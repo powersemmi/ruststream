@@ -1,16 +1,13 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*.*.*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
-  contents: read
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  contents: write
+  id-token: write
 
 jobs:
   crates-io:
@@ -21,10 +18,32 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify version matches tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].version')
+          if [ "${TAG#v}" != "$CARGO_VERSION" ]; then
+            echo "Tag '$TAG' does not match Cargo.toml version '$CARGO_VERSION'"
+            exit 1
+          fi
+          echo "Version $CARGO_VERSION verified"
+
+      - name: Exchange OIDC token for crates.io token
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=crates-io")
+          TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+          echo "CARGO_REGISTRY_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: cargo publish
         run: cargo publish --all-features
+
+      - name: Generate release notes
+        if: github.event_name == 'release'
+        run: gh release edit "${{ github.ref_name }}" --generate-notes --repo "${{ github.repository }}"
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
