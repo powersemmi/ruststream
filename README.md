@@ -11,7 +11,7 @@ This repository holds the Rust-only part of the project. No PyO3, no Python bind
 | `ruststream-runtime` | Router, middleware, lifecycle, dispatch. |
 | `ruststream-conformance` | Generic in-memory `MemoryBroker` (reference impl) plus contract tests for broker authors. |
 
-PyO3 helper crates for Python bindings live in the [`ruststream-py`](https://github.com/ruststream/ruststream-py) repository. Concrete brokers (NATS, Kafka, RabbitMQ, Redis, MQTT) live in their own repositories and pull `ruststream-core` from crates.io.
+PyO3 helper crates for Python bindings live in the [`ruststream-py`](https://github.com/powersemmi/ruststream-py) repository. Concrete brokers (NATS, Kafka, RabbitMQ, Redis, MQTT) live in their own repositories and pull `ruststream-core` from crates.io.
 
 ## Quick start
 
