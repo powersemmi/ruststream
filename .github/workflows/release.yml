@@ -48,4 +48,8 @@ jobs:
         if: github.event_name == 'release'
         env:
           TAG: ${{ github.ref_name }}
-        run: gh release edit "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" -q .body)
+          gh release edit "$TAG" --notes "$NOTES" --repo "$GITHUB_REPOSITORY"
