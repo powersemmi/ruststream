@@ -1,19 +1,26 @@
-//! The [`TestClient`] trait: contract for broker-specific in-memory test doubles.
+//! The [`TestClient`] trait: contract for a broker's in-process test transport.
 //!
 //! Broker crates implement `TestClient` under their `testing` cargo feature so application
-//! developers can write integration tests for their handlers without a real broker. Each
-//! implementation honours the real broker's semantics (`JetStream` ack, `Kafka` offsets,
-//! `RabbitMQ` exchanges and DLX, etc.).
+//! developers can test their handlers without a real server. An implementation reproduces
+//! only Core routing: subject / topic matching, fanout to subscribers opened after they
+//! subscribed, ack/nack as broker-side no-ops (a nack with requeue re-delivers the same
+//! payload to the same subscriber), and a recorded log of publishes behind
+//! [`TestClient::expect_published`].
+//!
+//! It must NOT simulate broker-specific semantics: durable cursors, consumer-group offsets,
+//! exchange / routing-key bindings, dead-letter queues, redelivery timers, retention. Those
+//! belong in env-gated integration tests against a real server, never in the test client.
+//! The [`crate::conformance::harness`] suite verifies exactly this Core-routing surface.
 
 use std::{error::Error as StdError, future::Future, time::Duration};
 
 use crate::{Broker, RawMessage};
 
-/// A broker test double that runs in memory while mimicking the real broker's semantics.
+/// A broker test transport that runs in process, reproducing Core routing without a server.
 ///
-/// Implementations live in the same crate as the broker they emulate, gated by the `testing`
-/// cargo feature. Test code adds the broker crate as a `dev-dependency` with that feature
-/// enabled and constructs a `TestClient` to drive the system under test.
+/// Implementations live in the same crate as the broker they stand in for, gated by the
+/// `testing` cargo feature. Test code adds the broker crate as a `dev-dependency` with that
+/// feature enabled and constructs a `TestClient` to drive the system under test.
 pub trait TestClient: Send {
     /// The broker type this test client emulates.
     type Broker: Broker;

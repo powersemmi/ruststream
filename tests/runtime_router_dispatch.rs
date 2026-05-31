@@ -9,7 +9,7 @@ use std::{
 };
 
 use ruststream::codec::JsonCodec;
-use ruststream::conformance::MemoryBroker;
+use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     DecodeFailure, HandlerExt, HandlerMetadata, HandlerResult, Router, layers,
 };

@@ -1,14 +1,14 @@
-//! In-memory reference broker used by the conformance harness and broker-agnostic tests.
+//! In-process broker that keeps every message in memory.
 //!
-//! `MemoryBroker` implements [`Broker`] with broadcast semantics: each subscriber receives a
+//! [`MemoryBroker`] implements [`Broker`] with broadcast semantics: each subscriber receives a
 //! copy of every message published to its topic after the subscription was opened. There is no
-//! durability, no consumer-group routing, and no on-disk state - this is strictly an in-process
-//! reference for testing.
+//! durability, no consumer-group routing, and no on-disk state.
 //!
-//! Use `MemoryBroker` directly when writing tests for runtime / middleware / codec components
-//! that do not depend on broker-specific semantics. For tests that target real broker
-//! semantics (`JetStream` ack timing, `Kafka` offsets, `RabbitMQ` exchanges), use the
-//! `testing` feature of the corresponding broker crate instead.
+//! It is a real, usable broker for single-process applications, prototypes, examples, and
+//! local development, as well as the reference implementation the [`crate::conformance`]
+//! harness runs against. It does not model any broker-specific semantics (`JetStream` ack
+//! timing, `Kafka` offsets, `RabbitMQ` exchanges); for those, use the corresponding broker
+//! crate.
 
 use std::{
     collections::HashMap,

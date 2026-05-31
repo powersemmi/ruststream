@@ -6,10 +6,14 @@
 //!
 //! # Examples
 //!
-//! ```no_run
-//! use ruststream::conformance::{harness, MemoryBroker};
+//! The example uses [`crate::memory::MemoryBroker`] as a stand-in broker, so it needs the
+//! `memory` feature; a broker crate substitutes its own `TestClient` here.
 //!
+//! ```no_run
+//! # #[cfg(feature = "memory")]
 //! # async fn run() {
+//! use ruststream::{conformance::harness, memory::MemoryBroker};
+//!
 //! harness::run_suite(|| async { Ok::<_, std::convert::Infallible>(MemoryBroker::new()) }).await;
 //! # }
 //! ```

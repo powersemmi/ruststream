@@ -20,10 +20,12 @@ runtime = [
     "dep:tokio-util",
     "dep:tracing",
 ]
-conformance = [
+memory = [
     "dep:tokio",
     "dep:tokio-stream",
-    "dep:tracing",
+]
+conformance = [
+    "dep:tokio",
 ]
 json = ["dep:serde_json"]
 msgpack = ["dep:rmp-serde"]

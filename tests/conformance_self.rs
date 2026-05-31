@@ -5,7 +5,7 @@
 
 use std::convert::Infallible;
 
-use ruststream::conformance::{MemoryBroker, harness};
+use ruststream::{conformance::harness, memory::MemoryBroker};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_conformance_suite() {

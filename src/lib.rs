@@ -13,9 +13,12 @@
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
 //! * `cbor`: [`codec::CborCodec`].
-//! * `conformance`: [`conformance::MemoryBroker`] reference implementation, the
-//!   [`conformance::harness`] contract suite, and broker-agnostic
-//!   [`conformance::helpers`] for application tests.
+//! * `memory`: [`memory::MemoryBroker`], an in-process broker usable in applications,
+//!   prototypes and tests.
+//! * `conformance`: the [`conformance::harness`] contract suite and broker-agnostic
+//!   [`conformance::helpers`] for application tests. Generic over any broker's `TestClient`,
+//!   so it pulls in no concrete broker (enable `memory` too to run it against
+//!   [`memory::MemoryBroker`]).
 //!
 //! Disable defaults (`default-features = false`) to depend only on the core traits, with no
 //! runtime, no codecs, and no Tokio. Useful for crates that only consume the trait surface
@@ -41,6 +44,9 @@ pub use publisher::Publisher;
 pub use subscriber::Subscriber;
 
 pub mod codec;
+
+#[cfg(feature = "memory")]
+pub mod memory;
 
 #[cfg(feature = "runtime")]
 pub mod runtime;
