@@ -5,25 +5,27 @@ on:
     types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: write
-  id-token: write
+permissions: {}
 
 jobs:
   crates-io:
     name: Publish ruststream to crates.io
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
       - name: Verify version matches tag
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG="${{ github.ref_name }}"
           CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].version')
           if [ "${TAG#v}" != "$CARGO_VERSION" ]; then
-            echo "Tag '$TAG' does not match Cargo.toml version '$CARGO_VERSION'"
+            echo "Tag '${TAG}' does not match Cargo.toml version '$CARGO_VERSION'"
             exit 1
           fi
           echo "Version $CARGO_VERSION verified"
@@ -44,6 +46,6 @@ jobs:
 
       - name: Generate release notes
         if: github.event_name == 'release'
-        run: gh release edit "${{ github.ref_name }}" --generate-notes --repo "${{ github.repository }}"
         env:
-          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY"
