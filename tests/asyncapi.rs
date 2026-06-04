@@ -1,7 +1,8 @@
 //! Integration test for `AsyncAPI` document generation.
 #![cfg(all(feature = "asyncapi", feature = "memory"))]
 
-use ruststream::asyncapi::build_spec;
+use ruststream::ServerSpec;
+use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
 
@@ -47,4 +48,73 @@ fn build_spec_describes_handlers() {
     assert!(json.contains("\"asyncapi\": \"3.0.0\""));
     assert!(json.contains("\"receive\""));
     assert!(json.contains("\"$ref\""));
+}
+
+#[test]
+fn build_spec_includes_servers_and_yaml() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).server(
+        "nats",
+        ServerSpec::new("nats.example.com:4222", "nats").with_description("primary"),
+    );
+
+    let spec = build_spec(&app);
+    let server = &spec.servers["nats"];
+    assert_eq!(server.host, "nats.example.com:4222");
+    assert_eq!(server.protocol, "nats");
+    assert_eq!(server.description.as_deref(), Some("primary"));
+
+    let yaml = spec.to_yaml().unwrap();
+    assert!(yaml.contains("asyncapi: 3.0.0"));
+    assert!(yaml.contains("host: nats.example.com:4222"));
+}
+
+#[test]
+fn viewer_html_embeds_spec_url_and_cdn() {
+    let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
+    assert!(html.contains("/asyncapi.json"));
+    assert!(html.contains("cdn.jsdelivr.net"));
+    assert!(html.contains("AsyncApiStandalone.render"));
+
+    let pinned = render_viewer_html(
+        "/spec",
+        &ViewerOptions::default()
+            .with_title("My API")
+            .with_cdn_base("https://example.test/assets/"),
+    );
+    assert!(pinned.contains("<title>My API</title>"));
+    assert!(pinned.contains("https://example.test/assets/browser/standalone/index.js"));
+}
+
+#[cfg(feature = "macros")]
+#[test]
+fn build_spec_emits_payload_schema() {
+    use ruststream::codec::JsonCodec;
+    use ruststream::schemars::JsonSchema;
+    use ruststream::subscriber;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    struct Order {
+        id: u32,
+        total: f64,
+    }
+
+    /// Handles an order.
+    #[subscriber("orders")]
+    async fn handle(order: &Order) -> HandlerResult {
+        let _ = order;
+        HandlerResult::Ack
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle, JsonCodec));
+
+    let spec = build_spec(&app);
+    let payload = spec.components.messages["Order"]
+        .payload
+        .as_ref()
+        .expect("Order payload schema should be emitted");
+    let props = &payload["properties"];
+    assert!(props.get("id").is_some());
+    assert!(props.get("total").is_some());
 }

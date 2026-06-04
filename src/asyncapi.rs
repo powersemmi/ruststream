@@ -1,15 +1,17 @@
 //! `AsyncAPI` 3.0 document generation from a [`RustStream`] service.
 //!
 //! [`build_spec`] turns a service's registered handlers and metadata into a [`Spec`] that
-//! serializes to an `AsyncAPI` 3.0 document. Hosting it over HTTP is the user's concern; this
-//! module only produces the document.
+//! serializes to an `AsyncAPI` 3.0 document ([`to_json`](Spec::to_json) / [`to_yaml`](Spec::to_yaml)).
+//! Hosting it over HTTP is the user's concern; [`render_viewer_html`] produces a ready-to-serve HTML
+//! page that renders the document with the `AsyncAPI` React component from a CDN.
 //!
-//! Message payload JSON schemas are not yet emitted (they require `schemars` integration); the
-//! current output covers info, channels, operations, and message names / descriptions.
+//! The document covers info, servers, channels, operations, and per-message payload JSON schemas
+//! (for message types that implement [`schemars::JsonSchema`]).
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::runtime::RustStream;
 
@@ -21,6 +23,9 @@ pub struct Spec {
     pub asyncapi: String,
     /// Service metadata.
     pub info: Info,
+    /// Servers (one per broker the service connects to), keyed by server name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub servers: BTreeMap<String, Server>,
     /// Channels, keyed by channel id (the topic).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub channels: BTreeMap<String, Channel>,
@@ -40,6 +45,28 @@ impl Spec {
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
+
+    /// Serializes the document to YAML.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`serde_norway::Error`] if serialization fails (not expected for a well-formed spec).
+    pub fn to_yaml(&self) -> Result<String, serde_norway::Error> {
+        serde_norway::to_string(self)
+    }
+}
+
+/// An `AsyncAPI` server: where and how clients reach a broker.
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
+pub struct Server {
+    /// The host (and optional port), e.g. `"nats.example.com:4222"`.
+    pub host: String,
+    /// The messaging protocol, e.g. `"nats"`.
+    pub protocol: String,
+    /// Optional human description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// `AsyncAPI` `Info` object: service title, version, and optional description.
@@ -95,6 +122,10 @@ pub struct MessageObject {
     /// Optional human description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The JSON Schema of the payload, when the message type implements
+    /// [`schemars::JsonSchema`]. Absent for raw-bytes handlers and types without a schema.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
 }
 
 /// A JSON `$ref` pointer.
@@ -154,6 +185,21 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
         description: app.info().description.clone(),
     };
 
+    let servers = app
+        .servers()
+        .iter()
+        .map(|(name, spec)| {
+            (
+                name.clone(),
+                Server {
+                    host: spec.host.clone(),
+                    protocol: spec.protocol.clone(),
+                    description: spec.description.clone(),
+                },
+            )
+        })
+        .collect();
+
     let mut channels = BTreeMap::new();
     let mut operations = BTreeMap::new();
     let mut messages = BTreeMap::new();
@@ -186,15 +232,97 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
             .or_insert_with(|| MessageObject {
                 name: message_name,
                 description: handler.description.as_ref().map(ToString::to_string),
+                payload: handler
+                    .payload_schema
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str(json).ok()),
             });
     }
 
     Spec {
         asyncapi: "3.0.0".to_owned(),
         info,
+        servers,
         channels,
         operations,
         components: Components { messages },
+    }
+}
+
+/// Renders a self-contained HTML page that displays `spec_url` using the `AsyncAPI` React component.
+///
+/// The component and its styles load from a CDN (jsDelivr) by default; override
+/// [`cdn_base`](ViewerOptions::cdn_base) to pin a version or self-host for offline / locked-down
+/// deployments. Serve the returned HTML from your own HTTP stack alongside the spec document.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::asyncapi::{render_viewer_html, ViewerOptions};
+///
+/// let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
+/// assert!(html.contains("/asyncapi.json"));
+/// ```
+#[must_use]
+pub fn render_viewer_html(spec_url: &str, opts: &ViewerOptions<'_>) -> String {
+    let title = opts.title;
+    let cdn = opts.cdn_base.trim_end_matches('/');
+    let spec = spec_url.replace('"', "&quot;");
+    format!(
+        "<!DOCTYPE html>\n\
+<html lang=\"en\">\n\
+<head>\n\
+  <meta charset=\"utf-8\" />\n\
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n\
+  <title>{title}</title>\n\
+  <link rel=\"stylesheet\" href=\"{cdn}/styles/default.min.css\" />\n\
+</head>\n\
+<body>\n\
+  <div id=\"asyncapi\"></div>\n\
+  <script src=\"{cdn}/browser/standalone/index.js\"></script>\n\
+  <script>\n\
+    AsyncApiStandalone.render(\n\
+      {{ schema: {{ url: \"{spec}\" }}, config: {{ show: {{ sidebar: true }} }} }},\n\
+      document.getElementById(\"asyncapi\"),\n\
+    );\n\
+  </script>\n\
+</body>\n\
+</html>\n"
+    )
+}
+
+/// Options for [`render_viewer_html`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ViewerOptions<'a> {
+    /// The HTML page title.
+    pub title: &'a str,
+    /// Base URL the `AsyncAPI` React assets load from (no trailing slash required).
+    pub cdn_base: &'a str,
+}
+
+impl<'a> ViewerOptions<'a> {
+    /// Sets the HTML page title.
+    #[must_use]
+    pub const fn with_title(mut self, title: &'a str) -> Self {
+        self.title = title;
+        self
+    }
+
+    /// Sets the base URL the `AsyncAPI` React assets load from.
+    #[must_use]
+    pub const fn with_cdn_base(mut self, cdn_base: &'a str) -> Self {
+        self.cdn_base = cdn_base;
+        self
+    }
+}
+
+impl Default for ViewerOptions<'_> {
+    fn default() -> Self {
+        Self {
+            title: "AsyncAPI",
+            cdn_base: "https://cdn.jsdelivr.net/npm/@asyncapi/react-component@2.6.4",
+        }
     }
 }
 

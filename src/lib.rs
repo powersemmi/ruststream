@@ -39,7 +39,8 @@ pub mod testing;
 
 pub use broker::Broker;
 pub use capability::{
-    BatchPublisher, BatchSubscriber, Partitioned, RequestReply, Subscribe, TransactionalPublisher,
+    BatchPublisher, BatchSubscriber, DescribeServer, Partitioned, RequestReply, ServerSpec,
+    Subscribe, TransactionalPublisher,
 };
 pub use error::AckError;
 pub use headers::Headers;
@@ -78,5 +79,67 @@ pub mod conformance;
 #[cfg(feature = "asyncapi")]
 pub mod asyncapi;
 
+/// Re-export of [`schemars`] so message types can derive `JsonSchema` without a direct dependency.
+///
+/// Derive it on a message type (`#[derive(ruststream::schemars::JsonSchema)]`) and its payload
+/// schema is emitted into the generated [`AsyncAPI`](asyncapi) document. Available with the
+/// `asyncapi` feature.
+#[cfg(feature = "asyncapi")]
+pub use schemars;
+
 #[cfg(feature = "metrics")]
 pub mod metrics;
+
+/// Implementation detail used by the `#[subscriber]` macro to capture a payload's JSON Schema.
+///
+/// Not part of the public API; no stability guarantees.
+#[doc(hidden)]
+pub mod __private {
+    use core::marker::PhantomData;
+
+    /// A type-carrying probe the macro reads a payload schema off.
+    ///
+    /// Schema selection uses inherent-vs-trait specialization (a stable-Rust trick): the schema
+    /// path is an inherent method on `Probe<T>` bounded by `T: JsonSchema`, and
+    /// [`NoSchemaProbe::schema_json`] is the trait fallback. Inherent methods win when present, so
+    /// `Probe::<T>::new().schema_json()` returns the schema for a concrete `T: JsonSchema` and
+    /// `None` otherwise — without forcing the bound onto every message type. The inherent method
+    /// exists only with the `asyncapi` feature.
+    #[derive(Debug)]
+    pub struct Probe<T>(pub PhantomData<T>);
+
+    impl<T> Probe<T> {
+        /// Constructs a probe for `T`.
+        #[must_use]
+        pub const fn new() -> Self {
+            Self(PhantomData)
+        }
+    }
+
+    impl<T> Default for Probe<T> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// The trait fallback: chosen for any `T` the inherent schema method does not cover.
+    pub trait NoSchemaProbe {
+        /// Returns `None` (no schema available for the probed type).
+        fn schema_json(&self) -> Option<String>;
+    }
+
+    impl<T> NoSchemaProbe for Probe<T> {
+        fn schema_json(&self) -> Option<String> {
+            None
+        }
+    }
+
+    #[cfg(feature = "asyncapi")]
+    impl<T: schemars::JsonSchema> Probe<T> {
+        /// Returns the serialized JSON Schema for `T` (inherent; preferred over the trait fallback).
+        #[must_use]
+        pub fn schema_json(&self) -> Option<String> {
+            serde_json::to_string(&schemars::schema_for!(T)).ok()
+        }
+    }
+}

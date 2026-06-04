@@ -24,6 +24,12 @@ pub trait SubscriberDef: Sized {
         None
     }
 
+    /// The input type's serialized JSON Schema, when it implements [`schemars::JsonSchema`] and the
+    /// `asyncapi` feature is on. The macro fills this in; the default omits it.
+    fn input_schema(&self) -> Option<String> {
+        None
+    }
+
     /// Consumes the definition, returning the handler.
     fn into_handler(self) -> Self::Handler;
 }

@@ -42,6 +42,12 @@ pub trait PublishingDef: Send + Sync {
         None
     }
 
+    /// The input type's serialized JSON Schema, when it implements [`schemars::JsonSchema`] and the
+    /// `asyncapi` feature is on. The macro fills this in; the default omits it.
+    fn input_schema(&self) -> Option<String> {
+        None
+    }
+
     /// Runs the handler body, producing the reply.
     fn call(&self, input: &Self::Input) -> impl Future<Output = Self::Reply> + Send;
 }

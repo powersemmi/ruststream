@@ -166,3 +166,58 @@ pub trait Subscribe: Broker {
         topic: &str,
     ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
 }
+
+/// How to reach a broker, for the `servers` section of an `AsyncAPI` document.
+///
+/// Each broker a service connects to is one `AsyncAPI` server. Construct it directly, or let a
+/// broker that implements [`DescribeServer`] build it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ServerSpec {
+    /// The host (and optional port) clients connect to, e.g. `"nats.example.com:4222"`.
+    pub host: String,
+    /// The messaging protocol, e.g. `"nats"`, `"kafka"`, `"amqp"`.
+    pub protocol: String,
+    /// An optional human description of this server.
+    pub description: Option<String>,
+}
+
+impl ServerSpec {
+    /// Describes a server reachable at `host` over `protocol`.
+    #[must_use]
+    pub fn new(host: impl Into<String>, protocol: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            protocol: protocol.into(),
+            description: None,
+        }
+    }
+
+    /// Builder-style setter for the server description.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+}
+
+/// A broker that describes itself as an `AsyncAPI` server.
+///
+/// Broker crates implement this so their connection coordinates land in the generated `AsyncAPI`
+/// document; wire it onto a service with
+/// [`RustStream::server`](crate::runtime::RustStream::server). Brokers without a meaningful network
+/// address (the in-memory test broker) simply do not implement it.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Broker, DescribeServer, ServerSpec};
+///
+/// fn describe<B: DescribeServer>(broker: &B) -> ServerSpec {
+///     broker.describe_server()
+/// }
+/// ```
+pub trait DescribeServer: Broker {
+    /// Returns the server coordinates for this broker.
+    fn describe_server(&self) -> ServerSpec;
+}

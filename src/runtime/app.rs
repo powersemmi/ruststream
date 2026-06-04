@@ -2,7 +2,11 @@
 //! service.
 
 use std::{
-    collections::HashMap, error::Error as StdError, future::Future, sync::Arc, time::Duration,
+    collections::{BTreeMap, HashMap},
+    error::Error as StdError,
+    future::Future,
+    sync::Arc,
+    time::Duration,
 };
 
 use thiserror::Error;
@@ -14,7 +18,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{Broker, Publisher, Subscribe, Subscriber, SubscriptionSource, Topic};
+use crate::{Broker, Publisher, ServerSpec, Subscribe, Subscriber, SubscriptionSource, Topic};
 
 use super::context::State;
 use super::handler::Handler;
@@ -154,6 +158,7 @@ pub struct RustStream<L = Identity> {
     brokers: Vec<Arc<dyn BrokerLifecycle>>,
     starters: Vec<Starter>,
     handlers: Vec<HandlerMetadata>,
+    servers: BTreeMap<String, ServerSpec>,
     publishers: Publishers,
     publish_layers: Vec<Arc<dyn PublishMiddleware>>,
     state: State,
@@ -184,6 +189,7 @@ impl RustStream<Identity> {
             brokers: Vec::new(),
             starters: Vec::new(),
             handlers: Vec::new(),
+            servers: BTreeMap::new(),
             publishers: HashMap::new(),
             publish_layers: Vec::new(),
             state: State::default(),
@@ -208,6 +214,7 @@ impl<L> RustStream<L> {
             brokers: self.brokers,
             starters: self.starters,
             handlers: self.handlers,
+            servers: self.servers,
             publishers: self.publishers,
             publish_layers: self.publish_layers,
             state: self.state,
@@ -347,6 +354,17 @@ impl<L> RustStream<L> {
         self
     }
 
+    /// Records an `AsyncAPI` server (one per broker the service connects to).
+    ///
+    /// Build the [`ServerSpec`] directly, or get it from a broker that implements
+    /// [`DescribeServer`](crate::DescribeServer): `app.server("nats", broker.describe_server())`.
+    /// `build_spec` emits these in the document's `servers` section.
+    #[must_use]
+    pub fn server(mut self, name: impl Into<String>, spec: ServerSpec) -> Self {
+        self.servers.insert(name.into(), spec);
+        self
+    }
+
     /// Registers a broker and the handlers attached to it.
     ///
     /// `build` receives a [`BrokerScope`] typed to this broker; use it to attach handlers. The
@@ -390,6 +408,12 @@ impl<L> RustStream<L> {
     #[must_use]
     pub fn info(&self) -> &AppInfo {
         &self.info
+    }
+
+    /// Returns the registered `AsyncAPI` servers, keyed by name. Input to the `AsyncAPI` generator.
+    #[must_use]
+    pub fn servers(&self) -> &BTreeMap<String, ServerSpec> {
+        &self.servers
     }
 
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
@@ -555,6 +579,9 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
         if let Some(description) = def.description() {
             meta = meta.with_description(description.to_owned());
         }
+        if let Some(schema) = def.input_schema() {
+            meta = meta.with_payload_schema(schema);
+        }
         let handler = typed(codec, def.into_handler());
         self.subscribe(Topic::new(channel), handler, meta);
     }
@@ -585,6 +612,9 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
             .with_output_type(std::any::type_name::<D::Reply>());
         if let Some(description) = description {
             meta = meta.with_description(description);
+        }
+        if let Some(schema) = def.input_schema() {
+            meta = meta.with_payload_schema(schema);
         }
         let handler = PublishingHandler {
             def,

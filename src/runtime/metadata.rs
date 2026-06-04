@@ -19,6 +19,10 @@ pub struct HandlerMetadata {
     pub output_type: Option<&'static str>,
     /// Free-form human description, typically pulled from a doc comment on the handler.
     pub description: Option<Cow<'static, str>>,
+    /// The input type's JSON Schema, serialized, when the type implements
+    /// [`schemars::JsonSchema`] (captured under the `asyncapi` feature). Feeds the `AsyncAPI`
+    /// message payload schema.
+    pub payload_schema: Option<String>,
 }
 
 impl HandlerMetadata {
@@ -31,6 +35,7 @@ impl HandlerMetadata {
             input_type: "bytes",
             output_type: None,
             description: None,
+            payload_schema: None,
         }
     }
 
@@ -45,6 +50,7 @@ impl HandlerMetadata {
             input_type: type_name::<T>(),
             output_type: None,
             description: None,
+            payload_schema: None,
         }
     }
 
@@ -66,6 +72,13 @@ impl HandlerMetadata {
     #[must_use]
     pub fn with_output_type(mut self, name: &'static str) -> Self {
         self.output_type = Some(name);
+        self
+    }
+
+    /// Builder-style setter for the serialized input payload schema.
+    #[must_use]
+    pub fn with_payload_schema(mut self, schema: impl Into<String>) -> Self {
+        self.payload_schema = Some(schema.into());
         self
     }
 }

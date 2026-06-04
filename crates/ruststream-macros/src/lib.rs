@@ -110,6 +110,17 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     let description = doc_description(&func.attrs);
     let topic = &args.topic;
 
+    // Captures the input type's JSON Schema for AsyncAPI when it implements `JsonSchema` (and the
+    // `asyncapi` feature is on), via the autoref-specialization probe; `None` otherwise. The
+    // concrete input type makes the trait selection resolve at the call site.
+    let input_schema = quote! {
+        fn input_schema(&self) -> ::core::option::Option<::std::string::String> {
+            #[allow(unused_imports)]
+            use ::ruststream::__private::NoSchemaProbe as _;
+            ::ruststream::__private::Probe::<#input_ty>::new().schema_json()
+        }
+    };
+
     // Optional second handler parameter: the per-delivery `&mut Context`. If the user declares it,
     // bind it to their name; otherwise generate an ignored binding.
     let ctx_param = if let Some(FnArg::Typed(PatType { pat, .. })) = func.sig.inputs.get(1) {
@@ -146,6 +157,8 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
                     #description
                 }
 
+                #input_schema
+
                 fn call(
                     &self,
                     #pat: &#input_ty,
@@ -181,6 +194,8 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description
                 }
+
+                #input_schema
 
                 fn into_handler(self) -> Self { self }
             }
