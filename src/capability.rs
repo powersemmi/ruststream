@@ -8,7 +8,7 @@ use std::{future::Future, time::Duration};
 
 use futures::Stream;
 
-use crate::{IncomingMessage, OutgoingMessage, Publisher, Subscriber};
+use crate::{Broker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
 
 /// A subscriber that natively delivers messages in batches.
 ///
@@ -100,4 +100,94 @@ pub trait RequestReply: Publisher {
 pub trait Partitioned {
     /// Returns the partition key for this item, or `None` if the broker should pick a partition.
     fn partition_key(&self) -> Option<&[u8]>;
+}
+
+/// A broker whose subscriptions are fully determined by a name string.
+///
+/// This is the common case (`NATS` core subjects, the in-memory broadcast broker, `Redis` pub/sub
+/// channels): no consumer group, partition, or durable-consumer configuration is needed to open a
+/// subscription, so the runtime can subscribe given just a name. Brokers whose subscriptions
+/// require richer options (`Kafka` consumer groups, `JetStream` durable consumers) do not
+/// implement `Subscribe`; callers describe those with a broker-specific
+/// [`SubscriptionSource`](crate::SubscriptionSource) instead.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Broker, Subscribe};
+///
+/// async fn open<B: Subscribe>(broker: &B) -> Result<B::Subscriber, B::Error> {
+///     broker.subscribe("orders").await
+/// }
+/// ```
+pub trait Subscribe: Broker {
+    /// The subscriber type opened by a by-name subscription.
+    type Subscriber: Subscriber;
+
+    /// Opens a subscription to `name`, producing this broker's [`Subscriber`](Self::Subscriber).
+    ///
+    /// Called after [`Broker::connect`]; implementations may assume a live connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Broker::Error`] when the broker rejects the subscription or the transport fails.
+    fn subscribe(
+        &self,
+        name: &str,
+    ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
+}
+
+/// How to reach a broker, for the `servers` section of an `AsyncAPI` document.
+///
+/// Each broker a service connects to is one `AsyncAPI` server. Construct it directly, or let a
+/// broker that implements [`DescribeServer`] build it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ServerSpec {
+    /// The host (and optional port) clients connect to, e.g. `"nats.example.com:4222"`.
+    pub host: String,
+    /// The messaging protocol, e.g. `"nats"`, `"kafka"`, `"amqp"`.
+    pub protocol: String,
+    /// An optional human description of this server.
+    pub description: Option<String>,
+}
+
+impl ServerSpec {
+    /// Describes a server reachable at `host` over `protocol`.
+    #[must_use]
+    pub fn new(host: impl Into<String>, protocol: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            protocol: protocol.into(),
+            description: None,
+        }
+    }
+
+    /// Builder-style setter for the server description.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+}
+
+/// A broker that describes itself as an `AsyncAPI` server.
+///
+/// Broker crates implement this so their connection coordinates land in the generated `AsyncAPI`
+/// document; wire it onto a service with
+/// [`RustStream::server`](crate::runtime::RustStream::server). Brokers without a meaningful network
+/// address (the in-memory test broker) simply do not implement it.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Broker, DescribeServer, ServerSpec};
+///
+/// fn describe<B: DescribeServer>(broker: &B) -> ServerSpec {
+///     broker.describe_server()
+/// }
+/// ```
+pub trait DescribeServer: Broker {
+    /// Returns the server coordinates for this broker.
+    fn describe_server(&self) -> ServerSpec;
 }

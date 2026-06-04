@@ -13,16 +13,16 @@ use crate::{AckError, Headers};
 /// [`IncomingMessage`] type that wraps the broker's native delivery handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawMessage {
-    topic: String,
+    name: String,
     payload: Bytes,
     headers: Headers,
 }
 
 impl RawMessage {
-    /// Constructs a new message for the given topic and payload, with no headers.
-    pub fn new(topic: impl Into<String>, payload: impl Into<Bytes>) -> Self {
+    /// Constructs a new message for the given name and payload, with no headers.
+    pub fn new(name: impl Into<String>, payload: impl Into<Bytes>) -> Self {
         Self {
-            topic: topic.into(),
+            name: name.into(),
             payload: payload.into(),
             headers: Headers::new(),
         }
@@ -35,10 +35,10 @@ impl RawMessage {
         self
     }
 
-    /// Returns the topic / subject this message was published to.
+    /// Returns the name / subject this message was published to.
     #[must_use]
-    pub fn topic(&self) -> &str {
-        &self.topic
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Returns the message payload as a byte slice.
@@ -65,7 +65,7 @@ impl RawMessage {
     }
 }
 
-/// A message ready to be published, holding borrowed payload and topic.
+/// A message ready to be published, holding borrowed payload and name.
 ///
 /// Borrowed fields let publishers send messages without an allocation when the caller already
 /// owns the buffers. Use [`OutgoingMessage::new`] and the builder-style setters to construct.
@@ -80,22 +80,22 @@ impl RawMessage {
 /// headers.insert("Content-Type", "application/json");
 ///
 /// let msg = OutgoingMessage::new("orders.created", payload).with_headers(headers);
-/// assert_eq!(msg.topic(), "orders.created");
+/// assert_eq!(msg.name(), "orders.created");
 /// assert_eq!(msg.payload(), payload);
 /// ```
 #[derive(Debug, Clone)]
 pub struct OutgoingMessage<'a> {
-    topic: &'a str,
+    name: &'a str,
     payload: &'a [u8],
     headers: Headers,
 }
 
 impl<'a> OutgoingMessage<'a> {
-    /// Constructs a new outgoing message for the given topic and payload, with no headers.
+    /// Constructs a new outgoing message for the given name and payload, with no headers.
     #[must_use]
-    pub fn new(topic: &'a str, payload: &'a [u8]) -> Self {
+    pub fn new(name: &'a str, payload: &'a [u8]) -> Self {
         Self {
-            topic,
+            name,
             payload,
             headers: Headers::new(),
         }
@@ -108,10 +108,10 @@ impl<'a> OutgoingMessage<'a> {
         self
     }
 
-    /// Returns the topic / subject this message will be published to.
+    /// Returns the name / subject this message will be published to.
     #[must_use]
-    pub fn topic(&self) -> &str {
-        self.topic
+    pub fn name(&self) -> &str {
+        self.name
     }
 
     /// Returns the payload to be published.
@@ -177,8 +177,8 @@ mod tests {
 
     #[test]
     fn raw_message_construction() {
-        let msg = RawMessage::new("topic.a", b"payload".as_slice());
-        assert_eq!(msg.topic(), "topic.a");
+        let msg = RawMessage::new("name.a", b"payload".as_slice());
+        assert_eq!(msg.name(), "name.a");
         assert_eq!(msg.payload(), b"payload");
         assert!(msg.headers().is_empty());
     }
@@ -188,17 +188,17 @@ mod tests {
         let mut headers = Headers::new();
         headers.insert("X-Tenant", "acme");
 
-        let msg = RawMessage::new("topic.a", Bytes::from_static(b"data")).with_headers(headers);
+        let msg = RawMessage::new("name.a", Bytes::from_static(b"data")).with_headers(headers);
         assert_eq!(msg.headers().get_str("x-tenant"), Some("acme"));
     }
 
     #[test]
     fn outgoing_message_holds_borrows() {
-        let topic = String::from("orders");
+        let name = String::from("orders");
         let payload = vec![1u8, 2, 3];
 
-        let msg = OutgoingMessage::new(&topic, &payload);
-        assert_eq!(msg.topic(), "orders");
+        let msg = OutgoingMessage::new(&name, &payload);
+        assert_eq!(msg.name(), "orders");
         assert_eq!(msg.payload(), &[1, 2, 3]);
     }
 }

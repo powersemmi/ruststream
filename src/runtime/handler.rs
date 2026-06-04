@@ -2,7 +2,7 @@
 
 use std::{future::Future, sync::Arc};
 
-use crate::IncomingMessage;
+use super::context::Context;
 
 /// What the router should do with the message after the handler returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,10 +31,48 @@ impl HandlerResult {
     }
 }
 
-/// Per-message handler invoked by the router on every delivery.
+/// Conversion into a [`HandlerResult`], so `#[subscriber]` handlers can return a plain value
+/// instead of always constructing one.
 ///
-/// Implementations are `Send + Sync` so the router can share a single handler across many
-/// concurrent deliveries.
+/// Implemented for [`HandlerResult`] (identity), `()` (always [`Ack`](HandlerResult::Ack)), and
+/// `Result<_, E>` (`Ok` acks, `Err` drops).
+pub trait IntoHandlerResult {
+    /// Converts `self` into the outcome the dispatcher acts on.
+    fn into_handler_result(self) -> HandlerResult;
+}
+
+impl IntoHandlerResult for HandlerResult {
+    fn into_handler_result(self) -> HandlerResult {
+        self
+    }
+}
+
+impl IntoHandlerResult for () {
+    fn into_handler_result(self) -> HandlerResult {
+        HandlerResult::Ack
+    }
+}
+
+impl<E> IntoHandlerResult for Result<(), E> {
+    fn into_handler_result(self) -> HandlerResult {
+        match self {
+            Ok(()) => HandlerResult::Ack,
+            Err(_) => HandlerResult::drop(),
+        }
+    }
+}
+
+impl<E> IntoHandlerResult for Result<HandlerResult, E> {
+    fn into_handler_result(self) -> HandlerResult {
+        self.unwrap_or_else(|_| HandlerResult::drop())
+    }
+}
+
+/// A handler invoked on each input it is given.
+///
+/// The same trait serves both pipeline levels: a raw delivery (`Handler<M>` where
+/// `M: IncomingMessage`) and a decoded value (`Handler<T>`). Implementations are `Send + Sync` so a
+/// single handler can be shared across many concurrent inputs.
 ///
 /// # Examples
 ///
@@ -42,7 +80,7 @@ impl HandlerResult {
 ///
 /// ```
 /// use ruststream::IncomingMessage;
-/// use ruststream::runtime::{Handler, HandlerResult};
+/// use ruststream::runtime::{Context, Handler, HandlerResult};
 ///
 /// fn assert_handler<M, H>(_: H)
 /// where
@@ -52,34 +90,29 @@ impl HandlerResult {
 /// }
 ///
 /// fn use_closure<M: IncomingMessage + 'static>() {
-///     assert_handler::<M, _>(|_msg: &M| async { HandlerResult::Ack });
+///     assert_handler::<M, _>(|_msg: &M, _ctx: &mut Context| async { HandlerResult::Ack });
 /// }
 /// ```
-pub trait Handler<M>: Send + Sync
-where
-    M: IncomingMessage,
-{
-    /// Handle one delivery.
-    fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send;
+pub trait Handler<M>: Send + Sync {
+    /// Handle one input, with the per-delivery [`Context`].
+    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send;
 }
 
 impl<M, F, Fut> Handler<M> for F
 where
-    M: IncomingMessage,
-    F: Fn(&M) -> Fut + Send + Sync,
+    F: Fn(&M, &mut Context) -> Fut + Send + Sync,
     Fut: Future<Output = HandlerResult> + Send,
 {
-    fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send {
-        (self)(msg)
+    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
+        (self)(msg, ctx)
     }
 }
 
 impl<M, H> Handler<M> for Arc<H>
 where
-    M: IncomingMessage,
     H: Handler<M>,
 {
-    fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send {
-        (**self).handle(msg)
+    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
+        (**self).handle(msg, ctx)
     }
 }

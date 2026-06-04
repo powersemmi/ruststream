@@ -1,7 +1,7 @@
 //! In-process broker that keeps every message in memory.
 //!
 //! [`MemoryBroker`] implements [`Broker`] with broadcast semantics: each subscriber receives a
-//! copy of every message published to its topic after the subscription was opened. There is no
+//! copy of every message published to its name after the subscription was opened. There is no
 //! durability, no consumer-group routing, and no on-disk state.
 //!
 //! It is a real, usable broker for single-process applications, prototypes, examples, and
@@ -18,8 +18,8 @@ use std::{
 };
 
 use crate::{
-    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, RawMessage, Subscriber,
-    testing::TestClient,
+    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, RawMessage, Subscribe,
+    Subscriber, testing::TestClient,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -33,7 +33,7 @@ type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
 #[derive(Clone)]
 struct MemoryDelivery {
-    topic: String,
+    name: String,
     payload: Bytes,
     headers: Headers,
 }
@@ -46,22 +46,20 @@ struct MemoryState {
 }
 
 impl MemoryState {
-    fn register(&self, topic: String, tx: Sender) {
+    fn register(&self, name: String, tx: Sender) {
         let mut subs = self
             .subscribers
             .lock()
             .expect("memory broker mutex poisoned");
-        subs.entry(topic).or_default().push(tx);
+        subs.entry(name).or_default().push(tx);
     }
 
     fn fanout(&self, delivery: &MemoryDelivery) {
-        let snapshot = RawMessage::new(delivery.topic.clone(), delivery.payload.clone())
+        let snapshot = RawMessage::new(delivery.name.clone(), delivery.payload.clone())
             .with_headers(delivery.headers.clone());
         {
             let mut log = self.published.lock().expect("memory broker mutex poisoned");
-            log.entry(delivery.topic.clone())
-                .or_default()
-                .push(snapshot);
+            log.entry(delivery.name.clone()).or_default().push(snapshot);
         }
         self.notify.notify_waiters();
 
@@ -69,7 +67,7 @@ impl MemoryState {
             .subscribers
             .lock()
             .expect("memory broker mutex poisoned");
-        if let Some(senders) = subs.get(&delivery.topic) {
+        if let Some(senders) = subs.get(&delivery.name) {
             for tx in senders {
                 let _ = tx.send(delivery.clone());
             }
@@ -90,15 +88,15 @@ impl MemoryBroker {
         Self::default()
     }
 
-    /// Opens a subscription to `topic`. The returned subscriber starts receiving messages
+    /// Opens a subscription to `name`. The returned subscriber starts receiving messages
     /// published after this call; messages published earlier are not buffered.
     #[must_use]
-    pub fn subscribe(&self, topic: impl Into<String>) -> MemorySubscriber {
+    pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber {
         let (tx, rx) = mpsc::unbounded_channel();
-        let topic = topic.into();
-        self.state.register(topic.clone(), tx.clone());
+        let name = name.into();
+        self.state.register(name.clone(), tx.clone());
         MemorySubscriber {
-            topic,
+            name,
             rx: Some(rx),
             requeue: tx,
         }
@@ -120,8 +118,6 @@ impl std::fmt::Debug for MemoryBroker {
 }
 
 impl Broker for MemoryBroker {
-    type Subscriber = MemorySubscriber;
-    type Publisher = MemoryPublisher;
     type Error = Infallible;
 
     async fn connect(&self) -> Result<(), Self::Error> {
@@ -138,10 +134,21 @@ impl Broker for MemoryBroker {
     }
 }
 
+// `Self::subscribe` would read as a recursive call into this trait method; spell out the broker
+// type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).
+#[allow(clippy::use_self)]
+impl Subscribe for MemoryBroker {
+    type Subscriber = MemorySubscriber;
+
+    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
+        Ok(MemoryBroker::subscribe(self, name))
+    }
+}
+
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
 pub struct MemorySubscriber {
-    topic: String,
+    name: String,
     rx: Option<mpsc::UnboundedReceiver<MemoryDelivery>>,
     requeue: Sender,
 }
@@ -149,7 +156,7 @@ pub struct MemorySubscriber {
 impl std::fmt::Debug for MemorySubscriber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemorySubscriber")
-            .field("topic", &self.topic)
+            .field("name", &self.name)
             .finish_non_exhaustive()
     }
 }
@@ -174,7 +181,7 @@ impl Subscriber for MemorySubscriber {
 }
 
 /// Publisher returned by [`MemoryBroker::publisher`]. Fanout copy to every subscriber of the
-/// target topic at publish time.
+/// target name at publish time.
 #[derive(Clone)]
 pub struct MemoryPublisher {
     state: Arc<MemoryState>,
@@ -191,7 +198,7 @@ impl Publisher for MemoryPublisher {
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
         let delivery = MemoryDelivery {
-            topic: msg.topic().to_owned(),
+            name: msg.name().to_owned(),
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         };
@@ -213,18 +220,18 @@ pub struct MemoryMessage {
 impl std::fmt::Debug for MemoryMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryMessage")
-            .field("topic", &self.delivery.as_ref().map(|d| d.topic.as_str()))
+            .field("name", &self.delivery.as_ref().map(|d| d.name.as_str()))
             .finish_non_exhaustive()
     }
 }
 
 impl MemoryMessage {
-    /// Returns the topic the message was published to.
+    /// Returns the name the message was published to.
     #[must_use]
-    pub fn topic(&self) -> &str {
+    pub fn name(&self) -> &str {
         self.delivery
             .as_ref()
-            .map(|d| d.topic.as_str())
+            .map(|d| d.name.as_str())
             .unwrap_or_default()
     }
 
@@ -238,7 +245,7 @@ impl MemoryMessage {
     #[must_use]
     pub fn into_raw(mut self) -> RawMessage {
         let delivery = self.delivery.take().expect("delivery already consumed");
-        RawMessage::new(delivery.topic, delivery.payload).with_headers(delivery.headers)
+        RawMessage::new(delivery.name, delivery.payload).with_headers(delivery.headers)
     }
 }
 
@@ -273,6 +280,8 @@ impl IncomingMessage for MemoryMessage {
 
 impl TestClient for MemoryBroker {
     type Broker = Self;
+    type Subscriber = MemorySubscriber;
+    type Publisher = MemoryPublisher;
     type Error = Infallible;
 
     async fn start() -> Result<Self, Self::Error> {
@@ -283,32 +292,27 @@ impl TestClient for MemoryBroker {
         self
     }
 
-    async fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), Self::Error> {
+    async fn publish(&self, name: &str, payload: &[u8]) -> Result<(), Self::Error> {
         let publisher = Self::publisher(self);
-        publisher
-            .publish(OutgoingMessage::new(topic, payload))
-            .await
+        publisher.publish(OutgoingMessage::new(name, payload)).await
     }
 
-    async fn subscribe(
-        &self,
-        topic: &str,
-    ) -> Result<<Self::Broker as Broker>::Subscriber, Self::Error> {
-        Ok(Self::subscribe(self, topic))
+    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
+        Ok(Self::subscribe(self, name))
     }
 
-    async fn publisher(&self) -> Result<<Self::Broker as Broker>::Publisher, Self::Error> {
+    async fn publisher(&self) -> Result<Self::Publisher, Self::Error> {
         Ok(Self::publisher(self))
     }
 
     async fn expect_published(
         &self,
-        topic: &str,
+        name: &str,
         count: usize,
         timeout_duration: Duration,
     ) -> Result<Vec<RawMessage>, Self::Error> {
-        let topic_for_wait = topic.to_owned();
-        let topic_for_fallback = topic_for_wait.clone();
+        let name_for_wait = name.to_owned();
+        let name_for_fallback = name_for_wait.clone();
         let state = Arc::clone(&self.state);
 
         let wait = async move {
@@ -318,7 +322,7 @@ impl TestClient for MemoryBroker {
                         .published
                         .lock()
                         .expect("memory broker mutex poisoned");
-                    if let Some(messages) = log.get(&topic_for_wait) {
+                    if let Some(messages) = log.get(&name_for_wait) {
                         if messages.len() >= count {
                             return messages.iter().take(count).cloned().collect::<Vec<_>>();
                         }
@@ -334,7 +338,7 @@ impl TestClient for MemoryBroker {
                 .published
                 .lock()
                 .expect("memory broker mutex poisoned")
-                .get(&topic_for_fallback)
+                .get(&name_for_fallback)
                 .map(|m| m.iter().take(count).cloned().collect())
                 .unwrap_or_default()
         });

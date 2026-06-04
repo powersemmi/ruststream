@@ -2,7 +2,7 @@
 //!
 //! Broker crates implement `TestClient` under their `testing` cargo feature so application
 //! developers can test their handlers without a real server. An implementation reproduces
-//! only Core routing: subject / topic matching, fanout to subscribers opened after they
+//! only Core routing: subject / name matching, fanout to subscribers opened after they
 //! subscribed, ack/nack as broker-side no-ops (a nack with requeue re-delivers the same
 //! payload to the same subscriber), and a recorded log of publishes behind
 //! [`TestClient::expect_published`].
@@ -14,7 +14,7 @@
 
 use std::{error::Error as StdError, future::Future, time::Duration};
 
-use crate::{Broker, RawMessage};
+use crate::{Broker, Publisher, RawMessage, Subscriber};
 
 /// A broker test transport that runs in process, reproducing Core routing without a server.
 ///
@@ -24,6 +24,12 @@ use crate::{Broker, RawMessage};
 pub trait TestClient: Send {
     /// The broker type this test client emulates.
     type Broker: Broker;
+
+    /// The subscriber type opened by [`subscribe`](Self::subscribe).
+    type Subscriber: Subscriber;
+
+    /// The publisher type returned by [`publisher`](Self::publisher).
+    type Publisher: Publisher;
 
     /// The error type returned by test-client operations.
     type Error: StdError + Send + Sync + 'static;
@@ -37,7 +43,7 @@ pub trait TestClient: Send {
     where
         Self: Sized;
 
-    /// Returns a handle to the in-memory broker, suitable for passing to a `Router`.
+    /// Returns a handle to the in-memory broker, suitable for registering with a `RustStream`.
     fn broker(&self) -> &Self::Broker;
 
     /// Publishes a message to the in-memory broker as if from an external producer.
@@ -47,7 +53,7 @@ pub trait TestClient: Send {
     /// Returns [`Self::Error`] when the in-memory broker rejects the publish.
     fn publish(
         &self,
-        topic: &str,
+        name: &str,
         payload: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
@@ -59,8 +65,8 @@ pub trait TestClient: Send {
     /// Returns [`Self::Error`] when the in-memory broker cannot register a new subscription.
     fn subscribe(
         &self,
-        topic: &str,
-    ) -> impl Future<Output = Result<<Self::Broker as Broker>::Subscriber, Self::Error>> + Send;
+        name: &str,
+    ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
 
     /// Returns a publisher bound to the in-memory broker. Useful when the test needs to set
     /// headers or publish in a tight loop without allocating per-call closures.
@@ -68,11 +74,9 @@ pub trait TestClient: Send {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the in-memory broker cannot produce a publisher.
-    fn publisher(
-        &self,
-    ) -> impl Future<Output = Result<<Self::Broker as Broker>::Publisher, Self::Error>> + Send;
+    fn publisher(&self) -> impl Future<Output = Result<Self::Publisher, Self::Error>> + Send;
 
-    /// Waits until at least `count` messages have been published to `topic`, returning all
+    /// Waits until at least `count` messages have been published to `name`, returning all
     /// observed messages. Fails after `timeout`.
     ///
     /// # Errors
@@ -81,7 +85,7 @@ pub trait TestClient: Send {
     /// when the in-memory broker is shut down before the assertion completes.
     fn expect_published(
         &self,
-        topic: &str,
+        name: &str,
         count: usize,
         timeout: Duration,
     ) -> impl Future<Output = Result<Vec<RawMessage>, Self::Error>> + Send;

@@ -1,8 +1,35 @@
 [workspace]
+members = ["crates/ruststream-macros"]
+
+[[bin]]
+name = "ruststream"
+path = "src/bin/ruststream/main.rs"
+required-features = ["cli"]
+
+[[example]]
+name = "macro_app"
+required-features = ["macros", "memory"]
+
+[[example]]
+name = "routed_service"
+path = "examples/routed_service/main.rs"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "quickstart"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "asyncapi_http"
+required-features = ["macros", "memory", "asyncapi"]
+
+[[example]]
+name = "metrics_http"
+required-features = ["macros", "memory", "metrics"]
 
 [package]
 name = "ruststream"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -14,22 +41,16 @@ keywords = ["messaging", "async", "broker", "faststream", "nats"]
 categories = ["asynchronous", "network-programming"]
 
 [features]
-default = ["runtime", "json"]
-runtime = [
-    "dep:tokio",
-    "dep:tokio-util",
-    "dep:tracing",
-]
-memory = [
-    "dep:tokio",
-    "dep:tokio-stream",
-]
-conformance = [
-    "dep:tokio",
-]
+default = ["json"]
+memory = ["dep:tokio-stream"]
+conformance = []
 json = ["dep:serde_json"]
 msgpack = ["dep:rmp-serde"]
 cbor = ["dep:ciborium"]
+macros = ["dep:ruststream-macros"]
+asyncapi = ["json", "dep:schemars", "dep:serde_norway"]
+metrics = ["dep:prometheus"]
+cli = ["dep:clap", "dep:anyhow"]
 
 [dependencies]
 bytes = "1"
@@ -37,20 +58,28 @@ futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+
+ruststream-macros = { version = "0.2.0", path = "crates/ruststream-macros", optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
 ciborium = { version = "0.2", optional = true }
-
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"], optional = true }
+prometheus = { version = "0.13", default-features = false, optional = true }
+schemars = { version = "0.8", optional = true }
+serde_norway = { version = "0.9", optional = true }
 tokio-stream = { version = "0.1", optional = true }
-tokio-util = { version = "0.7", features = ["rt"], optional = true }
-tracing = { version = "0.1", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+anyhow = { version = "1", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 tokio-stream = "0.1"
+tempfile = "3"
+axum = "0.8"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

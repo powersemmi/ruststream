@@ -1,0 +1,31 @@
+[package]
+name = "ruststream-macros"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
+authors = ["RustStream contributors"]
+description = "Procedural macros for the RustStream messaging framework."
+readme = "README.md"
+keywords = ["messaging", "async", "macros", "ruststream"]
+categories = ["asynchronous", "development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

@@ -1,0 +1,3 @@
+# Proper nouns that should not require backticks in doc comments. The trailing ".." keeps clippy's
+# built-in defaults. RustStream/AsyncAPI also appear in clap help text, where literal backticks leak.
+doc-valid-idents = ["RustStream", "AsyncAPI", ".."]

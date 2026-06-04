@@ -1,0 +1,23 @@
+//! {{name}} - a RustStream service.
+//!
+//! Handlers live in `orders`, wiring in `routes`; `#[ruststream::app]` generates `main`, so there
+//! is no runtime boilerplate to maintain:
+//!
+//! - `cargo run -- run` (or `ruststream run`) starts the service until interrupted.
+//! - `cargo run -- asyncapi gen` (or `ruststream asyncapi gen`) prints the AsyncAPI document.
+
+mod orders;
+mod routes;
+mod stream;
+
+use ruststream::memory::MemoryBroker;
+use ruststream::runtime::{AppInfo, RustStream};
+
+/// Builds the service: one in-memory broker with the orders router mounted.
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("{{name}}", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        let router = routes::orders(b.broker());
+        b.include_router(router);
+    })
+}

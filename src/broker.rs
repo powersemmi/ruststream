@@ -2,13 +2,15 @@
 
 use std::{error::Error as StdError, future::Future};
 
-use crate::{Publisher, Subscriber};
-
-/// A connection to a message broker, exposing typed subscriber and publisher handles.
+/// A connection to a message broker, owning its lifecycle.
 ///
 /// `Broker` is the entry point of any broker crate (`ruststream-nats`, `ruststream-kafka`, ...).
-/// It owns the lifecycle: implementations must establish their network connection in
-/// [`connect`] and release all resources in [`shutdown`].
+/// It owns only the connection lifecycle: implementations establish their network connection in
+/// [`connect`] and release all resources in [`shutdown`]. Subscribing is described separately by a
+/// [`SubscriptionSource`](crate::SubscriptionSource) (or the [`Subscribe`](crate::Subscribe)
+/// capability for the by-name case), so a single broker can offer several subscription kinds with
+/// different subscriber types (`Redis` pub/sub vs streams vs lists). Publishers are likewise
+/// produced by broker-specific constructors and registered on the app.
 ///
 /// `Send + Sync` is required so the router can share the broker handle across tasks.
 ///
@@ -26,12 +28,6 @@ use crate::{Publisher, Subscriber};
 /// [`connect`]: Self::connect
 /// [`shutdown`]: Self::shutdown
 pub trait Broker: Send + Sync {
-    /// The subscriber type produced by this broker.
-    type Subscriber: Subscriber;
-
-    /// The publisher type produced by this broker.
-    type Publisher: Publisher;
-
     /// The error type returned by broker-level operations.
     type Error: StdError + Send + Sync + 'static;
 
