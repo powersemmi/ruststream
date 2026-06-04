@@ -6,13 +6,14 @@ on:
     paths:
       - docs/**
       - mkdocs.yml
-      - Cargo.toml
+      - overrides/**
       - .github/workflows/docs.yml
   pull_request:
     branches: [main]
     paths:
       - docs/**
       - mkdocs.yml
+      - overrides/**
       - .github/workflows/docs.yml
   workflow_dispatch:
 
@@ -41,33 +42,3 @@ jobs:
 
       - name: Build site (strict)
         run: mkdocs build --strict
-
-  deploy:
-    name: Deploy versioned docs
-    if: github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install docs toolchain
-        run: pip install -r docs/requirements.txt
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Deploy with mike
-        run: |
-          version="$(sed -nE 's/^version = "([0-9]+)\.([0-9]+).*/\1.\2/p' Cargo.toml | head -1)"
-          mike deploy --push --update-aliases "$version" latest
-          mike set-default --push latest
