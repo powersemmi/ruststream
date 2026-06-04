@@ -11,16 +11,23 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::{Broker, Subscriber, SubscriptionSource};
+use crate::codec::Codec;
+use crate::{Broker, Publisher, Subscriber, SubscriptionSource};
 
 use super::context::State;
 use super::dispatch::{Delivery, spawn_dispatch};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
+use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
+use super::publishing::{PublishingDef, PublishingHandler};
+use super::subscriber_def::SubscriberDef;
+use super::typed::typed;
 
 /// A deferred registration: given the broker (after connect), shared state, the per-scope publish
 /// [`Delivery`] context, and the shutdown token, it opens the subscription and spawns the dispatch
@@ -131,6 +138,81 @@ impl<B: Broker + 'static> Router<B> {
                 })
             }));
         self.handlers.push(meta);
+    }
+
+    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with
+    /// `codec`.
+    ///
+    /// The router-level counterpart of [`BrokerScope::include`](super::BrokerScope::include): use it
+    /// to collect macro handlers in a standalone module, then mount the whole group with
+    /// [`include_router`](super::BrokerScope::include_router). The app's global middleware does not
+    /// wrap router handlers (see [`include_router`](super::BrokerScope::include_router)).
+    pub fn include<D, C>(&mut self, def: D, codec: C)
+    where
+        D: SubscriberDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        C: Codec + 'static,
+    {
+        let source = def.source();
+        let mut meta = HandlerMetadata::typed::<D::Input>(source.name().to_owned());
+        if let Some(description) = def.description() {
+            meta = meta.with_description(description.to_owned());
+        }
+        if let Some(schema) = def.input_schema() {
+            meta = meta.with_payload_schema(schema);
+        }
+        let handler = typed(codec, def.into_handler());
+        self.subscribe(source, handler, meta);
+    }
+
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source: decodes
+    /// its input with `codec`, runs the handler, then sends the reply through `publisher`.
+    ///
+    /// The router-level counterpart of
+    /// [`BrokerScope::include_publishing`](super::BrokerScope::include_publishing). Router handlers
+    /// run with an empty dynamic publish pipeline - the app's
+    /// [`publish_layer`](super::RustStream::publish_layer)s do not apply; the publisher's own static
+    /// [`PublishLayer`] stack still does.
+    pub fn include_publishing<D, C, P, PC, PL>(
+        &mut self,
+        def: D,
+        codec: C,
+        publisher: TypedPublisher<P, PC, PL>,
+    ) where
+        D: PublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        C: Codec + 'static,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        PL: PublishLayer + 'static,
+    {
+        let source = def.source();
+        let description = def.description().map(str::to_owned);
+        let schema = def.input_schema();
+        let mut meta = HandlerMetadata::typed::<D::Input>(source.name().to_owned())
+            .with_output_type(std::any::type_name::<D::Reply>());
+        if let Some(description) = description {
+            meta = meta.with_description(description);
+        }
+        if let Some(schema) = schema {
+            meta = meta.with_payload_schema(schema);
+        }
+        let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
+        let handler = PublishingHandler {
+            def,
+            codec,
+            publisher,
+            pipeline,
+        };
+        self.subscribe(source, handler, meta);
     }
 
     /// Merges another router's registrations into this one, preserving order.

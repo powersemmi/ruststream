@@ -1,5 +1,14 @@
 [workspace]
-members = ["crates/ruststream-macros"]
+members = ["crates/ruststream-macros", "crates/ruststream-cli"]
+
+[[example]]
+name = "macro_app"
+required-features = ["macros", "memory"]
+
+[[example]]
+name = "routed_service"
+path = "examples/routed_service/main.rs"
+required-features = ["macros", "memory", "json"]
 
 [package]
 name = "ruststream"

@@ -47,7 +47,7 @@ impl Parse for SubscriberArgs {
 /// A string literal `"orders"` becomes `(Name, Name::new("orders"))`; a constructor expression
 /// `RedisStream::new(..)` or `RedisStream { .. }` becomes `(RedisStream, <the expr verbatim>)` by
 /// pulling the type out of the call/struct path. Free functions (`redis::stream(..)`) and builder
-/// chains are rejected — their result type is not visible in the tokens.
+/// chains are rejected - their result type is not visible in the tokens.
 fn source_tokens(expr: &Expr) -> syn::Result<(TokenStream2, TokenStream2)> {
     if let Expr::Lit(ExprLit {
         lit: Lit::Str(name),
@@ -98,7 +98,7 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
 fn unsupported_source(expr: &Expr) -> syn::Error {
     syn::Error::new_spanned(
         expr,
-        "expected a string literal name, `Type::new(..)`, or `Type { .. }` — \
+        "expected a string literal name, `Type::new(..)`, or `Type { .. }` - \
          free functions and builder chains do not expose their type to the macro",
     )
 }
@@ -125,6 +125,55 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as SubscriberArgs);
     let func = parse_macro_input!(item as ItemFn);
     expand(&args, &func).unwrap_or_else(|err| err.to_compile_error().into())
+}
+
+/// Generates a `main` entry point for a `RustStream` service.
+///
+/// Place it on a synchronous, argument-free function that builds and returns a `RustStream`
+/// application. The expansion keeps the function and adds a `main` that hands it to
+/// `ruststream::runtime::cli::run_main`, producing a binary that understands the `run` and
+/// `asyncapi gen` commands with no hand-written runtime boilerplate.
+///
+/// ```ignore
+/// #[ruststream::app]
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn app(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let func = parse_macro_input!(item as ItemFn);
+    expand_app(&attr.into(), &func).unwrap_or_else(|err| err.to_compile_error().into())
+}
+
+fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
+    if !attr.is_empty() {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "#[ruststream::app] takes no arguments",
+        ));
+    }
+    if let Some(asyncness) = func.sig.asyncness {
+        return Err(syn::Error::new_spanned(
+            asyncness,
+            "#[ruststream::app] requires a synchronous builder returning `RustStream`",
+        ));
+    }
+    if !func.sig.inputs.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &func.sig.inputs,
+            "#[ruststream::app] builder must take no arguments",
+        ));
+    }
+    let name = &func.sig.ident;
+    Ok(quote! {
+        #func
+
+        fn main() -> ::std::process::ExitCode {
+            ::ruststream::runtime::cli::run_main(#name)
+        }
+    }
+    .into())
 }
 
 fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {

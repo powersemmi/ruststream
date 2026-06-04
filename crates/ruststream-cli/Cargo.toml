@@ -1,0 +1,37 @@
+[package]
+name = "ruststream-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
+authors = ["RustStream contributors"]
+description = "Command-line tool for RustStream: run services, generate AsyncAPI specs, and scaffold projects."
+readme = "README.md"
+keywords = ["messaging", "async", "cli", "ruststream", "scaffold"]
+categories = ["asynchronous", "command-line-utilities"]
+
+[[bin]]
+name = "ruststream"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+redundant_pub_crate = "allow"

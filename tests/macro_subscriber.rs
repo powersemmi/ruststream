@@ -122,7 +122,7 @@ async fn macro_descriptor_in_decorator() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    // No source at the call site — it came from the macro argument.
+    // No source at the call site - it came from the macro argument.
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(broker, |b| b.include(on_ctor, JsonCodec));
 
@@ -276,12 +276,12 @@ async fn static_publish_layer_transforms_reply() {
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
 
-    // The static layer is composed onto the publisher at compile time — no dyn dispatch.
+    // The static layer is composed onto the publisher at compile time - no dyn dispatch.
     let egress_pub = TypedPublisher::new(egress.publisher(), JsonCodec).layer(StaticEnvelope);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(ingress, |b| {
-            b.include_publishing(relay, JsonCodec, egress_pub)
+            b.include_publishing(relay, JsonCodec, egress_pub);
         })
         .with_broker(egress, |b| b.include(check, JsonCodec));
 

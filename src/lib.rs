@@ -67,6 +67,13 @@ pub use runtime::RustStream;
 #[cfg(feature = "macros")]
 pub use ruststream_macros::subscriber;
 
+/// Attribute macro that generates a `main` entry point from a `RustStream` builder function.
+///
+/// Available with the `macros` feature. See [`ruststream_macros::app`] and
+/// [`runtime::cli`](crate::runtime::cli).
+#[cfg(feature = "macros")]
+pub use ruststream_macros::app;
+
 /// Derive macro for [`Message`] metadata (type name + doc description).
 ///
 /// Available with the `macros` feature.
@@ -103,7 +110,7 @@ pub mod __private {
     /// path is an inherent method on `Probe<T>` bounded by `T: JsonSchema`, and
     /// [`NoSchemaProbe::schema_json`] is the trait fallback. Inherent methods win when present, so
     /// `Probe::<T>::new().schema_json()` returns the schema for a concrete `T: JsonSchema` and
-    /// `None` otherwise — without forcing the bound onto every message type. The inherent method
+    /// `None` otherwise - without forcing the bound onto every message type. The inherent method
     /// exists only with the `asyncapi` feature.
     #[derive(Debug)]
     pub struct Probe<T>(pub PhantomData<T>);

@@ -1,6 +1,7 @@
 //! Application object, middleware and dispatch.
 
 mod app;
+pub mod cli;
 mod context;
 mod dispatch;
 mod dynstack;
