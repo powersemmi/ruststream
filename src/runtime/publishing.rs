@@ -13,6 +13,7 @@ use crate::codec::Codec;
 
 use super::context::Context;
 use super::handler::{Handler, HandlerResult};
+use super::publish::{Outgoing, PublishMiddleware, run_publish};
 use super::publisher_registry::ErasedPublisher;
 
 /// A subscriber definition that produces a reply to publish.
@@ -51,6 +52,7 @@ pub struct PublishingHandler<D, C> {
     pub(crate) codec: C,
     pub(crate) publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(crate) topic: String,
+    pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
 }
 
 impl<D, C> std::fmt::Debug for PublishingHandler<D, C> {
@@ -87,7 +89,8 @@ where
             }
         };
         if let Some(publisher) = &self.publisher {
-            if let Err(err) = publisher.publish_bytes(&self.topic, bytes.as_ref()).await {
+            let mut out = Outgoing::new(self.topic.clone(), bytes.to_vec());
+            if let Err(err) = run_publish(&self.pipeline, publisher.as_ref(), &mut out).await {
                 warn!(target: "ruststream::dispatch", error = %err, "reply publish failed");
             }
         } else {

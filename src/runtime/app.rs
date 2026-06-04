@@ -21,6 +21,7 @@ use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture, BrokerLifecycle};
 use super::metadata::HandlerMetadata;
 use super::middleware::{Identity, Layer, Stack};
+use super::publish::PublishMiddleware;
 use super::publisher_registry::ErasedPublisher;
 use super::publishing::{PublishingDef, PublishingHandler};
 use super::router::Router;
@@ -154,6 +155,7 @@ pub struct RustStream<L = Identity> {
     starters: Vec<Starter>,
     handlers: Vec<HandlerMetadata>,
     publishers: Publishers,
+    publish_layers: Vec<Arc<dyn PublishMiddleware>>,
     state: State,
     on_startup: Vec<StartupHook>,
     after_startup: Vec<LifecycleHook>,
@@ -183,6 +185,7 @@ impl RustStream<Identity> {
             starters: Vec::new(),
             handlers: Vec::new(),
             publishers: HashMap::new(),
+            publish_layers: Vec::new(),
             state: State::default(),
             on_startup: Vec::new(),
             after_startup: Vec::new(),
@@ -206,6 +209,7 @@ impl<L> RustStream<L> {
             starters: self.starters,
             handlers: self.handlers,
             publishers: self.publishers,
+            publish_layers: self.publish_layers,
             state: self.state,
             on_startup: self.on_startup,
             after_startup: self.after_startup,
@@ -320,6 +324,18 @@ impl<L> RustStream<L> {
         self
     }
 
+    /// Adds an outgoing publish middleware, run on every published reply before it reaches the
+    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). The first one added runs
+    /// outermost. Call before [`with_broker`](Self::with_broker).
+    #[must_use]
+    pub fn publish_layer<M>(mut self, middleware: M) -> Self
+    where
+        M: PublishMiddleware + 'static,
+    {
+        self.publish_layers.push(Arc::new(middleware));
+        self
+    }
+
     /// Registers a broker for lifecycle management only (connect / shutdown), without attaching
     /// subscribers. Use for publish-only brokers.
     #[must_use]
@@ -348,6 +364,7 @@ impl<L> RustStream<L> {
             broker: broker.clone(),
             router: Router::new(),
             publishers: self.publishers.clone(),
+            pipeline: self.publish_layers.iter().cloned().collect(),
             global: self.global.clone(),
         };
         build(&mut scope);
@@ -468,6 +485,7 @@ pub struct BrokerScope<B, L = Identity> {
     broker: Arc<B>,
     router: Router<B>,
     publishers: Publishers,
+    pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
     global: L,
 }
 
@@ -573,6 +591,7 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
             codec,
             publisher,
             topic,
+            pipeline: self.pipeline.clone(),
         };
         self.subscribe(Topic::new(subscribe_channel), handler, meta);
     }

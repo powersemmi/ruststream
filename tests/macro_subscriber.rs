@@ -8,9 +8,13 @@ use std::{
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{
+    AppInfo, HandlerResult, Outgoing, PublishMiddleware, PublishNext, RustStream,
+};
 use ruststream::{Message, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -87,6 +91,25 @@ struct Response {
 }
 
 static REPLY_DOUBLED: AtomicU32 = AtomicU32::new(0);
+static REPLY_TAGGED: AtomicU32 = AtomicU32::new(0);
+
+/// A publish middleware that tags every outgoing reply with a header (envelope-style).
+struct Tagger;
+
+impl PublishMiddleware for Tagger {
+    fn on_publish<'a>(
+        &'a self,
+        out: &'a mut Outgoing,
+        next: PublishNext<'a>,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            out.headers_mut().insert("x-envelope", b"1".to_vec());
+            next.run(out).await
+        })
+    }
+}
 
 #[subscriber("requests", publish("responses", to = "egress"))]
 async fn reply(req: &Request) -> Response {
@@ -94,7 +117,10 @@ async fn reply(req: &Request) -> Response {
 }
 
 #[subscriber("responses")]
-async fn capture(resp: &Response) -> HandlerResult {
+async fn capture(resp: &Response, ctx: &mut Context) -> HandlerResult {
+    if ctx.headers().get("x-envelope").is_some() {
+        REPLY_TAGGED.store(1, Ordering::SeqCst);
+    }
     REPLY_DOUBLED.store(resp.doubled, Ordering::SeqCst);
     HandlerResult::Ack
 }
@@ -107,6 +133,7 @@ async fn macro_publisher_replies_cross_broker() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publisher("egress", egress.publisher())
+        .publish_layer(Tagger)
         .with_broker(ingress, |b| b.include_publishing(reply, JsonCodec))
         .with_broker(egress, |b| b.include(capture, JsonCodec));
 
@@ -128,6 +155,11 @@ async fn macro_publisher_replies_cross_broker() {
     })
     .await;
     assert!(result.is_ok(), "reply was not published to egress");
+    assert_eq!(
+        REPLY_TAGGED.load(Ordering::SeqCst),
+        1,
+        "publish middleware header did not reach the consumer",
+    );
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
