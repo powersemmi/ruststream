@@ -31,7 +31,7 @@ pub enum DecodeFailure {
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
 /// `inner`.
 ///
-/// `inner` is any [`Handler<T>`](Handler) — a closure `Fn(&T) -> _` or a typed middleware stack
+/// `inner` is any [`Handler<T>`](Handler) - a closure `Fn(&T) -> _` or a typed middleware stack
 /// built with [`HandlerExt::with`](super::HandlerExt::with).
 pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, T, C, H>
 where

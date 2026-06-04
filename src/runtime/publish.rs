@@ -179,7 +179,7 @@ impl std::fmt::Debug for ScopedPublisher<'_> {
 ///
 /// The publish-side counterpart to the consume-side [`Layer`](super::Layer): zero-cost composition,
 /// no `dyn` dispatch. Baked onto a [`TypedPublisher`] with [`TypedPublisher::layer`]. Use for
-/// per-destination transforms that belong to the publisher itself — a Confluent / Avro envelope, a
+/// per-destination transforms that belong to the publisher itself - a Confluent / Avro envelope, a
 /// fixed content-type header. For cross-cutting *observation* across every publish (metrics), use
 /// the dynamic [`PublishMiddleware`] via
 /// [`RustStream::publish_layer`](super::RustStream::publish_layer) instead; the static transforms
@@ -217,7 +217,7 @@ impl<Inner: PublishLayer, Outer: PublishLayer> PublishLayer for PublishStack<Inn
 ///
 /// The publish-side counterpart to a typed subscriber: it carries *how* a value is encoded and the
 /// per-publisher transforms ([`layer`](Self::layer)), while *where* it goes (the destination name)
-/// is supplied per send — so one `TypedPublisher` is reused across handlers replying to different
+/// is supplied per send - so one `TypedPublisher` is reused across handlers replying to different
 /// names. The [`#[subscriber(.., publish("name"))]`](macro) reply form supplies the name; the
 /// `TypedPublisher` is passed at wiring.
 ///

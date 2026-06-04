@@ -82,8 +82,8 @@ impl<'a> Context<'a> {
     /// Resolves a named publisher (registered with
     /// [`RustStream::publisher`](super::RustStream::publisher)) to publish from this handler.
     ///
-    /// Sends through it run the scope's publish middleware (envelope, metrics) — the same chain as a
-    /// macro reply — so a manual publish is not a hole in the pipeline. Returns `None` if no
+    /// Sends through it run the scope's publish middleware (envelope, metrics) - the same chain as a
+    /// macro reply - so a manual publish is not a hole in the pipeline. Returns `None` if no
     /// publisher is registered under `name`.
     #[must_use]
     pub fn publisher(&self, name: &str) -> Option<ScopedPublisher<'_>> {

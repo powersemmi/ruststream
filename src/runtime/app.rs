@@ -45,7 +45,7 @@ type Starter = Box<
 >;
 
 /// The `on_startup` lifespan hook: runs once before brokers connect. It receives the app [`State`]
-/// by value (so its future can own it across awaits — e.g. connect a database, then insert the
+/// by value (so its future can own it across awaits - e.g. connect a database, then insert the
 /// pool) and returns it, populated.
 type StartupHook = Box<dyn FnOnce(State) -> BoxFuture<'static, Result<State, BoxError>> + Send>;
 
@@ -728,7 +728,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
 
 impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
     /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`,
-    /// overriding the macro's own source. Useful to retarget a handler — e.g. mount it on an
+    /// overriding the macro's own source. Useful to retarget a handler - e.g. mount it on an
     /// in-memory source in tests, or a different broker descriptor per deployment. The subscription
     /// name in metadata comes from `source`. [`include`](BrokerScope::include) uses the def's own
     /// [`source`](SubscriberDef::source) instead.
