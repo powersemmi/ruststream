@@ -77,3 +77,6 @@ pub mod conformance;
 
 #[cfg(feature = "asyncapi")]
 pub mod asyncapi;
+
+#[cfg(feature = "metrics")]
+pub mod metrics;

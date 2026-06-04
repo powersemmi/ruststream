@@ -33,6 +33,7 @@ msgpack = ["dep:rmp-serde"]
 cbor = ["dep:ciborium"]
 macros = ["dep:ruststream-macros", "runtime"]
 asyncapi = ["runtime", "json"]
+metrics = ["runtime", "dep:prometheus"]
 
 [dependencies]
 bytes = "1"
@@ -44,6 +45,7 @@ ruststream-macros = { version = "0.1.0", path = "crates/ruststream-macros", opti
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
 ciborium = { version = "0.2", optional = true }
+prometheus = { version = "0.13", default-features = false, optional = true }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"], optional = true }
 tokio-stream = { version = "0.1", optional = true }
