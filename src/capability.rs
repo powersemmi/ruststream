@@ -121,7 +121,10 @@ pub trait Partitioned {
 /// }
 /// ```
 pub trait Subscribe: Broker {
-    /// Opens a subscription to `name`, producing this broker's [`Subscriber`].
+    /// The subscriber type opened by a by-name subscription.
+    type Subscriber: Subscriber;
+
+    /// Opens a subscription to `name`, producing this broker's [`Subscriber`](Self::Subscriber).
     ///
     /// Called after [`Broker::connect`]; implementations may assume a live connection.
     ///

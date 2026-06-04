@@ -14,7 +14,7 @@
 
 use std::{error::Error as StdError, future::Future, time::Duration};
 
-use crate::{Broker, RawMessage};
+use crate::{Broker, Publisher, RawMessage, Subscriber};
 
 /// A broker test transport that runs in process, reproducing Core routing without a server.
 ///
@@ -24,6 +24,12 @@ use crate::{Broker, RawMessage};
 pub trait TestClient: Send {
     /// The broker type this test client emulates.
     type Broker: Broker;
+
+    /// The subscriber type opened by [`subscribe`](Self::subscribe).
+    type Subscriber: Subscriber;
+
+    /// The publisher type returned by [`publisher`](Self::publisher).
+    type Publisher: Publisher;
 
     /// The error type returned by test-client operations.
     type Error: StdError + Send + Sync + 'static;
@@ -60,7 +66,7 @@ pub trait TestClient: Send {
     fn subscribe(
         &self,
         name: &str,
-    ) -> impl Future<Output = Result<<Self::Broker as Broker>::Subscriber, Self::Error>> + Send;
+    ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
 
     /// Returns a publisher bound to the in-memory broker. Useful when the test needs to set
     /// headers or publish in a tight loop without allocating per-call closures.
@@ -68,9 +74,7 @@ pub trait TestClient: Send {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the in-memory broker cannot produce a publisher.
-    fn publisher(
-        &self,
-    ) -> impl Future<Output = Result<<Self::Broker as Broker>::Publisher, Self::Error>> + Send;
+    fn publisher(&self) -> impl Future<Output = Result<Self::Publisher, Self::Error>> + Send;
 
     /// Waits until at least `count` messages have been published to `name`, returning all
     /// observed messages. Fails after `timeout`.

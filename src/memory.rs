@@ -118,8 +118,6 @@ impl std::fmt::Debug for MemoryBroker {
 }
 
 impl Broker for MemoryBroker {
-    type Subscriber = MemorySubscriber;
-    type Publisher = MemoryPublisher;
     type Error = Infallible;
 
     async fn connect(&self) -> Result<(), Self::Error> {
@@ -140,6 +138,8 @@ impl Broker for MemoryBroker {
 // type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).
 #[allow(clippy::use_self)]
 impl Subscribe for MemoryBroker {
+    type Subscriber = MemorySubscriber;
+
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         Ok(MemoryBroker::subscribe(self, name))
     }
@@ -280,6 +280,8 @@ impl IncomingMessage for MemoryMessage {
 
 impl TestClient for MemoryBroker {
     type Broker = Self;
+    type Subscriber = MemorySubscriber;
+    type Publisher = MemoryPublisher;
     type Error = Infallible;
 
     async fn start() -> Result<Self, Self::Error> {
@@ -295,14 +297,11 @@ impl TestClient for MemoryBroker {
         publisher.publish(OutgoingMessage::new(name, payload)).await
     }
 
-    async fn subscribe(
-        &self,
-        name: &str,
-    ) -> Result<<Self::Broker as Broker>::Subscriber, Self::Error> {
+    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         Ok(Self::subscribe(self, name))
     }
 
-    async fn publisher(&self) -> Result<<Self::Broker as Broker>::Publisher, Self::Error> {
+    async fn publisher(&self) -> Result<Self::Publisher, Self::Error> {
         Ok(Self::publisher(self))
     }
 
