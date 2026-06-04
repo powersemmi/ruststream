@@ -54,9 +54,11 @@ markdown_extensions:
 
 plugins:
   - search
-  # Versioned docs across major releases are published with `mike`; enable when 1.0 lands.
+  # Versioned docs are published with `mike` (see the Docs workflow and the version switcher).
 
 extra:
+  version:
+    provider: mike
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/powersemmi/ruststream
