@@ -1,0 +1,81 @@
+site_name: RustStream
+site_description: Async messaging framework for Rust - broker-agnostic traits, router, codecs, and a conformance harness for broker authors.
+site_url: https://powersemmi.github.io/ruststream/
+repo_url: https://github.com/powersemmi/ruststream
+repo_name: powersemmi/ruststream
+edit_uri: edit/main/docs/
+copyright: Apache-2.0
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+  # Versioned docs across major releases are published with `mike`; enable when 1.0 lands.
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/powersemmi/ruststream
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/installation.md
+      - getting-started/quickstart.md
+      - getting-started/tutorial.md
+  - Guides:
+      - guides/subscribers.md
+      - guides/publishing.md
+      - guides/middleware.md
+      - guides/asyncapi.md
+      - guides/metrics.md
+      - guides/testing.md
+      - guides/cli.md
+  - Broker authors:
+      - broker-authors/index.md
+      - broker-authors/conformance.md
+  - API reference: reference.md
