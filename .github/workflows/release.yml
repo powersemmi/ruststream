@@ -34,18 +34,16 @@ jobs:
             echo "$pkg $VERSION verified"
           done
 
-      - name: Exchange OIDC token for crates.io token
-        run: |
-          RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=crates-io")
-          TOKEN=$(echo "$RESPONSE" | jq -r '.token')
-          echo "CARGO_REGISTRY_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Authenticate to crates.io via trusted publishing
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
       - name: cargo publish (dependency order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           # ruststream-macros is a proc-macro crate and a dependency of ruststream,
           # so it must be on crates.io first. cargo waits for the index before returning.
