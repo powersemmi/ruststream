@@ -9,7 +9,7 @@ permissions: {}
 
 jobs:
   crates-io:
-    name: Publish ruststream to crates.io
+    name: Publish to crates.io
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -19,16 +19,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify version matches tag
+      - name: Verify versions match tag
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].version')
-          if [ "${TAG#v}" != "$CARGO_VERSION" ]; then
-            echo "Tag '${TAG}' does not match Cargo.toml version '$CARGO_VERSION'"
-            exit 1
-          fi
-          echo "Version $CARGO_VERSION verified"
+          TAG_VERSION="${TAG#v}"
+          META=$(cargo metadata --format-version 1 --no-deps)
+          for pkg in ruststream-macros ruststream; do
+            VERSION=$(echo "$META" | jq -r --arg p "$pkg" '.packages[] | select(.name == $p) | .version')
+            if [ "$TAG_VERSION" != "$VERSION" ]; then
+              echo "Tag '${TAG}' does not match $pkg version '$VERSION'"
+              exit 1
+            fi
+            echo "$pkg $VERSION verified"
+          done
 
       - name: Exchange OIDC token for crates.io token
         run: |
@@ -41,8 +45,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo publish
-        run: cargo publish --all-features
+      - name: cargo publish (dependency order)
+        run: |
+          # ruststream-macros is a proc-macro crate and a dependency of ruststream,
+          # so it must be on crates.io first. cargo waits for the index before returning.
+          cargo publish -p ruststream-macros
+          cargo publish -p ruststream --all-features
 
       - name: Generate release notes
         if: github.event_name == 'release'

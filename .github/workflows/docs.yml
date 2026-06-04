@@ -10,11 +10,6 @@ on:
       - .github/workflows/docs.yml
   pull_request:
     branches: [main]
-    paths:
-      - docs/**
-      - mkdocs.yml
-      - overrides/**
-      - .github/workflows/docs.yml
   workflow_dispatch:
 
 permissions:

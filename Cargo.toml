@@ -29,7 +29,7 @@ required-features = ["macros", "memory", "metrics"]
 
 [package]
 name = "ruststream"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -62,7 +62,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 
-ruststream-macros = { version = "0.2.0", path = "crates/ruststream-macros", optional = true }
+ruststream-macros = { version = "0.2.1", path = "crates/ruststream-macros", optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
 ciborium = { version = "0.2", optional = true }
