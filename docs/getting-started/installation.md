@@ -5,7 +5,7 @@ features. Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.1", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.2", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -18,11 +18,11 @@ serde = { version = "1", features = ["derive"] }
 
 ## Features
 
-Every feature is additive - turning one on never removes API or changes existing behaviour.
+The core traits, the `RustStream` application object, the `Router`, middleware, and dispatch are
+always compiled. Everything else is an additive, opt-in feature.
 
 | Feature | Pulls in | What it gives you |
 |---|---|---|
-| `runtime` *(default)* | tokio, tracing | `RustStream`, `Router`, middleware, dispatch |
 | `json` *(default)* | serde_json | `JsonCodec` |
 | `msgpack` | rmp-serde | `MsgpackCodec` |
 | `cbor` | ciborium | `CborCodec` |
@@ -31,22 +31,23 @@ Every feature is additive - turning one on never removes API or changes existing
 | `asyncapi` | schemars, serde_norway | AsyncAPI generation and the HTML viewer |
 | `metrics` | prometheus | Prometheus middleware and exporter |
 | `conformance` | - | the broker-author conformance harness |
+| `cli` | clap, anyhow | the `ruststream` binary |
 
-Codec features are mutually compatible; enable as many as you need. To depend on **only** the core
-traits (for a broker crate, say), disable defaults:
+Codec features are mutually compatible; enable as many as you need. To drop the bundled JSON codec
+(for a broker crate that only needs the trait surface and runtime), disable defaults:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.1", default-features = false }
+ruststream = { version = "0.2", default-features = false }
 ```
 
 ## The CLI
 
-The `ruststream` command-line tool is a separate crate. Install it to scaffold projects and drive
-`cargo` with the framework's subcommands:
+The `ruststream` binary ships with the crate behind the `cli` feature. Install it to scaffold
+projects and drive `cargo` with the framework's subcommands:
 
 ```bash
-cargo install ruststream-cli
+cargo install ruststream --features cli
 ```
 
 See the [CLI guide](../guides/cli.md), or jump straight to the [quick start](quickstart.md).
@@ -58,7 +59,7 @@ which re-exports what it needs from `ruststream`:
 
 ```toml
 # illustrative - substitute the real broker crate
-ruststream-nats = { version = "0.1", features = ["testing"] }
+ruststream-nats = { version = "0.2", features = ["testing"] }
 ```
 
 Each broker crate documents its own `Config` and capabilities. To write one yourself, see

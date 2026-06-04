@@ -5,7 +5,7 @@ The fastest way to a running service is the CLI scaffolder.
 ## Scaffold a project
 
 ```bash
-cargo install ruststream-cli
+cargo install ruststream --features cli
 ruststream new my-service
 cd my-service
 ```

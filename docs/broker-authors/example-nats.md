@@ -15,7 +15,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ruststream = { version = "0.1", default-features = false }
+ruststream = { version = "0.2", default-features = false }
 async-nats = "0.38"
 bytes = "1"
 futures = "0.3"

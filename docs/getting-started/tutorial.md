@@ -18,7 +18,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ruststream = { version = "0.1", features = ["macros", "memory", "json", "asyncapi"] }
+ruststream = { version = "0.2", features = ["macros", "memory", "json", "asyncapi"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -70,7 +70,7 @@ The macro turns `handle` into a value named after the function, so you import an
 
 !!! tip "Codec once per scope"
     Passing `JsonCodec` on every `include` gets repetitive. Use
-    `with_broker_codec(broker, JsonCodec, |b| b.include(handle_def()))` to set a scope default and
+    `with_broker_codec(broker, JsonCodec, |b| b.include(handle))` to set a scope default and
     drop the per-call codec.
 
 Run it:

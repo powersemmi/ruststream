@@ -1,11 +1,12 @@
 # Writing a broker
 
 A broker is an independent crate that implements the core traits. It depends on `ruststream` with
-default features off, so it pulls in only the trait surface, no runtime and no other broker:
+default features off, so it pulls in the trait surface and runtime without the bundled JSON codec or
+any other broker:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.1", default-features = false }
+ruststream = { version = "0.2", default-features = false }
 ```
 
 This page is the contract. Implement the required traits, expose your own `Config`, add capability

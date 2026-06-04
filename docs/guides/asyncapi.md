@@ -5,7 +5,7 @@ document from the application's handlers: each subscriber becomes a channel and 
 operation, and payload types contribute schemas.
 
 ```toml
-ruststream = { version = "0.1", features = ["macros", "memory", "asyncapi"] }
+ruststream = { version = "0.2", features = ["macros", "memory", "asyncapi"] }
 ```
 
 ## Generating the document

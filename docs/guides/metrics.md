@@ -4,7 +4,7 @@ The `metrics` feature collects Prometheus metrics for consumed and published mes
 the `prometheus` crate directly and exposes the data in the Prometheus exposition format.
 
 ```toml
-ruststream = { version = "0.1", features = ["macros", "memory", "metrics"] }
+ruststream = { version = "0.2", features = ["macros", "memory", "metrics"] }
 ```
 
 ## Wiring it up

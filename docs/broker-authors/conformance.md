@@ -6,7 +6,7 @@ message on the first failure.
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.1", features = ["conformance"] }
+ruststream = { version = "0.2", features = ["conformance"] }
 ```
 
 Enable your crate's own `testing` feature alongside it, since the harness drives the `TestClient` you
