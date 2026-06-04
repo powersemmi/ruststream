@@ -119,3 +119,5 @@ just test     # the test suite
 ## License
 
 Licensed under the [Apache-2.0](./LICENSE) license.
+
+<sub>Inspired by [FastStream](https://github.com/airtai/faststream).</sub>
