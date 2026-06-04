@@ -25,7 +25,7 @@ use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture, BrokerLifecycle};
 use super::metadata::HandlerMetadata;
 use super::middleware::{Identity, Layer, Stack};
-use super::publish::PublishMiddleware;
+use super::publish::{Publication, PublishMiddleware};
 use super::publisher_registry::ErasedPublisher;
 use super::publishing::{PublishingDef, PublishingHandler};
 use super::router::Router;
@@ -633,14 +633,16 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         self.include_with(def, codec);
     }
 
-    /// Mounts a `#[subscriber(.., publish(..))]`-generated definition, decoding its input with
-    /// `codec`. See [`include`](Self::include) for the scope-default-codec form.
-    ///
-    /// The publisher is resolved from the registry by name now; register it with
-    /// [`RustStream::publisher`](RustStream::publisher) before this call. If it is missing, the
-    /// reply is dropped (logged) at dispatch.
-    pub fn include_publishing<D, C>(&mut self, def: D, codec: C)
-    where
+    /// Mounts a `#[subscriber(.., publish)]`-generated definition: decodes its input with `codec`,
+    /// runs the handler, then sends the reply through `publication` (its destination topic and reply
+    /// codec). See [`include_publishing`](BrokerScope::include_publishing) on a codec-default scope
+    /// for the two-argument form.
+    pub fn include_publishing<D, C, P, PC>(
+        &mut self,
+        def: D,
+        codec: C,
+        publication: Publication<P, PC>,
+    ) where
         B: Subscribe,
         <B as Broker>::Subscriber: Send + 'static,
         <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
@@ -648,10 +650,12 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
-        L: Layer<PublishingHandler<D, C>>,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC>>,
         L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
     {
-        self.include_publishing_with(def, codec);
+        self.include_publishing_with(def, codec, publication);
     }
 }
 
@@ -675,9 +679,9 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         self.include_with(def, codec);
     }
 
-    /// Mounts a `#[subscriber(.., publish(..))]`-generated definition, decoding its input with the
-    /// scope's default codec.
-    pub fn include_publishing<D>(&mut self, def: D)
+    /// Mounts a `#[subscriber(.., publish)]`-generated definition, decoding its input with the
+    /// scope's default codec and sending the reply through `publication`.
+    pub fn include_publishing<D, P, PC>(&mut self, def: D, publication: Publication<P, PC>)
     where
         B: Subscribe,
         <B as Broker>::Subscriber: Send + 'static,
@@ -685,11 +689,13 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         D: PublishingDef + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        L: Layer<PublishingHandler<D, C>>,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC>>,
         L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
     {
         let codec = self.codec.clone();
-        self.include_publishing_with(def, codec);
+        self.include_publishing_with(def, codec, publication);
     }
 }
 
@@ -722,8 +728,12 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
     }
 
     /// Shared body for the explicit- and default-codec `include_publishing` forms.
-    fn include_publishing_with<D, C>(&mut self, def: D, codec: C)
-    where
+    fn include_publishing_with<D, C, P, PC>(
+        &mut self,
+        def: D,
+        codec: C,
+        publication: Publication<P, PC>,
+    ) where
         B: Subscribe,
         <B as Broker>::Subscriber: Send + 'static,
         <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
@@ -731,12 +741,12 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
-        L: Layer<PublishingHandler<D, C>>,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC>>,
         L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
     {
-        let publisher = self.publishers.get(def.publisher_name()).cloned();
         let subscribe_channel = def.subscribe_channel().to_owned();
-        let topic = def.publish_channel().to_owned();
         let description = def.description().map(str::to_owned);
         let mut meta = HandlerMetadata::typed::<D::Input>(subscribe_channel.clone())
             .with_output_type(std::any::type_name::<D::Reply>());
@@ -749,8 +759,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         let handler = PublishingHandler {
             def,
             codec,
-            publisher,
-            topic,
+            publication,
             pipeline: self.pipeline.clone(),
         };
         self.subscribe(Topic::new(subscribe_channel), handler, meta);

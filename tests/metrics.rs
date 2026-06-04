@@ -62,7 +62,7 @@ mod publish {
     use ruststream::codec::JsonCodec;
     use ruststream::memory::MemoryBroker;
     use ruststream::metrics::Metrics;
-    use ruststream::runtime::{AppInfo, RustStream};
+    use ruststream::runtime::{AppInfo, Publication, RustStream};
     use ruststream::{OutgoingMessage, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
 
@@ -76,7 +76,7 @@ mod publish {
         n: u32,
     }
 
-    #[subscriber("requests", publish("responses", to = "out"))]
+    #[subscriber("requests", publish)]
     async fn reply(req: &Req) -> Resp {
         Resp { n: req.n }
     }
@@ -87,11 +87,13 @@ mod publish {
         let ingress = MemoryBroker::new();
         let egress = MemoryBroker::new();
         let ingress_pub = ingress.publisher();
+        let responses = Publication::new(egress.publisher(), "responses", JsonCodec);
 
         let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-            .publisher("out", egress.publisher())
             .publish_layer(metrics.publish_layer())
-            .with_broker(ingress, |b| b.include_publishing(reply, JsonCodec));
+            .with_broker(ingress, |b| {
+                b.include_publishing(reply, JsonCodec, responses)
+            });
 
         let shutdown = Arc::new(Notify::new());
         let signal = Arc::clone(&shutdown);

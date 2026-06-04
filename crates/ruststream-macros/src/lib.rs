@@ -9,53 +9,28 @@ use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
     Attribute, DeriveInput, Expr, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Meta, PatType,
-    ReturnType, Token, Type, parenthesized, parse_macro_input,
+    ReturnType, Token, Type, parse_macro_input,
 };
 
-/// Arguments to `#[subscriber(..)]`: the subscribe topic and an optional `publish(..)` clause.
+/// Arguments to `#[subscriber(..)]`: the subscribe topic and an optional bare `publish` flag.
 struct SubscriberArgs {
     topic: LitStr,
-    publish: Option<PublishArgs>,
-}
-
-/// The `publish("topic", to = "name")` clause.
-struct PublishArgs {
-    topic: LitStr,
-    to: LitStr,
+    publish: bool,
 }
 
 impl Parse for SubscriberArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let topic: LitStr = input.parse()?;
-        let mut publish = None;
+        let mut publish = false;
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let keyword: Ident = input.parse()?;
             if keyword != "publish" {
-                return Err(syn::Error::new(
-                    keyword.span(),
-                    "expected `publish(\"topic\", to = \"name\")`",
-                ));
+                return Err(syn::Error::new(keyword.span(), "expected `publish`"));
             }
-            let content;
-            parenthesized!(content in input);
-            publish = Some(content.parse()?);
+            publish = true;
         }
         Ok(Self { topic, publish })
-    }
-}
-
-impl Parse for PublishArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let topic: LitStr = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let keyword: Ident = input.parse()?;
-        if keyword != "to" {
-            return Err(syn::Error::new(keyword.span(), "expected `to = \"name\"`"));
-        }
-        input.parse::<Token![=]>()?;
-        let to: LitStr = input.parse()?;
-        Ok(Self { topic, to })
     }
 }
 
@@ -67,11 +42,11 @@ impl Parse for PublishArgs {
 /// async fn handle(order: &Order) -> HandlerResult { HandlerResult::Ack }
 /// // later: broker_scope.include(handle, JsonCodec);
 ///
-/// // reply form: the return value is encoded and published to "responses" via the named
-/// // publisher "egress".
-/// #[subscriber("requests", publish("responses", to = "egress"))]
+/// // reply form: the return value is encoded and published through the `Publication` passed at
+/// // wiring time (it carries the destination topic and reply codec).
+/// #[subscriber("requests", publish)]
 /// async fn reply(req: &Request) -> Response { /* ... */ }
-/// // later: broker_scope.include_publishing(reply, JsonCodec);
+/// // later: broker_scope.include_publishing(reply, JsonCodec, publication);
 /// ```
 ///
 /// Without `publish(..)` the handler returns any `IntoHandlerResult` (a `HandlerResult`, `()`, or
@@ -129,7 +104,7 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
         quote!(_ctx)
     };
 
-    let body = if let Some(publish) = &args.publish {
+    let body = if args.publish {
         let reply_ty = match &func.sig.output {
             ReturnType::Type(_, ty) => &**ty,
             ReturnType::Default => {
@@ -139,8 +114,6 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
                 ));
             }
         };
-        let reply_topic = &publish.topic;
-        let to = &publish.to;
         quote! {
             #[allow(non_camel_case_types)]
             #vis struct #name;
@@ -150,8 +123,6 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
                 type Reply = #reply_ty;
 
                 fn subscribe_channel(&self) -> &str { #topic }
-                fn publish_channel(&self) -> &str { #reply_topic }
-                fn publisher_name(&self) -> &str { #to }
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description
