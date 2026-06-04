@@ -11,7 +11,7 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerMetadata, HandlerResult, Layer, Router, RustStream,
+    AppInfo, Context, Handler, HandlerMetadata, HandlerResult, Layer, Router, RustStream, State,
 };
 use ruststream::{OutgoingMessage, Publisher, Topic};
 use serde::{Deserialize, Serialize};
@@ -347,6 +347,71 @@ async fn handler_reads_context_topic_and_state() {
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lifespan_hooks_run_in_order() {
+    let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let (o1, o2, o3, o4) = (
+        Arc::clone(&order),
+        Arc::clone(&order),
+        Arc::clone(&order),
+        Arc::clone(&order),
+    );
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .shutdown_timeout(Duration::from_secs(5))
+        .on_startup(move |mut state: State| {
+            let o1 = Arc::clone(&o1);
+            async move {
+                state.insert(Config {
+                    greeting: "lazy".to_owned(),
+                });
+                o1.lock().expect("poisoned").push("startup");
+                Ok::<State, std::convert::Infallible>(state)
+            }
+        })
+        .after_startup(move |_state| {
+            let o2 = Arc::clone(&o2);
+            async move {
+                o2.lock().expect("poisoned").push("after_startup");
+                Ok::<(), std::convert::Infallible>(())
+            }
+        })
+        .on_shutdown(move |_state| {
+            let o3 = Arc::clone(&o3);
+            async move {
+                o3.lock().expect("poisoned").push("on_shutdown");
+                Ok::<(), std::convert::Infallible>(())
+            }
+        })
+        .after_shutdown(move |state| {
+            let o4 = Arc::clone(&o4);
+            let greeting = state.get::<Config>().map(|c| c.greeting.clone());
+            async move {
+                assert_eq!(greeting.as_deref(), Some("lazy"));
+                o4.lock().expect("poisoned").push("after_shutdown");
+                Ok::<(), std::convert::Infallible>(())
+            }
+        })
+        .with_broker(MemoryBroker::new(), |_b| {});
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    wait_for(
+        || order.lock().expect("poisoned").contains(&"after_startup"),
+        Duration::from_secs(1),
+    )
+    .await;
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+
+    assert_eq!(
+        *order.lock().expect("poisoned"),
+        vec!["startup", "after_startup", "on_shutdown", "after_shutdown"],
+    );
 }
 
 #[test]

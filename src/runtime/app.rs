@@ -1,11 +1,14 @@
 //! The [`RustStream`] application object: binds brokers, handlers and lifecycle into one runnable
 //! service.
 
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{
+    collections::HashMap, error::Error as StdError, future::Future, sync::Arc, time::Duration,
+};
 
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -36,6 +39,23 @@ type Starter = Box<
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
 >;
+
+/// The `on_startup` lifespan hook: runs once before brokers connect. It receives the app [`State`]
+/// by value (so its future can own it across awaits — e.g. connect a database, then insert the
+/// pool) and returns it, populated.
+type StartupHook = Box<dyn FnOnce(State) -> BoxFuture<'static, Result<State, BoxError>> + Send>;
+
+/// A read-only lifespan hook (`after_startup` / `on_shutdown` / `after_shutdown`): runs once at the
+/// corresponding lifecycle point with a shared [`State`] handle (read via [`State::get`]).
+type LifecycleHook = Box<dyn FnOnce(Arc<State>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
+
+/// Which read-only lifecycle hook list a hook is appended to.
+#[derive(Clone, Copy)]
+enum LifecyclePhase {
+    AfterStartup,
+    OnShutdown,
+    AfterShutdown,
+}
 
 /// Service-level metadata, surfaced to the `AsyncAPI` generator as the spec `Info` object.
 #[derive(Debug, Clone)]
@@ -75,6 +95,9 @@ pub enum RustStreamError {
     /// A broker failed to [`connect`](Broker::connect) at startup.
     #[error("broker connect failed: {0}")]
     Connect(#[source] BoxError),
+    /// An `on_startup` or `after_startup` lifespan hook failed.
+    #[error("startup hook failed: {0}")]
+    Startup(#[source] BoxError),
     /// A subscription failed to open after connect.
     #[error("subscription failed: {0}")]
     Subscribe(#[source] BoxError),
@@ -132,6 +155,11 @@ pub struct RustStream<L = Identity> {
     handlers: Vec<HandlerMetadata>,
     publishers: Publishers,
     state: State,
+    on_startup: Vec<StartupHook>,
+    after_startup: Vec<LifecycleHook>,
+    on_shutdown: Vec<LifecycleHook>,
+    after_shutdown: Vec<LifecycleHook>,
+    shutdown_timeout: Option<Duration>,
     global: L,
 }
 
@@ -156,6 +184,11 @@ impl RustStream<Identity> {
             handlers: Vec::new(),
             publishers: HashMap::new(),
             state: State::default(),
+            on_startup: Vec::new(),
+            after_startup: Vec::new(),
+            on_shutdown: Vec::new(),
+            after_shutdown: Vec::new(),
+            shutdown_timeout: None,
             global: Identity,
         }
     }
@@ -174,6 +207,11 @@ impl<L> RustStream<L> {
             handlers: self.handlers,
             publishers: self.publishers,
             state: self.state,
+            on_startup: self.on_startup,
+            after_startup: self.after_startup,
+            on_shutdown: self.on_shutdown,
+            after_shutdown: self.after_shutdown,
+            shutdown_timeout: self.shutdown_timeout,
             global: Stack::new(layer, self.global),
         }
     }
@@ -188,6 +226,83 @@ impl<L> RustStream<L> {
         T: std::any::Any + Send + Sync,
     {
         self.state.insert(value);
+        self
+    }
+
+    /// Adds a hook run before brokers connect. It receives the [`State`] by value for lazily
+    /// creating shared resources (a database pool, a client) and returns it populated. A failing
+    /// hook aborts startup.
+    #[must_use]
+    pub fn on_startup<F, Fut, E>(mut self, hook: F) -> Self
+    where
+        F: FnOnce(State) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<State, E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.on_startup.push(Box::new(move |state| {
+            Box::pin(async move { hook(state).await.map_err(|e| Box::new(e) as BoxError) })
+        }));
+        self
+    }
+
+    /// Adds a hook run after brokers connect and handlers are spawned (for example, to publish an
+    /// initial message or signal readiness). A failing hook aborts startup.
+    #[must_use]
+    pub fn after_startup<F, Fut, E>(self, hook: F) -> Self
+    where
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.push_lifecycle_hook(LifecyclePhase::AfterStartup, hook)
+    }
+
+    /// Adds a hook run when shutdown begins, while brokers are still connected. Errors are logged.
+    #[must_use]
+    pub fn on_shutdown<F, Fut, E>(self, hook: F) -> Self
+    where
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.push_lifecycle_hook(LifecyclePhase::OnShutdown, hook)
+    }
+
+    /// Adds a hook run after brokers have shut down (for final async resource teardown). Errors are
+    /// logged.
+    #[must_use]
+    pub fn after_shutdown<F, Fut, E>(self, hook: F) -> Self
+    where
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.push_lifecycle_hook(LifecyclePhase::AfterShutdown, hook)
+    }
+
+    fn push_lifecycle_hook<F, Fut, E>(mut self, phase: LifecyclePhase, hook: F) -> Self
+    where
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        let boxed: LifecycleHook = Box::new(move |state| {
+            Box::pin(async move { hook(state).await.map_err(|e| Box::new(e) as BoxError) })
+        });
+        match phase {
+            LifecyclePhase::AfterStartup => self.after_startup.push(boxed),
+            LifecyclePhase::OnShutdown => self.on_shutdown.push(boxed),
+            LifecyclePhase::AfterShutdown => self.after_shutdown.push(boxed),
+        }
+        self
+    }
+
+    /// Sets how long [`run`](Self::run) waits for in-flight handlers to finish after shutdown is
+    /// triggered. After the timeout, the remaining handler tasks are aborted. Defaults to waiting
+    /// indefinitely.
+    #[must_use]
+    pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
+        self.shutdown_timeout = Some(timeout);
         self
     }
 
@@ -287,9 +402,18 @@ impl<L> RustStream<L> {
         let Self {
             brokers,
             starters,
-            state,
+            mut state,
+            on_startup,
+            after_startup,
+            on_shutdown,
+            after_shutdown,
+            shutdown_timeout,
             ..
         } = self;
+
+        for hook in on_startup {
+            state = hook(state).await.map_err(RustStreamError::Startup)?;
+        }
         let state = Arc::new(state);
 
         for broker in &brokers {
@@ -305,14 +429,31 @@ impl<L> RustStream<L> {
             handles.push(handle);
         }
 
-        shutdown.await;
-        token.cancel();
-
-        for handle in handles {
-            handle.await.map_err(RustStreamError::Join)?;
+        for hook in after_startup {
+            hook(Arc::clone(&state))
+                .await
+                .map_err(RustStreamError::Startup)?;
         }
+
+        shutdown.await;
+
+        for hook in on_shutdown {
+            if let Err(err) = hook(Arc::clone(&state)).await {
+                warn!(target: "ruststream::lifecycle", error = %err, "on_shutdown hook failed");
+            }
+        }
+
+        token.cancel();
+        drain_handles(handles, shutdown_timeout).await?;
+
         for broker in brokers.iter().rev() {
             broker.shutdown().await.map_err(RustStreamError::Shutdown)?;
+        }
+
+        for hook in after_shutdown {
+            if let Err(err) = hook(Arc::clone(&state)).await {
+                warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
+            }
         }
         Ok(())
     }
@@ -451,6 +592,35 @@ impl<B, L> std::fmt::Debug for BrokerScope<B, L> {
             .field("router", &self.router)
             .finish_non_exhaustive()
     }
+}
+
+/// Awaits all handler tasks, bounded by `timeout` if set. On timeout the remaining tasks are
+/// aborted; without a timeout, a panicking task surfaces as [`RustStreamError::Join`].
+async fn drain_handles(
+    handles: Vec<JoinHandle<()>>,
+    timeout: Option<Duration>,
+) -> Result<(), RustStreamError> {
+    let Some(timeout) = timeout else {
+        for handle in handles {
+            handle.await.map_err(RustStreamError::Join)?;
+        }
+        return Ok(());
+    };
+
+    let aborts: Vec<_> = handles.iter().map(JoinHandle::abort_handle).collect();
+    if tokio::time::timeout(timeout, futures::future::join_all(handles))
+        .await
+        .is_err()
+    {
+        warn!(
+            target: "ruststream::lifecycle",
+            "graceful shutdown timed out; aborting in-flight handlers",
+        );
+        for abort in aborts {
+            abort.abort();
+        }
+    }
+    Ok(())
 }
 
 async fn wait_for_signal() {
