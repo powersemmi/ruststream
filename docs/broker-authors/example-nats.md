@@ -148,7 +148,7 @@ impl Subscriber for NatsSubscriber {
 ```
 
 A delivered message exposes its payload and headers. Core NATS is fire-and-forget, so ack and nack
-are no-ops; see [Core NATS versus JetStream](#core-nats-versus-jetstream).
+are no-ops; see [JetStream](#jetstream-durable-consumers-with-real-acks) for the acknowledged variant.
 
 ```rust
 use async_nats::{HeaderMap, Message};
@@ -294,13 +294,139 @@ impl DescribeServer for NatsBroker {
 Do not implement capabilities the transport lacks. Core NATS has no batch subscribe or transactional
 publish, so `BatchSubscriber` and `TransactionalPublisher` are left out.
 
-## Core NATS versus JetStream
+## JetStream: durable consumers with real acks
 
-The ack and nack above are no-ops because Core NATS does not acknowledge delivery. A JetStream
-variant would carry the acknowledgement: `ack` would call the message's `ack`, and `nack` would map
-to `nak` (with the redelivery delay when `requeue` is set). Model JetStream as its own
-`SubscriptionSource` and message type, so durable-consumer config lives in the descriptor rather
-than in the core.
+The ack and nack above are no-ops because Core NATS does not acknowledge delivery. JetStream adds
+persistence and acknowledgement, so model it as its own `SubscriptionSource` and message type, with
+durable-consumer config in the descriptor rather than the core. Add a `JetStream(String)` variant to
+`NatsError` for stream and consumer errors.
+
+The descriptor opens (or binds to) a durable pull consumer and wraps its message stream:
+
+```rust
+use async_nats::jetstream::{self, consumer::pull::Config as PullConfig};
+use async_nats::jetstream::consumer::pull::Stream as PullStream;
+use futures::{Stream, StreamExt};
+use ruststream::{Subscriber, SubscriptionSource};
+
+/// A durable JetStream pull consumer on a stream.
+pub struct JetStreamConsumer {
+    stream: String,
+    durable: String,
+}
+
+impl JetStreamConsumer {
+    #[must_use]
+    pub fn new(stream: impl Into<String>, durable: impl Into<String>) -> Self {
+        Self {
+            stream: stream.into(),
+            durable: durable.into(),
+        }
+    }
+}
+
+impl SubscriptionSource<NatsBroker> for JetStreamConsumer {
+    type Subscriber = JetStreamSubscriber;
+
+    fn name(&self) -> &str {
+        &self.stream
+    }
+
+    async fn subscribe(self, broker: &NatsBroker) -> Result<Self::Subscriber, NatsError> {
+        let context = jetstream::new(broker.client()?.clone());
+        let stream = context
+            .get_stream(&self.stream)
+            .await
+            .map_err(|e| NatsError::JetStream(e.to_string()))?;
+        let consumer = stream
+            .get_or_create_consumer(
+                &self.durable,
+                PullConfig {
+                    durable_name: Some(self.durable.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| NatsError::JetStream(e.to_string()))?;
+        let messages = consumer
+            .messages()
+            .await
+            .map_err(|e| NatsError::JetStream(e.to_string()))?;
+        Ok(JetStreamSubscriber(messages))
+    }
+}
+
+pub struct JetStreamSubscriber(PullStream);
+
+impl Subscriber for JetStreamSubscriber {
+    type Message = JetStreamMessage;
+    type Error = NatsError;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<JetStreamMessage, NatsError>> + Send + '_ {
+        (&mut self.0).map(|item| {
+            item.map(JetStreamMessage::new)
+                .map_err(|e| NatsError::JetStream(e.to_string()))
+        })
+    }
+}
+```
+
+The message carries the real acknowledgement. `ack` confirms delivery; `nack` maps to `nak` when the
+handler asks for redelivery, and to `term` when it does not (a poison message that should not come
+back).
+
+```rust
+use async_nats::jetstream::AckKind;
+use async_nats::jetstream::Message as JsMessage;
+use ruststream::{AckError, Headers, IncomingMessage};
+
+pub struct JetStreamMessage {
+    message: JsMessage,
+    headers: Headers,
+}
+
+impl JetStreamMessage {
+    fn new(message: JsMessage) -> Self {
+        let headers = convert_headers(message.headers.as_ref());
+        Self { message, headers }
+    }
+}
+
+impl IncomingMessage for JetStreamMessage {
+    fn payload(&self) -> &[u8] {
+        &self.message.payload
+    }
+
+    fn headers(&self) -> &Headers {
+        &self.headers
+    }
+
+    async fn ack(self) -> Result<(), AckError> {
+        self.message.ack().await.map_err(AckError::Broker)
+    }
+
+    async fn nack(self, requeue: bool) -> Result<(), AckError> {
+        let kind = if requeue { AckKind::Nak(None) } else { AckKind::Term };
+        self.message
+            .ack_with(kind)
+            .await
+            .map_err(AckError::Broker)
+    }
+}
+```
+
+`JsMessage` dereferences to the core message, so `payload`, `headers`, and `convert_headers` from the
+Core NATS section are reused unchanged. Mount a handler on the consumer through the descriptor:
+
+```rust
+#[subscriber(JetStreamConsumer::new("ORDERS", "workers"))]
+async fn handle(order: &Order) -> HandlerResult {
+    HandlerResult::Ack
+}
+```
+
+A handler returning `HandlerResult::retry()` triggers a `nak`; `HandlerResult::drop()` triggers a
+`term`.
 
 ## Proving it
 

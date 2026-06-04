@@ -112,6 +112,45 @@ When decoding fails, the message is dropped by default. The decode-failure behav
 on the typed adapter when you build handlers by hand (see the API reference for `Typed` and
 `DecodeFailure`).
 
+## Macro or manual
+
+`#[subscriber]` is sugar over a generic API. The macro generates a typed handler and its metadata;
+you can write the same registration by hand with `typed` (which decodes the payload), a closure or
+struct handler, and `HandlerMetadata`. Both forms below register the same handler.
+
+=== "Macro"
+
+    ```rust
+    use ruststream::codec::JsonCodec;
+    use ruststream::subscriber;
+
+    #[subscriber("orders")]
+    async fn handle(order: &Order) -> HandlerResult {
+        HandlerResult::Ack
+    }
+
+    // inside with_broker(...):
+    b.include(handle, JsonCodec);
+    ```
+
+=== "Manual"
+
+    ```rust
+    use ruststream::Name;
+    use ruststream::codec::JsonCodec;
+    use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
+
+    // inside with_broker(...):
+    b.subscribe(
+        Name::new("orders"),
+        typed(JsonCodec, |order: &Order, _ctx: &mut Context| async { HandlerResult::Ack }),
+        HandlerMetadata::typed::<Order>("orders"),
+    );
+    ```
+
+Reach for the manual form when a handler needs state the macro cannot express (a struct handler with
+fields), or to set a non-default decode-failure policy. Otherwise the macro is less to maintain.
+
 ## Routers
 
 Group handlers in their own module by collecting them into a `Router`, then mount the whole group
