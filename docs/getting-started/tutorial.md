@@ -57,14 +57,16 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, RustStream};
 
+use crate::orders::handle;
+
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_def(), JsonCodec))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle, JsonCodec))
 }
-
-use orders::handle as handle_def; // the macro exports a value named after the function
 ```
+
+The macro turns `handle` into a value named after the function, so you import and pass it directly.
 
 !!! tip "Codec once per scope"
     Passing `JsonCodec` on every `include` gets repetitive. Use
@@ -101,9 +103,9 @@ Mount it with a publisher that carries the reply codec:
 ```rust
 use ruststream::runtime::TypedPublisher;
 
-// inside with_broker(...)
+// inside with_broker(...), with `confirm` imported from the orders module
 let replies = TypedPublisher::new(b.broker().publisher(), JsonCodec);
-b.include_publishing(confirm_def(), JsonCodec, replies);
+b.include_publishing(confirm, JsonCodec, replies);
 ```
 
 See [Publishing & replies](../guides/publishing.md) for the full picture, including publishing from

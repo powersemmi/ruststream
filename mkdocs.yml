@@ -77,5 +77,6 @@ nav:
       - guides/cli.md
   - Broker authors:
       - broker-authors/index.md
+      - broker-authors/example-nats.md
       - broker-authors/conformance.md
   - API reference: reference.md

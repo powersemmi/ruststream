@@ -14,6 +14,7 @@ Two architectural commitments shape the framework:
    not the framework.
 
 ```rust
+use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::subscriber;
@@ -32,7 +33,6 @@ async fn handle(order: &Order) -> HandlerResult {
 
 #[ruststream::app]
 fn app() -> RustStream {
-    use ruststream::codec::JsonCodec;
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include(handle, JsonCodec))
 }

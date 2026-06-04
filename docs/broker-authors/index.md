@@ -10,7 +10,8 @@ ruststream = { version = "0.1", default-features = false }
 
 This page is the contract. Implement the required traits, expose your own `Config`, add capability
 traits for the features your broker supports, and prove the result with the
-[conformance harness](conformance.md).
+[conformance harness](conformance.md). For a complete implementation on a real client, see the
+[worked NATS example](example-nats.md).
 
 ## The required traits
 
