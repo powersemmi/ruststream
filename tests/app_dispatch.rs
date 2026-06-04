@@ -11,10 +11,13 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerMetadata, HandlerResult, Layer, Router, RustStream, State,
+    AppInfo, Context, Handler, HandlerMetadata, HandlerResult, Layer, Outgoing, PublishMiddleware,
+    PublishNext, Router, RustStream, State,
 };
 use ruststream::{Name, OutgoingMessage, Publisher};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -466,4 +469,98 @@ async fn wait_for_published(publisher: &impl Publisher, seen: &AtomicU32, timeou
     })
     .await;
     assert!(result.is_ok(), "no delivery within {timeout:?}");
+}
+
+/// A publish middleware that tags every outgoing message with a header.
+struct Tagger;
+
+impl PublishMiddleware for Tagger {
+    fn on_publish<'a>(
+        &'a self,
+        out: &'a mut Outgoing,
+        next: PublishNext<'a>,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            out.headers_mut().insert("x-envelope", b"1".to_vec());
+            next.run(out).await
+        })
+    }
+}
+
+/// A handler that publishes manually via `ctx.publisher`. A struct (not a closure) so the future
+/// may borrow `ctx` across the await.
+struct Bridge;
+
+impl<M: Send + Sync> Handler<M> for Bridge {
+    async fn handle(&self, _msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+        if let Some(out) = ctx.publisher("egress") {
+            let _ = out
+                .publish(Outgoing::new("responses", b"reply".to_vec()))
+                .await;
+        }
+        HandlerResult::Ack
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ctx_publisher_runs_through_pipeline() {
+    let ingress = MemoryBroker::new();
+    let egress = MemoryBroker::new();
+    let ingress_pub = ingress.publisher();
+
+    let tagged = Arc::new(AtomicU32::new(0));
+    let tagged_clone = Arc::clone(&tagged);
+
+    let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
+        .publisher("egress", egress.publisher())
+        .publish_layer(Tagger)
+        .with_broker(ingress, |b| {
+            b.subscribe(Name::new("orders"), Bridge, HandlerMetadata::raw("orders"));
+        })
+        .with_broker(egress, |b| {
+            let subscriber = b.broker().subscribe("responses");
+            b.handle(
+                subscriber,
+                move |msg: &_, _ctx: &mut Context| {
+                    let tagged = Arc::clone(&tagged_clone);
+                    // The Tagger middleware must have run on the manual publish.
+                    let has_header = ruststream::IncomingMessage::headers(msg)
+                        .get("x-envelope")
+                        .is_some();
+                    async move {
+                        if has_header {
+                            tagged.fetch_add(1, Ordering::SeqCst);
+                        }
+                        HandlerResult::Ack
+                    }
+                },
+                HandlerMetadata::raw("responses"),
+            );
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = ingress_pub
+                .publish(OutgoingMessage::new("orders", b"x"))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if tagged.load(Ordering::SeqCst) >= 1 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "manual publish did not reach egress with the pipeline header",
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
 }

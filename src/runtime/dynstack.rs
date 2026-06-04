@@ -190,7 +190,8 @@ mod tests {
         };
         let handler = inner.with(stack);
         let state = State::default();
-        let mut ctx = Context::new("test", Headers::new(), &state);
+        let delivery = crate::runtime::dispatch::Delivery::empty();
+        let mut ctx = Context::new("test", Headers::new(), &state, &delivery);
         assert_eq!(handler.handle(&Input, &mut ctx).await, HandlerResult::Ack);
         assert_eq!(*log.lock().expect("poisoned"), vec!["a", "b", "inner"]);
     }

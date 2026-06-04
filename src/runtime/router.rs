@@ -17,18 +17,19 @@ use tokio_util::sync::CancellationToken;
 use crate::{Broker, Subscriber, SubscriptionSource};
 
 use super::context::State;
-use super::dispatch::spawn_dispatch;
+use super::dispatch::{Delivery, spawn_dispatch};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
 
-/// A deferred registration: given the broker (after connect), shared state, and the shutdown
-/// token, it opens the subscription and spawns the dispatch task. The source and handler are
-/// captured and type-erased.
+/// A deferred registration: given the broker (after connect), shared state, the per-scope publish
+/// [`Delivery`] context, and the shutdown token, it opens the subscription and spawns the dispatch
+/// task. The source and handler are captured and type-erased.
 pub(crate) type BoundStarter<B> = Box<
     dyn FnOnce(
             Arc<B>,
             Arc<State>,
+            Arc<Delivery>,
             CancellationToken,
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
@@ -94,9 +95,14 @@ impl<B: Broker + 'static> Router<B> {
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(move |_broker, state, token| {
-            Box::pin(async move { Ok(spawn_dispatch(subscriber, handler, token, name, state)) })
-        }));
+        self.starters
+            .push(Box::new(move |_broker, state, delivery, token| {
+                Box::pin(async move {
+                    Ok(spawn_dispatch(
+                        subscriber, handler, token, name, state, delivery,
+                    ))
+                })
+            }));
         self.handlers.push(meta);
     }
 
@@ -113,13 +119,15 @@ impl<B: Broker + 'static> Router<B> {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters
-            .push(Box::new(move |broker: Arc<B>, state, token| {
+            .push(Box::new(move |broker: Arc<B>, state, delivery, token| {
                 Box::pin(async move {
                     let subscriber = source
                         .subscribe(broker.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
-                    Ok(spawn_dispatch(subscriber, handler, token, name, state))
+                    Ok(spawn_dispatch(
+                        subscriber, handler, token, name, state, delivery,
+                    ))
                 })
             }));
         self.handlers.push(meta);

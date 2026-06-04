@@ -9,6 +9,9 @@ use std::collections::HashMap;
 
 use crate::Headers;
 
+use super::dispatch::Delivery;
+use super::publish::ScopedPublisher;
+
 /// App-level shared state: a type-map holding one value per type.
 ///
 /// Put shared resources (database pools, HTTP clients, configuration) in here with
@@ -44,21 +47,29 @@ impl std::fmt::Debug for State {
 ///
 /// Carries the channel ([`name`](Self::name)), a mutable working copy of the message
 /// [`headers`](Self::headers) (middleware may modify them; the copy is also what outgoing replies
-/// start from), and shared application [state](Self::get).
+/// start from), shared application [state](Self::get), and access to named
+/// [`publisher`](Self::publisher)s for publishing from inside a handler.
 #[derive(Debug)]
 pub struct Context<'a> {
     name: &'a str,
     headers: Headers,
     state: &'a State,
+    delivery: &'a Delivery,
 }
 
 impl<'a> Context<'a> {
     /// Creates a context for one delivery.
-    pub(crate) fn new(name: &'a str, headers: Headers, state: &'a State) -> Self {
+    pub(crate) fn new(
+        name: &'a str,
+        headers: Headers,
+        state: &'a State,
+        delivery: &'a Delivery,
+    ) -> Self {
         Self {
             name,
             headers,
             state,
+            delivery,
         }
     }
 
@@ -66,6 +77,21 @@ impl<'a> Context<'a> {
     #[must_use]
     pub fn name(&self) -> &str {
         self.name
+    }
+
+    /// Resolves a named publisher (registered with
+    /// [`RustStream::publisher`](super::RustStream::publisher)) to publish from this handler.
+    ///
+    /// Sends through it run the scope's publish middleware (envelope, metrics) — the same chain as a
+    /// macro reply — so a manual publish is not a hole in the pipeline. Returns `None` if no
+    /// publisher is registered under `name`.
+    #[must_use]
+    pub fn publisher(&self, name: &str) -> Option<ScopedPublisher<'_>> {
+        let publisher = self.delivery.publishers.get(name)?;
+        Some(ScopedPublisher::new(
+            publisher.as_ref(),
+            &self.delivery.pipeline,
+        ))
     }
 
     /// The working copy of the message headers.

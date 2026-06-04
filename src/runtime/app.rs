@@ -21,6 +21,7 @@ use crate::codec::Codec;
 use crate::{Broker, Name, Publisher, ServerSpec, Subscribe, Subscriber, SubscriptionSource};
 
 use super::context::State;
+use super::dispatch::{Delivery, Publishers};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture, BrokerLifecycle};
 use super::metadata::HandlerMetadata;
@@ -31,8 +32,6 @@ use super::publishing::{PublishingDef, PublishingHandler};
 use super::router::Router;
 use super::subscriber_def::SubscriberDef;
 use super::typed::{Typed, typed};
-
-type Publishers = HashMap<String, Arc<dyn ErasedPublisher>>;
 
 /// A registration deferred until [`RustStream::run`]: given the shutdown token, it opens the
 /// subscription (after the broker is connected) and spawns the dispatch task. The broker, source
@@ -430,11 +429,17 @@ impl<L> RustStream<L> {
         B: Broker + 'static,
     {
         let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
+        let delivery = Arc::new(Delivery {
+            publishers: self.publishers.clone(),
+            pipeline: scope.pipeline.clone(),
+        });
         let (starters, handlers) = scope.router.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let broker = broker.clone();
-            self.starters
-                .push(Box::new(move |state, token| bound(broker, state, token)));
+            let delivery = delivery.clone();
+            self.starters.push(Box::new(move |state, token| {
+                bound(broker, state, delivery, token)
+            }));
             self.handlers.push(meta);
         }
         self.brokers.push(lifecycle);

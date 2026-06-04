@@ -21,7 +21,7 @@ pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use handler::{Handler, HandlerResult, IntoHandlerResult};
 pub use metadata::HandlerMetadata;
 pub use middleware::{HandlerExt, Identity, Layer, Stack, layers};
-pub use publish::{Outgoing, PublishMiddleware, PublishNext, TypedPublisher};
+pub use publish::{Outgoing, PublishMiddleware, PublishNext, ScopedPublisher, TypedPublisher};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingDef, PublishingHandler};
 pub use router::Router;

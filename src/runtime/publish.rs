@@ -135,6 +135,46 @@ pub(crate) fn run_publish<'a>(
     .run(out)
 }
 
+/// A named publisher resolved from a [`Context`](super::Context), sending through the scope's
+/// publish pipeline.
+///
+/// Returned by [`Context::publisher`](super::Context::publisher). Publishing through it runs the
+/// same [`PublishMiddleware`] chain (envelope, metrics) as a macro reply, so a manual publish from a
+/// handler is not a hole in the pipeline.
+pub struct ScopedPublisher<'a> {
+    publisher: &'a dyn ErasedPublisher,
+    pipeline: &'a [Arc<dyn PublishMiddleware>],
+}
+
+impl<'a> ScopedPublisher<'a> {
+    pub(crate) fn new(
+        publisher: &'a dyn ErasedPublisher,
+        pipeline: &'a [Arc<dyn PublishMiddleware>],
+    ) -> Self {
+        Self {
+            publisher,
+            pipeline,
+        }
+    }
+
+    /// Sends `out` through the publish pipeline to the broker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the boxed error from a middleware or the broker publish if either fails.
+    pub async fn publish(&self, mut out: Outgoing) -> Result<(), BoxError> {
+        run_publish(self.pipeline, self.publisher, &mut out).await
+    }
+}
+
+impl std::fmt::Debug for ScopedPublisher<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScopedPublisher")
+            .field("layers", &self.pipeline.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A byte [`Publisher`] paired with a [`Codec`], ready to send typed values.
 ///
 /// This is the publish-side counterpart to a typed subscriber: it carries *how* a value is encoded,
