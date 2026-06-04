@@ -21,11 +21,13 @@ use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
+// --8<-- [start:payload]
 #[derive(Debug, Deserialize, ruststream::schemars::JsonSchema)]
 struct Order {
     id: u64,
     item: String,
 }
+// --8<-- [end:payload]
 
 #[subscriber("orders")]
 async fn handle(order: &Order) -> HandlerResult {
@@ -38,11 +40,18 @@ fn service() -> RustStream {
         .with_broker(MemoryBroker::new(), |b| b.include(handle, JsonCodec))
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // The document is generated once from the service's handlers; hosting is up to us.
+// --8<-- [start:generate]
+/// Builds the AsyncAPI document and the viewer HTML from the service.
+fn document() -> Result<(String, String), serde_json::Error> {
     let spec = build_spec(&service()).to_json()?;
     let viewer = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
+    Ok((spec, viewer))
+}
+// --8<-- [end:generate]
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (spec, viewer) = document()?;
 
     let router = Router::new()
         .route(

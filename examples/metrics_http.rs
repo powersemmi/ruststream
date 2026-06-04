@@ -40,6 +40,7 @@ struct Confirmation {
     accepted: bool,
 }
 
+// --8<-- [start:handler]
 #[subscriber("orders", publish("confirmations"))]
 async fn confirm(order: &Order) -> Confirmation {
     Confirmation {
@@ -47,6 +48,7 @@ async fn confirm(order: &Order) -> Confirmation {
         accepted: order.quantity > 0,
     }
 }
+// --8<-- [end:handler]
 
 struct AppState {
     metrics: Metrics,
@@ -67,10 +69,10 @@ async fn serve_metrics(State(state): State<Arc<AppState>>) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // --8<-- [start:wiring]
     let metrics = Metrics::new()?;
     let broker = MemoryBroker::new();
     let ingest = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .layer(metrics.consume_layer())
         .publish_layer(metrics.publish_layer())
@@ -78,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let replies = TypedPublisher::new(b.broker().publisher(), JsonCodec);
             b.include_publishing(confirm, JsonCodec, replies);
         });
+    // --8<-- [end:wiring]
 
     // Run the service in the background; it shares the metric collectors with the HTTP state.
     tokio::spawn(async move {

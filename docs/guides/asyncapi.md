@@ -18,15 +18,11 @@ ruststream asyncapi gen -o asyncapi.json
 ruststream asyncapi gen --yaml
 ```
 
-In code, build the spec from the application and serialize it:
+In code, build the spec from the application with `build_spec`, then serialize it with `to_json` or
+`to_yaml`:
 
 ```rust
-use ruststream::asyncapi::build_spec;
-
-let app = build_app();
-let spec = build_spec(&app);
-let json = spec.to_json()?;
-let yaml = spec.to_yaml()?;
+--8<-- "examples/asyncapi_http.rs:generate"
 ```
 
 `#[ruststream::app]` wires the `asyncapi gen` command to `build_spec` for you, so the CLI and a
@@ -38,13 +34,7 @@ A handler's payload type appears as a schema when it derives `JsonSchema`. RustS
 `schemars`, so you do not need a direct dependency:
 
 ```rust
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize, ruststream::schemars::JsonSchema)]
-struct Order {
-    id: u64,
-    item: String,
-}
+--8<-- "examples/asyncapi_http.rs:payload"
 ```
 
 A type without `JsonSchema` still works as a handler payload; it just contributes no schema to the

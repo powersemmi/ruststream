@@ -12,14 +12,7 @@ ruststream = { version = "0.2", features = ["macros", "memory", "metrics"] }
 Create a `Metrics`, install its consume and publish layers, and keep the handle to export later:
 
 ```rust
-use ruststream::metrics::Metrics;
-
-let metrics = Metrics::new()?;
-
-let app = RustStream::new(info)
-    .layer(metrics.consume_layer())
-    .publish_layer(metrics.publish_layer())
-    .with_broker(broker, |b| b.include(handle, JsonCodec));
+--8<-- "examples/metrics_http.rs:wiring"
 ```
 
 `consume_layer` records every handled message; `publish_layer` records every published message. To
