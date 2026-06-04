@@ -4,25 +4,26 @@
 //!
 //! # Cargo features
 //!
-//! Every feature is additive. Default features cover the common path: typed messages, a
-//! router, and JSON codec. Broker authors enable `conformance` to pick up the in-memory
-//! reference broker and the contract harness. Codec features are mutually compatible and
+//! The core traits, the [`runtime::RustStream`] application object, middleware, and dispatch are
+//! always present. The rest is additive and opt-in. Codec features are mutually compatible and
 //! enable only the deserializers you need.
 //!
-//! * `runtime` (default): [`runtime::RustStream`] plus middleware, lifecycle, and dispatch.
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
 //! * `cbor`: [`codec::CborCodec`].
-//! * `memory`: [`memory::MemoryBroker`], an in-process broker usable in applications,
-//!   prototypes and tests.
+//! * `memory`: [`memory::MemoryBroker`], an in-process broker usable in applications, prototypes
+//!   and tests.
+//! * `macros`: the `#[subscriber]`, [`#[ruststream::app]`](macro@app), and
+//!   [`#[derive(Message)]`](macro@Message) macros.
+//! * `asyncapi`: `AsyncAPI` document generation and the HTML viewer.
+//! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `conformance`: the [`conformance::harness`] contract suite and broker-agnostic
-//!   [`conformance::helpers`] for application tests. Generic over any broker's `TestClient`,
-//!   so it pulls in no concrete broker (enable `memory` too to run it against
-//!   [`memory::MemoryBroker`]).
+//!   [`conformance::helpers`] for application tests. Generic over any broker's `TestClient`, so it
+//!   pulls in no concrete broker (enable `memory` too to run it against [`memory::MemoryBroker`]).
+//! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
 //!
-//! Disable defaults (`default-features = false`) to depend only on the core traits, with no
-//! runtime, no codecs, and no Tokio. Useful for crates that only consume the trait surface
-//! (broker authors implementing their own [`Broker`] from scratch).
+//! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,
+//! runtime, and dispatch remain. Add back only what you need.
 
 #![forbid(unsafe_code)]
 
@@ -55,10 +56,8 @@ pub mod codec;
 #[cfg(feature = "memory")]
 pub mod memory;
 
-#[cfg(feature = "runtime")]
 pub mod runtime;
 
-#[cfg(feature = "runtime")]
 pub use runtime::RustStream;
 
 /// Attribute macro that turns an `async fn` into a mountable subscriber definition.

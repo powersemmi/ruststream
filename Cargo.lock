@@ -561,10 +561,12 @@ dependencies = [
 
 [[package]]
 name = "ruststream"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "ciborium",
+ "clap",
  "futures",
  "prometheus",
  "rmp-serde",
@@ -573,6 +575,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -581,17 +584,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruststream-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "tempfile",
-]
-
-[[package]]
 name = "ruststream-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",

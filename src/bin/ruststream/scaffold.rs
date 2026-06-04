@@ -5,17 +5,17 @@
 //! `#[ruststream::app]`, so the project has no hand-written runtime boilerplate.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
 use crate::BrokerKind;
 
-const MEMORY_CARGO: &str = include_str!("../templates/memory/Cargo.toml.in");
-const MEMORY_MAIN: &str = include_str!("../templates/memory/main.rs.in");
-const MEMORY_ORDERS: &str = include_str!("../templates/memory/orders.rs.in");
-const MEMORY_ROUTES: &str = include_str!("../templates/memory/routes.rs.in");
-const MEMORY_STREAM: &str = include_str!("../templates/memory/stream.rs.in");
+const MEMORY_CARGO: &str = include_str!("templates/memory/Cargo.toml.in");
+const MEMORY_MAIN: &str = include_str!("templates/memory/main.rs.in");
+const MEMORY_ORDERS: &str = include_str!("templates/memory/orders.rs.in");
+const MEMORY_ROUTES: &str = include_str!("templates/memory/routes.rs.in");
+const MEMORY_STREAM: &str = include_str!("templates/memory/stream.rs.in");
 
 /// The files a broker template writes, as `(path relative to the project dir, contents)` pairs.
 const fn template(broker: BrokerKind) -> &'static [(&'static str, &'static str)] {
@@ -46,7 +46,7 @@ pub(crate) fn create(name: &str, broker: BrokerKind) -> Result<()> {
 
 /// Writes the project under `parent/name`, returning the created directory. Split out from
 /// [`create`] so tests can target a temporary directory.
-fn create_in(parent: &Path, name: &str, broker: BrokerKind) -> Result<std::path::PathBuf> {
+fn create_in(parent: &Path, name: &str, broker: BrokerKind) -> Result<PathBuf> {
     validate_name(name)?;
     let dir = parent.join(name);
     if dir.exists() {
