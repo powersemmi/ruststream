@@ -77,3 +77,14 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 
 Serve that HTML and the spec JSON from two routes in your own server. By default the viewer loads its
 assets from a CDN; override the URLs through `ViewerOptions` for offline or locked-down deployments.
+
+## A complete server
+
+The [`asyncapi_http`](https://github.com/powersemmi/ruststream/blob/main/examples/asyncapi_http.rs)
+example serves the document and the viewer with [axum](https://github.com/tokio-rs/axum). Run it with
+`cargo run --example asyncapi_http --features macros,memory,asyncapi`, then open
+<http://127.0.0.1:8080/>.
+
+```rust
+--8<-- "examples/asyncapi_http.rs"
+```

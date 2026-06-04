@@ -48,3 +48,19 @@ Hosting is your responsibility, as with AsyncAPI: serve `export()` from a `/metr
 own HTTP stack, or push it to a gateway. `metrics.registry()` returns the underlying
 `prometheus::Registry` if you want to register your own collectors alongside RustStream's or use an
 existing exporter.
+
+## A complete server
+
+The [`metrics_http`](https://github.com/powersemmi/ruststream/blob/main/examples/metrics_http.rs)
+example serves `/metrics` with [axum](https://github.com/tokio-rs/axum) and publishes orders through
+a `/orders` route, so an HTTP client drives the counters. Run it with
+`cargo run --example metrics_http --features macros,memory,metrics`, then:
+
+```bash
+curl -X POST http://127.0.0.1:8080/orders -d '{"id":1,"quantity":3}'
+curl http://127.0.0.1:8080/metrics
+```
+
+```rust
+--8<-- "examples/metrics_http.rs"
+```

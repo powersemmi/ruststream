@@ -15,6 +15,18 @@ name = "routed_service"
 path = "examples/routed_service/main.rs"
 required-features = ["macros", "memory", "json"]
 
+[[example]]
+name = "quickstart"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "asyncapi_http"
+required-features = ["macros", "memory", "asyncapi"]
+
+[[example]]
+name = "metrics_http"
+required-features = ["macros", "memory", "metrics"]
+
 [package]
 name = "ruststream"
 version = "0.2.0"
@@ -64,9 +76,10 @@ anyhow = { version = "1", optional = true }
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 tokio-stream = "0.1"
 tempfile = "3"
+axum = "0.8"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
