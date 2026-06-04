@@ -1,4 +1,5 @@
 [workspace]
+members = ["crates/ruststream-macros"]
 
 [package]
 name = "ruststream"
@@ -30,6 +31,7 @@ conformance = [
 json = ["dep:serde_json"]
 msgpack = ["dep:rmp-serde"]
 cbor = ["dep:ciborium"]
+macros = ["dep:ruststream-macros", "runtime"]
 
 [dependencies]
 bytes = "1"
@@ -37,6 +39,7 @@ futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
+ruststream-macros = { version = "0.1.0", path = "crates/ruststream-macros", optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
 ciborium = { version = "0.2", optional = true }

@@ -257,6 +257,7 @@ dependencies = [
  "ciborium",
  "futures",
  "rmp-serde",
+ "ruststream-macros",
  "serde",
  "serde_json",
  "thiserror",
@@ -264,6 +265,15 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "ruststream-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

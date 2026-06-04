@@ -1,19 +1,29 @@
 //! The [`RustStream`] application object: binds brokers, handlers and lifecycle into one runnable
 //! service.
 
-use std::{future::Future, sync::Arc};
+use std::{collections::HashMap, future::Future, sync::Arc};
 
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::{Broker, Subscriber, SubscriptionSource};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+use crate::codec::Codec;
+use crate::{Broker, Publisher, Subscribe, Subscriber, SubscriptionSource, Topic};
 
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture, BrokerLifecycle};
 use super::metadata::HandlerMetadata;
 use super::middleware::{Identity, Layer, Stack};
+use super::publisher_registry::ErasedPublisher;
+use super::publishing::{PublishingDef, PublishingHandler};
 use super::router::Router;
+use super::subscriber_def::SubscriberDef;
+use super::typed::{Typed, typed};
+
+type Publishers = HashMap<String, Arc<dyn ErasedPublisher>>;
 
 /// A registration deferred until [`RustStream::run`]: given the shutdown token, it opens the
 /// subscription (after the broker is connected) and spawns the dispatch task. The broker, source
@@ -115,6 +125,7 @@ pub struct RustStream<L = Identity> {
     brokers: Vec<Arc<dyn BrokerLifecycle>>,
     starters: Vec<Starter>,
     handlers: Vec<HandlerMetadata>,
+    publishers: Publishers,
     global: L,
 }
 
@@ -137,6 +148,7 @@ impl RustStream<Identity> {
             brokers: Vec::new(),
             starters: Vec::new(),
             handlers: Vec::new(),
+            publishers: HashMap::new(),
             global: Identity,
         }
     }
@@ -153,8 +165,34 @@ impl<L> RustStream<L> {
             brokers: self.brokers,
             starters: self.starters,
             handlers: self.handlers,
+            publishers: self.publishers,
             global: Stack::new(layer, self.global),
         }
+    }
+
+    /// Registers a named publisher, so handlers can publish to it by name (including from a
+    /// different broker's scope).
+    ///
+    /// The publisher is held type-erased; resolve it with
+    /// [`BrokerScope::publisher`](BrokerScope::publisher).
+    #[must_use]
+    pub fn publisher<P>(mut self, name: impl Into<String>, publisher: P) -> Self
+    where
+        P: Publisher + 'static,
+    {
+        self.publishers.insert(name.into(), Arc::new(publisher));
+        self
+    }
+
+    /// Registers a broker for lifecycle management only (connect / shutdown), without attaching
+    /// subscribers. Use for publish-only brokers.
+    #[must_use]
+    pub fn register_broker<B>(mut self, broker: B) -> Self
+    where
+        B: Broker + 'static,
+    {
+        self.brokers.push(Arc::new(broker));
+        self
     }
 
     /// Registers a broker and the handlers attached to it.
@@ -173,6 +211,7 @@ impl<L> RustStream<L> {
         let mut scope = BrokerScope {
             broker: broker.clone(),
             router: Router::new(),
+            publishers: self.publishers.clone(),
             global: self.global.clone(),
         };
         build(&mut scope);
@@ -262,6 +301,7 @@ impl<L> RustStream<L> {
 pub struct BrokerScope<B, L = Identity> {
     broker: Arc<B>,
     router: Router<B>,
+    publishers: Publishers,
     global: L,
 }
 
@@ -270,6 +310,13 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
     #[must_use]
     pub fn broker(&self) -> &B {
         &self.broker
+    }
+
+    /// Resolves a named publisher registered with
+    /// [`RustStream::publisher`](RustStream::publisher), to capture in a handler and publish to.
+    #[must_use]
+    pub fn publisher(&self, name: &str) -> Option<Arc<dyn ErasedPublisher>> {
+        self.publishers.get(name).cloned()
     }
 
     /// Attaches `handler` (wrapped with the global stack) to an already-created `subscriber`.
@@ -299,6 +346,69 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
     {
         let handler = self.global.layer(handler);
         self.router.subscribe(source, handler, meta);
+    }
+
+    /// Mounts a `#[subscriber]`-generated definition, decoding its input with `codec`.
+    ///
+    /// Subscribes via a [`Topic`] descriptor (so the broker must implement [`Subscribe`]) and wraps
+    /// the handler with the global middleware stack, just like [`subscribe`](Self::subscribe).
+    pub fn include<D, C>(&mut self, def: D, codec: C)
+    where
+        B: Subscribe,
+        <B as Broker>::Subscriber: Send + 'static,
+        <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
+        D: SubscriberDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        C: Codec + 'static,
+        L: Layer<
+            Typed<<<B as Broker>::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>,
+        >,
+        L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let channel = def.channel().to_owned();
+        let mut meta = HandlerMetadata::typed::<D::Input>(channel.clone());
+        if let Some(description) = def.description() {
+            meta = meta.with_description(description.to_owned());
+        }
+        let handler = typed(codec, def.into_handler());
+        self.subscribe(Topic::new(channel), handler, meta);
+    }
+
+    /// Mounts a `#[subscriber(.., publish(..))]`-generated definition: decodes its input with
+    /// `codec`, runs the handler, then encodes and publishes the reply through the named publisher.
+    ///
+    /// The publisher is resolved from the registry by name now; register it with
+    /// [`RustStream::publisher`](RustStream::publisher) before this call. If it is missing, the
+    /// reply is dropped (logged) at dispatch.
+    pub fn include_publishing<D, C>(&mut self, def: D, codec: C)
+    where
+        B: Subscribe,
+        <B as Broker>::Subscriber: Send + 'static,
+        <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        C: Codec + 'static,
+        L: Layer<PublishingHandler<D, C>>,
+        L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let publisher = self.publishers.get(def.publisher_name()).cloned();
+        let subscribe_channel = def.subscribe_channel().to_owned();
+        let topic = def.publish_channel().to_owned();
+        let description = def.description().map(str::to_owned);
+        let mut meta = HandlerMetadata::typed::<D::Input>(subscribe_channel.clone())
+            .with_output_type(std::any::type_name::<D::Reply>());
+        if let Some(description) = description {
+            meta = meta.with_description(description);
+        }
+        let handler = PublishingHandler {
+            def,
+            codec,
+            publisher,
+            topic,
+        };
+        self.subscribe(Topic::new(subscribe_channel), handler, meta);
     }
 
     /// Mounts every registration from `router` onto this broker.

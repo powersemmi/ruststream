@@ -32,6 +32,7 @@ mod error;
 mod headers;
 mod message;
 mod publisher;
+mod schema;
 mod subscriber;
 mod subscription;
 pub mod testing;
@@ -44,6 +45,7 @@ pub use error::AckError;
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;
+pub use schema::Message;
 pub use subscriber::Subscriber;
 pub use subscription::{SubscriptionSource, Topic};
 
@@ -57,6 +59,18 @@ pub mod runtime;
 
 #[cfg(feature = "runtime")]
 pub use runtime::RustStream;
+
+/// Attribute macro that turns an `async fn` into a mountable subscriber definition.
+///
+/// Available with the `macros` feature. See [`ruststream_macros::subscriber`].
+#[cfg(feature = "macros")]
+pub use ruststream_macros::subscriber;
+
+/// Derive macro for [`Message`] metadata (type name + doc description).
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::Message;
 
 #[cfg(feature = "conformance")]
 pub mod conformance;

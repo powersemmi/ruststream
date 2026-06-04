@@ -29,6 +29,43 @@ impl HandlerResult {
     }
 }
 
+/// Conversion into a [`HandlerResult`], so `#[subscriber]` handlers can return a plain value
+/// instead of always constructing one.
+///
+/// Implemented for [`HandlerResult`] (identity), `()` (always [`Ack`](HandlerResult::Ack)), and
+/// `Result<_, E>` (`Ok` acks, `Err` drops).
+pub trait IntoHandlerResult {
+    /// Converts `self` into the outcome the dispatcher acts on.
+    fn into_handler_result(self) -> HandlerResult;
+}
+
+impl IntoHandlerResult for HandlerResult {
+    fn into_handler_result(self) -> HandlerResult {
+        self
+    }
+}
+
+impl IntoHandlerResult for () {
+    fn into_handler_result(self) -> HandlerResult {
+        HandlerResult::Ack
+    }
+}
+
+impl<E> IntoHandlerResult for Result<(), E> {
+    fn into_handler_result(self) -> HandlerResult {
+        match self {
+            Ok(()) => HandlerResult::Ack,
+            Err(_) => HandlerResult::drop(),
+        }
+    }
+}
+
+impl<E> IntoHandlerResult for Result<HandlerResult, E> {
+    fn into_handler_result(self) -> HandlerResult {
+        self.unwrap_or_else(|_| HandlerResult::drop())
+    }
+}
+
 /// A handler invoked on each input it is given.
 ///
 /// The same trait serves both pipeline levels: a raw delivery (`Handler<M>` where

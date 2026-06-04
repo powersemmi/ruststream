@@ -223,6 +223,72 @@ async fn global_layer_wraps_handlers() {
     run.await.unwrap().unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cross_broker_publish_via_named_publisher() {
+    let ingress = MemoryBroker::new();
+    let egress = MemoryBroker::new();
+    let ingress_pub = ingress.publisher();
+
+    let received = Arc::new(AtomicU32::new(0));
+    let received_clone = Arc::clone(&received);
+
+    let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
+        .publisher("egress", egress.publisher())
+        .with_broker(ingress, |b| {
+            let out = b.publisher("egress").expect("egress registered");
+            b.subscribe(
+                Topic::new("orders"),
+                move |_msg: &_| {
+                    let out = Arc::clone(&out);
+                    async move {
+                        let _ = out.publish_bytes("responses", b"reply").await;
+                        HandlerResult::Ack
+                    }
+                },
+                HandlerMetadata::raw("orders"),
+            );
+        })
+        .with_broker(egress, |b| {
+            let subscriber = b.broker().subscribe("responses");
+            b.handle(
+                subscriber,
+                move |_msg: &_| {
+                    let received = Arc::clone(&received_clone);
+                    async move {
+                        received.fetch_add(1, Ordering::SeqCst);
+                        HandlerResult::Ack
+                    }
+                },
+                HandlerMetadata::raw("responses"),
+            );
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    // ingress "orders" subscribes inside run() (deferred); retry until the bridge fires.
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = ingress_pub
+                .publish(OutgoingMessage::new("orders", b"x"))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if received.load(Ordering::SeqCst) >= 1 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "cross-broker publish did not arrive on egress"
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
 #[test]
 fn app_records_handler_metadata() {
     let broker = MemoryBroker::new();
