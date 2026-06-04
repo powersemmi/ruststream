@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block scripts %}
+  {{ super() }}
+  {#
+    Context7 "Ask AI" widget (free for open source; indexes the public repo).
+    Update data-library if the org or repo name changes.
+  #}
+  <script src="https://context7.com/widget.js" data-library="/powersemmi/ruststream"></script>
+{% endblock %}

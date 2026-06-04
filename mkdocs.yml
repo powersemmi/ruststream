@@ -8,6 +8,7 @@ copyright: Apache-2.0
 
 theme:
   name: material
+  custom_dir: overrides
   features:
     - navigation.sections
     - navigation.top
