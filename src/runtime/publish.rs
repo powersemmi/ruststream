@@ -175,13 +175,51 @@ impl std::fmt::Debug for ScopedPublisher<'_> {
     }
 }
 
-/// A byte [`Publisher`] paired with a [`Codec`], ready to send typed values.
+/// A static, compile-time publish transform: mutates an [`Outgoing`] before it is sent.
 ///
-/// This is the publish-side counterpart to a typed subscriber: it carries *how* a value is encoded,
-/// while *where* it goes (the destination name) is supplied per send — so one `TypedPublisher` (a
-/// broker connection + reply codec) is reused across handlers replying to different names. The
-/// [`#[subscriber(.., publish("name"))]`](macro) reply form supplies the name; the `TypedPublisher`
-/// is passed at wiring.
+/// The publish-side counterpart to the consume-side [`Layer`](super::Layer): zero-cost composition,
+/// no `dyn` dispatch. Baked onto a [`TypedPublisher`] with [`TypedPublisher::layer`]. Use for
+/// per-destination transforms that belong to the publisher itself — a Confluent / Avro envelope, a
+/// fixed content-type header. For cross-cutting *observation* across every publish (metrics), use
+/// the dynamic [`PublishMiddleware`] via
+/// [`RustStream::publish_layer`](super::RustStream::publish_layer) instead; the static transforms
+/// run first (closest to the value), then the dynamic pipeline, then the send.
+pub trait PublishLayer: Send + Sync {
+    /// Transforms `out` in place before it is sent.
+    fn apply(&self, out: &mut Outgoing);
+}
+
+/// The no-op [`PublishLayer`]: the default for a [`TypedPublisher`] with no static transforms.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PublishIdentity;
+
+impl PublishLayer for PublishIdentity {
+    fn apply(&self, _out: &mut Outgoing) {}
+}
+
+/// Composes two [`PublishLayer`]s: `inner` runs first, then `outer`. Built by
+/// [`TypedPublisher::layer`]; you rarely name it directly.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PublishStack<Inner, Outer> {
+    inner: Inner,
+    outer: Outer,
+}
+
+impl<Inner: PublishLayer, Outer: PublishLayer> PublishLayer for PublishStack<Inner, Outer> {
+    fn apply(&self, out: &mut Outgoing) {
+        self.inner.apply(out);
+        self.outer.apply(out);
+    }
+}
+
+/// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishLayer`] stack, ready to send
+/// typed values.
+///
+/// The publish-side counterpart to a typed subscriber: it carries *how* a value is encoded and the
+/// per-publisher transforms ([`layer`](Self::layer)), while *where* it goes (the destination name)
+/// is supplied per send — so one `TypedPublisher` is reused across handlers replying to different
+/// names. The [`#[subscriber(.., publish("name"))]`](macro) reply form supplies the name; the
+/// `TypedPublisher` is passed at wiring.
 ///
 /// ```
 /// # #[cfg(all(feature = "memory", feature = "json"))]
@@ -197,21 +235,42 @@ impl std::fmt::Debug for ScopedPublisher<'_> {
 /// ```
 ///
 /// [macro]: crate::subscriber
-pub struct TypedPublisher<P, C> {
+pub struct TypedPublisher<P, C, PL = PublishIdentity> {
     publisher: P,
     codec: C,
+    layers: PL,
 }
 
-impl<P, C> TypedPublisher<P, C> {
-    /// Pairs `publisher` with `codec`.
+impl<P, C> TypedPublisher<P, C, PublishIdentity> {
+    /// Pairs `publisher` with `codec` and no static transforms.
     #[must_use]
     pub fn new(publisher: P, codec: C) -> Self {
-        Self { publisher, codec }
+        Self {
+            publisher,
+            codec,
+            layers: PublishIdentity,
+        }
     }
 }
 
-impl<P: Publisher, C: Codec> TypedPublisher<P, C> {
-    /// Encodes `value` and publishes it to `name`, through `pipeline`.
+impl<P, C, PL> TypedPublisher<P, C, PL> {
+    /// Adds a static [`PublishLayer`], applied to every outgoing message from this publisher. The
+    /// first one added runs first (closest to the encoded value).
+    #[must_use]
+    pub fn layer<N>(self, layer: N) -> TypedPublisher<P, C, PublishStack<PL, N>> {
+        TypedPublisher {
+            publisher: self.publisher,
+            codec: self.codec,
+            layers: PublishStack {
+                inner: self.layers,
+                outer: layer,
+            },
+        }
+    }
+}
+
+impl<P: Publisher, C: Codec, PL: PublishLayer> TypedPublisher<P, C, PL> {
+    /// Encodes `value`, applies the static transforms, then publishes to `name` through `pipeline`.
     pub(crate) async fn publish<T: Serialize + Sync>(
         &self,
         name: &str,
@@ -223,11 +282,12 @@ impl<P: Publisher, C: Codec> TypedPublisher<P, C> {
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = Outgoing::new(name.to_owned(), bytes.to_vec());
+        self.layers.apply(&mut out);
         run_publish(pipeline, &self.publisher, &mut out).await
     }
 }
 
-impl<P, C> std::fmt::Debug for TypedPublisher<P, C> {
+impl<P, C, PL> std::fmt::Debug for TypedPublisher<P, C, PL> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TypedPublisher").finish_non_exhaustive()
     }

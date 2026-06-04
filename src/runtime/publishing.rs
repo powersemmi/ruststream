@@ -15,7 +15,7 @@ use crate::{IncomingMessage, Publisher};
 
 use super::context::Context;
 use super::handler::{Handler, HandlerResult};
-use super::publish::{PublishMiddleware, TypedPublisher};
+use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 
 /// A subscriber definition that produces a reply to publish.
 ///
@@ -56,16 +56,17 @@ pub trait PublishingDef: Send + Sync {
 
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, encode the reply, publish, ack.
 ///
-/// `C` decodes the incoming message; the reply is encoded by the [`TypedPublisher`] and sent to the
-/// definition's [`reply_name`](PublishingDef::reply_name).
-pub struct PublishingHandler<D, C, P, PC> {
+/// `C` decodes the incoming message; the reply is encoded by the [`TypedPublisher`] (with its static
+/// [`PublishLayer`] stack `PL`) and sent to the definition's
+/// [`reply_name`](PublishingDef::reply_name).
+pub struct PublishingHandler<D, C, P, PC, PL> {
     pub(crate) def: D,
     pub(crate) codec: C,
-    pub(crate) publisher: TypedPublisher<P, PC>,
+    pub(crate) publisher: TypedPublisher<P, PC, PL>,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
 }
 
-impl<D, C, P, PC> std::fmt::Debug for PublishingHandler<D, C, P, PC> {
+impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PublishingHandler")
             .field("publisher", &self.publisher)
@@ -73,7 +74,7 @@ impl<D, C, P, PC> std::fmt::Debug for PublishingHandler<D, C, P, PC> {
     }
 }
 
-impl<M, D, C, P, PC> Handler<M> for PublishingHandler<D, C, P, PC>
+impl<M, D, C, P, PC, PL> Handler<M> for PublishingHandler<D, C, P, PC, PL>
 where
     M: IncomingMessage,
     D: PublishingDef,
@@ -82,6 +83,7 @@ where
     C: Codec,
     P: Publisher,
     PC: Codec,
+    PL: PublishLayer,
 {
     async fn handle(&self, msg: &M, _ctx: &mut Context<'_>) -> HandlerResult {
         let input = match self.codec.decode::<D::Input>(msg.payload()) {

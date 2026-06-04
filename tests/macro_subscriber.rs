@@ -9,7 +9,8 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishMiddleware, PublishNext, RustStream, TypedPublisher,
+    AppInfo, HandlerResult, Outgoing, PublishLayer, PublishMiddleware, PublishNext, RustStream,
+    TypedPublisher,
 };
 use ruststream::{Message, OutgoingMessage, Publisher, SubscriptionSource, subscriber};
 use serde::{Deserialize, Serialize};
@@ -235,6 +236,76 @@ async fn scope_default_codec_drops_per_call_codec() {
     })
     .await;
     assert!(result.is_ok(), "scope-default-codec handler did not run");
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+/// A static (zero-cost) publish transform baked onto the `TypedPublisher`.
+struct StaticEnvelope;
+
+impl PublishLayer for StaticEnvelope {
+    fn apply(&self, out: &mut Outgoing) {
+        out.headers_mut().insert("x-static", b"1".to_vec());
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Ping {
+    n: u32,
+}
+
+static STATIC_SEEN: AtomicU32 = AtomicU32::new(0);
+
+#[subscriber("ping-in", publish("ping-out"))]
+async fn relay(p: &Ping) -> Ping {
+    Ping { n: p.n }
+}
+
+#[subscriber("ping-out")]
+async fn check(p: &Ping, ctx: &mut Context) -> HandlerResult {
+    if ctx.headers().get("x-static").is_some() {
+        STATIC_SEEN.store(p.n, Ordering::SeqCst);
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn static_publish_layer_transforms_reply() {
+    let ingress = MemoryBroker::new();
+    let egress = MemoryBroker::new();
+    let ingress_pub = ingress.publisher();
+
+    // The static layer is composed onto the publisher at compile time — no dyn dispatch.
+    let egress_pub = TypedPublisher::new(egress.publisher(), JsonCodec).layer(StaticEnvelope);
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(ingress, |b| {
+            b.include_publishing(relay, JsonCodec, egress_pub)
+        })
+        .with_broker(egress, |b| b.include(check, JsonCodec));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Ping { n: 7 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = ingress_pub
+                .publish(OutgoingMessage::new("ping-in", &payload))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if STATIC_SEEN.load(Ordering::SeqCst) == 7 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "static publish layer header did not reach the consumer",
+    );
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
