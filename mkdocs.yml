@@ -77,6 +77,8 @@ nav:
       - guides/metrics.md
       - guides/testing.md
       - guides/cli.md
+  - Brokers:
+      - brokers/index.md
   - Broker authors:
       - broker-authors/index.md
       - broker-authors/example-nats.md

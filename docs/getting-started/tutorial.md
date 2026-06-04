@@ -153,11 +153,36 @@ Every subscriber becomes a channel and a `receive` operation; payload types that
 
 ## 7. Swap in a real broker
 
-Nothing above is tied to the in-memory broker. Replace `MemoryBroker::new()` with a real broker's
-constructor and config; the handlers, router, and codecs are unchanged. Each broker crate documents
-its own `Config`. Subscriptions that need broker-specific options (consumer groups, durable names)
-use that broker's descriptor in the decorator - see
-[Subscribers & publishers](../guides/subscribers.md#broker-specific-descriptors).
+Nothing above is tied to the in-memory broker. The handlers, router, and codecs are unchanged; only
+the broker construction differs. Add the broker crate as a dependency and swap the `with_broker`
+line:
+
+=== "Memory"
+
+    ```rust
+    use ruststream::memory::MemoryBroker;
+
+    .with_broker(MemoryBroker::new(), |b| {
+        let router = routes::orders(b.broker());
+        b.include_router(router);
+    })
+    ```
+
+=== "NATS"
+
+    ```rust
+    use ruststream_nats::NatsBroker;
+
+    .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
+        let router = routes::orders(b.broker());
+        b.include_router(router);
+    })
+    ```
+
+Each broker crate documents its own `Config`. Subscriptions that need broker-specific options
+(consumer groups, durable names) use that broker's descriptor in the decorator, see
+[Subscribers & publishers](../guides/subscribers.md#broker-specific-descriptors). The available
+brokers are listed under [Brokers](../brokers/index.md).
 
 ## Next steps
 
