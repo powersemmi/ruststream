@@ -8,20 +8,22 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, DeriveInput, Expr, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Meta, PatType,
-    ReturnType, Token, Type, parenthesized, parse_macro_input,
+    Attribute, DeriveInput, Expr, ExprCall, ExprLit, ExprPath, ExprStruct, FnArg, Ident, ItemFn,
+    Lit, LitStr, Meta, PatType, Path, ReturnType, Token, Type, TypePath, parenthesized,
+    parse_macro_input,
 };
 
-/// Arguments to `#[subscriber(..)]`: the subscribe topic and an optional `publish("topic")` clause
-/// naming the reply destination.
+/// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
+/// descriptor constructor `Type::new(..)` / `Type { .. }`) and an optional `publish("topic")`
+/// clause naming the reply destination.
 struct SubscriberArgs {
-    topic: LitStr,
+    source: Expr,
     publish: Option<LitStr>,
 }
 
 impl Parse for SubscriberArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let topic: LitStr = input.parse()?;
+        let source: Expr = input.parse()?;
         let mut publish = None;
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
@@ -36,8 +38,69 @@ impl Parse for SubscriberArgs {
             parenthesized!(content in input);
             publish = Some(content.parse()?);
         }
-        Ok(Self { topic, publish })
+        Ok(Self { source, publish })
     }
+}
+
+/// Derives the subscription `Source` type and a constructor expression from the macro argument.
+///
+/// A string literal `"orders"` becomes `(Name, Name::new("orders"))`; a constructor expression
+/// `RedisStream::new(..)` or `RedisStream { .. }` becomes `(RedisStream, <the expr verbatim>)` by
+/// pulling the type out of the call/struct path. Free functions (`redis::stream(..)`) and builder
+/// chains are rejected — their result type is not visible in the tokens.
+fn source_tokens(expr: &Expr) -> syn::Result<(TokenStream2, TokenStream2)> {
+    if let Expr::Lit(ExprLit {
+        lit: Lit::Str(name),
+        ..
+    }) = expr
+    {
+        return Ok((
+            quote!(::ruststream::Name),
+            quote!(::ruststream::Name::new(#name)),
+        ));
+    }
+
+    let ty: Type = match expr {
+        Expr::Call(ExprCall { func, .. }) => match &**func {
+            Expr::Path(ExprPath {
+                path, qself: None, ..
+            }) => type_from_constructor_path(path)?,
+            _ => return Err(unsupported_source(expr)),
+        },
+        Expr::Struct(ExprStruct { path, .. }) => Type::Path(TypePath {
+            qself: None,
+            path: path.clone(),
+        }),
+        _ => return Err(unsupported_source(expr)),
+    };
+    Ok((quote!(#ty), quote!(#expr)))
+}
+
+/// Builds the type from a constructor path by dropping the final segment (`Type::new` -> `Type`).
+fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
+    let n = path.segments.len();
+    if n < 2 {
+        return Err(syn::Error::new_spanned(
+            path,
+            "expected `Type::new(..)`: the path must name a type and an associated constructor",
+        ));
+    }
+    let segments = path.segments.iter().take(n - 1).cloned().collect();
+    Ok(Type::Path(TypePath {
+        qself: None,
+        path: Path {
+            leading_colon: path.leading_colon,
+            segments,
+        },
+    }))
+}
+
+fn unsupported_source(expr: &Expr) -> syn::Error {
+    syn::Error::new_spanned(
+        expr,
+        "expected a string literal name, `Type::new(..)`, or `Type { .. }` — \
+         free functions and builder chains do not expose their type to the macro",
+    )
 }
 
 /// Turns an `async fn` handler into a mountable subscriber definition.
@@ -89,7 +152,7 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     };
     let input_ty = &reference.elem;
     let description = doc_description(&func.attrs);
-    let topic = &args.topic;
+    let (source_ty, source_expr) = source_tokens(&args.source)?;
 
     // Captures the input type's JSON Schema for AsyncAPI when it implements `JsonSchema` (and the
     // `asyncapi` feature is on), via the autoref-specialization probe; `None` otherwise. The
@@ -127,8 +190,9 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
             impl ::ruststream::runtime::PublishingDef for #name {
                 type Input = #input_ty;
                 type Reply = #reply_ty;
+                type Source = #source_ty;
 
-                fn name(&self) -> &str { #topic }
+                fn source(&self) -> Self::Source { #source_expr }
                 fn reply_name(&self) -> &str { #reply_topic }
 
                 fn description(&self) -> ::core::option::Option<&str> {
@@ -166,8 +230,9 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
             impl ::ruststream::runtime::SubscriberDef for #name {
                 type Input = #input_ty;
                 type Handler = Self;
+                type Source = #source_ty;
 
-                fn name(&self) -> &str { #topic }
+                fn source(&self) -> Self::Source { #source_expr }
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description

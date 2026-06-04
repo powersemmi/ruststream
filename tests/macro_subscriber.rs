@@ -39,6 +39,14 @@ struct StreamSource {
     name: String,
 }
 
+impl StreamSource {
+    fn new(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+        }
+    }
+}
+
 impl SubscriptionSource<MemoryBroker> for StreamSource {
     type Subscriber = MemorySubscriber;
 
@@ -93,6 +101,51 @@ async fn macro_def_mounts_on_arbitrary_source() {
     })
     .await;
     assert!(result.is_ok(), "include_on handler did not run");
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+static HANDLED_CTOR: AtomicU32 = AtomicU32::new(0);
+
+// The descriptor lives in the decorator: the macro pulls the `StreamSource` type out of the
+// constructor path and `include` mounts on `def.source()`, with the broker checked at compile time.
+#[subscriber(StreamSource::new("ctor.stream"))]
+async fn on_ctor(order: &Order) -> HandlerResult {
+    HANDLED_CTOR.fetch_add(order.id, Ordering::SeqCst);
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn macro_descriptor_in_decorator() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    // No source at the call site — it came from the macro argument.
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(broker, |b| b.include(on_ctor, JsonCodec));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("ctor.stream", &payload))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if HANDLED_CTOR.load(Ordering::SeqCst) >= 6 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "descriptor-in-decorator handler did not run"
+    );
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();

@@ -5,10 +5,11 @@ use super::handler::Handler;
 
 /// A handler definition produced by the `#[subscriber]` macro.
 ///
-/// It bundles a typed [`Handler`] with the name it binds to, so
-/// [`BrokerScope::include`](super::BrokerScope::include) can subscribe and wire decoding without
-/// the caller repeating the name or message type. The generated type is itself the handler, so
-/// [`Handler`](Self::Handler) is usually `Self`.
+/// It bundles a typed [`Handler`] with the subscription [`Source`](Self::Source) it binds to, so
+/// [`BrokerScope::include`](super::BrokerScope::include) can subscribe and wire decoding without the
+/// caller repeating anything. The source is a [`Name`](crate::Name) for `#[subscriber("topic")]`, or
+/// a broker descriptor for `#[subscriber(RedisStream::new(..))]`. The generated type is itself the
+/// handler, so [`Handler`](Self::Handler) is usually `Self`.
 pub trait SubscriberDef: Sized {
     /// The decoded message type the handler consumes.
     type Input;
@@ -16,8 +17,13 @@ pub trait SubscriberDef: Sized {
     /// The concrete handler type over [`Input`](Self::Input).
     type Handler: Handler<Self::Input>;
 
-    /// The name (subject / channel) this handler subscribes to.
-    fn name(&self) -> &str;
+    /// The subscription source this handler binds to. The bound to
+    /// [`SubscriptionSource`](crate::SubscriptionSource) for the target broker is applied where the
+    /// def is mounted, not on the trait, so a def can name any broker's descriptor.
+    type Source;
+
+    /// Builds the subscription source (fresh each call).
+    fn source(&self) -> Self::Source;
 
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
     fn description(&self) -> Option<&str> {

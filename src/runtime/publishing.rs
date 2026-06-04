@@ -29,8 +29,12 @@ pub trait PublishingDef: Send + Sync {
     /// The reply type the handler produces, encoded and published.
     type Reply;
 
-    /// The name (subject / channel) this handler subscribes to.
-    fn name(&self) -> &str;
+    /// The subscription source this handler binds to (see
+    /// [`SubscriberDef::Source`](super::SubscriberDef::Source)).
+    type Source;
+
+    /// Builds the subscription source (fresh each call).
+    fn source(&self) -> Self::Source;
 
     /// The name (subject / channel) the reply is published to.
     fn reply_name(&self) -> &str;
