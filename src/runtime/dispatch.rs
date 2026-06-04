@@ -8,7 +8,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 use crate::{IncomingMessage, Subscriber};
 
@@ -77,7 +77,14 @@ where
                             "subscriber stream error",
                         );
                     }
-                    None => break,
+                    None => {
+                        debug!(
+                            target: "ruststream::dispatch",
+                            subscriber = %name,
+                            "subscriber stream ended",
+                        );
+                        break;
+                    }
                 }
             }
         }

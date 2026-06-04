@@ -12,7 +12,7 @@ use std::{
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -489,8 +489,10 @@ impl<L> RustStream<L> {
         F: Future<Output = ()> + Send,
     {
         let Self {
+            info,
             brokers,
             starters,
+            handlers,
             mut state,
             on_startup,
             after_startup,
@@ -500,6 +502,18 @@ impl<L> RustStream<L> {
             ..
         } = self;
 
+        info!(
+            target: "ruststream::lifecycle",
+            service = %info.title,
+            version = %info.version,
+            brokers = brokers.len(),
+            subscribers = starters.len(),
+            "starting service",
+        );
+
+        if !on_startup.is_empty() {
+            debug!(target: "ruststream::lifecycle", count = on_startup.len(), "running on_startup hooks");
+        }
         for hook in on_startup {
             state = hook(state).await.map_err(RustStreamError::Startup)?;
         }
@@ -507,24 +521,37 @@ impl<L> RustStream<L> {
 
         for broker in &brokers {
             broker.connect().await.map_err(RustStreamError::Connect)?;
+            info!(target: "ruststream::lifecycle", broker = broker.name(), "broker connected");
         }
 
         let token = CancellationToken::new();
         let mut handles = Vec::with_capacity(starters.len());
-        for starter in starters {
+        for (starter, meta) in starters.into_iter().zip(handlers) {
             let handle = starter(state.clone(), token.clone())
                 .await
                 .map_err(RustStreamError::Subscribe)?;
+            info!(
+                target: "ruststream::dispatch",
+                subscriber = %meta.name,
+                input = meta.input_type,
+                "subscriber started",
+            );
             handles.push(handle);
         }
 
+        if !after_startup.is_empty() {
+            debug!(target: "ruststream::lifecycle", count = after_startup.len(), "running after_startup hooks");
+        }
         for hook in after_startup {
             hook(Arc::clone(&state))
                 .await
                 .map_err(RustStreamError::Startup)?;
         }
 
+        info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
+
         shutdown.await;
+        info!(target: "ruststream::lifecycle", "shutdown signal received");
 
         for hook in on_shutdown {
             if let Err(err) = hook(Arc::clone(&state)).await {
@@ -533,10 +560,12 @@ impl<L> RustStream<L> {
         }
 
         token.cancel();
+        debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
         drain_handles(handles, shutdown_timeout).await?;
 
         for broker in brokers.iter().rev() {
             broker.shutdown().await.map_err(RustStreamError::Shutdown)?;
+            debug!(target: "ruststream::lifecycle", broker = broker.name(), "broker shut down");
         }
 
         for hook in after_shutdown {
@@ -544,6 +573,7 @@ impl<L> RustStream<L> {
                 warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
             }
         }
+        info!(target: "ruststream::lifecycle", "service stopped");
         Ok(())
     }
 }

@@ -32,12 +32,65 @@ Core NATS subjects and JetStream durable consumers.
 ```toml
 ruststream = { version = "0.2", features = ["macros"] }
 ruststream-nats = "0.2"
+serde = { version = "1", features = ["derive"] }
 ```
 
-```rust
-use ruststream_nats::NatsBroker;
+`NatsBroker::new` is synchronous and does no I/O, so a NATS service is assembled with the same
+`#[ruststream::app]` macro as any other broker. The runtime connects the broker once at startup,
+before opening subscriptions.
 
-let broker = NatsBroker::new("nats://localhost:4222");
+### Core subscription
+
+A `#[subscriber("subject")]` handler binds straight to a NATS subject:
+
+```rust
+use ruststream::codec::JsonCodec;
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::subscriber;
+use ruststream_nats::NatsBroker;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct Order {
+    id: u64,
+}
+
+#[subscriber("orders.created")]
+async fn handle(order: &Order) -> HandlerResult {
+    println!("got order {}", order.id);
+    HandlerResult::Ack
+}
+```
+
+Wire it onto the broker; the `with_broker` / `include` part is identical to the in-memory broker.
+
+```rust
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
+            b.include(handle, JsonCodec)
+        })
+}
+```
+
+### JetStream durable consumer
+
+To consume from JetStream instead, override the handler's by-name source with `SubscribeOptions`,
+naming the stream and a durable consumer so progress survives restarts. The handler's
+`HandlerResult::Ack` acks back to JetStream.
+
+```rust
+use ruststream_nats::SubscribeOptions;
+
+// inside with_broker(broker, |b| { ... }):
+b.include_on(
+    SubscribeOptions::new("orders.*")
+        .jetstream("ORDERS")
+        .durable("orders-worker"),
+    handle,
+    JsonCodec,
+);
 ```
 
 See the crate's documentation for connection options, authentication, and JetStream configuration.
@@ -46,7 +99,8 @@ For how a NATS broker implements the contract from the inside, read the
 
 ## Switching brokers
 
-The same service runs on either broker; only the construction differs.
+The same handlers and routers run on either broker, and both build synchronously, so only the
+broker construction differs by one line inside `with_broker`.
 
 === "Memory"
 

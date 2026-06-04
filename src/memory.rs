@@ -19,7 +19,7 @@ use std::{
 
 use crate::{
     AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, RawMessage, Subscribe,
-    Subscriber, testing::TestClient,
+    Subscriber, SubscriptionSource, testing::TestClient,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -142,6 +142,38 @@ impl Subscribe for MemoryBroker {
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         Ok(MemoryBroker::subscribe(self, name))
+    }
+}
+
+/// A subscription descriptor for [`MemoryBroker`], naming the subject to receive on.
+///
+/// The broker-owned counterpart to the generic [`Name`](crate::Name) source: it carries no extra
+/// configuration (the in-memory broker has none), but giving every broker its own
+/// [`SubscriptionSource`] keeps the macro-subscriber and lazy-startup paths uniform across brokers.
+/// Pass it to the descriptor form of the macro, `#[subscriber(MemorySource::new("orders"))]`, the
+/// way a NATS service passes `SubscribeOptions`.
+#[derive(Debug, Clone)]
+pub struct MemorySource {
+    name: String,
+}
+
+impl MemorySource {
+    /// Creates a source bound to `name`.
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
+
+impl SubscriptionSource<MemoryBroker> for MemorySource {
+    type Subscriber = MemorySubscriber;
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn subscribe(self, broker: &MemoryBroker) -> Result<Self::Subscriber, Infallible> {
+        Ok(broker.subscribe(self.name))
     }
 }
 

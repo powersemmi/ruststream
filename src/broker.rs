@@ -14,6 +14,18 @@ use std::{error::Error as StdError, future::Future};
 ///
 /// `Send + Sync` is required so the router can share the broker handle across tasks.
 ///
+/// # Lazy startup contract
+///
+/// Implementations MUST be constructible **synchronously**, without performing I/O: expose a plain
+/// `new(..)` constructor that only captures configuration (addresses, credentials). All network
+/// setup happens in [`connect`], which the runtime calls once at startup, after the synchronous
+/// `#[ruststream::app]` builder has run. This is what lets a service be assembled with the app
+/// macro regardless of broker. A broker that can only be built by connecting (an `async` "connect
+/// and return the handle" constructor) does not satisfy this contract. Each broker also ships a
+/// [`SubscriptionSource`](crate::SubscriptionSource) for its subjects, resolved after `connect`.
+/// [`conformance::harness::lifecycle`](crate::conformance::harness::lifecycle) checks the whole
+/// path: synchronous construction, `connect`, subscribe through the source, deliver, ack, shutdown.
+///
 /// # Examples
 ///
 /// ```

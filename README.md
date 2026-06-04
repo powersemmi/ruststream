@@ -35,6 +35,8 @@ the framework.
 - **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI
   scaffolds projects, runs them, and generates the AsyncAPI document.
 - **AsyncAPI 3.0 and Prometheus metrics,** served from your own HTTP stack.
+- **Colored console logging** behind the `logging` feature; the generated CLI installs it on `run`,
+  with verbosity driven by `RUST_LOG`.
 - **Capability traits** for optional features (batch subscribe, transactions, request-reply,
   partitioning); a broker implements only what it supports.
 

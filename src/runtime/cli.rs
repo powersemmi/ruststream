@@ -5,7 +5,9 @@
 //! binary which understands two commands:
 //!
 //! - `run` (the default) builds a multi-thread Tokio runtime and runs the service until an
-//!   interrupt, mirroring [`RustStream::run`].
+//!   interrupt, mirroring [`RustStream::run`]. With the `logging` feature enabled it first installs
+//!   the colored console logger ([`crate::logging`]), so a scaffolded service prints logs without
+//!   any setup; an app that installs its own subscriber keeps it.
 //! - `asyncapi gen [-o <file>] [--yaml]` builds the [`AsyncAPI`](crate::asyncapi) document for the
 //!   service and writes it to stdout or a file. Requires the crate to enable the `asyncapi` feature.
 //!
@@ -116,6 +118,11 @@ where
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse(&args)? {
         Command::Run => {
+            // Install the colored console logger so a freshly scaffolded service prints logs out
+            // of the box. Ignore the error: it only fails if the app already installed its own
+            // subscriber, which we must not replace.
+            #[cfg(feature = "logging")]
+            let _ = crate::logging::init();
             let app = build();
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
