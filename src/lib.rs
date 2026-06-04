@@ -17,6 +17,8 @@
 //!   [`#[derive(Message)]`](macro@Message) macros.
 //! * `asyncapi`: `AsyncAPI` document generation and the HTML viewer.
 //! * `metrics`: Prometheus metrics middleware and exporter.
+//! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`
+//!   ([`logging::init`]). The generated `cli` `run` command installs it automatically.
 //! * `conformance`: the [`conformance::harness`] contract suite and broker-agnostic
 //!   [`conformance::helpers`] for application tests. Generic over any broker's `TestClient`, so it
 //!   pulls in no concrete broker (enable `memory` too to run it against [`memory::MemoryBroker`]).
@@ -95,6 +97,9 @@ pub use schemars;
 
 #[cfg(feature = "metrics")]
 pub mod metrics;
+
+#[cfg(feature = "logging")]
+pub mod logging;
 
 /// Implementation detail used by the `#[subscriber]` macro to capture a payload's JSON Schema.
 ///

@@ -21,7 +21,8 @@
 use std::{future::Future, time::Duration};
 
 use crate::{
-    Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber, testing::TestClient,
+    Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
+    testing::TestClient,
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -53,6 +54,88 @@ where
     nack_without_requeue_drops(fresh().await).await;
     headers_propagate(fresh().await).await;
     expect_published_observes_publishes(fresh().await).await;
+}
+
+/// Verifies a broker honours the lazy-startup contract end to end.
+///
+/// The steps are: synchronous construction (no I/O in the constructor), then `connect`, a
+/// subscription opened through the broker's own [`SubscriptionSource`], a publish the subscription
+/// receives and acks, and finally `shutdown`.
+///
+/// The three factories keep the check broker-agnostic:
+/// * `make_broker` is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
+///   cannot satisfy it, which is exactly the contract: construct cheaply, connect lazily in
+///   [`Broker::connect`].
+/// * `make_source` builds the broker's subscription descriptor for a subject (the macro-subscriber
+///   path).
+/// * `make_publisher` produces a publisher from the connected broker.
+///
+/// Run it from the broker crate, against a real server where one is needed (NATS, Kafka, ...) or
+/// in-process for the in-memory broker.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # async fn run() {
+/// use ruststream::{conformance::harness, memory::{MemoryBroker, MemorySource}};
+///
+/// harness::lifecycle(
+///     || MemoryBroker::new(),
+///     |name| MemorySource::new(name),
+///     |broker| broker.publisher(),
+/// )
+/// .await;
+/// # }
+/// ```
+///
+/// # Panics
+///
+/// Panics with a descriptive message if construction, connection, subscription, delivery, ack, or
+/// shutdown does not behave as the contract requires.
+pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
+    make_broker: MkBroker,
+    make_source: MkSrc,
+    make_publisher: MkPub,
+) where
+    B: Broker,
+    MkBroker: Fn() -> B,
+    Src: SubscriptionSource<B> + Send,
+    Src::Subscriber: Send,
+    MkSrc: Fn(&str) -> Src,
+    Pub: Publisher,
+    MkPub: Fn(&B) -> Pub,
+{
+    const SUBJECT: &str = "conformance.lifecycle";
+
+    let broker = make_broker();
+    Broker::connect(&broker)
+        .await
+        .expect("broker must connect after synchronous construction");
+
+    let mut subscriber = make_source(SUBJECT)
+        .subscribe(&broker)
+        .await
+        .expect("subscription source must open after connect");
+    let publisher = make_publisher(&broker);
+
+    publisher
+        .publish(OutgoingMessage::new(SUBJECT, b"lifecycle".as_slice()))
+        .await
+        .expect("publish after connect failed");
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    let msg = expect_next(&mut stream, "lifecycle").await;
+    assert_eq!(
+        msg.payload(),
+        b"lifecycle",
+        "subscription opened through SubscriptionSource must receive the publish",
+    );
+    msg.ack().await.expect("ack failed");
+
+    Broker::shutdown(&broker)
+        .await
+        .expect("broker must shut down cleanly");
 }
 
 async fn ordering<T: TestClient>(client: T) {
