@@ -13,6 +13,7 @@ use serde::de::DeserializeOwned;
 use crate::codec::Codec;
 use crate::{Broker, Publisher, Subscribe, Subscriber, SubscriptionSource, Topic};
 
+use super::context::State;
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture, BrokerLifecycle};
 use super::metadata::HandlerMetadata;
@@ -29,7 +30,11 @@ type Publishers = HashMap<String, Arc<dyn ErasedPublisher>>;
 /// subscription (after the broker is connected) and spawns the dispatch task. The broker, source
 /// and handler are captured and type-erased.
 type Starter = Box<
-    dyn FnOnce(CancellationToken) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>> + Send,
+    dyn FnOnce(
+            Arc<State>,
+            CancellationToken,
+        ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
+        + Send,
 >;
 
 /// Service-level metadata, surfaced to the `AsyncAPI` generator as the spec `Info` object.
@@ -104,7 +109,7 @@ pub enum RustStreamError {
 /// # #[cfg(feature = "memory")]
 /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{AppInfo, HandlerMetadata, HandlerResult, RustStream};
+/// use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
 /// use ruststream::runtime::layers::TracingLayer;
 ///
 /// let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -113,7 +118,7 @@ pub enum RustStreamError {
 ///         let subscriber = b.broker().subscribe("orders");
 ///         b.handle(
 ///             subscriber,
-///             |_msg: &_| async { HandlerResult::Ack },
+///             |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
 ///             HandlerMetadata::raw("orders"),
 ///         );
 ///     });
@@ -126,6 +131,7 @@ pub struct RustStream<L = Identity> {
     starters: Vec<Starter>,
     handlers: Vec<HandlerMetadata>,
     publishers: Publishers,
+    state: State,
     global: L,
 }
 
@@ -149,6 +155,7 @@ impl RustStream<Identity> {
             starters: Vec::new(),
             handlers: Vec::new(),
             publishers: HashMap::new(),
+            state: State::default(),
             global: Identity,
         }
     }
@@ -166,8 +173,22 @@ impl<L> RustStream<L> {
             starters: self.starters,
             handlers: self.handlers,
             publishers: self.publishers,
+            state: self.state,
             global: Stack::new(layer, self.global),
         }
+    }
+
+    /// Inserts a shared application state value, readable from handlers and middleware via
+    /// [`Context::get`](super::Context::get).
+    ///
+    /// One value per type; inserting the same type again replaces it.
+    #[must_use]
+    pub fn insert_state<T>(mut self, value: T) -> Self
+    where
+        T: std::any::Any + Send + Sync,
+    {
+        self.state.insert(value);
+        self
     }
 
     /// Registers a named publisher, so handlers can publish to it by name (including from a
@@ -219,7 +240,7 @@ impl<L> RustStream<L> {
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let broker = broker.clone();
             self.starters
-                .push(Box::new(move |token| bound(broker, token)));
+                .push(Box::new(move |state, token| bound(broker, state, token)));
             self.handlers.push(meta);
         }
         self.brokers.push(lifecycle);
@@ -264,8 +285,12 @@ impl<L> RustStream<L> {
         F: Future<Output = ()> + Send,
     {
         let Self {
-            brokers, starters, ..
+            brokers,
+            starters,
+            state,
+            ..
         } = self;
+        let state = Arc::new(state);
 
         for broker in &brokers {
             broker.connect().await.map_err(RustStreamError::Connect)?;
@@ -274,7 +299,7 @@ impl<L> RustStream<L> {
         let token = CancellationToken::new();
         let mut handles = Vec::with_capacity(starters.len());
         for starter in starters {
-            let handle = starter(token.clone())
+            let handle = starter(state.clone(), token.clone())
                 .await
                 .map_err(RustStreamError::Subscribe)?;
             handles.push(handle);

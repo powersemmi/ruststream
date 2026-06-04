@@ -2,7 +2,7 @@
 
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU32, Ordering},
     },
     time::Duration,
@@ -11,7 +11,7 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Handler, HandlerMetadata, HandlerResult, Layer, Router, RustStream,
+    AppInfo, Context, Handler, HandlerMetadata, HandlerResult, Layer, Router, RustStream,
 };
 use ruststream::{OutgoingMessage, Publisher, Topic};
 use serde::{Deserialize, Serialize};
@@ -52,9 +52,9 @@ where
     M: Sync,
     H: Handler<M>,
 {
-    async fn handle(&self, msg: &M) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
         self.count.fetch_add(1, Ordering::SeqCst);
-        self.inner.handle(msg).await
+        self.inner.handle(msg, ctx).await
     }
 }
 
@@ -66,16 +66,17 @@ async fn app_dispatches_typed_messages() {
     let received = Arc::new(AtomicU32::new(0));
     let received_clone = Arc::clone(&received);
 
-    let handler = ruststream::runtime::typed(JsonCodec, move |order: &Order| {
-        let received = Arc::clone(&received_clone);
-        let total = order.total;
-        let id = order.id;
-        async move {
-            assert!(total > 0.0);
-            received.fetch_add(id, Ordering::SeqCst);
-            HandlerResult::Ack
-        }
-    });
+    let handler =
+        ruststream::runtime::typed(JsonCodec, move |order: &Order, _ctx: &mut Context| {
+            let received = Arc::clone(&received_clone);
+            let total = order.total;
+            let id = order.id;
+            async move {
+                assert!(total > 0.0);
+                received.fetch_add(id, Ordering::SeqCst);
+                HandlerResult::Ack
+            }
+        });
 
     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
         // Subscribe up front so messages published after run() starts are buffered, not lost.
@@ -121,7 +122,7 @@ async fn app_subscribes_via_descriptor_after_connect() {
     let app = RustStream::new(AppInfo::new("events", "0.1.0")).with_broker(broker, |b| {
         b.subscribe(
             Topic::new("events"),
-            move |_msg: &_| {
+            move |_msg: &_, _ctx: &mut Context| {
                 let seen = Arc::clone(&seen_clone);
                 async move {
                     seen.fetch_add(1, Ordering::SeqCst);
@@ -155,7 +156,7 @@ async fn included_router_handlers_dispatch() {
     let mut router = Router::<MemoryBroker>::new();
     router.subscribe(
         Topic::new("events"),
-        move |_msg: &_| {
+        move |_msg: &_, _ctx: &mut Context| {
             let seen = Arc::clone(&seen_clone);
             async move {
                 seen.fetch_add(1, Ordering::SeqCst);
@@ -193,7 +194,7 @@ async fn global_layer_wraps_handlers() {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &_| {
+                move |_msg: &_, _ctx: &mut Context| {
                     let handler_hits = Arc::clone(&handler_hits_clone);
                     async move {
                         handler_hits.fetch_add(1, Ordering::SeqCst);
@@ -238,7 +239,7 @@ async fn cross_broker_publish_via_named_publisher() {
             let out = b.publisher("egress").expect("egress registered");
             b.subscribe(
                 Topic::new("orders"),
-                move |_msg: &_| {
+                move |_msg: &_, _ctx: &mut Context| {
                     let out = Arc::clone(&out);
                     async move {
                         let _ = out.publish_bytes("responses", b"reply").await;
@@ -252,7 +253,7 @@ async fn cross_broker_publish_via_named_publisher() {
             let subscriber = b.broker().subscribe("responses");
             b.handle(
                 subscriber,
-                move |_msg: &_| {
+                move |_msg: &_, _ctx: &mut Context| {
                     let received = Arc::clone(&received_clone);
                     async move {
                         received.fetch_add(1, Ordering::SeqCst);
@@ -289,6 +290,65 @@ async fn cross_broker_publish_via_named_publisher() {
     run.await.unwrap().unwrap();
 }
 
+struct Config {
+    greeting: String,
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handler_reads_context_topic_and_state() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let seen = Arc::new(Mutex::new(None::<(String, String)>));
+    let seen_clone = Arc::clone(&seen);
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .insert_state(Config {
+            greeting: "hello".to_owned(),
+        })
+        .with_broker(broker, |b| {
+            let subscriber = b.broker().subscribe("orders");
+            b.handle(
+                subscriber,
+                move |_msg: &_, ctx: &mut Context| {
+                    let topic = ctx.topic().to_owned();
+                    let greeting = ctx.get::<Config>().map(|c| c.greeting.clone());
+                    // Middleware/handlers may enrich the working headers.
+                    ctx.headers_mut().insert("x-seen", b"1".to_vec());
+                    let seen = Arc::clone(&seen_clone);
+                    async move {
+                        *seen.lock().expect("poisoned") =
+                            Some((topic, greeting.unwrap_or_default()));
+                        HandlerResult::Ack
+                    }
+                },
+                HandlerMetadata::raw("orders"),
+            );
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    publisher
+        .publish(OutgoingMessage::new("orders", b"x"))
+        .await
+        .unwrap();
+
+    wait_for(
+        || seen.lock().expect("poisoned").is_some(),
+        Duration::from_secs(1),
+    )
+    .await;
+    assert_eq!(
+        *seen.lock().expect("poisoned"),
+        Some(("orders".to_owned(), "hello".to_owned())),
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
 #[test]
 fn app_records_handler_metadata() {
     let broker = MemoryBroker::new();
@@ -296,13 +356,13 @@ fn app_records_handler_metadata() {
         let subscriber = b.broker().subscribe("orders");
         b.handle(
             subscriber,
-            |_msg: &_| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
             HandlerMetadata::typed::<Order>("orders").with_description("processes orders"),
         );
         let alerts = b.broker().subscribe("alerts");
         b.handle(
             alerts,
-            |_msg: &_| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
             HandlerMetadata::raw("alerts"),
         );
     });

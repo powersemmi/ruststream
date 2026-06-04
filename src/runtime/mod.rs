@@ -1,6 +1,7 @@
 //! Application object, middleware and dispatch.
 
 mod app;
+mod context;
 mod dispatch;
 mod dynstack;
 mod handler;
@@ -14,6 +15,7 @@ mod subscriber_def;
 mod typed;
 
 pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
+pub use context::{Context, State};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use handler::{Handler, HandlerResult, IntoHandlerResult};
 pub use metadata::HandlerMetadata;

@@ -16,15 +16,21 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Broker, Subscriber, SubscriptionSource};
 
+use super::context::State;
 use super::dispatch::spawn_dispatch;
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
 
-/// A deferred registration: given the broker (after connect) and the shutdown token, it opens the
-/// subscription and spawns the dispatch task. The source and handler are captured and type-erased.
+/// A deferred registration: given the broker (after connect), shared state, and the shutdown
+/// token, it opens the subscription and spawns the dispatch task. The source and handler are
+/// captured and type-erased.
 pub(crate) type BoundStarter<B> = Box<
-    dyn FnOnce(Arc<B>, CancellationToken) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
+    dyn FnOnce(
+            Arc<B>,
+            Arc<State>,
+            CancellationToken,
+        ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
 >;
 
@@ -36,13 +42,13 @@ pub(crate) type BoundStarter<B> = Box<
 /// # #[cfg(feature = "memory")]
 /// # fn build() {
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{HandlerMetadata, HandlerResult, Router};
+/// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router};
 /// use ruststream::Topic;
 ///
 /// let mut router = Router::<MemoryBroker>::new();
 /// router.subscribe(
 ///     Topic::new("events"),
-///     |_msg: &_| async { HandlerResult::Ack },
+///     |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
 ///     HandlerMetadata::raw("events"),
 /// );
 /// // later: app.with_broker(broker, |b| b.include_router(router));
@@ -87,8 +93,9 @@ impl<B: Broker + 'static> Router<B> {
         H: Handler<S::Message> + 'static,
     {
         let handler = Arc::new(handler);
-        self.starters.push(Box::new(move |_broker, token| {
-            Box::pin(async move { Ok(spawn_dispatch(subscriber, handler, token)) })
+        let topic: Arc<str> = Arc::from(meta.topic.as_ref());
+        self.starters.push(Box::new(move |_broker, state, token| {
+            Box::pin(async move { Ok(spawn_dispatch(subscriber, handler, token, topic, state)) })
         }));
         self.handlers.push(meta);
     }
@@ -104,15 +111,17 @@ impl<B: Broker + 'static> Router<B> {
         H: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let handler = Arc::new(handler);
-        self.starters.push(Box::new(move |broker: Arc<B>, token| {
-            Box::pin(async move {
-                let subscriber = source
-                    .subscribe(broker.as_ref())
-                    .await
-                    .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(spawn_dispatch(subscriber, handler, token))
-            })
-        }));
+        let topic: Arc<str> = Arc::from(meta.topic.as_ref());
+        self.starters
+            .push(Box::new(move |broker: Arc<B>, state, token| {
+                Box::pin(async move {
+                    let subscriber = source
+                        .subscribe(broker.as_ref())
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
+                    Ok(spawn_dispatch(subscriber, handler, token, topic, state))
+                })
+            }));
         self.handlers.push(meta);
     }
 

@@ -11,6 +11,7 @@ use tracing::warn;
 use crate::IncomingMessage;
 use crate::codec::Codec;
 
+use super::context::Context;
 use super::handler::{Handler, HandlerResult};
 use super::publisher_registry::ErasedPublisher;
 
@@ -69,7 +70,7 @@ where
     D::Reply: Serialize + Send + Sync,
     C: Codec,
 {
-    async fn handle(&self, msg: &M) -> HandlerResult {
+    async fn handle(&self, msg: &M, _ctx: &mut Context<'_>) -> HandlerResult {
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
             Ok(value) => value,
             Err(err) => {

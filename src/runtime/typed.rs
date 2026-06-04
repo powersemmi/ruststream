@@ -13,6 +13,7 @@ use crate::codec::Codec;
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
+use super::context::Context;
 use super::handler::{Handler, HandlerResult};
 
 /// Behaviour when [`Codec`] fails to decode a payload.
@@ -80,9 +81,9 @@ where
     C: Codec,
     H: Handler<T>,
 {
-    async fn handle(&self, msg: &M) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
         match self.codec.decode::<T>(msg.payload()) {
-            Ok(value) => self.inner.handle(&value).await,
+            Ok(value) => self.inner.handle(&value, ctx).await,
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",

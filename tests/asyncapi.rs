@@ -3,7 +3,7 @@
 
 use ruststream::asyncapi::build_spec;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerMetadata, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
 
 #[test]
 fn build_spec_describes_handlers() {
@@ -12,13 +12,13 @@ fn build_spec_describes_handlers() {
         let orders = b.broker().subscribe("orders");
         b.handle(
             orders,
-            |_msg: &_| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
             HandlerMetadata::raw("orders").with_description("Handles orders"),
         );
         let alerts = b.broker().subscribe("alerts");
         b.handle(
             alerts,
-            |_msg: &_| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
             HandlerMetadata::typed::<u64>("alerts"),
         );
     });

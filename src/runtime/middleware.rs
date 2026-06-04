@@ -8,16 +8,17 @@
 //!
 //! ```
 //! use ruststream::IncomingMessage;
-//! use ruststream::runtime::{Handler, HandlerExt, HandlerResult, layers::TracingLayer};
+//! use ruststream::runtime::{Context, Handler, HandlerExt, HandlerResult, layers::TracingLayer};
 //!
 //! fn build<M: IncomingMessage + 'static>() -> impl Handler<M> {
-//!     let base = |_msg: &M| async { HandlerResult::Ack };
+//!     let base = |_msg: &M, _ctx: &mut Context| async { HandlerResult::Ack };
 //!     base.with(TracingLayer::default())
 //! }
 //! ```
 
 use std::future::Future;
 
+use super::context::Context;
 use super::handler::{Handler, HandlerResult};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`].
@@ -88,7 +89,7 @@ where
 pub mod layers {
     use tracing::{debug, info, instrument, warn};
 
-    use super::{Future, Handler, HandlerResult, Layer};
+    use super::{Context, Future, Handler, HandlerResult, Layer};
 
     /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
     /// outcome and `DEBUG` for arrival.
@@ -130,11 +131,11 @@ pub mod layers {
         M: Sync,
         H: Handler<M>,
     {
-        #[instrument(level = "trace", skip(self, msg), fields(target = self.target))]
-        fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send {
+        #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]
+        fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
             async move {
                 debug!(target: "ruststream::dispatch", "delivery received");
-                let result = self.inner.handle(msg).await;
+                let result = self.inner.handle(msg, ctx).await;
                 match result {
                     HandlerResult::Ack => {
                         info!(target: "ruststream::dispatch", "handler ack");

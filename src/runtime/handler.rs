@@ -2,6 +2,8 @@
 
 use std::{future::Future, sync::Arc};
 
+use super::context::Context;
+
 /// What the router should do with the message after the handler returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -78,7 +80,7 @@ impl<E> IntoHandlerResult for Result<HandlerResult, E> {
 ///
 /// ```
 /// use ruststream::IncomingMessage;
-/// use ruststream::runtime::{Handler, HandlerResult};
+/// use ruststream::runtime::{Context, Handler, HandlerResult};
 ///
 /// fn assert_handler<M, H>(_: H)
 /// where
@@ -88,21 +90,21 @@ impl<E> IntoHandlerResult for Result<HandlerResult, E> {
 /// }
 ///
 /// fn use_closure<M: IncomingMessage + 'static>() {
-///     assert_handler::<M, _>(|_msg: &M| async { HandlerResult::Ack });
+///     assert_handler::<M, _>(|_msg: &M, _ctx: &mut Context| async { HandlerResult::Ack });
 /// }
 /// ```
 pub trait Handler<M>: Send + Sync {
-    /// Handle one input.
-    fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send;
+    /// Handle one input, with the per-delivery [`Context`].
+    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send;
 }
 
 impl<M, F, Fut> Handler<M> for F
 where
-    F: Fn(&M) -> Fut + Send + Sync,
+    F: Fn(&M, &mut Context) -> Fut + Send + Sync,
     Fut: Future<Output = HandlerResult> + Send,
 {
-    fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send {
-        (self)(msg)
+    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
+        (self)(msg, ctx)
     }
 }
 
@@ -110,7 +112,7 @@ impl<M, H> Handler<M> for Arc<H>
 where
     H: Handler<M>,
 {
-    fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send {
-        (**self).handle(msg)
+    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
+        (**self).handle(msg, ctx)
     }
 }

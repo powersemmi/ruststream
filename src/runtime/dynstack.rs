@@ -12,6 +12,7 @@
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
+use super::context::Context;
 use super::handler::{Handler, HandlerResult};
 use super::middleware::Layer;
 
@@ -19,7 +20,7 @@ type BoxFut<'a> = Pin<Box<dyn Future<Output = HandlerResult> + Send + 'a>>;
 
 /// The wrapped handler at the end of the chain, erased so [`Next`] need not carry its type.
 trait ErasedHandler<I>: Send + Sync {
-    fn handle_boxed<'a>(&'a self, input: &'a I) -> BoxFut<'a>;
+    fn handle_boxed<'a>(&'a self, input: &'a I, ctx: &'a mut Context<'_>) -> BoxFut<'a>;
 }
 
 impl<I, H> ErasedHandler<I> for H
@@ -27,19 +28,24 @@ where
     I: Sync,
     H: Handler<I>,
 {
-    fn handle_boxed<'a>(&'a self, input: &'a I) -> BoxFut<'a> {
-        Box::pin(self.handle(input))
+    fn handle_boxed<'a>(&'a self, input: &'a I, ctx: &'a mut Context<'_>) -> BoxFut<'a> {
+        Box::pin(self.handle(input, ctx))
     }
 }
 
-/// A middleware in the around / next style, operating on a borrowed input `I`.
+/// A middleware in the around / next style, operating on a borrowed input `I` and its [`Context`].
 ///
-/// Each middleware inspects `input`, optionally short-circuits, and otherwise calls
-/// [`Next::run`] to continue the chain. Object-safe, so a heterogeneous list can be stored in a
-/// [`DynStack`].
+/// Each middleware inspects `input` / `ctx` (and may modify the context), optionally
+/// short-circuits, and otherwise calls [`Next::run`] to continue the chain. Object-safe, so a
+/// heterogeneous list can be stored in a [`DynStack`].
 pub trait DynMiddleware<I>: Send + Sync {
     /// Handle `input`, calling `next` to continue to the rest of the chain.
-    fn handle<'a>(&'a self, input: &'a I, next: Next<'a, I>) -> BoxFut<'a>;
+    fn handle<'a>(
+        &'a self,
+        input: &'a I,
+        ctx: &'a mut Context<'_>,
+        next: Next<'a, I>,
+    ) -> BoxFut<'a>;
 }
 
 /// A cursor over the remaining middleware in a [`DynStack`], ending in the wrapped handler.
@@ -51,16 +57,17 @@ pub struct Next<'a, I> {
 impl<'a, I> Next<'a, I> {
     /// Runs the next middleware in the chain, or the wrapped handler if the chain is exhausted.
     #[must_use]
-    pub fn run(self, input: &'a I) -> BoxFut<'a> {
+    pub fn run(self, input: &'a I, ctx: &'a mut Context<'_>) -> BoxFut<'a> {
         match self.rest.split_first() {
             Some((middleware, rest)) => middleware.handle(
                 input,
+                ctx,
                 Next {
                     rest,
                     tail: self.tail,
                 },
             ),
-            None => self.tail.handle_boxed(input),
+            None => self.tail.handle_boxed(input, ctx),
         }
     }
 }
@@ -128,12 +135,12 @@ where
     I: Sync,
     H: Handler<I>,
 {
-    fn handle(&self, input: &I) -> impl Future<Output = HandlerResult> + Send {
+    fn handle(&self, input: &I, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
         let chain = self.chain.clone();
         let inner = self.inner.clone();
         async move {
             let tail: &dyn ErasedHandler<I> = &inner;
-            Next { rest: &chain, tail }.run(input).await
+            Next { rest: &chain, tail }.run(input, ctx).await
         }
     }
 }
@@ -143,18 +150,25 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::super::HandlerExt;
+    use super::super::context::{Context, State};
     use super::super::handler::{Handler, HandlerResult};
     use super::{BoxFut, DynMiddleware, DynStack, Next};
+    use crate::Headers;
 
     struct Input;
 
     struct Recorder(Arc<Mutex<Vec<&'static str>>>, &'static str);
 
     impl DynMiddleware<Input> for Recorder {
-        fn handle<'a>(&'a self, input: &'a Input, next: Next<'a, Input>) -> BoxFut<'a> {
+        fn handle<'a>(
+            &'a self,
+            input: &'a Input,
+            ctx: &'a mut Context<'_>,
+            next: Next<'a, Input>,
+        ) -> BoxFut<'a> {
             Box::pin(async move {
                 self.0.lock().expect("poisoned").push(self.1);
-                next.run(input).await
+                next.run(input, ctx).await
             })
         }
     }
@@ -167,7 +181,7 @@ mod tests {
             Arc::new(Recorder(Arc::clone(&log), "b")) as Arc<dyn DynMiddleware<Input>>,
         ]);
         let inner_log = Arc::clone(&log);
-        let inner = move |_: &Input| {
+        let inner = move |_: &Input, _ctx: &mut Context| {
             let inner_log = Arc::clone(&inner_log);
             async move {
                 inner_log.lock().expect("poisoned").push("inner");
@@ -175,7 +189,9 @@ mod tests {
             }
         };
         let handler = inner.with(stack);
-        assert_eq!(handler.handle(&Input).await, HandlerResult::Ack);
+        let state = State::default();
+        let mut ctx = Context::new("test", Headers::new(), &state);
+        assert_eq!(handler.handle(&Input, &mut ctx).await, HandlerResult::Ack);
         assert_eq!(*log.lock().expect("poisoned"), vec!["a", "b", "inner"]);
     }
 }

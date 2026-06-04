@@ -110,6 +110,14 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     let description = doc_description(&func.attrs);
     let topic = &args.topic;
 
+    // Optional second handler parameter: the per-delivery `&mut Context`. If the user declares it,
+    // bind it to their name; otherwise generate an ignored binding.
+    let ctx_param = if let Some(FnArg::Typed(PatType { pat, .. })) = func.sig.inputs.get(1) {
+        quote!(#pat)
+    } else {
+        quote!(_ctx)
+    };
+
     let body = if let Some(publish) = &args.publish {
         let reply_ty = match &func.sig.output {
             ReturnType::Type(_, ty) => &**ty,
@@ -153,7 +161,11 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
             #vis struct #name;
 
             impl ::ruststream::runtime::Handler<#input_ty> for #name {
-                async fn handle(&self, #pat: &#input_ty) -> ::ruststream::runtime::HandlerResult {
+                async fn handle(
+                    &self,
+                    #pat: &#input_ty,
+                    #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+                ) -> ::ruststream::runtime::HandlerResult {
                     ::ruststream::runtime::IntoHandlerResult::into_handler_result(
                         (async move #block).await,
                     )

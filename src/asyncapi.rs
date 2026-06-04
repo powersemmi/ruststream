@@ -125,7 +125,7 @@ impl Reference {
 /// # fn demo() -> Result<(), serde_json::Error> {
 /// use ruststream::asyncapi::build_spec;
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{AppInfo, HandlerMetadata, HandlerResult, RustStream};
+/// use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
 ///
 /// let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
 ///     MemoryBroker::new(),
@@ -133,7 +133,7 @@ impl Reference {
 ///         let subscriber = b.broker().subscribe("orders");
 ///         b.handle(
 ///             subscriber,
-///             |_msg: &_| async { HandlerResult::Ack },
+///             |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
 ///             HandlerMetadata::raw("orders"),
 ///         );
 ///     },
