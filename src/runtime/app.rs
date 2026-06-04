@@ -369,6 +369,10 @@ impl<L> RustStream<L> {
     ///
     /// `build` receives a [`BrokerScope`] typed to this broker; use it to attach handlers. The
     /// broker is then held for lifecycle management. Call this once per broker.
+    ///
+    /// The scope has no default codec, so macro handlers are mounted with an explicit one
+    /// (`b.include(handle, JsonCodec)`). To set a scope default and drop the per-call codec, use
+    /// [`with_broker_codec`](Self::with_broker_codec).
     #[must_use]
     pub fn with_broker<B, F>(mut self, broker: B, build: F) -> Self
     where
@@ -377,15 +381,55 @@ impl<L> RustStream<L> {
         F: FnOnce(&mut BrokerScope<B, L>),
     {
         let broker = Arc::new(broker);
-        let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
-        let mut scope = BrokerScope {
+        let mut scope = self.new_scope(&broker, ());
+        build(&mut scope);
+        self.collect_scope(&broker, scope);
+        self
+    }
+
+    /// Registers a broker with a default `codec`, so its macro handlers are mounted without
+    /// repeating it: `b.include(handle)` instead of `b.include(handle, codec)`.
+    ///
+    /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) and
+    /// [`include_publishing`](BrokerScope::include_publishing) take just the definition and decode
+    /// it with `codec`.
+    #[must_use]
+    pub fn with_broker_codec<B, C, F>(mut self, broker: B, codec: C, build: F) -> Self
+    where
+        B: Broker + 'static,
+        C: Codec + Clone + 'static,
+        L: Clone,
+        F: FnOnce(&mut BrokerScope<B, L, C>),
+    {
+        let broker = Arc::new(broker);
+        let mut scope = self.new_scope(&broker, codec);
+        build(&mut scope);
+        self.collect_scope(&broker, scope);
+        self
+    }
+
+    /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
+    fn new_scope<B, C>(&self, broker: &Arc<B>, codec: C) -> BrokerScope<B, L, C>
+    where
+        B: Broker + 'static,
+        L: Clone,
+    {
+        BrokerScope {
             broker: broker.clone(),
             router: Router::new(),
             publishers: self.publishers.clone(),
             pipeline: self.publish_layers.iter().cloned().collect(),
             global: self.global.clone(),
-        };
-        build(&mut scope);
+            codec,
+        }
+    }
+
+    /// Drains a built scope's registrations into the app and holds the broker for lifecycle.
+    fn collect_scope<B, C>(&mut self, broker: &Arc<B>, scope: BrokerScope<B, L, C>)
+    where
+        B: Broker + 'static,
+    {
+        let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
         let (starters, handlers) = scope.router.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let broker = broker.clone();
@@ -394,7 +438,6 @@ impl<L> RustStream<L> {
             self.handlers.push(meta);
         }
         self.brokers.push(lifecycle);
-        self
     }
 
     /// Returns metadata for every registered handler, in registration order. Input to the
@@ -505,15 +548,16 @@ impl<L> RustStream<L> {
 /// Handed to the [`RustStream::with_broker`] closure. It is a [`Router`] plus the broker it is
 /// bound to and the global middleware stack `L`; registrations are collected and started later, in
 /// [`RustStream::run`]. Each handler registered here is wrapped with `L` before it is stored.
-pub struct BrokerScope<B, L = Identity> {
+pub struct BrokerScope<B, L = Identity, C = ()> {
     broker: Arc<B>,
     router: Router<B>,
     publishers: Publishers,
     pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
     global: L,
+    codec: C,
 }
 
-impl<B: Broker + 'static, L> BrokerScope<B, L> {
+impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
     /// Returns the broker, for creating subscribers or publishers with its own API.
     #[must_use]
     pub fn broker(&self) -> &B {
@@ -556,11 +600,102 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
         self.router.subscribe(source, handler, meta);
     }
 
+    /// Mounts every registration from `router` onto this broker.
+    ///
+    /// The global middleware stack does **not** apply to these handlers: a [`Router`] is built
+    /// independently and its handlers are already finalized. Wrap them in the router if needed.
+    pub fn include_router(&mut self, router: Router<B>) {
+        self.router.merge(router);
+    }
+}
+
+impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     /// Mounts a `#[subscriber]`-generated definition, decoding its input with `codec`.
     ///
     /// Subscribes via a [`Topic`] descriptor (so the broker must implement [`Subscribe`]) and wraps
-    /// the handler with the global middleware stack, just like [`subscribe`](Self::subscribe).
+    /// the handler with the global middleware stack, just like [`subscribe`](Self::subscribe). To
+    /// avoid repeating the codec, set a scope default with
+    /// [`with_broker_codec`](RustStream::with_broker_codec) and call the one-argument `include`.
     pub fn include<D, C>(&mut self, def: D, codec: C)
+    where
+        B: Subscribe,
+        <B as Broker>::Subscriber: Send + 'static,
+        <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
+        D: SubscriberDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        C: Codec + 'static,
+        L: Layer<
+            Typed<<<B as Broker>::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>,
+        >,
+        L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
+    {
+        self.include_with(def, codec);
+    }
+
+    /// Mounts a `#[subscriber(.., publish(..))]`-generated definition, decoding its input with
+    /// `codec`. See [`include`](Self::include) for the scope-default-codec form.
+    ///
+    /// The publisher is resolved from the registry by name now; register it with
+    /// [`RustStream::publisher`](RustStream::publisher) before this call. If it is missing, the
+    /// reply is dropped (logged) at dispatch.
+    pub fn include_publishing<D, C>(&mut self, def: D, codec: C)
+    where
+        B: Subscribe,
+        <B as Broker>::Subscriber: Send + 'static,
+        <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        C: Codec + 'static,
+        L: Layer<PublishingHandler<D, C>>,
+        L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
+    {
+        self.include_publishing_with(def, codec);
+    }
+}
+
+impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
+    /// Mounts a `#[subscriber]`-generated definition, decoding its input with the scope's default
+    /// codec (set by [`with_broker_codec`](RustStream::with_broker_codec)).
+    pub fn include<D>(&mut self, def: D)
+    where
+        B: Subscribe,
+        <B as Broker>::Subscriber: Send + 'static,
+        <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
+        D: SubscriberDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        L: Layer<
+            Typed<<<B as Broker>::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>,
+        >,
+        L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let codec = self.codec.clone();
+        self.include_with(def, codec);
+    }
+
+    /// Mounts a `#[subscriber(.., publish(..))]`-generated definition, decoding its input with the
+    /// scope's default codec.
+    pub fn include_publishing<D>(&mut self, def: D)
+    where
+        B: Subscribe,
+        <B as Broker>::Subscriber: Send + 'static,
+        <<B as Broker>::Subscriber as Subscriber>::Message: 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        L: Layer<PublishingHandler<D, C>>,
+        L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let codec = self.codec.clone();
+        self.include_publishing_with(def, codec);
+    }
+}
+
+impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
+    /// Shared body for the explicit- and default-codec `include` forms.
+    fn include_with<D, C>(&mut self, def: D, codec: C)
     where
         B: Subscribe,
         <B as Broker>::Subscriber: Send + 'static,
@@ -586,13 +721,8 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
         self.subscribe(Topic::new(channel), handler, meta);
     }
 
-    /// Mounts a `#[subscriber(.., publish(..))]`-generated definition: decodes its input with
-    /// `codec`, runs the handler, then encodes and publishes the reply through the named publisher.
-    ///
-    /// The publisher is resolved from the registry by name now; register it with
-    /// [`RustStream::publisher`](RustStream::publisher) before this call. If it is missing, the
-    /// reply is dropped (logged) at dispatch.
-    pub fn include_publishing<D, C>(&mut self, def: D, codec: C)
+    /// Shared body for the explicit- and default-codec `include_publishing` forms.
+    fn include_publishing_with<D, C>(&mut self, def: D, codec: C)
     where
         B: Subscribe,
         <B as Broker>::Subscriber: Send + 'static,
@@ -625,17 +755,9 @@ impl<B: Broker + 'static, L> BrokerScope<B, L> {
         };
         self.subscribe(Topic::new(subscribe_channel), handler, meta);
     }
-
-    /// Mounts every registration from `router` onto this broker.
-    ///
-    /// The global middleware stack does **not** apply to these handlers: a [`Router`] is built
-    /// independently and its handlers are already finalized. Wrap them in the router if needed.
-    pub fn include_router(&mut self, router: Router<B>) {
-        self.router.merge(router);
-    }
 }
 
-impl<B, L> std::fmt::Debug for BrokerScope<B, L> {
+impl<B, L, C> std::fmt::Debug for BrokerScope<B, L, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrokerScope")
             .field("router", &self.router)

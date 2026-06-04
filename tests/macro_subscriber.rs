@@ -80,6 +80,47 @@ async fn macro_subscriber_dispatches() {
     run.await.unwrap().unwrap();
 }
 
+static HANDLED_DEFAULT: AtomicU32 = AtomicU32::new(0);
+
+#[subscriber("orders-default")]
+async fn handle_default(order: &Order) -> HandlerResult {
+    HANDLED_DEFAULT.fetch_add(order.id, Ordering::SeqCst);
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scope_default_codec_drops_per_call_codec() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    // with_broker_codec sets the scope default, so include takes no codec argument.
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0"))
+            .with_broker_codec(broker, JsonCodec, |b| b.include(handle_default));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Order { id: 9, total: 1.0 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("orders-default", &payload))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if HANDLED_DEFAULT.load(Ordering::SeqCst) >= 9 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "scope-default-codec handler did not run");
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
 #[derive(Serialize, Deserialize)]
 struct Request {
     n: u32,
