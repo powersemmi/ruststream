@@ -39,8 +39,8 @@ pub mod testing;
 
 pub use broker::Broker;
 pub use capability::{
-    BatchPublisher, BatchSubscriber, DescribeServer, Partitioned, RequestReply, ServerSpec,
-    Subscribe, TransactionalPublisher,
+    BatchSubscriber, DescribeServer, Partitioned, RequestReply, ServerSpec, Subscribe,
+    TransactionalPublisher,
 };
 pub use error::AckError;
 pub use headers::Headers;

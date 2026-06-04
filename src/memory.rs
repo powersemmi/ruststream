@@ -18,8 +18,8 @@ use std::{
 };
 
 use crate::{
-    AckError, BatchPublisher, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher,
-    RawMessage, Subscribe, Subscriber, testing::TestClient,
+    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, RawMessage, Subscribe,
+    Subscriber, testing::TestClient,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -206,8 +206,6 @@ impl Publisher for MemoryPublisher {
         Ok(())
     }
 }
-
-impl BatchPublisher for MemoryPublisher {}
 
 /// A delivery yielded by [`MemorySubscriber::stream`].
 ///

@@ -21,8 +21,7 @@
 use std::{future::Future, time::Duration};
 
 use crate::{
-    BatchPublisher, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber,
-    testing::TestClient,
+    Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber, testing::TestClient,
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -54,30 +53,6 @@ where
     nack_without_requeue_drops(fresh().await).await;
     headers_propagate(fresh().await).await;
     expect_published_observes_publishes(fresh().await).await;
-}
-
-/// Runs the [`BatchPublisher`] scenarios. Opt-in extension to [`run_suite`] for brokers whose
-/// publisher implements batch publishing.
-///
-/// A broker crate that implements [`BatchPublisher`] calls this in addition to [`run_suite`] to
-/// prove the capability honours the same ordering and fanout contract as single publishes.
-/// Brokers without batch support simply do not invoke it.
-///
-/// # Panics
-///
-/// Panics if any scenario fails an assertion. The panic message identifies the scenario.
-pub async fn run_batch_publisher_suite<T, F, Fut, E>(factory: F)
-where
-    T: TestClient<Error = E>,
-    <T::Broker as Broker>::Publisher: BatchPublisher,
-    F: Fn() -> Fut + Send + Sync,
-    Fut: Future<Output = Result<T, E>> + Send,
-    E: std::fmt::Debug,
-{
-    let fresh = || async { factory().await.expect("test client factory failed") };
-
-    batch_publish_delivers_in_order(fresh().await).await;
-    batch_publish_empty_is_noop(fresh().await).await;
 }
 
 async fn ordering<T: TestClient>(client: T) {
@@ -269,63 +244,6 @@ async fn expect_published_observes_publishes<T: TestClient>(client: T) {
     );
     assert_eq!(observed[0].payload(), b"first");
     assert_eq!(observed[1].payload(), b"second");
-    client.shutdown().await.expect("shutdown failed");
-}
-
-async fn batch_publish_delivers_in_order<T>(client: T)
-where
-    T: TestClient,
-    <T::Broker as Broker>::Publisher: BatchPublisher,
-{
-    let mut subscriber = client
-        .subscribe("conformance.batch")
-        .await
-        .expect("subscribe failed");
-    let publisher = client.publisher().await.expect("publisher failed");
-
-    let payloads: Vec<[u8; 4]> = (0..10u32).map(u32::to_be_bytes).collect();
-    let batch: Vec<OutgoingMessage<'_>> = payloads
-        .iter()
-        .map(|p| OutgoingMessage::new("conformance.batch", p.as_slice()))
-        .collect();
-    publisher
-        .publish_batch(batch)
-        .await
-        .expect("publish_batch failed");
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-    for expected in 0..10u32 {
-        let msg = expect_next(&mut stream, "batch ordering").await;
-        assert_eq!(
-            msg.payload(),
-            expected.to_be_bytes(),
-            "publish_batch must deliver every message in iteration order",
-        );
-        msg.ack().await.expect("ack failed");
-    }
-    expect_no_more(&mut stream, "batch ordering").await;
-    client.shutdown().await.expect("shutdown failed");
-}
-
-async fn batch_publish_empty_is_noop<T>(client: T)
-where
-    T: TestClient,
-    <T::Broker as Broker>::Publisher: BatchPublisher,
-{
-    let mut subscriber = client
-        .subscribe("conformance.batch.empty")
-        .await
-        .expect("subscribe failed");
-    let publisher = client.publisher().await.expect("publisher failed");
-
-    let empty: Vec<OutgoingMessage<'_>> = Vec::new();
-    publisher
-        .publish_batch(empty)
-        .await
-        .expect("publish_batch failed");
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-    expect_no_more(&mut stream, "batch empty").await;
     client.shutdown().await.expect("shutdown failed");
 }
 

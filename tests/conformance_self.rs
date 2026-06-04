@@ -11,8 +11,3 @@ use ruststream::{conformance::harness, memory::MemoryBroker};
 async fn memory_broker_passes_conformance_suite() {
     harness::run_suite(|| async { Ok::<_, Infallible>(MemoryBroker::new()) }).await;
 }
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn memory_broker_passes_batch_publisher_suite() {
-    harness::run_batch_publisher_suite(|| async { Ok::<_, Infallible>(MemoryBroker::new()) }).await;
-}

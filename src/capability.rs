@@ -32,39 +32,6 @@ pub trait BatchSubscriber: Subscriber {
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_;
 }
 
-/// A publisher that sends many messages in one call.
-///
-/// The default implementation awaits [`Publisher::publish`] for each message in order. Brokers
-/// whose client coalesces writes (`NATS`, `Kafka` producers) override it to amortize per-call
-/// overhead, for example by flushing once after enqueueing the whole batch. Generic code that
-/// wants batch semantics adds this as a bound; brokers that gain nothing keep the default.
-pub trait BatchPublisher: Publisher {
-    /// Publishes every message in `msgs`, preserving iteration order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] on the first message the broker rejects. Messages published before
-    /// the failure are not rolled back; use [`TransactionalPublisher`] for all-or-nothing
-    /// semantics.
-    ///
-    /// # Cancel safety
-    ///
-    /// Not cancel-safe: dropping the returned future mid-batch may leave a prefix of `msgs`
-    /// already published.
-    fn publish_batch<'a, I>(&self, msgs: I) -> impl Future<Output = Result<(), Self::Error>> + Send
-    where
-        I: IntoIterator<Item = OutgoingMessage<'a>> + Send,
-        I::IntoIter: Send,
-    {
-        async move {
-            for msg in msgs {
-                self.publish(msg).await?;
-            }
-            Ok(())
-        }
-    }
-}
-
 /// A publisher that supports broker-side transactions.
 ///
 /// Implementations must guarantee that messages published between [`begin_transaction`] and
