@@ -32,6 +32,7 @@ json = ["dep:serde_json"]
 msgpack = ["dep:rmp-serde"]
 cbor = ["dep:ciborium"]
 macros = ["dep:ruststream-macros", "runtime"]
+asyncapi = ["runtime", "json"]
 
 [dependencies]
 bytes = "1"

@@ -74,3 +74,6 @@ pub use ruststream_macros::Message;
 
 #[cfg(feature = "conformance")]
 pub mod conformance;
+
+#[cfg(feature = "asyncapi")]
+pub mod asyncapi;
