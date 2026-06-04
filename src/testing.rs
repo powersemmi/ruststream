@@ -37,7 +37,7 @@ pub trait TestClient: Send {
     where
         Self: Sized;
 
-    /// Returns a handle to the in-memory broker, suitable for passing to a `Router`.
+    /// Returns a handle to the in-memory broker, suitable for registering with a `RustStream`.
     fn broker(&self) -> &Self::Broker;
 
     /// Publishes a message to the in-memory broker as if from an external producer.

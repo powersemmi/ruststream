@@ -1,7 +1,12 @@
-//! Typed handler adapter: turns `Fn(T) -> HandlerResult` into a [`Handler`] by decoding
-//! the message payload via a [`Codec`].
+//! Typed handler adapter: turns a [`Handler<T>`](Handler) over a decoded value into a
+//! [`Handler<M>`](Handler) by decoding the message payload via a [`Codec`].
+//!
+//! This is the decode boundary between the two middleware levels: raw (pre-decode) middleware
+//! wrap the produced `Handler<M>`; typed (post-decode) middleware wrap the `inner: Handler<T>`
+//! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
+//! machinery, just at different inputs.
 
-use std::{fmt, future::Future, marker::PhantomData};
+use std::{fmt, marker::PhantomData};
 
 use crate::IncomingMessage;
 use crate::codec::Codec;
@@ -22,14 +27,17 @@ pub enum DecodeFailure {
     Requeue,
 }
 
-/// Build a handler that decodes the payload with `codec` and forwards the value to `inner`.
-pub fn typed<M, T, C, H, Fut>(codec: C, inner: H) -> Typed<M, T, C, H>
+/// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
+/// `inner`.
+///
+/// `inner` is any [`Handler<T>`](Handler) — a closure `Fn(&T) -> _` or a typed middleware stack
+/// built with [`HandlerExt::with`](super::HandlerExt::with).
+pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, T, C, H>
 where
     M: IncomingMessage,
-    T: DeserializeOwned + Send,
+    T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: Fn(T) -> Fut + Send + Sync,
-    Fut: Future<Output = HandlerResult> + Send,
+    H: Handler<T>,
 {
     Typed {
         codec,
@@ -65,17 +73,16 @@ impl<M, T, C, H> fmt::Debug for Typed<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H, Fut> Handler<M> for Typed<M, T, C, H>
+impl<M, T, C, H> Handler<M> for Typed<M, T, C, H>
 where
     M: IncomingMessage,
-    T: DeserializeOwned + Send,
+    T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: Fn(T) -> Fut + Send + Sync,
-    Fut: Future<Output = HandlerResult> + Send,
+    H: Handler<T>,
 {
     async fn handle(&self, msg: &M) -> HandlerResult {
         match self.codec.decode::<T>(msg.payload()) {
-            Ok(value) => (self.inner)(value).await,
+            Ok(value) => self.inner.handle(&value).await,
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",

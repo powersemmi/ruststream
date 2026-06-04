@@ -18,8 +18,8 @@ use std::{
 };
 
 use crate::{
-    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, RawMessage, Subscriber,
-    testing::TestClient,
+    AckError, BatchPublisher, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher,
+    RawMessage, Subscribe, Subscriber, testing::TestClient,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -138,6 +138,15 @@ impl Broker for MemoryBroker {
     }
 }
 
+// `Self::subscribe` would read as a recursive call into this trait method; spell out the broker
+// type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).
+#[allow(clippy::use_self)]
+impl Subscribe for MemoryBroker {
+    async fn subscribe(&self, topic: &str) -> Result<Self::Subscriber, Self::Error> {
+        Ok(MemoryBroker::subscribe(self, topic))
+    }
+}
+
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
 pub struct MemorySubscriber {
@@ -199,6 +208,8 @@ impl Publisher for MemoryPublisher {
         Ok(())
     }
 }
+
+impl BatchPublisher for MemoryPublisher {}
 
 /// A delivery yielded by [`MemorySubscriber::stream`].
 ///

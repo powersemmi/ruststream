@@ -2,8 +2,6 @@
 
 use std::{future::Future, sync::Arc};
 
-use crate::IncomingMessage;
-
 /// What the router should do with the message after the handler returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -31,10 +29,11 @@ impl HandlerResult {
     }
 }
 
-/// Per-message handler invoked by the router on every delivery.
+/// A handler invoked on each input it is given.
 ///
-/// Implementations are `Send + Sync` so the router can share a single handler across many
-/// concurrent deliveries.
+/// The same trait serves both pipeline levels: a raw delivery (`Handler<M>` where
+/// `M: IncomingMessage`) and a decoded value (`Handler<T>`). Implementations are `Send + Sync` so a
+/// single handler can be shared across many concurrent inputs.
 ///
 /// # Examples
 ///
@@ -55,17 +54,13 @@ impl HandlerResult {
 ///     assert_handler::<M, _>(|_msg: &M| async { HandlerResult::Ack });
 /// }
 /// ```
-pub trait Handler<M>: Send + Sync
-where
-    M: IncomingMessage,
-{
-    /// Handle one delivery.
+pub trait Handler<M>: Send + Sync {
+    /// Handle one input.
     fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send;
 }
 
 impl<M, F, Fut> Handler<M> for F
 where
-    M: IncomingMessage,
     F: Fn(&M) -> Fut + Send + Sync,
     Fut: Future<Output = HandlerResult> + Send,
 {
@@ -76,7 +71,6 @@ where
 
 impl<M, H> Handler<M> for Arc<H>
 where
-    M: IncomingMessage,
     H: Handler<M>,
 {
     fn handle(&self, msg: &M) -> impl Future<Output = HandlerResult> + Send {

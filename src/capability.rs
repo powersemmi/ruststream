@@ -8,7 +8,7 @@ use std::{future::Future, time::Duration};
 
 use futures::Stream;
 
-use crate::{IncomingMessage, OutgoingMessage, Publisher, Subscriber};
+use crate::{Broker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
 
 /// A subscriber that natively delivers messages in batches.
 ///
@@ -30,6 +30,39 @@ pub trait BatchSubscriber: Subscriber {
     fn batches(
         &mut self,
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_;
+}
+
+/// A publisher that sends many messages in one call.
+///
+/// The default implementation awaits [`Publisher::publish`] for each message in order. Brokers
+/// whose client coalesces writes (`NATS`, `Kafka` producers) override it to amortize per-call
+/// overhead, for example by flushing once after enqueueing the whole batch. Generic code that
+/// wants batch semantics adds this as a bound; brokers that gain nothing keep the default.
+pub trait BatchPublisher: Publisher {
+    /// Publishes every message in `msgs`, preserving iteration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] on the first message the broker rejects. Messages published before
+    /// the failure are not rolled back; use [`TransactionalPublisher`] for all-or-nothing
+    /// semantics.
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe: dropping the returned future mid-batch may leave a prefix of `msgs`
+    /// already published.
+    fn publish_batch<'a, I>(&self, msgs: I) -> impl Future<Output = Result<(), Self::Error>> + Send
+    where
+        I: IntoIterator<Item = OutgoingMessage<'a>> + Send,
+        I::IntoIter: Send,
+    {
+        async move {
+            for msg in msgs {
+                self.publish(msg).await?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// A publisher that supports broker-side transactions.
@@ -100,4 +133,36 @@ pub trait RequestReply: Publisher {
 pub trait Partitioned {
     /// Returns the partition key for this item, or `None` if the broker should pick a partition.
     fn partition_key(&self) -> Option<&[u8]>;
+}
+
+/// A broker whose subscriptions are fully determined by a topic string.
+///
+/// This is the common case (`NATS` core subjects, the in-memory broadcast broker, `Redis` pub/sub
+/// channels): no consumer group, partition, or durable-consumer configuration is needed to open a
+/// subscription, so the runtime can subscribe given just a topic. Brokers whose subscriptions
+/// require richer options (`Kafka` consumer groups, `JetStream` durable consumers) do not
+/// implement `Subscribe`; callers describe those with a broker-specific
+/// [`SubscriptionSource`](crate::SubscriptionSource) instead.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Broker, Subscribe};
+///
+/// async fn open<B: Subscribe>(broker: &B) -> Result<B::Subscriber, B::Error> {
+///     broker.subscribe("orders").await
+/// }
+/// ```
+pub trait Subscribe: Broker {
+    /// Opens a subscription to `topic`, producing this broker's [`Subscriber`].
+    ///
+    /// Called after [`Broker::connect`]; implementations may assume a live connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Broker::Error`] when the broker rejects the subscription or the transport fails.
+    fn subscribe(
+        &self,
+        topic: &str,
+    ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
 }

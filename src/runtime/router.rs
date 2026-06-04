@@ -1,156 +1,134 @@
-//! The [`Router`]: spawns one task per registered handler, drives subscriber streams, and
-//! reacts to a single graceful-shutdown signal.
+//! [`Router`]: a broker-agnostic, lazily-bound group of handler registrations.
+//!
+//! A `Router` collects subscriber registrations without a live broker, so a set of handlers can be
+//! defined in its own module and mounted later. Bind it to a broker by passing it to
+//! [`BrokerScope::include_router`](super::BrokerScope::include_router) inside
+//! [`RustStream::with_broker`](super::RustStream::with_broker). Nothing connects or subscribes
+//! until the application runs.
+//!
+//! It is also the shared registration collector: a [`BrokerScope`](super::BrokerScope) is a
+//! `Router` plus the broker it is bound to.
 
 use std::sync::Arc;
 
-use crate::{IncomingMessage, Subscriber};
-use futures::StreamExt;
-use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, warn};
 
-use super::{
-    handler::{Handler, HandlerResult},
-    metadata::HandlerMetadata,
-};
+use crate::{Broker, Subscriber, SubscriptionSource};
 
-/// Errors surfaced by the router itself (handler-level errors are signalled via
-/// [`HandlerResult::Nack`]).
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum RouterError {
-    /// A spawned subscriber task panicked or was aborted.
-    #[error("subscriber task failed: {0}")]
-    Join(#[source] tokio::task::JoinError),
-}
+use super::dispatch::spawn_dispatch;
+use super::handler::Handler;
+use super::lifecycle::{BoxError, BoxFuture};
+use super::metadata::HandlerMetadata;
 
-/// Coordinates message dispatch across one or more subscriber tasks.
+/// A deferred registration: given the broker (after connect) and the shutdown token, it opens the
+/// subscription and spawns the dispatch task. The source and handler are captured and type-erased.
+pub(crate) type BoundStarter<B> = Box<
+    dyn FnOnce(Arc<B>, CancellationToken) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
+        + Send,
+>;
+
+/// A lazily-bound group of handler registrations, not yet attached to any broker.
 ///
-/// Each call to [`Router::handle`] spawns a long-lived task that pulls messages off the
-/// subscriber and invokes the registered [`Handler`]. Construct with [`Router::new`], register
-/// handlers with [`handle`], then drive lifecycle
-/// with [`run`] or release the [`shutdown_handle`] elsewhere. Dropping the router cancels
-/// all subscriber tasks.
+/// # Examples
 ///
-/// [`handle`]: Self::handle
-/// [`run`]: Self::run
-/// [`shutdown_handle`]: Self::shutdown_handle
-pub struct Router {
-    tasks: Vec<JoinHandle<()>>,
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # fn build() {
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::runtime::{HandlerMetadata, HandlerResult, Router};
+/// use ruststream::Topic;
+///
+/// let mut router = Router::<MemoryBroker>::new();
+/// router.subscribe(
+///     Topic::new("events"),
+///     |_msg: &_| async { HandlerResult::Ack },
+///     HandlerMetadata::raw("events"),
+/// );
+/// // later: app.with_broker(broker, |b| b.include_router(router));
+/// # }
+/// ```
+pub struct Router<B> {
+    starters: Vec<BoundStarter<B>>,
     handlers: Vec<HandlerMetadata>,
-    shutdown: CancellationToken,
 }
 
-impl Default for Router {
+impl<B> Default for Router<B> {
     fn default() -> Self {
-        Self::new()
+        Self {
+            starters: Vec::new(),
+            handlers: Vec::new(),
+        }
     }
 }
 
-impl std::fmt::Debug for Router {
+impl<B> std::fmt::Debug for Router<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Router")
             .field("handlers", &self.handlers.len())
-            .field(
-                "tasks_running",
-                &self.tasks.iter().filter(|t| !t.is_finished()).count(),
-            )
             .finish_non_exhaustive()
     }
 }
 
-impl Router {
-    /// Creates an empty router with a fresh shutdown token.
+impl<B: Broker + 'static> Router<B> {
+    /// Creates an empty router.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            tasks: Vec::new(),
-            handlers: Vec::new(),
-            shutdown: CancellationToken::new(),
-        }
+        Self::default()
     }
 
-    /// Registers a handler bound to the given subscriber. Spawns one Tokio task that drives
-    /// the subscriber stream until the shutdown token is triggered or the stream ends.
-    pub fn handle<S, H>(&mut self, mut subscriber: S, handler: H, metadata: HandlerMetadata)
+    /// Attaches `handler` to an already-created `subscriber`.
+    ///
+    /// The subscriber is created up front (before connect). Use this for brokers whose
+    /// subscription does not need a live connection, or when you already hold a subscriber.
+    pub fn handle<S, H>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
     where
         S: Subscriber + Send + 'static,
         H: Handler<S::Message> + 'static,
     {
-        self.handlers.push(metadata);
-        let shutdown = self.shutdown.clone();
         let handler = Arc::new(handler);
-        let task = tokio::spawn(async move {
-            let mut stream = std::pin::pin!(subscriber.stream());
-            loop {
-                tokio::select! {
-                    () = shutdown.cancelled() => break,
-                    next = stream.next() => match next {
-                        Some(Ok(msg)) => dispatch(&*handler, msg).await,
-                        Some(Err(err)) => {
-                            error!(
-                                target: "ruststream::dispatch",
-                                error = %err,
-                                "subscriber stream error",
-                            );
-                        }
-                        None => break,
-                    }
-                }
-            }
-        });
-        self.tasks.push(task);
+        self.starters.push(Box::new(move |_broker, token| {
+            Box::pin(async move { Ok(spawn_dispatch(subscriber, handler, token)) })
+        }));
+        self.handlers.push(meta);
     }
 
-    /// Returns a token that can be cloned and used to trigger shutdown from anywhere.
-    #[must_use]
-    pub fn shutdown_handle(&self) -> CancellationToken {
-        self.shutdown.clone()
+    /// Attaches `handler` to a subscription described by `source`.
+    ///
+    /// The subscription is opened when the application runs, after the broker is connected, so this
+    /// is the path that works for brokers requiring a live connection to subscribe.
+    pub fn subscribe<S, H>(&mut self, source: S, handler: H, meta: HandlerMetadata)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        H: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let handler = Arc::new(handler);
+        self.starters.push(Box::new(move |broker: Arc<B>, token| {
+            Box::pin(async move {
+                let subscriber = source
+                    .subscribe(broker.as_ref())
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                Ok(spawn_dispatch(subscriber, handler, token))
+            })
+        }));
+        self.handlers.push(meta);
     }
 
-    /// Triggers shutdown of every subscriber task.
-    pub fn shutdown(&self) {
-        self.shutdown.cancel();
+    /// Merges another router's registrations into this one, preserving order.
+    pub fn merge(&mut self, other: Self) {
+        self.starters.extend(other.starters);
+        self.handlers.extend(other.handlers);
     }
 
-    /// Returns metadata for every registered handler, in registration order. Useful for the
-    /// `AsyncAPI` generator and runtime introspection.
+    /// Returns metadata for every registered handler, in registration order.
     #[must_use]
     pub fn handlers(&self) -> &[HandlerMetadata] {
         &self.handlers
     }
 
-    /// Awaits all spawned subscriber tasks. Returns once every task has finished, either by
-    /// reaching the end of its stream or because shutdown was triggered.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RouterError::Join`] if any subscriber task panicked.
-    pub async fn run(self) -> Result<(), RouterError> {
-        let results = futures::future::join_all(self.tasks).await;
-        for result in results {
-            result.map_err(RouterError::Join)?;
-        }
-        Ok(())
-    }
-}
-
-async fn dispatch<H, M>(handler: &H, msg: M)
-where
-    H: Handler<M>,
-    M: IncomingMessage,
-{
-    let outcome = handler.handle(&msg).await;
-    let ack_result = match outcome {
-        HandlerResult::Ack => msg.ack().await,
-        HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-    };
-    if let Err(err) = ack_result {
-        warn!(
-            target: "ruststream::dispatch",
-            error = %err,
-            "ack / nack failed",
-        );
+    pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B>>, Vec<HandlerMetadata>) {
+        (self.starters, self.handlers)
     }
 }

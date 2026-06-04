@@ -18,8 +18,6 @@
 
 use std::future::Future;
 
-use crate::IncomingMessage;
-
 use super::handler::{Handler, HandlerResult};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`].
@@ -32,10 +30,7 @@ pub trait Layer<H> {
 }
 
 /// Convenience extension trait for fluent layer stacking on any [`Handler`].
-pub trait HandlerExt<M>: Handler<M> + Sized
-where
-    M: IncomingMessage,
-{
+pub trait HandlerExt<M>: Handler<M> + Sized {
     /// Wrap this handler with the given layer.
     fn with<L>(self, layer: L) -> L::Handler
     where
@@ -45,18 +40,55 @@ where
     }
 }
 
-impl<M, H> HandlerExt<M> for H
+impl<M, H> HandlerExt<M> for H where H: Handler<M> {}
+
+/// The identity [`Layer`]: returns the handler unchanged. The default global stack on
+/// [`RustStream`](super::RustStream).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Identity;
+
+impl<H> Layer<H> for Identity {
+    type Handler = H;
+
+    fn layer(&self, inner: H) -> H {
+        inner
+    }
+}
+
+/// Composes two layers into one: `inner` is applied first (innermost), `outer` wraps it.
+///
+/// Built by chaining [`RustStream::layer`](super::RustStream::layer); you rarely name it directly.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Stack<Inner, Outer> {
+    inner: Inner,
+    outer: Outer,
+}
+
+impl<Inner, Outer> Stack<Inner, Outer> {
+    /// Composes `inner` (applied first) under `outer`.
+    #[must_use]
+    pub fn new(inner: Inner, outer: Outer) -> Self {
+        Self { inner, outer }
+    }
+}
+
+impl<H, Inner, Outer> Layer<H> for Stack<Inner, Outer>
 where
-    M: IncomingMessage,
-    H: Handler<M>,
+    Inner: Layer<H>,
+    Outer: Layer<Inner::Handler>,
 {
+    type Handler = Outer::Handler;
+
+    fn layer(&self, inner: H) -> Self::Handler {
+        self.outer.layer(self.inner.layer(inner))
+    }
 }
 
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
 pub mod layers {
     use tracing::{debug, info, instrument, warn};
 
-    use super::{Future, Handler, HandlerResult, IncomingMessage, Layer};
+    use super::{Future, Handler, HandlerResult, Layer};
 
     /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
     /// outcome and `DEBUG` for arrival.
@@ -95,7 +127,7 @@ pub mod layers {
 
     impl<M, H> Handler<M> for TracingHandler<H>
     where
-        M: IncomingMessage,
+        M: Sync,
         H: Handler<M>,
     {
         #[instrument(level = "trace", skip(self, msg), fields(target = self.target))]

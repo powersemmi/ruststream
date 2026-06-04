@@ -9,7 +9,7 @@
 //! reference broker and the contract harness. Codec features are mutually compatible and
 //! enable only the deserializers you need.
 //!
-//! * `runtime` (default): [`runtime::Router`] plus middleware, lifecycle, and dispatch.
+//! * `runtime` (default): [`runtime::RustStream`] plus middleware, lifecycle, and dispatch.
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
 //! * `cbor`: [`codec::CborCodec`].
@@ -33,15 +33,19 @@ mod headers;
 mod message;
 mod publisher;
 mod subscriber;
+mod subscription;
 pub mod testing;
 
 pub use broker::Broker;
-pub use capability::{BatchSubscriber, Partitioned, RequestReply, TransactionalPublisher};
+pub use capability::{
+    BatchPublisher, BatchSubscriber, Partitioned, RequestReply, Subscribe, TransactionalPublisher,
+};
 pub use error::AckError;
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;
 pub use subscriber::Subscriber;
+pub use subscription::{SubscriptionSource, Topic};
 
 pub mod codec;
 
@@ -50,6 +54,9 @@ pub mod memory;
 
 #[cfg(feature = "runtime")]
 pub mod runtime;
+
+#[cfg(feature = "runtime")]
+pub use runtime::RustStream;
 
 #[cfg(feature = "conformance")]
 pub mod conformance;
