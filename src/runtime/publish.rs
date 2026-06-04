@@ -135,54 +135,46 @@ pub(crate) fn run_publish<'a>(
     .run(out)
 }
 
-/// A publisher bound to a destination topic and a [`Codec`], ready to send typed values.
+/// A byte [`Publisher`] paired with a [`Codec`], ready to send typed values.
 ///
-/// This is the publish-side counterpart to a subscriber: it carries *where* (the topic) and *how*
-/// (the codec) a reply is sent, so a handler — or the [`#[subscriber(.., publish)]`](macro) reply
-/// form — just hands it a value. Construct it from a broker's byte publisher:
+/// This is the publish-side counterpart to a typed subscriber: it carries *how* a value is encoded,
+/// while *where* it goes (the topic) is supplied per send — so one `TypedPublisher` (a broker
+/// connection + reply codec) is reused across handlers that reply to different topics. The
+/// [`#[subscriber(.., publish("topic"))]`](macro) reply form names the topic; the `TypedPublisher`
+/// is passed at wiring.
 ///
 /// ```
 /// # #[cfg(all(feature = "memory", feature = "json"))]
 /// # {
 /// use ruststream::codec::JsonCodec;
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::Publication;
+/// use ruststream::runtime::TypedPublisher;
 ///
 /// let broker = MemoryBroker::new();
-/// let out = Publication::new(broker.publisher(), "responses", JsonCodec);
-/// assert_eq!(out.topic(), "responses");
+/// let out = TypedPublisher::new(broker.publisher(), JsonCodec);
+/// # let _ = out;
 /// # }
 /// ```
 ///
 /// [macro]: crate::subscriber
-pub struct Publication<P, C> {
+pub struct TypedPublisher<P, C> {
     publisher: P,
-    topic: String,
     codec: C,
 }
 
-impl<P, C> Publication<P, C> {
-    /// Binds `publisher` to `topic`, encoding values with `codec`.
+impl<P, C> TypedPublisher<P, C> {
+    /// Pairs `publisher` with `codec`.
     #[must_use]
-    pub fn new(publisher: P, topic: impl Into<String>, codec: C) -> Self {
-        Self {
-            publisher,
-            topic: topic.into(),
-            codec,
-        }
-    }
-
-    /// The destination topic replies are sent to.
-    #[must_use]
-    pub fn topic(&self) -> &str {
-        &self.topic
+    pub fn new(publisher: P, codec: C) -> Self {
+        Self { publisher, codec }
     }
 }
 
-impl<P: Publisher, C: Codec> Publication<P, C> {
-    /// Encodes `value` and publishes it to the bound topic, through `pipeline`.
+impl<P: Publisher, C: Codec> TypedPublisher<P, C> {
+    /// Encodes `value` and publishes it to `topic`, through `pipeline`.
     pub(crate) async fn publish<T: Serialize + Sync>(
         &self,
+        topic: &str,
         value: &T,
         pipeline: &[Arc<dyn PublishMiddleware>],
     ) -> Result<(), BoxError> {
@@ -190,15 +182,13 @@ impl<P: Publisher, C: Codec> Publication<P, C> {
             .codec
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
-        let mut out = Outgoing::new(self.topic.clone(), bytes.to_vec());
+        let mut out = Outgoing::new(topic.to_owned(), bytes.to_vec());
         run_publish(pipeline, &self.publisher, &mut out).await
     }
 }
 
-impl<P, C> std::fmt::Debug for Publication<P, C> {
+impl<P, C> std::fmt::Debug for TypedPublisher<P, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Publication")
-            .field("topic", &self.topic)
-            .finish_non_exhaustive()
+        f.debug_struct("TypedPublisher").finish_non_exhaustive()
     }
 }

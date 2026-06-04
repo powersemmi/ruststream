@@ -9,7 +9,7 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, Publication, PublishMiddleware, PublishNext, RustStream,
+    AppInfo, HandlerResult, Outgoing, PublishMiddleware, PublishNext, RustStream, TypedPublisher,
 };
 use ruststream::{Message, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -152,7 +152,7 @@ impl PublishMiddleware for Tagger {
     }
 }
 
-#[subscriber("requests", publish)]
+#[subscriber("requests", publish("responses"))]
 async fn reply(req: &Request) -> Response {
     Response { doubled: req.n * 2 }
 }
@@ -172,13 +172,13 @@ async fn macro_publisher_replies_cross_broker() {
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
 
-    // The reply is published cross-broker: a Publication bound to egress's "responses" topic.
-    let responses = Publication::new(egress.publisher(), "responses", JsonCodec);
+    // The reply is published cross-broker: egress's publisher + reply codec; topic from the macro.
+    let egress_pub = TypedPublisher::new(egress.publisher(), JsonCodec);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
         .with_broker(ingress, |b| {
-            b.include_publishing(reply, JsonCodec, responses)
+            b.include_publishing(reply, JsonCodec, egress_pub)
         })
         .with_broker(egress, |b| b.include(capture, JsonCodec));
 
