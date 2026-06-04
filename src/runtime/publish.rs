@@ -20,12 +20,12 @@ type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send +
 
 /// An owned, mutable outgoing message flowing through the publish pipeline.
 ///
-/// Middleware may change the [`topic`](Self::topic), transform the
+/// Middleware may change the [`name`](Self::name), transform the
 /// [`payload`](Self::payload_mut), and enrich the [`headers`](Self::headers_mut) before the
 /// message is sent.
 #[derive(Debug, Clone)]
 pub struct Outgoing {
-    topic: String,
+    name: String,
     payload: Vec<u8>,
     headers: Headers,
 }
@@ -33,23 +33,23 @@ pub struct Outgoing {
 impl Outgoing {
     /// Creates an outgoing message with no headers.
     #[must_use]
-    pub fn new(topic: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
+    pub fn new(name: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
         Self {
-            topic: topic.into(),
+            name: name.into(),
             payload: payload.into(),
             headers: Headers::new(),
         }
     }
 
-    /// The destination topic.
+    /// The destination name.
     #[must_use]
-    pub fn topic(&self) -> &str {
-        &self.topic
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    /// Sets the destination topic.
-    pub fn set_topic(&mut self, topic: impl Into<String>) {
-        self.topic = topic.into();
+    /// Sets the destination name.
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.name = name.into();
     }
 
     /// The payload bytes.
@@ -109,7 +109,7 @@ impl<'a> PublishNext<'a> {
             ),
             None => self
                 .publisher
-                .publish_message(out.topic(), out.payload(), out.headers()),
+                .publish_message(out.name(), out.payload(), out.headers()),
         }
     }
 }
@@ -138,9 +138,9 @@ pub(crate) fn run_publish<'a>(
 /// A byte [`Publisher`] paired with a [`Codec`], ready to send typed values.
 ///
 /// This is the publish-side counterpart to a typed subscriber: it carries *how* a value is encoded,
-/// while *where* it goes (the topic) is supplied per send — so one `TypedPublisher` (a broker
-/// connection + reply codec) is reused across handlers that reply to different topics. The
-/// [`#[subscriber(.., publish("topic"))]`](macro) reply form names the topic; the `TypedPublisher`
+/// while *where* it goes (the destination name) is supplied per send — so one `TypedPublisher` (a
+/// broker connection + reply codec) is reused across handlers replying to different names. The
+/// [`#[subscriber(.., publish("name"))]`](macro) reply form supplies the name; the `TypedPublisher`
 /// is passed at wiring.
 ///
 /// ```
@@ -171,10 +171,10 @@ impl<P, C> TypedPublisher<P, C> {
 }
 
 impl<P: Publisher, C: Codec> TypedPublisher<P, C> {
-    /// Encodes `value` and publishes it to `topic`, through `pipeline`.
+    /// Encodes `value` and publishes it to `name`, through `pipeline`.
     pub(crate) async fn publish<T: Serialize + Sync>(
         &self,
-        topic: &str,
+        name: &str,
         value: &T,
         pipeline: &[Arc<dyn PublishMiddleware>],
     ) -> Result<(), BoxError> {
@@ -182,7 +182,7 @@ impl<P: Publisher, C: Codec> TypedPublisher<P, C> {
             .codec
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
-        let mut out = Outgoing::new(topic.to_owned(), bytes.to_vec());
+        let mut out = Outgoing::new(name.to_owned(), bytes.to_vec());
         run_publish(pipeline, &self.publisher, &mut out).await
     }
 }

@@ -5,9 +5,9 @@ use super::handler::Handler;
 
 /// A handler definition produced by the `#[subscriber]` macro.
 ///
-/// It bundles a typed [`Handler`] with the channel it binds to, so
+/// It bundles a typed [`Handler`] with the name it binds to, so
 /// [`BrokerScope::include`](super::BrokerScope::include) can subscribe and wire decoding without
-/// the caller repeating the topic or message type. The generated type is itself the handler, so
+/// the caller repeating the name or message type. The generated type is itself the handler, so
 /// [`Handler`](Self::Handler) is usually `Self`.
 pub trait SubscriberDef: Sized {
     /// The decoded message type the handler consumes.
@@ -16,8 +16,8 @@ pub trait SubscriberDef: Sized {
     /// The concrete handler type over [`Input`](Self::Input).
     type Handler: Handler<Self::Input>;
 
-    /// The channel (topic) this handler subscribes to.
-    fn channel(&self) -> &str;
+    /// The name (subject / channel) this handler subscribes to.
+    fn name(&self) -> &str;
 
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
     fn description(&self) -> Option<&str> {

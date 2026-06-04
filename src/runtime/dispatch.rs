@@ -15,13 +15,13 @@ use super::context::{Context, State};
 use super::handler::{Handler, HandlerResult};
 
 /// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
-/// stream terminates. Each delivery is given a [`Context`] built from `topic`, the message headers,
+/// stream terminates. Each delivery is given a [`Context`] built from `name`, the message headers,
 /// and shared `state`.
 pub(crate) fn spawn_dispatch<S, H>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
-    topic: Arc<str>,
+    name: Arc<str>,
     state: Arc<State>,
 ) -> JoinHandle<()>
 where
@@ -34,7 +34,7 @@ where
             tokio::select! {
                 () = shutdown.cancelled() => break,
                 next = stream.next() => match next {
-                    Some(Ok(msg)) => dispatch(&*handler, msg, &topic, &state).await,
+                    Some(Ok(msg)) => dispatch(&*handler, msg, &name, &state).await,
                     Some(Err(err)) => {
                         error!(
                             target: "ruststream::dispatch",
@@ -49,12 +49,12 @@ where
     })
 }
 
-async fn dispatch<H, M>(handler: &H, msg: M, topic: &str, state: &State)
+async fn dispatch<H, M>(handler: &H, msg: M, name: &str, state: &State)
 where
     H: Handler<M>,
     M: IncomingMessage,
 {
-    let mut ctx = Context::new(topic, msg.headers().clone(), state);
+    let mut ctx = Context::new(name, msg.headers().clone(), state);
     let outcome = handler.handle(&msg, &mut ctx).await;
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,

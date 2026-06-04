@@ -2,7 +2,7 @@
 //!
 //! Broker crates implement `TestClient` under their `testing` cargo feature so application
 //! developers can test their handlers without a real server. An implementation reproduces
-//! only Core routing: subject / topic matching, fanout to subscribers opened after they
+//! only Core routing: subject / name matching, fanout to subscribers opened after they
 //! subscribed, ack/nack as broker-side no-ops (a nack with requeue re-delivers the same
 //! payload to the same subscriber), and a recorded log of publishes behind
 //! [`TestClient::expect_published`].
@@ -47,7 +47,7 @@ pub trait TestClient: Send {
     /// Returns [`Self::Error`] when the in-memory broker rejects the publish.
     fn publish(
         &self,
-        topic: &str,
+        name: &str,
         payload: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
@@ -59,7 +59,7 @@ pub trait TestClient: Send {
     /// Returns [`Self::Error`] when the in-memory broker cannot register a new subscription.
     fn subscribe(
         &self,
-        topic: &str,
+        name: &str,
     ) -> impl Future<Output = Result<<Self::Broker as Broker>::Subscriber, Self::Error>> + Send;
 
     /// Returns a publisher bound to the in-memory broker. Useful when the test needs to set
@@ -72,7 +72,7 @@ pub trait TestClient: Send {
         &self,
     ) -> impl Future<Output = Result<<Self::Broker as Broker>::Publisher, Self::Error>> + Send;
 
-    /// Waits until at least `count` messages have been published to `topic`, returning all
+    /// Waits until at least `count` messages have been published to `name`, returning all
     /// observed messages. Fails after `timeout`.
     ///
     /// # Errors
@@ -81,7 +81,7 @@ pub trait TestClient: Send {
     /// when the in-memory broker is shut down before the assertion completes.
     fn expect_published(
         &self,
-        topic: &str,
+        name: &str,
         count: usize,
         timeout: Duration,
     ) -> impl Future<Output = Result<Vec<RawMessage>, Self::Error>> + Send;

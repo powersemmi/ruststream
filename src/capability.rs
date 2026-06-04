@@ -135,11 +135,11 @@ pub trait Partitioned {
     fn partition_key(&self) -> Option<&[u8]>;
 }
 
-/// A broker whose subscriptions are fully determined by a topic string.
+/// A broker whose subscriptions are fully determined by a name string.
 ///
 /// This is the common case (`NATS` core subjects, the in-memory broadcast broker, `Redis` pub/sub
 /// channels): no consumer group, partition, or durable-consumer configuration is needed to open a
-/// subscription, so the runtime can subscribe given just a topic. Brokers whose subscriptions
+/// subscription, so the runtime can subscribe given just a name. Brokers whose subscriptions
 /// require richer options (`Kafka` consumer groups, `JetStream` durable consumers) do not
 /// implement `Subscribe`; callers describe those with a broker-specific
 /// [`SubscriptionSource`](crate::SubscriptionSource) instead.
@@ -154,7 +154,7 @@ pub trait Partitioned {
 /// }
 /// ```
 pub trait Subscribe: Broker {
-    /// Opens a subscription to `topic`, producing this broker's [`Subscriber`].
+    /// Opens a subscription to `name`, producing this broker's [`Subscriber`].
     ///
     /// Called after [`Broker::connect`]; implementations may assume a live connection.
     ///
@@ -163,7 +163,7 @@ pub trait Subscribe: Broker {
     /// Returns [`Broker::Error`] when the broker rejects the subscription or the transport fails.
     fn subscribe(
         &self,
-        topic: &str,
+        name: &str,
     ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
 }
 

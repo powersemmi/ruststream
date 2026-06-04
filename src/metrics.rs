@@ -88,24 +88,24 @@ impl Metrics {
         let consumed = IntCounterVec::new(
             Opts::new(
                 "ruststream_messages_consumed_total",
-                "Messages handled, by topic and outcome.",
+                "Messages handled, by name and outcome.",
             ),
-            &["topic", "status"],
+            &["name", "status"],
         )?;
         let consume_duration = HistogramVec::new(
             HistogramOpts::new(
                 "ruststream_consume_duration_seconds",
-                "Handler execution time, by topic.",
+                "Handler execution time, by name.",
             )
             .buckets(DURATION_BUCKETS.to_vec()),
-            &["topic"],
+            &["name"],
         )?;
         let published = IntCounterVec::new(
             Opts::new(
                 "ruststream_messages_published_total",
-                "Messages published, by topic and outcome.",
+                "Messages published, by name and outcome.",
             ),
-            &["topic", "status"],
+            &["name", "status"],
         )?;
 
         registry.register(Box::new(consumed.clone()))?;
@@ -206,17 +206,17 @@ where
     H: Handler<M>,
 {
     fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
-        let topic = ctx.topic().to_owned();
+        let name = ctx.name().to_owned();
         async move {
             let started = std::time::Instant::now();
             let result = self.inner.handle(msg, ctx).await;
             self.metrics
                 .consume_duration
-                .with_label_values(&[topic.as_str()])
+                .with_label_values(&[name.as_str()])
                 .observe(started.elapsed().as_secs_f64());
             self.metrics
                 .consumed
-                .with_label_values(&[topic.as_str(), consume_status(result)])
+                .with_label_values(&[name.as_str(), consume_status(result)])
                 .inc();
             result
         }
@@ -237,13 +237,13 @@ impl std::fmt::Debug for MetricsPublish {
 
 impl PublishMiddleware for MetricsPublish {
     fn on_publish<'a>(&'a self, out: &'a mut Outgoing, next: PublishNext<'a>) -> PublishFut<'a> {
-        let topic = out.topic().to_owned();
+        let name = out.name().to_owned();
         Box::pin(async move {
             let result = next.run(out).await;
             let status = if result.is_ok() { "ok" } else { "error" };
             self.inner
                 .published
-                .with_label_values(&[topic.as_str(), status])
+                .with_label_values(&[name.as_str(), status])
                 .inc();
             result
         })

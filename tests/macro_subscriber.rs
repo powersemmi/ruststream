@@ -172,13 +172,13 @@ async fn macro_publisher_replies_cross_broker() {
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
 
-    // The reply is published cross-broker: egress's publisher + reply codec; topic from the macro.
+    // The reply is published cross-broker: egress's publisher + reply codec; name from the macro.
     let egress_pub = TypedPublisher::new(egress.publisher(), JsonCodec);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
         .with_broker(ingress, |b| {
-            b.include_publishing(reply, JsonCodec, egress_pub)
+            b.include_publishing(reply, JsonCodec, egress_pub);
         })
         .with_broker(egress, |b| b.include(capture, JsonCodec));
 

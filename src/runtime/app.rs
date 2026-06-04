@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{Broker, Publisher, ServerSpec, Subscribe, Subscriber, SubscriptionSource, Topic};
+use crate::{Broker, Name, Publisher, ServerSpec, Subscribe, Subscriber, SubscriptionSource};
 
 use super::context::State;
 use super::handler::Handler;
@@ -473,7 +473,7 @@ impl<L> RustStream<L> {
     /// Runs the service until `shutdown` resolves, then shuts down gracefully.
     ///
     /// Use this instead of [`run`](Self::run) to drive shutdown from a caller-owned future (a
-    /// channel, a timeout, a test signal) rather than from process signals.
+    /// name, a timeout, a test signal) rather than from process signals.
     ///
     /// # Errors
     ///
@@ -612,7 +612,7 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
 impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     /// Mounts a `#[subscriber]`-generated definition, decoding its input with `codec`.
     ///
-    /// Subscribes via a [`Topic`] descriptor (so the broker must implement [`Subscribe`]) and wraps
+    /// Subscribes via a [`Name`] descriptor (so the broker must implement [`Subscribe`]) and wraps
     /// the handler with the global middleware stack, just like [`subscribe`](Self::subscribe). To
     /// avoid repeating the codec, set a scope default with
     /// [`with_broker_codec`](RustStream::with_broker_codec) and call the one-argument `include`.
@@ -633,8 +633,8 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         self.include_with(def, codec);
     }
 
-    /// Mounts a `#[subscriber(.., publish("topic"))]`-generated definition: decodes its input with
-    /// `codec`, runs the handler, then sends the reply to the macro's reply topic through
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition: decodes its input with
+    /// `codec`, runs the handler, then sends the reply to the macro's reply name through
     /// `publisher` (a broker connection + reply codec). See
     /// [`include_publishing`](BrokerScope::include_publishing) on a codec-default scope for the
     /// two-argument form.
@@ -681,7 +681,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
     }
 
     /// Mounts a `#[subscriber(.., publish)]`-generated definition, decoding its input with the
-    /// scope's default codec and sending the reply to the macro's reply topic through `publisher`.
+    /// scope's default codec and sending the reply to the macro's reply name through `publisher`.
     pub fn include_publishing<D, P, PC>(&mut self, def: D, publisher: TypedPublisher<P, PC>)
     where
         B: Subscribe,
@@ -716,8 +716,8 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         >,
         L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
     {
-        let channel = def.channel().to_owned();
-        let mut meta = HandlerMetadata::typed::<D::Input>(channel.clone());
+        let name = def.name().to_owned();
+        let mut meta = HandlerMetadata::typed::<D::Input>(name.clone());
         if let Some(description) = def.description() {
             meta = meta.with_description(description.to_owned());
         }
@@ -725,7 +725,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
             meta = meta.with_payload_schema(schema);
         }
         let handler = typed(codec, def.into_handler());
-        self.subscribe(Topic::new(channel), handler, meta);
+        self.subscribe(Name::new(name), handler, meta);
     }
 
     /// Shared body for the explicit- and default-codec `include_publishing` forms.
@@ -747,9 +747,9 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L: Layer<PublishingHandler<D, C, P, PC>>,
         L::Handler: Handler<<<B as Broker>::Subscriber as Subscriber>::Message> + 'static,
     {
-        let subscribe_channel = def.subscribe_channel().to_owned();
+        let name = def.name().to_owned();
         let description = def.description().map(str::to_owned);
-        let mut meta = HandlerMetadata::typed::<D::Input>(subscribe_channel.clone())
+        let mut meta = HandlerMetadata::typed::<D::Input>(name.clone())
             .with_output_type(std::any::type_name::<D::Reply>());
         if let Some(description) = description {
             meta = meta.with_description(description);
@@ -763,7 +763,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
             publisher,
             pipeline: self.pipeline.clone(),
         };
-        self.subscribe(Topic::new(subscribe_channel), handler, meta);
+        self.subscribe(Name::new(name), handler, meta);
     }
 }
 

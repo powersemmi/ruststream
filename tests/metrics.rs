@@ -7,7 +7,7 @@ use std::time::Duration;
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
-use ruststream::{OutgoingMessage, Publisher, Topic};
+use ruststream::{Name, OutgoingMessage, Publisher};
 use tokio::sync::Notify;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -20,7 +20,7 @@ async fn consume_metrics_are_recorded() {
         .layer(metrics.consume_layer())
         .with_broker(broker, |b| {
             b.subscribe(
-                Topic::new("pings"),
+                Name::new("pings"),
                 |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
                 HandlerMetadata::raw("pings"),
             );
@@ -49,7 +49,7 @@ async fn consume_metrics_are_recorded() {
     assert!(recorded.is_ok(), "consume metric was never recorded");
 
     let text = metrics.export().unwrap();
-    assert!(text.contains(r#"ruststream_messages_consumed_total{status="ack",topic="pings"}"#));
+    assert!(text.contains(r#"ruststream_messages_consumed_total{name="pings",status="ack"}"#));
     assert!(text.contains("ruststream_consume_duration_seconds"));
 
     shutdown.notify_one();
@@ -92,7 +92,7 @@ mod publish {
         let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
             .publish_layer(metrics.publish_layer())
             .with_broker(ingress, |b| {
-                b.include_publishing(reply, JsonCodec, egress_pub)
+                b.include_publishing(reply, JsonCodec, egress_pub);
             });
 
         let shutdown = Arc::new(Notify::new());
@@ -120,7 +120,7 @@ mod publish {
 
         let text = metrics.export().unwrap();
         assert!(
-            text.contains(r#"ruststream_messages_published_total{status="ok",topic="responses"}"#)
+            text.contains(r#"ruststream_messages_published_total{name="responses",status="ok"}"#)
         );
 
         shutdown.notify_one();

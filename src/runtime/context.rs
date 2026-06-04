@@ -42,30 +42,30 @@ impl std::fmt::Debug for State {
 
 /// Per-delivery context, threaded through middleware and into the handler.
 ///
-/// Carries the channel ([`topic`](Self::topic)), a mutable working copy of the message
+/// Carries the channel ([`name`](Self::name)), a mutable working copy of the message
 /// [`headers`](Self::headers) (middleware may modify them; the copy is also what outgoing replies
 /// start from), and shared application [state](Self::get).
 #[derive(Debug)]
 pub struct Context<'a> {
-    topic: &'a str,
+    name: &'a str,
     headers: Headers,
     state: &'a State,
 }
 
 impl<'a> Context<'a> {
     /// Creates a context for one delivery.
-    pub(crate) fn new(topic: &'a str, headers: Headers, state: &'a State) -> Self {
+    pub(crate) fn new(name: &'a str, headers: Headers, state: &'a State) -> Self {
         Self {
-            topic,
+            name,
             headers,
             state,
         }
     }
 
-    /// The channel (topic / subject) the message arrived on.
+    /// The channel (name / subject) the message arrived on.
     #[must_use]
-    pub fn topic(&self) -> &str {
-        self.topic
+    pub fn name(&self) -> &str {
+        self.name
     }
 
     /// The working copy of the message headers.

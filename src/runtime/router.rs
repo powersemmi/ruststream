@@ -43,11 +43,11 @@ pub(crate) type BoundStarter<B> = Box<
 /// # fn build() {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router};
-/// use ruststream::Topic;
+/// use ruststream::Name;
 ///
 /// let mut router = Router::<MemoryBroker>::new();
 /// router.subscribe(
-///     Topic::new("events"),
+///     Name::new("events"),
 ///     |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
 ///     HandlerMetadata::raw("events"),
 /// );
@@ -93,9 +93,9 @@ impl<B: Broker + 'static> Router<B> {
         H: Handler<S::Message> + 'static,
     {
         let handler = Arc::new(handler);
-        let topic: Arc<str> = Arc::from(meta.topic.as_ref());
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(move |_broker, state, token| {
-            Box::pin(async move { Ok(spawn_dispatch(subscriber, handler, token, topic, state)) })
+            Box::pin(async move { Ok(spawn_dispatch(subscriber, handler, token, name, state)) })
         }));
         self.handlers.push(meta);
     }
@@ -111,7 +111,7 @@ impl<B: Broker + 'static> Router<B> {
         H: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let handler = Arc::new(handler);
-        let topic: Arc<str> = Arc::from(meta.topic.as_ref());
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters
             .push(Box::new(move |broker: Arc<B>, state, token| {
                 Box::pin(async move {
@@ -119,7 +119,7 @@ impl<B: Broker + 'static> Router<B> {
                         .subscribe(broker.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
-                    Ok(spawn_dispatch(subscriber, handler, token, topic, state))
+                    Ok(spawn_dispatch(subscriber, handler, token, name, state))
                 })
             }));
         self.handlers.push(meta);

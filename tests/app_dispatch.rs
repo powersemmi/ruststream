@@ -13,7 +13,7 @@ use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     AppInfo, Context, Handler, HandlerMetadata, HandlerResult, Layer, Router, RustStream, State,
 };
-use ruststream::{OutgoingMessage, Publisher, Topic};
+use ruststream::{Name, OutgoingMessage, Publisher};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -121,7 +121,7 @@ async fn app_subscribes_via_descriptor_after_connect() {
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0")).with_broker(broker, |b| {
         b.subscribe(
-            Topic::new("events"),
+            Name::new("events"),
             move |_msg: &_, _ctx: &mut Context| {
                 let seen = Arc::clone(&seen_clone);
                 async move {
@@ -155,7 +155,7 @@ async fn included_router_handlers_dispatch() {
     // Router defined independently of any live broker, then mounted.
     let mut router = Router::<MemoryBroker>::new();
     router.subscribe(
-        Topic::new("events"),
+        Name::new("events"),
         move |_msg: &_, _ctx: &mut Context| {
             let seen = Arc::clone(&seen_clone);
             async move {
@@ -238,7 +238,7 @@ async fn cross_broker_publish_via_named_publisher() {
         .with_broker(ingress, |b| {
             let out = b.publisher("egress").expect("egress registered");
             b.subscribe(
-                Topic::new("orders"),
+                Name::new("orders"),
                 move |_msg: &_, _ctx: &mut Context| {
                     let out = Arc::clone(&out);
                     async move {
@@ -311,14 +311,14 @@ async fn handler_reads_context_topic_and_state() {
             b.handle(
                 subscriber,
                 move |_msg: &_, ctx: &mut Context| {
-                    let topic = ctx.topic().to_owned();
+                    let name = ctx.name().to_owned();
                     let greeting = ctx.get::<Config>().map(|c| c.greeting.clone());
                     // Middleware/handlers may enrich the working headers.
                     ctx.headers_mut().insert("x-seen", b"1".to_vec());
                     let seen = Arc::clone(&seen_clone);
                     async move {
                         *seen.lock().expect("poisoned") =
-                            Some((topic, greeting.unwrap_or_default()));
+                            Some((name, greeting.unwrap_or_default()));
                         HandlerResult::Ack
                     }
                 },
@@ -433,7 +433,7 @@ fn app_records_handler_metadata() {
     });
 
     assert_eq!(app.handlers().len(), 2);
-    assert_eq!(app.handlers()[0].topic, "orders");
+    assert_eq!(app.handlers()[0].name, "orders");
     assert_eq!(
         app.handlers()[0].description.as_deref(),
         Some("processes orders"),

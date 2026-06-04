@@ -9,9 +9,9 @@ use std::{any::type_name, borrow::Cow, marker::PhantomData};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct HandlerMetadata {
-    /// Broker topic / subject the handler is bound to.
-    pub topic: Cow<'static, str>,
-    /// Optional broker-provided routing key, when the broker distinguishes from `topic`.
+    /// Broker name / subject the handler is bound to.
+    pub name: Cow<'static, str>,
+    /// Optional broker-provided routing key, when the broker distinguishes from `name`.
     pub routing_key: Option<Cow<'static, str>>,
     /// Type name of the decoded input value, as captured at registration time.
     pub input_type: &'static str,
@@ -26,11 +26,11 @@ pub struct HandlerMetadata {
 }
 
 impl HandlerMetadata {
-    /// Constructs metadata for a raw-bytes handler bound to a topic.
+    /// Constructs metadata for a raw-bytes handler bound to a name.
     #[must_use]
-    pub fn raw(topic: impl Into<Cow<'static, str>>) -> Self {
+    pub fn raw(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            topic: topic.into(),
+            name: name.into(),
             routing_key: None,
             input_type: "bytes",
             output_type: None,
@@ -42,10 +42,10 @@ impl HandlerMetadata {
     /// Constructs metadata for a typed handler. The input type name is captured via
     /// [`std::any::type_name`].
     #[must_use]
-    pub fn typed<T>(topic: impl Into<Cow<'static, str>>) -> Self {
+    pub fn typed<T>(name: impl Into<Cow<'static, str>>) -> Self {
         let _ = PhantomData::<T>;
         Self {
-            topic: topic.into(),
+            name: name.into(),
             routing_key: None,
             input_type: type_name::<T>(),
             output_type: None,

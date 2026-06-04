@@ -128,8 +128,8 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
                 type Input = #input_ty;
                 type Reply = #reply_ty;
 
-                fn subscribe_channel(&self) -> &str { #topic }
-                fn publish_channel(&self) -> &str { #reply_topic }
+                fn name(&self) -> &str { #topic }
+                fn reply_name(&self) -> &str { #reply_topic }
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description
@@ -167,7 +167,7 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
                 type Input = #input_ty;
                 type Handler = Self;
 
-                fn channel(&self) -> &str { #topic }
+                fn name(&self) -> &str { #topic }
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description

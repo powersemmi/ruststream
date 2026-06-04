@@ -6,7 +6,7 @@ use futures::Stream;
 
 use crate::IncomingMessage;
 
-/// A consumer attached to one or more broker topics.
+/// A consumer attached to one or more broker names.
 ///
 /// `Subscriber` yields messages via a [`Stream`], so users get back-pressure and integration with
 /// the rest of the futures ecosystem for free. Each yielded item is a broker-specific

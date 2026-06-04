@@ -48,7 +48,7 @@ pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;
 pub use schema::Message;
 pub use subscriber::Subscriber;
-pub use subscription::{SubscriptionSource, Topic};
+pub use subscription::{Name, SubscriptionSource};
 
 pub mod codec;
 

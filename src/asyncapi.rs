@@ -26,7 +26,7 @@ pub struct Spec {
     /// Servers (one per broker the service connects to), keyed by server name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub servers: BTreeMap<String, Server>,
-    /// Channels, keyed by channel id (the topic).
+    /// Channels, keyed by channel id (the name).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub channels: BTreeMap<String, Channel>,
     /// Operations, keyed by operation id.
@@ -86,7 +86,7 @@ pub struct Info {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct Channel {
-    /// The channel address (the broker topic / subject).
+    /// The channel address (the broker name / subject).
     pub address: String,
     /// Messages on this channel, keyed by message name, referencing component definitions.
     pub messages: BTreeMap<String, Reference>,
@@ -146,7 +146,7 @@ impl Reference {
 
 /// Builds an [`AsyncAPI`](Spec) 3.0 document from a service's handlers and metadata.
 ///
-/// Each registered subscriber becomes a channel (addressed by its topic), a `receive` operation,
+/// Each registered subscriber becomes a channel (addressed by its name), a `receive` operation,
 /// and a message component named after the handler's input type.
 ///
 /// # Examples
@@ -205,11 +205,11 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
     let mut messages = BTreeMap::new();
 
     for handler in app.handlers() {
-        let topic = handler.topic.as_ref();
+        let name = handler.name.as_ref();
         let message_name = message_name(handler.input_type);
 
-        channels.entry(topic.to_owned()).or_insert_with(|| Channel {
-            address: topic.to_owned(),
+        channels.entry(name.to_owned()).or_insert_with(|| Channel {
+            address: name.to_owned(),
             messages: BTreeMap::from([(
                 message_name.clone(),
                 Reference::new(format!("#/components/messages/{message_name}")),
@@ -217,12 +217,12 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
         });
 
         operations.insert(
-            operation_id(topic),
+            operation_id(name),
             Operation {
                 action: "receive".to_owned(),
-                channel: Reference::new(format!("#/channels/{topic}")),
+                channel: Reference::new(format!("#/channels/{name}")),
                 messages: vec![Reference::new(format!(
-                    "#/channels/{topic}/messages/{message_name}"
+                    "#/channels/{name}/messages/{message_name}"
                 ))],
             },
         );
@@ -335,9 +335,9 @@ fn message_name(type_name: &str) -> String {
         .to_owned()
 }
 
-/// Derives a stable operation id from a topic.
-fn operation_id(topic: &str) -> String {
-    let sanitized: String = topic
+/// Derives a stable operation id from a name.
+fn operation_id(name: &str) -> String {
+    let sanitized: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect();

@@ -1,13 +1,13 @@
 //! Subscription descriptors: how a handler is bound to one broker subscription.
 //!
 //! A [`SubscriptionSource`] is the value a broker crate exposes as its subscriber configuration:
-//! it carries everything needed to open one subscription (subject / topic, consumer group,
+//! it carries everything needed to open one subscription (subject / name, consumer group,
 //! durable name, delivery policy, ...) and knows how to turn that into a live [`Subscriber`]
-//! against a connected broker. The default [`Topic`] source covers brokers that only need a topic
+//! against a connected broker. The default [`Name`] source covers brokers that only need a name
 //! string (those implementing [`Subscribe`]); richer brokers ship their own sources.
 //!
 //! This is the seam the `#[subscriber(..)]` macro and the application object build on: the macro
-//! takes a source (a topic string or a broker config value), the runtime resolves it once after
+//! takes a source (a name string or a broker config value), the runtime resolves it once after
 //! the broker is connected.
 
 use std::{borrow::Cow, future::Future};
@@ -40,11 +40,11 @@ pub trait SubscriptionSource<B: Broker> {
     /// The subscriber type this source opens.
     type Subscriber: Subscriber;
 
-    /// The channel (topic / subject) name this subscription binds to.
+    /// The name (subject / channel) this subscription binds to.
     ///
     /// Used for handler metadata and `AsyncAPI` generation; it need not be the only routing
     /// information the source carries.
-    fn channel(&self) -> &str;
+    fn name(&self) -> &str;
 
     /// Opens the subscription against `broker`. Called once, after [`Broker::connect`].
     ///
@@ -57,35 +57,35 @@ pub trait SubscriptionSource<B: Broker> {
     ) -> impl Future<Output = Result<Self::Subscriber, B::Error>> + Send;
 }
 
-/// The default [`SubscriptionSource`]: subscribe by topic string via the [`Subscribe`] capability.
+/// The default [`SubscriptionSource`]: subscribe by name string via the [`Subscribe`] capability.
 ///
-/// Produced by `#[subscriber("topic")]` and usable directly with any broker implementing
+/// Produced by `#[subscriber("name")]` and usable directly with any broker implementing
 /// [`Subscribe`].
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Broker, Subscribe, SubscriptionSource, Topic};
+/// use ruststream::{Broker, Subscribe, SubscriptionSource, Name};
 ///
 /// async fn open<B: Subscribe>(broker: &B) -> Result<B::Subscriber, B::Error> {
-///     Topic::new("orders").subscribe(broker).await
+///     Name::new("orders").subscribe(broker).await
 /// }
 /// ```
 #[derive(Debug, Clone)]
-pub struct Topic(Cow<'static, str>);
+pub struct Name(Cow<'static, str>);
 
-impl Topic {
-    /// Creates a topic source bound to `topic`.
+impl Name {
+    /// Creates a name source bound to `name`.
     #[must_use]
-    pub fn new(topic: impl Into<Cow<'static, str>>) -> Self {
-        Self(topic.into())
+    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+        Self(name.into())
     }
 }
 
-impl<B: Subscribe> SubscriptionSource<B> for Topic {
+impl<B: Subscribe> SubscriptionSource<B> for Name {
     type Subscriber = B::Subscriber;
 
-    fn channel(&self) -> &str {
+    fn name(&self) -> &str {
         &self.0
     }
 

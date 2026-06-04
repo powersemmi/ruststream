@@ -14,25 +14,25 @@ use super::lifecycle::{BoxError, BoxFuture};
 /// Blanket-implemented for every [`Publisher`], so any broker's publisher can be registered by
 /// name and shared as `Arc<dyn ErasedPublisher>`.
 pub trait ErasedPublisher: Send + Sync {
-    /// Publishes `payload` to `topic`, with no headers.
+    /// Publishes `payload` to `name`, with no headers.
     ///
     /// # Errors
     ///
     /// Returns the underlying publisher's error, boxed, if the broker rejects the publish.
     fn publish_bytes<'a>(
         &'a self,
-        topic: &'a str,
+        name: &'a str,
         payload: &'a [u8],
     ) -> BoxFuture<'a, Result<(), BoxError>>;
 
-    /// Publishes `payload` to `topic` with `headers`.
+    /// Publishes `payload` to `name` with `headers`.
     ///
     /// # Errors
     ///
     /// Returns the underlying publisher's error, boxed, if the broker rejects the publish.
     fn publish_message<'a>(
         &'a self,
-        topic: &'a str,
+        name: &'a str,
         payload: &'a [u8],
         headers: &'a Headers,
     ) -> BoxFuture<'a, Result<(), BoxError>>;
@@ -41,11 +41,11 @@ pub trait ErasedPublisher: Send + Sync {
 impl<P: Publisher> ErasedPublisher for P {
     fn publish_bytes<'a>(
         &'a self,
-        topic: &'a str,
+        name: &'a str,
         payload: &'a [u8],
     ) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move {
-            self.publish(OutgoingMessage::new(topic, payload))
+            self.publish(OutgoingMessage::new(name, payload))
                 .await
                 .map_err(|e| Box::new(e) as BoxError)
         })
@@ -53,12 +53,12 @@ impl<P: Publisher> ErasedPublisher for P {
 
     fn publish_message<'a>(
         &'a self,
-        topic: &'a str,
+        name: &'a str,
         payload: &'a [u8],
         headers: &'a Headers,
     ) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move {
-            self.publish(OutgoingMessage::new(topic, payload).with_headers(headers.clone()))
+            self.publish(OutgoingMessage::new(name, payload).with_headers(headers.clone()))
                 .await
                 .map_err(|e| Box::new(e) as BoxError)
         })
