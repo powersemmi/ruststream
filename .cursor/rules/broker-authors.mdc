@@ -1,0 +1,139 @@
+---
+description: How to author a new RustStream broker crate (the Broker contract, capabilities, conformance)
+globs:
+alwaysApply: false
+---
+
+- A broker is its own crate that depends on `ruststream` (broker clients never go into core).
+  Implement `Broker`: associated `Error`, async `connect`, async `shutdown`.
+- Lazy-startup contract (so the broker works with `#[ruststream::app]`): a synchronous, I/O-free
+  `new(addrs)` that only records config; all network work happens in `connect`, which is idempotent
+  and runs once at startup. Keep the connection behind interior mutability so publishers handed out
+  before `connect` resolve on first use.
+- Implement `Subscribe` for the by-name `#[subscriber("topic")]` form, and ship a
+  `SubscriptionSource<YourBroker>` descriptor for broker-specific options. Implement capability traits
+  (`RequestReply`, `BatchSubscriber`, `TransactionalPublisher`, `Partitioned`, `DescribeServer`) only
+  for what the broker natively supports.
+- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`.
+- Ship a `TestClient` (handler-stub, Core routing only) under a `testing` feature. Verify with the
+  conformance harness; run `lifecycle` against a real server (env-gated). No simulation of
+  broker-specific semantics (durable cursors, offsets, DLX) - those are tested only against a server.
+
+## Lazy broker
+
+`new` is synchronous; the connection is opened lazily in `Broker::connect`.
+
+```rust
+use std::sync::Arc;
+use ruststream::Broker;
+use tokio::sync::OnceCell;
+
+#[derive(Clone)]
+pub struct MyBroker {
+    client: Arc<OnceCell<Client>>,
+    addrs: Option<String>,
+}
+
+impl MyBroker {
+    /// Records the address; opens the connection later in `Broker::connect`.
+    #[must_use]
+    pub fn new(addrs: impl Into<String>) -> Self {
+        Self { client: Arc::new(OnceCell::new()), addrs: Some(addrs.into()) }
+    }
+
+    fn connected(&self) -> Result<Client, MyError> {
+        self.client.get().cloned().ok_or(MyError::NotConnected)
+    }
+}
+
+impl Broker for MyBroker {
+    type Error = MyError;
+
+    async fn connect(&self) -> Result<(), MyError> {
+        self.client
+            .get_or_try_init(|| async {
+                let addrs = self.addrs.as_deref().ok_or(MyError::NotConnected)?;
+                Client::connect(addrs).await.map_err(MyError::connect)
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), MyError> {
+        if let Some(client) = self.client.get() {
+            client.drain().await;
+        }
+        Ok(())
+    }
+}
+```
+
+## Deferred publisher
+
+The publisher shares the broker's connection cell, so it works even when created before `connect`.
+
+```rust
+use ruststream::{OutgoingMessage, Publisher};
+
+#[derive(Clone)]
+pub struct MyPublisher {
+    client: Arc<OnceCell<Client>>,
+}
+
+impl Publisher for MyPublisher {
+    type Error = MyError;
+
+    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), MyError> {
+        let client = self.client.get().ok_or(MyError::NotConnected)?;
+        client.send(msg.name(), msg.payload()).await.map_err(MyError::publish)
+    }
+}
+```
+
+## Subscription source
+
+The by-name `Subscribe` impl covers `#[subscriber("topic")]`; a descriptor carries richer options.
+
+```rust
+use ruststream::{Subscribe, SubscriptionSource};
+
+impl Subscribe for MyBroker {
+    type Subscriber = MySubscriber;
+    async fn subscribe(&self, name: &str) -> Result<MySubscriber, MyError> {
+        self.open(MySubscribeOptions::new(name)).await
+    }
+}
+
+impl SubscriptionSource<MyBroker> for MySubscribeOptions {
+    type Subscriber = MySubscriber;
+    fn name(&self) -> &str {
+        &self.subject
+    }
+    async fn subscribe(self, broker: &MyBroker) -> Result<MySubscriber, MyError> {
+        broker.open(self).await
+    }
+}
+```
+
+## Conformance
+
+Run both, the lifecycle against a real server behind an env gate.
+
+```rust
+use ruststream::conformance::harness;
+
+// routing, via your TestClient (testing feature)
+harness::run_suite(|| async { MyTestClient::start().await }).await;
+
+// full lazy lifecycle against a real broker
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lazy_lifecycle_conformance() {
+    let Ok(url) = std::env::var("MY_BROKER_TEST_URL") else { return };
+    harness::lifecycle(
+        || MyBroker::new(url.clone()),
+        |name| MySubscribeOptions::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+```

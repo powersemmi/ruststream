@@ -1,0 +1,112 @@
+---
+description: Conventions for developing the RustStream core crate (src/, crates/ruststream-macros)
+globs: src/**/*.rs,crates/**/*.rs,tests/**/*.rs
+alwaysApply: false
+---
+
+- Core is broker-agnostic: traits and message types with zero broker dependencies. Keep
+  broker-specific config and defaults out of core; if a field has no sane default, do not implement
+  `Default`. Core is fully generic (no object-safety); erasure lives in `runtime`.
+- Default visibility `pub(crate)`; make `pub` only what `lib.rs` re-exports. The crate root denies
+  `missing_docs`: every `pub` item gets a summary plus a compiling `# Examples` doctest using `?`.
+- Library code uses `thiserror` (`anyhow` is bins/examples only); public error enums are
+  `#[non_exhaustive]`. Never panic on user/network input - return `Result`.
+- Native `async fn in trait`; `+ Send` at the call site, not the trait. Destructors never panic or
+  block. Features are strictly additive, never mutually exclusive.
+- Gates: `just check` (`cargo fmt --check`, `clippy --all-targets --all-features -- -D warnings`,
+  `cargo check` all-features and `--no-default-features`) + `just test`. SemVer pre-1.0: minor =
+  breaking, patch = additive; `ruststream` and `ruststream-macros` versions are lockstep via
+  `[workspace.package].version`.
+- English only, no emoji, no em-dashes. One logical unit per commit; no `Co-Authored-By`. Do not
+  publish/tag/release - prepare branches/PRs; the maintainer releases.
+
+## Error type
+
+One `#[non_exhaustive]` enum per crate, variants by source, with `thiserror`.
+
+```rust
+use std::error::Error as StdError;
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum PublishError {
+    /// The broker rejected the publish.
+    #[error("publish rejected: {0}")]
+    Rejected(#[source] Box<dyn StdError + Send + Sync>),
+}
+```
+
+## Trait with async methods
+
+Use RPITIT; keep `+ Send` on the returned future. Do not force object-safety in core.
+
+```rust
+use std::future::Future;
+
+pub trait Publisher: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Publishes `msg`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the broker rejects the message.
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+```
+
+## Public item with a doctest
+
+Every `pub` item carries a compiling example using `?`, not `unwrap()`.
+
+```rust
+/// Creates a name source bound to `name`.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::Name;
+/// let source = Name::new("orders");
+/// # let _ = source;
+/// ```
+#[must_use]
+pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+    Self(name.into())
+}
+```
+
+## Feature-gated default-codec API
+
+The default-codec convenience methods only exist when a codec feature is on.
+
+```rust
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+pub fn include<D>(&mut self, def: D)
+where
+    D: SubscriberDef,
+    // ...
+{
+    self.mount(def, crate::codec::DefaultCodec::default());
+}
+```
+
+## Conformance self-test
+
+The reference `MemoryBroker` runs the harness in `tests/`.
+
+```rust
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_lifecycle() {
+    harness::lifecycle(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+```
