@@ -6,8 +6,6 @@
 
 mod orders;
 mod routes;
-mod stream;
-
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, RustStream};
 
