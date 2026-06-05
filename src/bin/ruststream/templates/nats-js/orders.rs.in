@@ -1,18 +1,17 @@
 //! Domain types and handlers, written as `#[subscriber]` functions.
 //!
 //! The first parameter is the decoded payload; the macro turns each function into a mountable
-//! definition (a value named after the function) that `routes` collects into a `Router`. `confirm`
-//! consumes `orders` and replies on `confirmations`; `on_cancel` handles `cancellations`.
+//! definition mounted in `main`. The handler is broker-agnostic - `main` binds `confirm` to a
+//! JetStream consumer; `on_cancel` handles `cancellations` with no reply.
 
 use ruststream::runtime::HandlerResult;
 use ruststream::schemars::JsonSchema;
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
-/// An order placed on the `orders` channel.
+/// An order placed on the `orders` subject.
 ///
-/// `JsonSchema` lets `asyncapi gen` emit this payload's schema into the generated document; the
-/// `crate` attribute points the derive at `schemars` re-exported through `ruststream`.
+/// `JsonSchema` lets `asyncapi gen` emit this payload's schema into the generated document.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(crate = "ruststream::schemars")]
 pub struct Order {
@@ -32,7 +31,7 @@ pub struct Confirmation {
 /// Confirms an incoming order and publishes a `Confirmation` to `confirmations`.
 ///
 /// The return value is the reply: the `publish("confirmations")` clause makes the runtime encode it
-/// and send it through the publisher wired in `routes`.
+/// and send it through the publisher wired in `main`.
 #[subscriber("orders", publish("confirmations"))]
 pub async fn confirm(order: &Order) -> Confirmation {
     Confirmation {

@@ -15,7 +15,14 @@ const MEMORY_CARGO: &str = include_str!("templates/memory/Cargo.toml.in");
 const MEMORY_MAIN: &str = include_str!("templates/memory/main.rs.in");
 const MEMORY_ORDERS: &str = include_str!("templates/memory/orders.rs.in");
 const MEMORY_ROUTES: &str = include_str!("templates/memory/routes.rs.in");
-const MEMORY_STREAM: &str = include_str!("templates/memory/stream.rs.in");
+
+const NATS_CARGO: &str = include_str!("templates/nats/Cargo.toml.in");
+const NATS_MAIN: &str = include_str!("templates/nats/main.rs.in");
+const NATS_ORDERS: &str = include_str!("templates/nats/orders.rs.in");
+
+const NATS_JS_CARGO: &str = include_str!("templates/nats-js/Cargo.toml.in");
+const NATS_JS_MAIN: &str = include_str!("templates/nats-js/main.rs.in");
+const NATS_JS_ORDERS: &str = include_str!("templates/nats-js/orders.rs.in");
 
 /// The files a broker template writes, as `(path relative to the project dir, contents)` pairs.
 const fn template(broker: BrokerKind) -> &'static [(&'static str, &'static str)] {
@@ -25,7 +32,16 @@ const fn template(broker: BrokerKind) -> &'static [(&'static str, &'static str)]
             ("src/main.rs", MEMORY_MAIN),
             ("src/orders.rs", MEMORY_ORDERS),
             ("src/routes.rs", MEMORY_ROUTES),
-            ("src/stream.rs", MEMORY_STREAM),
+        ],
+        BrokerKind::Nats => &[
+            ("Cargo.toml", NATS_CARGO),
+            ("src/main.rs", NATS_MAIN),
+            ("src/orders.rs", NATS_ORDERS),
+        ],
+        BrokerKind::NatsJs => &[
+            ("Cargo.toml", NATS_JS_CARGO),
+            ("src/main.rs", NATS_JS_MAIN),
+            ("src/orders.rs", NATS_JS_ORDERS),
         ],
     }
 }
@@ -102,18 +118,44 @@ mod tests {
         let main = std::fs::read_to_string(dir.join("src/main.rs")).unwrap();
         let orders = std::fs::read_to_string(dir.join("src/orders.rs")).unwrap();
         let routes = std::fs::read_to_string(dir.join("src/routes.rs")).unwrap();
-        let stream = std::fs::read_to_string(dir.join("src/stream.rs")).unwrap();
         assert!(cargo.contains("name = \"svc\""));
         assert!(cargo.contains("ruststream = "));
         assert!(main.contains("#[ruststream::app]"));
         assert!(main.contains("AppInfo::new(\"svc\""));
-        assert!(main.contains("mod stream;"));
-        assert!(orders.contains("#[subscriber(OrdersStream::new("));
         assert!(routes.contains("include_router") || routes.contains("Router::new"));
-        assert!(stream.contains("impl SubscriptionSource<MemoryBroker> for OrdersStream"));
-        for file in [&cargo, &main, &orders, &routes, &stream] {
+        assert!(orders.contains("JsonSchema")); // payload schema for `asyncapi gen`
+        assert!(!dir.join("src/stream.rs").exists());
+        for file in [&cargo, &main, &orders, &routes] {
             assert!(!file.contains("{{name}}"));
         }
+    }
+
+    #[test]
+    fn writes_nats_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = create_in(tmp.path(), "svc", BrokerKind::Nats).unwrap();
+
+        let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        let main = std::fs::read_to_string(dir.join("src/main.rs")).unwrap();
+        let orders = std::fs::read_to_string(dir.join("src/orders.rs")).unwrap();
+        assert!(cargo.contains("ruststream-nats = "));
+        assert!(main.contains("NatsBroker::new("));
+        assert!(orders.contains("JsonSchema"));
+        assert!(!dir.join("src/stream.rs").exists());
+        for file in [&cargo, &main, &orders] {
+            assert!(!file.contains("{{name}}"));
+        }
+    }
+
+    #[test]
+    fn writes_nats_js_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = create_in(tmp.path(), "svc", BrokerKind::NatsJs).unwrap();
+
+        let main = std::fs::read_to_string(dir.join("src/main.rs")).unwrap();
+        assert!(main.contains("jetstream(\"ORDERS\")"));
+        assert!(main.contains("include_publishing_on"));
+        assert!(!main.contains("{{name}}"));
     }
 
     #[test]

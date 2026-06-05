@@ -1,0 +1,40 @@
+//! {{name}} - a RustStream service on NATS JetStream.
+//!
+//! `confirm` consumes a durable JetStream pull consumer (so progress survives restarts) and replies
+//! on `confirmations`; `on_cancel` is a plain Core NATS subscription. `#[ruststream::app]` generates
+//! `main`; `NatsBroker::new` connects at startup.
+//!
+//! - `cargo run -- run` starts the service; `cargo run -- asyncapi gen` prints the AsyncAPI document.
+//!
+//! Start NATS with JetStream and create the stream once:
+//!
+//! ```text
+//! docker run -p 4222:4222 nats -js
+//! nats stream add ORDERS --subjects 'orders.*' --defaults
+//! ```
+
+mod orders;
+
+use ruststream::codec::JsonCodec;
+use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
+use ruststream_nats::{NatsBroker, SubscribeOptions};
+
+/// Builds the service: a NATS broker with a durable JetStream consumer for orders.
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("{{name}}", "0.1.0"))
+        .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
+            let confirmations = TypedPublisher::new(b.broker().publisher());
+            // `include_on` overrides the handler's by-name source with JetStream options, so it
+            // takes the codec explicitly.
+            b.include_publishing_on(
+                SubscribeOptions::new("orders.*")
+                    .jetstream("ORDERS")
+                    .durable("{{name}}-worker"),
+                orders::confirm,
+                JsonCodec,
+                confirmations,
+            );
+            b.include(orders::on_cancel);
+        })
+}

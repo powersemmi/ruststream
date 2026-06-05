@@ -76,6 +76,10 @@ enum AsyncApiCommand {
 enum BrokerKind {
     /// The in-memory reference broker (`ruststream`'s `memory` feature).
     Memory,
+    /// Core NATS subjects (the `ruststream-nats` crate).
+    Nats,
+    /// NATS `JetStream` durable consumers (the `ruststream-nats` crate).
+    NatsJs,
 }
 
 fn main() -> Result<()> {
