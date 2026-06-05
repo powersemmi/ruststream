@@ -30,6 +30,7 @@ always compiled. Everything else is an additive, opt-in feature.
 | `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]`, `#[derive(Message)]` |
 | `asyncapi` | schemars, serde_norway | AsyncAPI generation and the HTML viewer |
 | `metrics` | prometheus | Prometheus middleware and exporter |
+| `logging` | tracing-subscriber | `ruststream::logging`, a colored console logger ([Logging](../guides/logging.md)) |
 | `conformance` | - | the broker-author conformance harness |
 | `cli` | clap, anyhow | the `ruststream` binary |
 

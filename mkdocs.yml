@@ -75,7 +75,9 @@ nav:
   - Guides:
       - guides/subscribers.md
       - guides/publishing.md
+      - guides/lifespan.md
       - guides/middleware.md
+      - guides/logging.md
       - guides/asyncapi.md
       - guides/metrics.md
       - guides/testing.md

@@ -46,6 +46,7 @@ the framework.
 [dependencies]
 ruststream = { version = "0.2", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
+schemars = "0.8"
 ```
 
 The CLI ships with the crate behind the `cli` feature:
@@ -57,13 +58,13 @@ cargo install ruststream --features cli
 ## Write a service
 
 ```rust
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::subscriber;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -77,7 +78,7 @@ async fn handle(order: &Order) -> HandlerResult {
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle, JsonCodec))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 ```
 

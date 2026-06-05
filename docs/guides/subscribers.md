@@ -75,6 +75,22 @@ The macro reads the descriptor type out of the constructor call, so the compiler
 descriptor against the broker it is mounted on. A descriptor is any type that implements
 `SubscriptionSource<B>`; see [Broker authors](../broker-authors/index.md#subscription-sources).
 
+The source may also be a builder chain on that constructor, so fluent options stay inline. A NATS
+JetStream consumer, for example:
+
+```rust
+use ruststream_nats::SubscribeOptions;
+
+#[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("workers"))]
+async fn handle(order: &Order) -> HandlerResult {
+    HandlerResult::Ack
+}
+```
+
+The macro follows the chain down to the base `Type::new(..)` to name the source type, so each method
+in the chain must return `Self`. Free functions are rejected, since their type is not visible to the
+macro.
+
 ## Mounting handlers
 
 Inside `with_broker`, mount a definition with `include`. It decodes the payload with the default
@@ -201,7 +217,42 @@ RustStream::new(info).with_broker(broker, |b| {
 ```
 
 The application's global middleware (added with `layer`) does not wrap router handlers, since a
-router is finalized independently. Wrap handlers inside the router if you need that.
+router is finalized independently. Give the router its own stack with `Router::layer`, applied to
+every handler registered after it (the same composition as `RustStream::layer`). It changes the
+router's type, so let the builder function's return type follow from it:
+
+```rust title="routes.rs"
+use ruststream::runtime::{Identity, Router, Stack};
+use ruststream::runtime::layers::TracingLayer;
+
+pub fn orders() -> Router<MyBroker, Stack<TracingLayer, Identity>> {
+    let mut router = Router::new().layer(TracingLayer::default());
+    router.include(handle);
+    router.include(other_handler);
+    router
+}
+```
+
+### Composing and mounting
+
+A `Router` mirrors the broker scope: alongside `include` and `include_publishing` it has
+`with_codec` (a per-handler codec, as [above](#where-the-codec-comes-from)) and the manual
+`handle` / `subscribe`. Build routers per module, then combine them however suits the service:
+
+```rust
+// Mount several routers on one broker - include_router can be called more than once.
+RustStream::new(info).with_broker(broker, |b| {
+    b.include_router(routes::orders());
+    b.include_router(routes::shipping());
+});
+
+// Or merge groups into one router before mounting.
+let mut all = routes::orders();
+all.merge(routes::shipping());
+```
+
+`merge` appends another router's registrations in order; the merged router's own layer was already
+baked into its handlers, so the two need not share a middleware stack.
 
 ## Publishers
 

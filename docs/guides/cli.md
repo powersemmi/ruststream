@@ -15,6 +15,8 @@ crate, and `new` writes a project.
 
 ```bash
 ruststream new my-service              # scaffold a project (default --broker memory)
+ruststream new my-service --broker nats     # Core NATS project
+ruststream new my-service --broker nats-js  # NATS JetStream project
 ruststream run                         # cargo run -- run, against ./Cargo.toml
 ruststream run -p ./my-service         # against another crate
 ruststream run --release               # release build
@@ -57,8 +59,15 @@ my-service/
 └── src/
     ├── main.rs      # #[ruststream::app], mounts the router
     ├── orders.rs    # #[subscriber] handlers, one with a reply
-    ├── routes.rs    # a Router collecting the handlers
-    └── stream.rs    # a broker-specific subscription descriptor
+    └── routes.rs    # a Router collecting the handlers
 ```
+
+`--broker` picks the broker wired into `main.rs` and the dependencies:
+
+- `memory` (default) - the in-process `MemoryBroker`, no external service; good for a first run or
+  tests.
+- `nats` - Core NATS via `ruststream-nats`.
+- `nats-js` - NATS JetStream; `orders.rs` binds the consumer with a `SubscribeOptions` builder chain
+  in the `#[subscriber(..)]` decorator (a durable pull consumer).
 
 See the [quick start](../getting-started/quickstart.md) to scaffold and run one.
