@@ -2,7 +2,7 @@
 members = ["crates/ruststream-macros"]
 
 [workspace.package]
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -43,6 +43,10 @@ required-features = ["macros", "memory", "metrics"]
 
 [[example]]
 name = "logging"
+required-features = ["macros", "memory", "json", "logging"]
+
+[[example]]
+name = "logging_middleware"
 required-features = ["macros", "memory", "json", "logging"]
 
 [[example]]

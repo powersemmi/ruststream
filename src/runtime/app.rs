@@ -637,9 +637,10 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
 
     /// Mounts every registration from `router` onto this broker.
     ///
-    /// The global middleware stack does **not** apply to these handlers: a [`Router`] is built
-    /// independently and its handlers are already finalized. Wrap them in the router if needed.
-    pub fn include_router(&mut self, router: Router<B>) {
+    /// The app's global middleware stack does **not** apply to these handlers: a [`Router`] is built
+    /// independently and its handlers are already finalized with the router's own middleware. Give
+    /// the router its own stack with [`Router::layer`] to wrap them.
+    pub fn include_router<L2>(&mut self, router: Router<B, L2>) {
         self.router.merge(router);
     }
 }

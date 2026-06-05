@@ -183,6 +183,47 @@ async fn included_router_handlers_dispatch() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn router_layer_wraps_handlers() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let layer_hits = Arc::new(AtomicU32::new(0));
+    let handler_hits = Arc::new(AtomicU32::new(0));
+    let handler_hits_clone = Arc::clone(&handler_hits);
+
+    // The app's global stack does not reach router handlers, so the router carries its own layer.
+    let mut router = Router::<MemoryBroker>::new().layer(CountLayer(Arc::clone(&layer_hits)));
+    router.subscribe(
+        Name::new("events"),
+        move |_msg: &_, _ctx: &mut Context| {
+            let handler_hits = Arc::clone(&handler_hits_clone);
+            async move {
+                handler_hits.fetch_add(1, Ordering::SeqCst);
+                HandlerResult::Ack
+            }
+        },
+        HandlerMetadata::raw("events"),
+    );
+
+    let app = RustStream::new(AppInfo::new("events", "0.1.0"))
+        .with_broker(broker, |b| b.include_router(router));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    wait_for_published(&publisher, &handler_hits, Duration::from_secs(1)).await;
+
+    assert!(
+        layer_hits.load(Ordering::SeqCst) >= 1,
+        "router layer did not wrap the handler"
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn global_layer_wraps_handlers() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();

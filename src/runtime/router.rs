@@ -24,10 +24,11 @@ use super::dispatch::{Delivery, spawn_dispatch};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
+use super::middleware::{Identity, Layer, Stack};
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 use super::publishing::{PublishingDef, PublishingHandler};
 use super::subscriber_def::SubscriberDef;
-use super::typed::typed;
+use super::typed::{Typed, typed};
 
 /// A deferred registration: given the broker (after connect), shared state, the per-scope publish
 /// [`Delivery`] context, and the shutdown token, it opens the subscription and spawns the dispatch
@@ -44,6 +45,13 @@ pub(crate) type BoundStarter<B> = Box<
 
 /// A lazily-bound group of handler registrations, not yet attached to any broker.
 ///
+/// The `L` type parameter is the router's middleware stack, applied to every handler registered
+/// after a [`layer`](Self::layer) call, exactly like [`RustStream::layer`](super::RustStream::layer).
+/// It defaults to [`Identity`] (no middleware). Because the global stack on
+/// [`RustStream`](super::RustStream) does **not** reach handlers mounted through
+/// [`include_router`](super::BrokerScope::include_router), this is how a standalone router gets
+/// middleware such as [`TracingLayer`](super::layers::TracingLayer).
+///
 /// # Examples
 ///
 /// ```no_run
@@ -51,9 +59,10 @@ pub(crate) type BoundStarter<B> = Box<
 /// # fn build() {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router};
+/// use ruststream::runtime::layers::TracingLayer;
 /// use ruststream::Name;
 ///
-/// let mut router = Router::<MemoryBroker>::new();
+/// let mut router = Router::<MemoryBroker>::new().layer(TracingLayer::default());
 /// router.subscribe(
 ///     Name::new("events"),
 ///     |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
@@ -62,21 +71,23 @@ pub(crate) type BoundStarter<B> = Box<
 /// // later: app.with_broker(broker, |b| b.include_router(router));
 /// # }
 /// ```
-pub struct Router<B> {
+pub struct Router<B, L = Identity> {
     starters: Vec<BoundStarter<B>>,
     handlers: Vec<HandlerMetadata>,
+    layer: L,
 }
 
-impl<B> Default for Router<B> {
+impl<B> Default for Router<B, Identity> {
     fn default() -> Self {
         Self {
             starters: Vec::new(),
             handlers: Vec::new(),
+            layer: Identity,
         }
     }
 }
 
-impl<B> std::fmt::Debug for Router<B> {
+impl<B, L> std::fmt::Debug for Router<B, L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Router")
             .field("handlers", &self.handlers.len())
@@ -84,14 +95,31 @@ impl<B> std::fmt::Debug for Router<B> {
     }
 }
 
-impl<B: Broker + 'static> Router<B> {
-    /// Creates an empty router.
+impl<B: Broker + 'static> Router<B, Identity> {
+    /// Creates an empty router with no middleware.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
+}
 
-    /// Attaches `handler` to an already-created `subscriber`.
+impl<B: Broker + 'static, L> Router<B, L> {
+    /// Adds a middleware layer, applied to every handler registered after it.
+    ///
+    /// The first layer added runs outermost, matching
+    /// [`RustStream::layer`](super::RustStream::layer). Call before the `include`/`subscribe` calls
+    /// whose handlers it should wrap; handlers registered earlier keep the previous stack.
+    #[must_use]
+    pub fn layer<N>(self, layer: N) -> Router<B, Stack<N, L>> {
+        Router {
+            starters: self.starters,
+            handlers: self.handlers,
+            layer: Stack::new(layer, self.layer),
+        }
+    }
+
+    /// Attaches `handler` (wrapped with this router's middleware) to an already-created
+    /// `subscriber`.
     ///
     /// The subscriber is created up front (before connect). Use this for brokers whose
     /// subscription does not need a live connection, or when you already hold a subscriber.
@@ -99,8 +127,10 @@ impl<B: Broker + 'static> Router<B> {
     where
         S: Subscriber + Send + 'static,
         H: Handler<S::Message> + 'static,
+        L: Layer<H>,
+        L::Handler: Handler<S::Message> + 'static,
     {
-        let handler = Arc::new(handler);
+        let handler = Arc::new(self.layer.layer(handler));
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters
             .push(Box::new(move |_broker, state, delivery, token| {
@@ -113,7 +143,8 @@ impl<B: Broker + 'static> Router<B> {
         self.handlers.push(meta);
     }
 
-    /// Attaches `handler` to a subscription described by `source`.
+    /// Attaches `handler` (wrapped with this router's middleware) to a subscription described by
+    /// `source`.
     ///
     /// The subscription is opened when the application runs, after the broker is connected, so this
     /// is the path that works for brokers requiring a live connection to subscribe.
@@ -122,8 +153,10 @@ impl<B: Broker + 'static> Router<B> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         H: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+        L: Layer<H>,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
-        let handler = Arc::new(handler);
+        let handler = Arc::new(self.layer.layer(handler));
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters
             .push(Box::new(move |broker: Arc<B>, state, delivery, token| {
@@ -156,6 +189,16 @@ impl<B: Broker + 'static> Router<B> {
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
+        L: Layer<
+            Typed<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                D::Input,
+                crate::codec::DefaultCodec,
+                D::Handler,
+            >,
+        >,
+        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
+            + 'static,
     {
         self.mount(def, crate::codec::DefaultCodec::default());
     }
@@ -169,6 +212,16 @@ impl<B: Broker + 'static> Router<B> {
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
         C: Codec + 'static,
+        L: Layer<
+            Typed<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                D::Input,
+                C,
+                D::Handler,
+            >,
+        >,
+        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
+            + 'static,
     {
         let source = def.source();
         let mut meta = HandlerMetadata::typed::<D::Input>(source.name().to_owned());
@@ -201,6 +254,9 @@ impl<B: Broker + 'static> Router<B> {
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
         PL: PublishLayer + 'static,
+        L: Layer<PublishingHandler<D, PC, P, PC, PL>>,
+        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
+            + 'static,
     {
         let codec = publisher.codec().clone();
         self.mount_publishing(def, codec, publisher);
@@ -222,6 +278,9 @@ impl<B: Broker + 'static> Router<B> {
         P: Publisher + 'static,
         PC: Codec + 'static,
         PL: PublishLayer + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
+        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
+            + 'static,
     {
         let source = def.source();
         let description = def.description().map(str::to_owned);
@@ -251,7 +310,7 @@ impl<B: Broker + 'static> Router<B> {
     /// [`include`](Self::include). The view's
     /// [`include_publishing`](RouterCodec::include_publishing) overrides the decode codec; the reply
     /// still uses the publisher's own.
-    pub fn with_codec<C>(&mut self, codec: C) -> RouterCodec<'_, B, C>
+    pub fn with_codec<C>(&mut self, codec: C) -> RouterCodec<'_, B, L, C>
     where
         C: Codec + Clone + 'static,
     {
@@ -262,7 +321,10 @@ impl<B: Broker + 'static> Router<B> {
     }
 
     /// Merges another router's registrations into this one, preserving order.
-    pub fn merge(&mut self, other: Self) {
+    ///
+    /// The other router's middleware was already baked into its handlers at registration, so its
+    /// stack type does not need to match this one's.
+    pub fn merge<L2>(&mut self, other: Router<B, L2>) {
         self.starters.extend(other.starters);
         self.handlers.extend(other.handlers);
     }
@@ -282,18 +344,18 @@ impl<B: Broker + 'static> Router<B> {
 ///
 /// Its [`include`](Self::include) / [`include_publishing`](Self::include_publishing) decode handler
 /// input with the chosen codec instead of the [`DefaultCodec`](crate::codec::DefaultCodec).
-pub struct RouterCodec<'a, B, C> {
-    router: &'a mut Router<B>,
+pub struct RouterCodec<'a, B, L, C> {
+    router: &'a mut Router<B, L>,
     codec: C,
 }
 
-impl<B, C> std::fmt::Debug for RouterCodec<'_, B, C> {
+impl<B, L, C> std::fmt::Debug for RouterCodec<'_, B, L, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RouterCodec").finish_non_exhaustive()
     }
 }
 
-impl<B: Broker + 'static, C: Codec + Clone + 'static> RouterCodec<'_, B, C> {
+impl<B: Broker + 'static, L, C: Codec + Clone + 'static> RouterCodec<'_, B, L, C> {
     /// Mounts `def` on its own source, decoding its input with this view's codec.
     pub fn include<D>(&mut self, def: D)
     where
@@ -303,6 +365,16 @@ impl<B: Broker + 'static, C: Codec + Clone + 'static> RouterCodec<'_, B, C> {
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
+        L: Layer<
+            Typed<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                D::Input,
+                C,
+                D::Handler,
+            >,
+        >,
+        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
+            + 'static,
     {
         self.router.mount(def, self.codec.clone());
     }
@@ -320,6 +392,9 @@ impl<B: Broker + 'static, C: Codec + Clone + 'static> RouterCodec<'_, B, C> {
         P: Publisher + 'static,
         PC: Codec + 'static,
         PL: PublishLayer + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
+        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
+            + 'static,
     {
         self.router
             .mount_publishing(def, self.codec.clone(), publisher);
