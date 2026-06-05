@@ -98,9 +98,11 @@ pub trait SubscriptionSource<B: Broker> {
 
 Give the descriptor an associated constructor (`OrdersStream::new(..)`) rather than a free function,
 so users can name it directly in the decorator: `#[subscriber(OrdersStream::new("orders", "workers"))]`.
-The macro reads the type out of the constructor call. Because `type Subscriber` lives on the source,
-one broker can offer several subscription kinds (pub/sub versus streams) with different subscriber
-types.
+The macro reads the type out of the constructor call, and also accepts a builder chain on it
+(`#[subscriber(OrdersStream::new("orders").durable("workers"))]`) as long as each method returns
+`Self`. Because `type Subscriber` lives on the source, one broker can offer several subscription
+kinds (pub/sub versus streams) with different subscriber types - or, as the
+[NATS example](example-nats.md) does, serve them all from one descriptor that branches internally.
 
 ## Capability traits
 
