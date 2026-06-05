@@ -1,7 +1,7 @@
 //! {{name}} - a RustStream service on Core NATS.
 //!
-//! Handlers live in `orders`; `#[ruststream::app]` generates `main`, so there is no runtime
-//! boilerplate. `NatsBroker::new` is synchronous - the runtime connects it at startup.
+//! Handlers live in `orders`, wiring in `routes`; `#[ruststream::app]` generates `main`, so there
+//! is no runtime boilerplate. `NatsBroker::new` is synchronous - the runtime connects it at startup.
 //!
 //! - `cargo run -- run` (or `ruststream run`) starts the service until interrupted.
 //! - `cargo run -- asyncapi gen` (or `ruststream asyncapi gen`) prints the AsyncAPI document.
@@ -9,17 +9,17 @@
 //! Start a NATS server first, e.g. `docker run -p 4222:4222 nats`.
 
 mod orders;
+mod routes;
 
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, RustStream};
 use ruststream_nats::NatsBroker;
 
-/// Builds the service: one NATS broker with the orders handlers mounted.
+/// Builds the service: one NATS broker with the orders router mounted.
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("{{name}}", "0.1.0"))
         .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-            let confirmations = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(orders::confirm, confirmations);
-            b.include(orders::on_cancel);
+            let router = routes::orders(b.broker());
+            b.include_router(router);
         })
 }
