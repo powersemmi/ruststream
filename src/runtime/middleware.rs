@@ -30,6 +30,25 @@ pub trait Layer<H> {
     fn layer(&self, inner: H) -> Self::Handler;
 }
 
+/// A [`Layer`] that wraps a handler on *any* message type, not one fixed `H`.
+///
+/// [`Layer`] is checked per concrete handler (`L: Layer<H>`). That bound cannot be discharged when
+/// the handler types are hidden, which is exactly the case for a [`Router`](super::Router) mounted
+/// through [`include_router`](super::BrokerScope::include_router): its handlers are erased behind
+/// [`RouterDef`](super::RouterDef). `BlanketLayer` carries the wrapping as a generic method, so a
+/// layer that applies uniformly (logging, metrics) can wrap every router handler from one bound.
+///
+/// Implemented for [`Identity`], a [`Stack`] of blanket layers, and the bundled
+/// [`TracingLayer`](layers::TracingLayer). Implement it for a custom layer to let the app's global
+/// stack reach router handlers; a layer that only wraps specific handler types cannot be blanket.
+pub trait BlanketLayer: Send + Sync {
+    /// Wraps `handler`, returning the layered handler.
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static;
+}
+
 /// Convenience extension trait for fluent layer stacking on any [`Handler`].
 pub trait HandlerExt<M>: Handler<M> + Sized {
     /// Wrap this handler with the given layer.
@@ -53,6 +72,16 @@ impl<H> Layer<H> for Identity {
 
     fn layer(&self, inner: H) -> H {
         inner
+    }
+}
+
+impl BlanketLayer for Identity {
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static,
+    {
+        handler
     }
 }
 
@@ -85,11 +114,26 @@ where
     }
 }
 
+impl<Inner, Outer> BlanketLayer for Stack<Inner, Outer>
+where
+    Inner: BlanketLayer,
+    Outer: BlanketLayer,
+{
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static,
+    {
+        // Same order as the static `Layer` impl: inner wraps first (innermost), outer outside.
+        self.outer.apply::<M, _>(self.inner.apply::<M, _>(handler))
+    }
+}
+
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
 pub mod layers {
     use tracing::{debug, info, instrument, warn};
 
-    use super::{Context, Future, Handler, HandlerResult, Layer};
+    use super::{BlanketLayer, Context, Future, Handler, HandlerResult, Layer};
 
     /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
     /// outcome and `DEBUG` for arrival.
@@ -116,6 +160,16 @@ pub mod layers {
                 inner,
                 target: self.target,
             }
+        }
+    }
+
+    impl BlanketLayer for TracingLayer {
+        fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+        where
+            M: Send + Sync + 'static,
+            H: Handler<M> + 'static,
+        {
+            self.layer(handler)
         }
     }
 

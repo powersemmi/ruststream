@@ -25,11 +25,11 @@ use super::dispatch::{Delivery, Publishers};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture, BrokerLifecycle};
 use super::metadata::HandlerMetadata;
-use super::middleware::{Identity, Layer, Stack};
+use super::middleware::{BlanketLayer, Identity, Layer, Stack};
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 use super::publisher_registry::ErasedPublisher;
 use super::publishing::{PublishingDef, PublishingHandler};
-use super::router::Router;
+use super::router::{RouterDef, RouterSink};
 use super::subscriber_def::SubscriberDef;
 use super::typed::{Typed, typed};
 
@@ -415,7 +415,7 @@ impl<L> RustStream<L> {
     {
         BrokerScope {
             broker: broker.clone(),
-            router: Router::new(),
+            sink: RouterSink::new(),
             publishers: self.publishers.clone(),
             pipeline: self.publish_layers.iter().cloned().collect(),
             global: self.global.clone(),
@@ -433,7 +433,7 @@ impl<L> RustStream<L> {
             publishers: self.publishers.clone(),
             pipeline: scope.pipeline.clone(),
         });
-        let (starters, handlers) = scope.router.into_parts();
+        let (starters, handlers) = scope.sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let broker = broker.clone();
             let delivery = delivery.clone();
@@ -585,7 +585,7 @@ impl<L> RustStream<L> {
 /// [`RustStream::run`]. Each handler registered here is wrapped with `L` before it is stored.
 pub struct BrokerScope<B, L = Identity, C = ()> {
     broker: Arc<B>,
-    router: Router<B>,
+    sink: RouterSink<B>,
     publishers: Publishers,
     pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
     global: L,
@@ -617,7 +617,7 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
         L::Handler: Handler<S::Message> + 'static,
     {
         let handler = self.global.layer(handler);
-        self.router.handle(subscriber, handler, meta);
+        self.sink.push_handle(subscriber, handler, meta);
     }
 
     /// Attaches `handler` (wrapped with the global stack) to a subscription described by `source`.
@@ -632,16 +632,22 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let handler = self.global.layer(handler);
-        self.router.subscribe(source, handler, meta);
+        self.sink.push_subscribe(source, handler, meta);
     }
 
-    /// Mounts every registration from `router` onto this broker.
+    /// Mounts every registration from `router` onto this broker, wrapping each handler with the
+    /// app's global middleware stack.
     ///
-    /// The app's global middleware stack does **not** apply to these handlers: a [`Router`] is built
-    /// independently and its handlers are already finalized with the router's own middleware. Give
-    /// the router its own stack with [`Router::layer`] to wrap them.
-    pub fn include_router<L2>(&mut self, router: Router<B, L2>) {
-        self.router.merge(router);
+    /// Unlike a hand-rolled handler group, a [`Router`] composes with the app's
+    /// [`layer`](RustStream::layer): the global stack must be a [`BlanketLayer`] (it applies to
+    /// handlers whose concrete types the router hides), which every bundled layer and any
+    /// [`Stack`](super::Stack) of them satisfies.
+    pub fn include_router<R>(&mut self, router: R)
+    where
+        R: RouterDef<B>,
+        L: BlanketLayer,
+    {
+        router.mount(&self.global, &mut self.sink);
     }
 }
 
@@ -828,7 +834,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
 impl<B, L, C> std::fmt::Debug for BrokerScope<B, L, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrokerScope")
-            .field("router", &self.router)
+            .field("sink", &self.sink)
             .finish_non_exhaustive()
     }
 }

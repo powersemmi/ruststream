@@ -146,7 +146,7 @@ mod tests {
         assert!(cargo.contains("ruststream-nats = "));
         assert!(main.contains("NatsBroker::new("));
         assert!(main.contains("include_router"));
-        assert!(routes.contains("Router<NatsBroker>"));
+        assert!(routes.contains("impl RouterDef<NatsBroker>"));
         assert!(orders.contains("JsonSchema"));
         assert!(!dir.join("src/stream.rs").exists());
         for file in [&cargo, &main, &orders, &routes] {
@@ -166,7 +166,7 @@ mod tests {
         assert!(orders.contains("jetstream(\"ORDERS\")"));
         assert!(orders.contains("durable(\"svc-worker\")"));
         assert!(main.contains("include_router"));
-        assert!(routes.contains("Router<NatsBroker>"));
+        assert!(routes.contains("impl RouterDef<NatsBroker>"));
         assert!(!dir.join("src/stream.rs").exists());
         for file in [&main, &orders, &routes] {
             assert!(!file.contains("{{name}}"));

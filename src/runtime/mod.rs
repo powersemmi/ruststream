@@ -21,13 +21,13 @@ pub use context::{Context, State};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use handler::{Handler, HandlerResult, IntoHandlerResult};
 pub use metadata::HandlerMetadata;
-pub use middleware::{HandlerExt, Identity, Layer, Stack, layers};
+pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     Outgoing, PublishIdentity, PublishLayer, PublishMiddleware, PublishNext, PublishStack,
     ScopedPublisher, TypedPublisher,
 };
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingDef, PublishingHandler};
-pub use router::{Router, RouterCodec};
+pub use router::{Router, RouterDef, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{DecodeFailure, Typed, typed};
