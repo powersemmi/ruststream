@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a problem with RustStream
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report. Please fill in the sections below so the problem can be
+        reproduced and fixed.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps or a self-contained code snippet that triggers the issue.
+      render: rust
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RustStream version
+      description: The `ruststream` version, plus any broker crate and its version.
+      placeholder: "ruststream 0.2.3, ruststream-nats 0.2.1"
+    validations:
+      required: true
+  - type: input
+    id: rustc
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version`.
+      placeholder: "1.85.0"
+    validations:
+      required: true
+  - type: input
+    id: features
+    attributes:
+      label: Enabled cargo features
+      placeholder: "macros, json, memory"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / backtrace
+      description: Relevant logs, the panic message, or a backtrace (`RUST_BACKTRACE=1`).
+      render: shell
+    validations:
+      required: false
