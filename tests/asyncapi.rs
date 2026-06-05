@@ -88,7 +88,6 @@ fn viewer_html_embeds_spec_url_and_cdn() {
 #[cfg(feature = "macros")]
 #[test]
 fn build_spec_emits_payload_schema() {
-    use ruststream::codec::JsonCodec;
     use ruststream::schemars::JsonSchema;
     use ruststream::subscriber;
     use serde::{Deserialize, Serialize};
@@ -107,7 +106,7 @@ fn build_spec_emits_payload_schema() {
     }
 
     let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle, JsonCodec));
+        .with_broker(MemoryBroker::new(), |b| b.include(handle));
 
     let spec = build_spec(&app);
     let payload = spec.components.messages["Order"]

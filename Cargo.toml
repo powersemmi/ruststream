@@ -1,6 +1,14 @@
 [workspace]
 members = ["crates/ruststream-macros"]
 
+[workspace.package]
+version = "0.2.3"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
+authors = ["RustStream contributors"]
+
 [[bin]]
 name = "ruststream"
 path = "src/bin/ruststream/main.rs"
@@ -33,12 +41,12 @@ required-features = ["macros", "memory", "json", "logging"]
 
 [package]
 name = "ruststream"
-version = "0.2.2"
-edition = "2024"
-rust-version = "1.85"
-license = "Apache-2.0"
-repository = "https://github.com/powersemmi/ruststream"
-authors = ["RustStream contributors"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 description = "Async messaging framework for Rust: broker-agnostic traits, router, codecs, and a conformance harness for broker authors."
 readme = "README.md"
 keywords = ["messaging", "async", "broker", "faststream", "nats"]
@@ -67,7 +75,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 
-ruststream-macros = { version = "0.2.1", path = "crates/ruststream-macros", optional = true }
+ruststream-macros = { version = "0.2.3", path = "crates/ruststream-macros", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }

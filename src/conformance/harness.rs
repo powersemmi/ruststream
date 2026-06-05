@@ -21,8 +21,8 @@
 use std::{future::Future, time::Duration};
 
 use crate::{
-    Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
-    testing::TestClient,
+    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber,
+    SubscriptionSource, testing::TestClient,
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -60,7 +60,8 @@ where
 ///
 /// The steps are: synchronous construction (no I/O in the constructor), then `connect`, a
 /// subscription opened through the broker's own [`SubscriptionSource`], a publish the subscription
-/// receives and acks, and finally `shutdown`.
+/// receives and acks (or reports [`AckError::Unsupported`] for a broker with no ack semantics), and
+/// finally `shutdown`.
 ///
 /// The three factories keep the check broker-agnostic:
 /// * `make_broker` is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
@@ -131,7 +132,12 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         b"lifecycle",
         "subscription opened through SubscriptionSource must receive the publish",
     );
-    msg.ack().await.expect("ack failed");
+    // Ack must either succeed or be explicitly unsupported (a broker with no ack semantics, e.g.
+    // Core NATS). Any other ack error is a real failure.
+    match msg.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
 
     Broker::shutdown(&broker)
         .await

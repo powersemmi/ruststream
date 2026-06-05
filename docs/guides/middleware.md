@@ -14,7 +14,7 @@ use ruststream::runtime::layers::TracingLayer;
 
 let app = RustStream::new(info)
     .layer(TracingLayer::default())
-    .with_broker(broker, |b| b.include(handle, JsonCodec));
+    .with_broker(broker, |b| b.include(handle));
 ```
 
 The first layer added is the outermost. The global stack is static: it has zero runtime dispatch

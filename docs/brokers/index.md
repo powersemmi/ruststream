@@ -69,7 +69,7 @@ Wire it onto the broker; the `with_broker` / `include` part is identical to the 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-            b.include(handle, JsonCodec)
+            b.include(handle)
         })
 }
 ```

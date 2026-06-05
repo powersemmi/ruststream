@@ -77,26 +77,52 @@ descriptor against the broker it is mounted on. A descriptor is any type that im
 
 ## Mounting handlers
 
-Inside `with_broker`, mount a definition with `include`, passing the codec that decodes the payload:
+Inside `with_broker`, mount a definition with `include`. It decodes the payload with the default
+codec - `json` if enabled, otherwise `cbor`, otherwise `msgpack`:
 
 ```rust
-use ruststream::codec::JsonCodec;
-
 RustStream::new(info).with_broker(broker, |b| {
-    b.include(handle, JsonCodec);
+    b.include(handle);
 });
 ```
 
-### A scope default codec
+### Where the codec comes from
 
-To avoid repeating the codec, set a scope default with `with_broker_codec`:
+The decode codec is fixed at compile time. `include` takes no codec argument; it resolves one from
+the most specific level you set, from narrowest to widest:
+
+**1. Per handler.** Override a single mounting:
+
+=== "Router"
+
+    ```rust
+    router.with_codec(CborCodec).include(handle);
+    ```
+
+=== "with_broker"
+
+    ```rust
+    // name the source and the codec for this one handler
+    b.include_on(handle.source(), handle, CborCodec);
+    ```
+
+**2. Per scope.** Set one codec for every handler in a `with_broker` scope:
 
 ```rust
-RustStream::new(info).with_broker_codec(broker, JsonCodec, |b| {
-    b.include(handle);          // codec inferred from the scope
-    b.include(other_handler);
+use ruststream::codec::CborCodec;
+
+RustStream::new(info).with_broker_codec(broker, CborCodec, |b| {
+    b.include(handle);          // decodes with CborCodec
+    b.include(other_handler);   // also CborCodec
 });
 ```
+
+**3. Default.** When nothing above names a codec, `include` uses `DefaultCodec` - `json` if the
+feature is enabled, otherwise `cbor`, otherwise `msgpack`.
+
+The reply side mirrors this: `TypedPublisher::new(publisher)` uses the default codec,
+`TypedPublisher::with_codec(publisher, codec)` names one, and `include_publishing(def, publisher)`
+reuses the publisher's codec to decode the request.
 
 ### Codecs
 
@@ -130,7 +156,7 @@ struct handler, and `HandlerMetadata`. Both forms below register the same handle
     }
 
     // inside with_broker(...):
-    b.include(handle, JsonCodec);
+    b.include(handle);
     ```
 
 === "Manual"
@@ -162,8 +188,8 @@ use ruststream::runtime::Router;
 
 pub fn orders() -> Router<MyBroker> {
     let mut router = Router::new();
-    router.include(handle, JsonCodec);
-    router.include(other_handler, JsonCodec);
+    router.include(handle);
+    router.include(other_handler);
     router
 }
 ```

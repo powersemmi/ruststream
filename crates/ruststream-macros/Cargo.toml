@@ -1,11 +1,11 @@
 [package]
 name = "ruststream-macros"
-version = "0.2.2"
-edition = "2024"
-rust-version = "1.85"
-license = "Apache-2.0"
-repository = "https://github.com/powersemmi/ruststream"
-authors = ["RustStream contributors"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 description = "Procedural macros for the RustStream messaging framework."
 readme = "README.md"
 keywords = ["messaging", "async", "macros", "ruststream"]

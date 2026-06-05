@@ -62,16 +62,16 @@ use crate::orders::handle;
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle, JsonCodec))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 ```
 
 The macro turns `handle` into a value named after the function, so you import and pass it directly.
 
-!!! tip "Codec once per scope"
-    Passing `JsonCodec` on every `include` gets repetitive. Use
-    `with_broker_codec(broker, JsonCodec, |b| b.include(handle))` to set a scope default and
-    drop the per-call codec.
+!!! tip "Codec defaults"
+    `include` decodes with the default codec - `json` if enabled, otherwise `cbor`, otherwise
+    `msgpack` - so it needs no codec argument. To decode with a different one everywhere, set it
+    once with `with_broker_codec(broker, codec, |b| ...)`.
 
 Run it:
 
@@ -104,8 +104,8 @@ Mount it with a publisher that carries the reply codec:
 use ruststream::runtime::TypedPublisher;
 
 // inside with_broker(...), with `confirm` imported from the orders module
-let replies = TypedPublisher::new(b.broker().publisher(), JsonCodec);
-b.include_publishing(confirm, JsonCodec, replies);
+let replies = TypedPublisher::new(b.broker().publisher());
+b.include_publishing(confirm, replies);
 ```
 
 See [Publishing & replies](../guides/publishing.md) for the full picture, including publishing from
@@ -124,10 +124,10 @@ use ruststream::runtime::{Router, TypedPublisher};
 use crate::orders;
 
 pub fn orders(broker: &MemoryBroker) -> Router<MemoryBroker> {
-    let replies = TypedPublisher::new(broker.publisher(), JsonCodec);
+    let replies = TypedPublisher::new(broker.publisher());
     let mut router = Router::new();
-    router.include_publishing(orders::confirm, JsonCodec, replies);
-    router.include(orders::handle, JsonCodec);
+    router.include_publishing(orders::confirm, replies);
+    router.include(orders::handle);
     router
 }
 ```

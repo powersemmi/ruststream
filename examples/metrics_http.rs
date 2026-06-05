@@ -21,7 +21,6 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::routing::{get, post};
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
@@ -77,8 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(metrics.consume_layer())
         .publish_layer(metrics.publish_layer())
         .with_broker(broker, |b| {
-            let replies = TypedPublisher::new(b.broker().publisher(), JsonCodec);
-            b.include_publishing(confirm, JsonCodec, replies);
+            let replies = TypedPublisher::new(b.broker().publisher());
+            b.include_publishing(confirm, replies);
         });
     // --8<-- [end:wiring]
 

@@ -229,8 +229,9 @@ impl<Inner: PublishLayer, Outer: PublishLayer> PublishLayer for PublishStack<Inn
 /// use ruststream::runtime::TypedPublisher;
 ///
 /// let broker = MemoryBroker::new();
-/// let out = TypedPublisher::new(broker.publisher(), JsonCodec);
-/// # let _ = out;
+/// let with_default = TypedPublisher::new(broker.publisher()); // DefaultCodec
+/// let explicit = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
+/// # let _ = (with_default, explicit);
 /// # }
 /// ```
 ///
@@ -242,9 +243,9 @@ pub struct TypedPublisher<P, C, PL = PublishIdentity> {
 }
 
 impl<P, C> TypedPublisher<P, C, PublishIdentity> {
-    /// Pairs `publisher` with `codec` and no static transforms.
+    /// Pairs `publisher` with an explicit `codec` and no static transforms.
     #[must_use]
-    pub fn new(publisher: P, codec: C) -> Self {
+    pub fn with_codec(publisher: P, codec: C) -> Self {
         Self {
             publisher,
             codec,
@@ -253,7 +254,23 @@ impl<P, C> TypedPublisher<P, C, PublishIdentity> {
     }
 }
 
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+impl<P> TypedPublisher<P, crate::codec::DefaultCodec, PublishIdentity> {
+    /// Pairs `publisher` with the [`DefaultCodec`](crate::codec::DefaultCodec) and no static
+    /// transforms. Use [`with_codec`](Self::with_codec) to name a codec explicitly.
+    #[must_use]
+    pub fn new(publisher: P) -> Self {
+        Self::with_codec(publisher, crate::codec::DefaultCodec::default())
+    }
+}
+
 impl<P, C, PL> TypedPublisher<P, C, PL> {
+    /// The codec this publisher encodes replies with. Lets the runtime reuse it as the decode
+    /// codec when a publishing handler is mounted without an explicit one.
+    pub(crate) const fn codec(&self) -> &C {
+        &self.codec
+    }
+
     /// Adds a static [`PublishLayer`], applied to every outgoing message from this publisher. The
     /// first one added runs first (closest to the encoded value).
     #[must_use]

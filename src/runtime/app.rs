@@ -645,14 +645,16 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
 }
 
 impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
-    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with
-    /// `codec` and wrapping the handler with the global stack.
+    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec) and wrapping the handler with the global stack.
     ///
-    /// The source comes from the macro: a [`Name`] for `#[subscriber("topic")]` (the broker must
-    /// implement [`Subscribe`]) or a broker descriptor for `#[subscriber(RedisStream::new(..))]`.
-    /// Set a scope default with [`with_broker_codec`](RustStream::with_broker_codec) to drop the
-    /// codec argument, or use [`include_on`](Self::include_on) to override the source.
-    pub fn include<D, C>(&mut self, def: D, codec: C)
+    /// Name a codec by setting a scope default with
+    /// [`with_broker_codec`](RustStream::with_broker_codec), or per handler with
+    /// [`include_on`](Self::include_on). The source comes from the macro: a [`Name`] for
+    /// `#[subscriber("topic")]` (the broker must implement [`Subscribe`]) or a broker descriptor for
+    /// `#[subscriber(RedisStream::new(..))]`.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include<D>(&mut self, def: D)
     where
         D: SubscriberDef,
         D::Source: SubscriptionSource<B> + Send + 'static,
@@ -660,12 +662,11 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
-        C: Codec + 'static,
         L: Layer<
             Typed<
                 <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
                 D::Input,
-                C,
+                crate::codec::DefaultCodec,
                 D::Handler,
             >,
         >,
@@ -673,34 +674,31 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
             + 'static,
     {
         let source = def.source();
-        self.include_on(source, def, codec);
+        self.include_on(source, def, crate::codec::DefaultCodec::default());
     }
 
-    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source: decodes
-    /// its input with `codec`, runs the handler, then sends the reply to the macro's reply name
-    /// through `publisher`. See [`include_publishing`](BrokerScope::include_publishing) on a
-    /// codec-default scope for the two-argument form, or
-    /// [`include_publishing_on`](Self::include_publishing_on) to override the source.
-    pub fn include_publishing<D, C, P, PC, PL>(
-        &mut self,
-        def: D,
-        codec: C,
-        publisher: TypedPublisher<P, PC, PL>,
-    ) where
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
+    /// decoding its input with the `publisher`'s own codec and replying through it.
+    ///
+    /// Name the codec once, on the `publisher`. Override the decode codec per handler with
+    /// [`include_publishing_on`](Self::include_publishing_on), or set a scope default with
+    /// [`with_broker_codec`](RustStream::with_broker_codec).
+    pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
+    where
         D: PublishingDef + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        C: Codec + 'static,
         P: Publisher + 'static,
-        PC: Codec + 'static,
+        PC: Codec + Clone + 'static,
         PL: PublishLayer + 'static,
-        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
+        L: Layer<PublishingHandler<D, PC, P, PC, PL>>,
         L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
             + 'static,
     {
+        let codec = publisher.codec().clone();
         let source = def.source();
         self.include_publishing_on(source, def, codec, publisher);
     }

@@ -123,8 +123,8 @@ async fn macro_descriptor_in_decorator() {
     let publisher = broker.publisher();
 
     // No source at the call site - it came from the macro argument.
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include(on_ctor, JsonCodec));
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(on_ctor));
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = Arc::clone(&shutdown);
@@ -173,8 +173,8 @@ async fn macro_subscriber_dispatches() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include(handle, JsonCodec));
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(handle));
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = Arc::clone(&shutdown);
@@ -277,13 +277,13 @@ async fn static_publish_layer_transforms_reply() {
     let ingress_pub = ingress.publisher();
 
     // The static layer is composed onto the publisher at compile time - no dyn dispatch.
-    let egress_pub = TypedPublisher::new(egress.publisher(), JsonCodec).layer(StaticEnvelope);
+    let egress_pub = TypedPublisher::new(egress.publisher()).layer(StaticEnvelope);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(ingress, |b| {
-            b.include_publishing(relay, JsonCodec, egress_pub);
+            b.include_publishing(relay, egress_pub);
         })
-        .with_broker(egress, |b| b.include(check, JsonCodec));
+        .with_broker(egress, |b| b.include(check));
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = Arc::clone(&shutdown);
@@ -363,14 +363,14 @@ async fn macro_publisher_replies_cross_broker() {
     let ingress_pub = ingress.publisher();
 
     // The reply is published cross-broker: egress's publisher + reply codec; name from the macro.
-    let egress_pub = TypedPublisher::new(egress.publisher(), JsonCodec);
+    let egress_pub = TypedPublisher::new(egress.publisher());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
         .with_broker(ingress, |b| {
-            b.include_publishing(reply, JsonCodec, egress_pub);
+            b.include_publishing(reply, egress_pub);
         })
-        .with_broker(egress, |b| b.include(capture, JsonCodec));
+        .with_broker(egress, |b| b.include(capture));
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = Arc::clone(&shutdown);
