@@ -44,53 +44,24 @@ before opening subscriptions.
 A `#[subscriber("subject")]` handler binds straight to a NATS subject:
 
 ```rust
-use ruststream::codec::JsonCodec;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::subscriber;
-use ruststream_nats::NatsBroker;
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize)]
-struct Order {
-    id: u64,
-}
-
-#[subscriber("orders.created")]
-async fn handle(order: &Order) -> HandlerResult {
-    println!("got order {}", order.id);
-    HandlerResult::Ack
-}
+--8<-- "examples/nats_core.rs:handler"
 ```
 
 Wire it onto the broker; the `with_broker` / `include` part is identical to the in-memory broker.
 
 ```rust
-#[ruststream::app]
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-            b.include(handle)
-        })
-}
+--8<-- "examples/nats_core.rs:app"
 ```
 
 ### JetStream durable consumer
 
 To consume from JetStream instead, override the handler's by-name source with `SubscribeOptions`,
 naming the stream and a durable consumer so progress survives restarts. The handler's
-`HandlerResult::Ack` acks back to JetStream.
+`HandlerResult::Ack` acks back to JetStream. `include_on` is the source-override form, so it takes
+the codec explicitly.
 
 ```rust
-use ruststream_nats::SubscribeOptions;
-
-// inside with_broker(broker, |b| { ... }):
-b.include_on(
-    SubscribeOptions::new("orders.*")
-        .jetstream("ORDERS")
-        .durable("orders-worker"),
-    handle,
-    JsonCodec,
-);
+--8<-- "examples/nats_jetstream.rs:include_on"
 ```
 
 See the crate's documentation for connection options, authentication, and JetStream configuration.

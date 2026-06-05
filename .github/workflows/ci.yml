@@ -14,8 +14,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      dist: ${{ steps.filter.outputs.dist }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'src/**'
+              - 'crates/**'
+              - 'tests/**'
+              - 'examples/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
+              - '.github/workflows/ci.yml'
+            dist:
+              - 'src/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+
   rust:
     name: Rust ${{ matrix.toolchain }}
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -54,6 +89,8 @@ jobs:
 
   package:
     name: Package (publish dry-run)
+    needs: changes
+    if: ${{ needs.changes.outputs.dist == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,8 +103,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Builds the crate tarballs and verify-compiles them, without uploading. `--workspace`
-      # packages ruststream-macros and ruststream together, so ruststream verifies against the
-      # locally packaged macros - no need for it to be on crates.io first.
-      - name: cargo package (trial build, no publish)
-        run: cargo package --workspace --all-features
+      # Trial-build the published artifacts without uploading. Per-package (not `--workspace`) so the
+      # dev-only `[patch.crates-io]` self-patch used by the `nats_*` examples is handled the same way
+      # the real release does it; `--workspace` packaging trips over its checksum. ruststream verifies
+      # against the published ruststream-macros from crates.io.
+      - name: cargo publish dry-run (no upload)
+        run: |
+          cargo publish --dry-run -p ruststream-macros
+          cargo publish --dry-run -p ruststream --all-features
