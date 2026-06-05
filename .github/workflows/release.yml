@@ -20,20 +20,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify versions match tag
+      - name: Verify ruststream version matches tag
         env:
           TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${TAG#v}"
           META=$(cargo metadata --format-version 1 --no-deps)
-          for pkg in ruststream-macros ruststream; do
-            VERSION=$(echo "$META" | jq -r --arg p "$pkg" '.packages[] | select(.name == $p) | .version')
-            if [ "$TAG_VERSION" != "$VERSION" ]; then
-              echo "Tag '${TAG}' does not match $pkg version '$VERSION'"
-              exit 1
-            fi
-            echo "$pkg $VERSION verified"
-          done
+          # Only the main crate must match the tag. ruststream-macros may stay on an older,
+          # already-published version when it did not change; the publish step skips it then,
+          # and ruststream resolves it from crates.io by its semver dependency requirement.
+          VERSION=$(echo "$META" | jq -r '.packages[] | select(.name == "ruststream") | .version')
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "Tag '${TAG}' does not match ruststream version '$VERSION'"
+            exit 1
+          fi
+          echo "ruststream $VERSION verified against tag ${TAG}"
+          MACROS=$(echo "$META" | jq -r '.packages[] | select(.name == "ruststream-macros") | .version')
+          echo "ruststream-macros at $MACROS (published only if not already on crates.io)"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
