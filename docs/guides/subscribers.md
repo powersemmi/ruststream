@@ -86,23 +86,43 @@ RustStream::new(info).with_broker(broker, |b| {
 });
 ```
 
-### A scope default codec
+### Where the codec comes from
 
-To decode every handler in a scope with a specific codec instead, set it once with
-`with_broker_codec`:
+The decode codec is fixed at compile time. `include` takes no codec argument; it resolves one from
+the most specific level you set, from narrowest to widest:
+
+**1. Per handler.** Override a single mounting:
+
+=== "Router"
+
+    ```rust
+    router.with_codec(CborCodec).include(handle);
+    ```
+
+=== "with_broker"
+
+    ```rust
+    // name the source and the codec for this one handler
+    b.include_on(handle.source(), handle, CborCodec);
+    ```
+
+**2. Per scope.** Set one codec for every handler in a `with_broker` scope:
 
 ```rust
 use ruststream::codec::CborCodec;
 
 RustStream::new(info).with_broker_codec(broker, CborCodec, |b| {
     b.include(handle);          // decodes with CborCodec
-    b.include(other_handler);
+    b.include(other_handler);   // also CborCodec
 });
 ```
 
-To override the codec for a single handler, mount it with `include_on` (naming its source and the
-codec). On a standalone [`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Router.html),
-the per-call form is `router.with_codec(codec).include(def)`.
+**3. Default.** When nothing above names a codec, `include` uses `DefaultCodec` - `json` if the
+feature is enabled, otherwise `cbor`, otherwise `msgpack`.
+
+The reply side mirrors this: `TypedPublisher::new(publisher)` uses the default codec,
+`TypedPublisher::with_codec(publisher, codec)` names one, and `include_publishing(def, publisher)`
+reuses the publisher's codec to decode the request.
 
 ### Codecs
 
