@@ -3,13 +3,15 @@ name: Docs
 on:
   push:
     branches: [main]
-    paths:
+    paths: &docs-paths
       - docs/**
       - mkdocs.yml
       - overrides/**
+      - examples/**
       - .github/workflows/docs.yml
   pull_request:
     branches: [main]
+    paths: *docs-paths
   workflow_dispatch:
 
 permissions:
