@@ -1,0 +1,33 @@
+---
+description: How to author a new RustStream broker crate (the Broker contract, capabilities, conformance)
+globs:
+alwaysApply: false
+---
+
+- A broker is its own crate that depends on `ruststream` (broker clients never go into core).
+  Implement `Broker`: associated `Error`, async `connect`, async `shutdown`.
+- Follow the lazy-startup contract so the broker works with the synchronous `#[ruststream::app]`
+  builder: a synchronous, I/O-free `new(addrs)` constructor that only records configuration; all
+  network work happens in `connect`, which must be idempotent and is called once at startup before
+  any subscription opens.
+- Hold the live connection behind interior mutability (e.g. `Arc<tokio::sync::OnceCell<Client>>`) so a
+  publisher handed out at build time (before `connect`) resolves the connection on first use.
+  Operations that need the connection before `connect` return a `NotConnected`-style error.
+- Implement `Subscribe` (subscribe by name) so the string-literal `#[subscriber("topic")]` form works.
+  Ship a `SubscriptionSource<YourBroker>` descriptor type for broker-specific options (consumer
+  groups, durable names, delivery policy); the macro's descriptor form mounts it via `include_on`.
+- Implement capability traits only for what the broker natively supports: `RequestReply`,
+  `BatchSubscriber`, `TransactionalPublisher`, `Partitioned`, `DescribeServer`. Do not fold optional
+  behaviour into the required interface.
+- `ack` consumes `self` (double-ack is a compile error). For transports without acknowledgement,
+  return `AckError::Unsupported` from `ack`/`nack`.
+- Verify against `ruststream::conformance::harness`:
+  - `run_suite` - the Core routing contract, driven through your `TestClient`.
+  - `lifecycle` - sync `new` -> `connect` -> subscribe via `SubscriptionSource` -> publish -> receive
+    -> ack (or `AckError::Unsupported`) -> `shutdown`. Run it against a real server in an env-gated
+    integration test (e.g. `NATS_TEST_URL`), not just in-process.
+- Ship a `TestClient` under a `testing` feature: handler-stub, Core routing only. Do not simulate
+  broker-specific semantics (durable cursors, consumer-group offsets, exchanges/DLX, redelivery
+  timers) - those are tested only against a real server.
+- Version the broker crate independently and depend on `ruststream` by a semver range. Run the
+  conformance suite against the real broker before releasing.

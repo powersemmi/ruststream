@@ -1,0 +1,32 @@
+---
+description: How to build a service with RustStream (handlers, app, brokers, codecs)
+globs: examples/**/*.rs
+alwaysApply: false
+---
+
+- A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
+  decoded payload by reference (`&T`, where `T: serde::Deserialize`). An optional second parameter is
+  `ctx: &mut ruststream::runtime::Context`.
+- The return type drives acknowledgement: `HandlerResult` (`HandlerResult::Ack`, or
+  `HandlerResult::Nack { requeue }`), `()` (always acks), or `Result<_, E>` (an `Err` nacks).
+- For a reply handler, return the reply value (`R: serde::Serialize`) and add a `publish("subject")`
+  clause: `#[subscriber("orders", publish("confirmations"))]`.
+- Build the service with `#[ruststream::app]` on a synchronous `fn app() -> RustStream`. It generates
+  `main` understanding `run` and `asyncapi gen`. Do not write your own `main` or `#[tokio::main]`.
+- Construct the broker synchronously and pass it to `with_broker`; the runtime connects it at startup.
+  Memory: `MemoryBroker::new()`. NATS: `NatsBroker::new("nats://localhost:4222")`. Never connect in
+  the builder.
+- Mount inside `with_broker(broker, |b| { ... })`: `b.include(handle)` for a plain handler;
+  `b.include_publishing(handle, TypedPublisher::new(b.broker().publisher()))` for a reply handler.
+- The codec defaults to `codec::DefaultCodec` (feature priority `json` > `cbor` > `msgpack`), so
+  `include` takes no codec argument. Override per scope with `with_broker_codec(broker, codec, |b|
+  ...)`, or per call on a `Router` with `router.with_codec(codec).include(def)`.
+- Use a `Router` to collect handlers in their own module, then `b.include_router(router)`. Bind a
+  broker-specific source (NATS JetStream, ...) with `b.include_on(source, handle, codec)`.
+- Message types derive `serde::Deserialize` (incoming) / `Serialize` (replies). Add
+  `#[derive(ruststream::Message)]` to name them in the generated AsyncAPI, and
+  `#[derive(ruststream::schemars::JsonSchema)]` (feature `asyncapi`) for payload schemas.
+- Log with `tracing` events, never `println!` in handlers. Enable the `logging` feature so the CLI
+  `run` installs a console subscriber.
+- In tests use `MemoryBroker` (feature `memory`) or a broker's `TestClient` (feature `testing`); do
+  not stand up a real server in unit tests.
