@@ -29,6 +29,21 @@ pub use json::JsonCodec;
 #[cfg(feature = "msgpack")]
 pub use msgpack::MsgpackCodec;
 
+/// The codec used when an `include` / publisher call does not name one explicitly.
+///
+/// Resolved at compile time by feature priority: `json`, then `cbor`, then `msgpack`. It exists
+/// only when at least one codec feature is enabled; with none, every call site must name a codec.
+#[cfg(feature = "json")]
+pub type DefaultCodec = JsonCodec;
+/// The codec used when an `include` / publisher call does not name one explicitly. See the `json`
+/// variant for details.
+#[cfg(all(not(feature = "json"), feature = "cbor"))]
+pub type DefaultCodec = CborCodec;
+/// The codec used when an `include` / publisher call does not name one explicitly. See the `json`
+/// variant for details.
+#[cfg(all(not(feature = "json"), not(feature = "cbor"), feature = "msgpack"))]
+pub type DefaultCodec = MsgpackCodec;
+
 use std::error::Error as StdError;
 
 use bytes::Bytes;

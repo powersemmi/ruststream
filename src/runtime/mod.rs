@@ -28,6 +28,6 @@ pub use publish::{
 };
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingDef, PublishingHandler};
-pub use router::Router;
+pub use router::{Router, RouterCodec};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{DecodeFailure, Typed, typed};

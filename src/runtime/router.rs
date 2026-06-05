@@ -140,14 +140,27 @@ impl<B: Broker + 'static> Router<B> {
         self.handlers.push(meta);
     }
 
-    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with
-    /// `codec`.
+    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
     ///
-    /// The router-level counterpart of [`BrokerScope::include`](super::BrokerScope::include): use it
-    /// to collect macro handlers in a standalone module, then mount the whole group with
-    /// [`include_router`](super::BrokerScope::include_router). The app's global middleware does not
-    /// wrap router handlers (see [`include_router`](super::BrokerScope::include_router)).
-    pub fn include<D, C>(&mut self, def: D, codec: C)
+    /// Name a codec explicitly with [`with_codec`](Self::with_codec). The router-level counterpart
+    /// of [`BrokerScope::include`](super::BrokerScope::include): collect macro handlers in a
+    /// standalone module, then mount the whole group with
+    /// [`include_router`](super::BrokerScope::include_router).
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include<D>(&mut self, def: D)
+    where
+        D: SubscriberDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        self.mount(def, crate::codec::DefaultCodec::default());
+    }
+
+    fn mount<D, C>(&mut self, def: D, codec: C)
     where
         D: SubscriberDef,
         D::Source: SubscriptionSource<B> + Send + 'static,
@@ -169,15 +182,31 @@ impl<B: Broker + 'static> Router<B> {
         self.subscribe(source, handler, meta);
     }
 
-    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source: decodes
-    /// its input with `codec`, runs the handler, then sends the reply through `publisher`.
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
+    /// decoding its input with the `publisher`'s own codec and sending the reply through it.
     ///
-    /// The router-level counterpart of
-    /// [`BrokerScope::include_publishing`](super::BrokerScope::include_publishing). Router handlers
+    /// The common case where input and reply share a format: name the codec once, on the
+    /// `publisher`. Override the decode codec with [`with_codec`](Self::with_codec). Router handlers
     /// run with an empty dynamic publish pipeline - the app's
     /// [`publish_layer`](super::RustStream::publish_layer)s do not apply; the publisher's own static
     /// [`PublishLayer`] stack still does.
-    pub fn include_publishing<D, C, P, PC, PL>(
+    pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
+    where
+        D: PublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        P: Publisher + 'static,
+        PC: Codec + Clone + 'static,
+        PL: PublishLayer + 'static,
+    {
+        let codec = publisher.codec().clone();
+        self.mount_publishing(def, codec, publisher);
+    }
+
+    fn mount_publishing<D, C, P, PC, PL>(
         &mut self,
         def: D,
         codec: C,
@@ -215,6 +244,23 @@ impl<B: Broker + 'static> Router<B> {
         self.subscribe(source, handler, meta);
     }
 
+    /// Returns a view of this router that decodes with `codec` instead of the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// `router.with_codec(CborCodec).include(def)` is the explicit-codec form of
+    /// [`include`](Self::include). The view's
+    /// [`include_publishing`](RouterCodec::include_publishing) overrides the decode codec; the reply
+    /// still uses the publisher's own.
+    pub fn with_codec<C>(&mut self, codec: C) -> RouterCodec<'_, B, C>
+    where
+        C: Codec + Clone + 'static,
+    {
+        RouterCodec {
+            router: self,
+            codec,
+        }
+    }
+
     /// Merges another router's registrations into this one, preserving order.
     pub fn merge(&mut self, other: Self) {
         self.starters.extend(other.starters);
@@ -229,5 +275,53 @@ impl<B: Broker + 'static> Router<B> {
 
     pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B>>, Vec<HandlerMetadata>) {
         (self.starters, self.handlers)
+    }
+}
+
+/// A codec-bound view of a [`Router`], returned by [`Router::with_codec`].
+///
+/// Its [`include`](Self::include) / [`include_publishing`](Self::include_publishing) decode handler
+/// input with the chosen codec instead of the [`DefaultCodec`](crate::codec::DefaultCodec).
+pub struct RouterCodec<'a, B, C> {
+    router: &'a mut Router<B>,
+    codec: C,
+}
+
+impl<B, C> std::fmt::Debug for RouterCodec<'_, B, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouterCodec").finish_non_exhaustive()
+    }
+}
+
+impl<B: Broker + 'static, C: Codec + Clone + 'static> RouterCodec<'_, B, C> {
+    /// Mounts `def` on its own source, decoding its input with this view's codec.
+    pub fn include<D>(&mut self, def: D)
+    where
+        D: SubscriberDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        self.router.mount(def, self.codec.clone());
+    }
+
+    /// Mounts a publishing `def` on its own source, decoding its input with this view's codec; the
+    /// reply uses the `publisher`'s own codec.
+    pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
+    where
+        D: PublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        PL: PublishLayer + 'static,
+    {
+        self.router
+            .mount_publishing(def, self.codec.clone(), publisher);
     }
 }

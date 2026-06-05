@@ -244,8 +244,8 @@ use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
 
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-        let replies = TypedPublisher::new(b.broker().publisher(), JsonCodec);
-        b.include_publishing(confirm, JsonCodec, replies);
+        let replies = TypedPublisher::new(b.broker().publisher());
+        b.include_publishing(confirm, replies);
     });
 ```
 

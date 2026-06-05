@@ -48,7 +48,7 @@ Build a `ServerSpec` directly, or get one from a broker that implements `Describ
 ```rust
 let app = RustStream::new(info)
     .server("production", broker.describe_server())
-    .with_broker(broker, |b| b.include(handle, JsonCodec));
+    .with_broker(broker, |b| b.include(handle));
 ```
 
 ## Serving the document

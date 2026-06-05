@@ -18,15 +18,15 @@ async fn respond(req: &Request) -> Response {
 ```
 
 Mount it with `include_publishing`, handing it a [`TypedPublisher`] that carries the broker
-connection and the reply codec:
+connection and the reply codec (`TypedPublisher::new` uses the default codec; name one with
+`TypedPublisher::with_codec`). `include_publishing` reuses that codec to decode the request too:
 
 ```rust
-use ruststream::codec::JsonCodec;
 use ruststream::runtime::TypedPublisher;
 
 RustStream::new(info).with_broker(broker, |b| {
-    let replies = TypedPublisher::new(b.broker().publisher(), JsonCodec);
-    b.include_publishing(respond, JsonCodec, replies);
+    let replies = TypedPublisher::new(b.broker().publisher());
+    b.include_publishing(respond, replies);
 });
 ```
 
@@ -42,7 +42,7 @@ broker), register a named publisher on the application and resolve it from the c
 // register at build time
 let app = RustStream::new(info)
     .publisher("egress", egress_publisher)
-    .with_broker(broker, |b| b.include(forward, JsonCodec));
+    .with_broker(broker, |b| b.include(forward));
 ```
 
 ```rust
@@ -76,13 +76,13 @@ Two kinds of transform run before a message leaves the process, and they compose
 
 ```rust
 // static, per-publisher
-let replies = TypedPublisher::new(b.broker().publisher(), JsonCodec)
+let replies = TypedPublisher::new(b.broker().publisher())
     .layer(EnvelopeLayer);
 
 // dynamic, app-wide
 let app = RustStream::new(info)
     .publish_layer(metrics.publish_layer())
-    .with_broker(broker, |b| b.include_publishing(respond, JsonCodec, replies));
+    .with_broker(broker, |b| b.include_publishing(respond, replies));
 ```
 
 A static `PublishLayer` implements `apply(&mut Outgoing)`. A dynamic middleware implements

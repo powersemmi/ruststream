@@ -77,26 +77,32 @@ descriptor against the broker it is mounted on. A descriptor is any type that im
 
 ## Mounting handlers
 
-Inside `with_broker`, mount a definition with `include`, passing the codec that decodes the payload:
+Inside `with_broker`, mount a definition with `include`. It decodes the payload with the default
+codec - `json` if enabled, otherwise `cbor`, otherwise `msgpack`:
 
 ```rust
-use ruststream::codec::JsonCodec;
-
 RustStream::new(info).with_broker(broker, |b| {
-    b.include(handle, JsonCodec);
+    b.include(handle);
 });
 ```
 
 ### A scope default codec
 
-To avoid repeating the codec, set a scope default with `with_broker_codec`:
+To decode every handler in a scope with a specific codec instead, set it once with
+`with_broker_codec`:
 
 ```rust
-RustStream::new(info).with_broker_codec(broker, JsonCodec, |b| {
-    b.include(handle);          // codec inferred from the scope
+use ruststream::codec::CborCodec;
+
+RustStream::new(info).with_broker_codec(broker, CborCodec, |b| {
+    b.include(handle);          // decodes with CborCodec
     b.include(other_handler);
 });
 ```
+
+To override the codec for a single handler, mount it with `include_on` (naming its source and the
+codec). On a standalone [`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Router.html),
+the per-call form is `router.with_codec(codec).include(def)`.
 
 ### Codecs
 
@@ -130,7 +136,7 @@ struct handler, and `HandlerMetadata`. Both forms below register the same handle
     }
 
     // inside with_broker(...):
-    b.include(handle, JsonCodec);
+    b.include(handle);
     ```
 
 === "Manual"
@@ -162,8 +168,8 @@ use ruststream::runtime::Router;
 
 pub fn orders() -> Router<MyBroker> {
     let mut router = Router::new();
-    router.include(handle, JsonCodec);
-    router.include(other_handler, JsonCodec);
+    router.include(handle);
+    router.include(other_handler);
     router
 }
 ```
