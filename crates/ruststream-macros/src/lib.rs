@@ -8,9 +8,9 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, DeriveInput, Expr, ExprCall, ExprLit, ExprPath, ExprStruct, FnArg, Ident, ItemFn,
-    Lit, LitStr, Meta, PatType, Path, ReturnType, Token, Type, TypePath, parenthesized,
-    parse_macro_input,
+    Attribute, DeriveInput, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, FnArg,
+    Ident, ItemFn, Lit, LitStr, Meta, PatType, Path, ReturnType, Token, Type, TypePath,
+    parenthesized, parse_macro_input,
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
@@ -46,8 +46,10 @@ impl Parse for SubscriberArgs {
 ///
 /// A string literal `"orders"` becomes `(Name, Name::new("orders"))`; a constructor expression
 /// `RedisStream::new(..)` or `RedisStream { .. }` becomes `(RedisStream, <the expr verbatim>)` by
-/// pulling the type out of the call/struct path. Free functions (`redis::stream(..)`) and builder
-/// chains are rejected - their result type is not visible in the tokens.
+/// pulling the type out of the call/struct path. A builder chain
+/// `SubscribeOptions::new(..).jetstream(..)` is followed down its receivers to that base
+/// constructor, so fluent options that return `Self` can be written inline. Free functions
+/// (`redis::stream(..)`) are still rejected - their result type is not visible in the tokens.
 fn source_tokens(expr: &Expr) -> syn::Result<(TokenStream2, TokenStream2)> {
     if let Expr::Lit(ExprLit {
         lit: Lit::Str(name),
@@ -60,20 +62,29 @@ fn source_tokens(expr: &Expr) -> syn::Result<(TokenStream2, TokenStream2)> {
         ));
     }
 
-    let ty: Type = match expr {
+    let ty = source_type(expr)?;
+    Ok((quote!(#ty), quote!(#expr)))
+}
+
+/// Recovers the source type from a constructor expression, following a builder chain's receivers
+/// down to the base `Type::new(..)` / `Type { .. }`. Methods in the chain are assumed to return
+/// `Self`; a builder that returns a different type produces a type-mismatch the user can see and
+/// fix. Free functions and other shapes are rejected (their type is not visible in the tokens).
+fn source_type(expr: &Expr) -> syn::Result<Type> {
+    match expr {
         Expr::Call(ExprCall { func, .. }) => match &**func {
             Expr::Path(ExprPath {
                 path, qself: None, ..
-            }) => type_from_constructor_path(path)?,
-            _ => return Err(unsupported_source(expr)),
+            }) => type_from_constructor_path(path),
+            _ => Err(unsupported_source(expr)),
         },
-        Expr::Struct(ExprStruct { path, .. }) => Type::Path(TypePath {
+        Expr::Struct(ExprStruct { path, .. }) => Ok(Type::Path(TypePath {
             qself: None,
             path: path.clone(),
-        }),
-        _ => return Err(unsupported_source(expr)),
-    };
-    Ok((quote!(#ty), quote!(#expr)))
+        })),
+        Expr::MethodCall(ExprMethodCall { receiver, .. }) => source_type(receiver),
+        _ => Err(unsupported_source(expr)),
+    }
 }
 
 /// Builds the type from a constructor path by dropping the final segment (`Type::new` -> `Type`).
@@ -98,8 +109,8 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
 fn unsupported_source(expr: &Expr) -> syn::Error {
     syn::Error::new_spanned(
         expr,
-        "expected a string literal name, `Type::new(..)`, or `Type { .. }` - \
-         free functions and builder chains do not expose their type to the macro",
+        "expected a string literal name, `Type::new(..)`, `Type { .. }`, or a builder chain on \
+         one of those - a free function does not expose its type to the macro",
     )
 }
 

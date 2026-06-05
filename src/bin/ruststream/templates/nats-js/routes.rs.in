@@ -1,0 +1,25 @@
+//! Wiring: collect the `orders` handlers into one `Router`, mounted by `main` via `include_router`.
+//!
+//! Keeping registration in its own module lets the handlers stay broker-agnostic - the router binds
+//! to a concrete broker only when `main` mounts it. `confirm` carries its JetStream
+//! `SubscribeOptions` source from the decorator; `include_publishing` reuses that source as is.
+
+use ruststream::runtime::{Router, TypedPublisher};
+use ruststream_nats::NatsBroker;
+
+use crate::orders;
+
+/// Builds the orders router: the JetStream `confirm` handler (replies to `confirmations`) plus the
+/// plain `on_cancel`.
+///
+/// `confirm` needs a publisher for its reply; `TypedPublisher::new` pairs the broker's publisher
+/// with the default codec, reused to decode the order. `on_cancel` has no reply, so it is mounted
+/// with `include` (also the default codec).
+pub fn orders(broker: &NatsBroker) -> Router<NatsBroker> {
+    let confirmations = TypedPublisher::new(broker.publisher());
+
+    let mut router = Router::new();
+    router.include_publishing(orders::confirm, confirmations);
+    router.include(orders::on_cancel);
+    router
+}

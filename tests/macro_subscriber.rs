@@ -46,6 +46,13 @@ impl StreamSource {
             name: name.to_owned(),
         }
     }
+
+    /// A fluent option returning `Self`, so a `StreamSource::new(..).at(..)` chain can sit directly
+    /// in the `#[subscriber(..)]` decorator.
+    fn at(mut self, name: &str) -> Self {
+        name.clone_into(&mut self.name);
+        self
+    }
 }
 
 impl SubscriptionSource<MemoryBroker> for StreamSource {
@@ -146,6 +153,51 @@ async fn macro_descriptor_in_decorator() {
     assert!(
         result.is_ok(),
         "descriptor-in-decorator handler did not run"
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+static HANDLED_CHAIN: AtomicU32 = AtomicU32::new(0);
+
+// A builder chain in the decorator: the macro follows the receivers down to `StreamSource::new`
+// for the type, and emits the whole chain as the source constructor.
+#[subscriber(StreamSource::new("placeholder").at("chain.stream"))]
+async fn on_chain(order: &Order) -> HandlerResult {
+    HANDLED_CHAIN.fetch_add(order.id, Ordering::SeqCst);
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn macro_builder_chain_in_decorator() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(on_chain));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Order { id: 7, total: 1.0 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            // The `at(..)` option won: the subscription binds to "chain.stream".
+            let _ = publisher
+                .publish(OutgoingMessage::new("chain.stream", &payload))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if HANDLED_CHAIN.load(Ordering::SeqCst) >= 7 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "builder-chain-in-decorator handler did not run"
     );
 
     shutdown.notify_one();

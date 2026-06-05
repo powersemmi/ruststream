@@ -1,15 +1,15 @@
 //! Domain types and handlers, written as `#[subscriber]` functions.
 //!
 //! The first parameter is the decoded payload; the macro turns each function into a mountable
-//! definition (a value named after the function) that `routes` collects into a `Router`. `confirm`
-//! consumes `orders` and replies on `confirmations`; `on_cancel` handles `cancellations`.
+//! definition that `routes` collects into a `Router`. `confirm` consumes `orders` and replies on
+//! `confirmations`; `on_cancel` handles `cancellations` with no reply.
 
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// An order placed on the `orders` channel.
+/// An order placed on the `orders` subject.
 ///
 /// `JsonSchema` lets `asyncapi gen` emit this payload's schema into the generated document.
 #[derive(Debug, Deserialize, JsonSchema)]
