@@ -1,23 +1,22 @@
-//! Logging every message with the built-in `TracingLayer` middleware, on a `Router`.
+//! Logging every message with the app-global `TracingLayer`, reaching handlers behind a `Router`.
 //!
 //! ```text
 //! RUST_LOG=ruststream=debug,info cargo run --example logging_middleware \
 //!     --features macros,memory,json,logging -- run
 //! ```
 //!
-//! `TracingLayer` is the ready-made middleware for this: it wraps every handler and emits a
-//! `tracing` event on each delivery (DEBUG on arrival, INFO on ack, WARN on nack), so the handlers
-//! stay free of logging calls. The `logging` feature installs the console subscriber that renders
-//! those events; the generated `#[ruststream::app]` CLI calls it on `run`.
+//! `TracingLayer` wraps every handler and emits a `tracing` event on each delivery (DEBUG on
+//! arrival, INFO on ack, WARN on nack), so the handlers stay free of logging calls. The `logging`
+//! feature installs the console subscriber that renders those events; the generated
+//! `#[ruststream::app]` CLI calls it on `run`.
 //!
-//! The app's global `.layer(..)` does NOT reach handlers mounted through `include_router` - a
-//! `Router` is built independently. So the middleware goes on the router itself with
-//! `Router::layer(..)`, which wraps every handler registered after it. This mirrors how the
-//! scaffolded projects (`ruststream new --broker nats`) group their handlers in a `routes` module.
+//! The app-global `.layer(..)` reaches router handlers: `include_router` wraps each with the app's
+//! stack, which must be a `BlanketLayer` (every bundled layer is). `TracingLayer` here applies to
+//! both `confirm` and `reject`, mounted through the `routes` module.
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::layers::TracingLayer;
-use ruststream::runtime::{AppInfo, HandlerResult, Identity, Router, RustStream, Stack};
+use ruststream::runtime::{AppInfo, HandlerResult, Identity, Router, RouterDef, RustStream, Stack};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -43,21 +42,18 @@ async fn reject(order: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Builds the orders router with `TracingLayer` in front of every handler.
-///
-/// The layer is added first, so both `confirm` and `reject` registered after it are wrapped.
-/// `TracingLayer::with_target("orders")` would route the events under a custom tracing target.
+/// Builds the orders router. Broker-agnostic and middleware-agnostic: the app's global layer wraps
+/// these handlers when the router is mounted.
 // --8<-- [start:layered_router]
-fn routes() -> Router<MemoryBroker, Stack<TracingLayer, Identity>> {
-    let mut router = Router::new().layer(TracingLayer::default());
-    router.include(confirm);
-    router.include(reject);
-    router
+fn routes() -> impl RouterDef<MemoryBroker> {
+    Router::new().include(confirm).include(reject)
 }
 // --8<-- [end:layered_router]
 
 #[ruststream::app]
-fn app() -> RustStream {
+fn app() -> RustStream<Stack<TracingLayer, Identity>> {
+    // The global layer is added before with_broker; include_router applies it to the router handlers.
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .layer(TracingLayer::default())
         .with_broker(MemoryBroker::new(), |b| b.include_router(routes()))
 }
