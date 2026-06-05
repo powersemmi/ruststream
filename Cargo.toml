@@ -46,6 +46,10 @@ name = "logging"
 required-features = ["macros", "memory", "json", "logging"]
 
 [[example]]
+name = "logging_middleware"
+required-features = ["macros", "memory", "json", "logging"]
+
+[[example]]
 name = "nats_core"
 required-features = ["macros", "json"]
 
