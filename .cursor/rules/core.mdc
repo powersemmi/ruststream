@@ -5,33 +5,106 @@ alwaysApply: false
 ---
 
 - Core is broker-agnostic: traits and message types with zero broker dependencies. Keep
-  broker-specific config and defaults out of core. If a field has no sane default, do not implement
-  `Default` - force the caller to be explicit.
-- Core is fully generic (associated types, native `async fn in trait`); no object-safety in core.
-  Type erasure for dynamic dispatch or language bindings lives in `runtime`, not core.
-- Default visibility is `pub(crate)`; make `pub` only what `lib.rs` re-exports. The crate root denies
-  `missing_docs`: every `pub` item needs a one-line summary plus a compiling `# Examples` doctest that
-  uses `?`, not `unwrap()`. Document `# Errors`, `# Panics`, `# Cancel safety` where they apply.
-- Library code uses `thiserror`; `anyhow` is banned in the library surface (bins/examples only).
-  Public error enums are `#[non_exhaustive]`, variants by source. Never panic on user/network/FFI
-  input - return `Result`. `panic!`/`unwrap` only on invariant violations.
-- Use native `async fn in trait` (RPITIT); add `+ Send` at the call site, not in the trait.
-  Destructors never panic or block - cleanup is an explicit `async shutdown() -> Result`.
-- Features are strictly additive and never mutually exclusive; optional deps are named like their
-  feature (`json = ["dep:serde_json"]`). Gate code that needs a default codec with
-  `#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]`.
-- The only sanctioned "mock" is the in-memory broker (`memory`) plus the conformance harness - no
-  `mockall`. Spawning tests use `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`; never
-  `sleep` to synchronize - use notify primitives or `tokio::time::pause()`. `proptest`, not
-  `quickcheck`, for codec/routing properties.
-- When a contract-level change touches the broker lifecycle, verify against a real broker (sibling
-  `ruststream-nats` with `NATS_TEST_URL`) before committing or releasing - an in-process pass is not
-  enough.
-- Gates: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
-  `cargo test --all-features`, `cargo check --no-default-features` (or `just check` + `just test`).
-  Narrow `#[allow(...)]` only for genuine false positives, with a one-line reason.
-- SemVer pre-1.0: minor bump = breaking, patch = additive (MSRV 1.85, edition 2024). `ruststream` and
-  `ruststream-macros` move in lockstep via `[workspace.package].version`.
-- English only in files; no emoji; no em-dashes (use hyphens). Comments explain "why", not "what".
-  Files under ~500 lines. One logical unit per commit; no `Co-Authored-By` trailer. Do not publish,
-  tag, or release - prepare branches/PRs; the maintainer releases via GitHub Release.
+  broker-specific config and defaults out of core; if a field has no sane default, do not implement
+  `Default`. Core is fully generic (no object-safety); erasure lives in `runtime`.
+- Default visibility `pub(crate)`; make `pub` only what `lib.rs` re-exports. The crate root denies
+  `missing_docs`: every `pub` item gets a summary plus a compiling `# Examples` doctest using `?`.
+- Library code uses `thiserror` (`anyhow` is bins/examples only); public error enums are
+  `#[non_exhaustive]`. Never panic on user/network input - return `Result`.
+- Native `async fn in trait`; `+ Send` at the call site, not the trait. Destructors never panic or
+  block. Features are strictly additive, never mutually exclusive.
+- Gates: `just check` (`cargo fmt --check`, `clippy --all-targets --all-features -- -D warnings`,
+  `cargo check` all-features and `--no-default-features`) + `just test`. SemVer pre-1.0: minor =
+  breaking, patch = additive; `ruststream` and `ruststream-macros` versions are lockstep via
+  `[workspace.package].version`.
+- English only, no emoji, no em-dashes. One logical unit per commit; no `Co-Authored-By`. Do not
+  publish/tag/release - prepare branches/PRs; the maintainer releases.
+
+## Error type
+
+One `#[non_exhaustive]` enum per crate, variants by source, with `thiserror`.
+
+```rust
+use std::error::Error as StdError;
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum PublishError {
+    /// The broker rejected the publish.
+    #[error("publish rejected: {0}")]
+    Rejected(#[source] Box<dyn StdError + Send + Sync>),
+}
+```
+
+## Trait with async methods
+
+Use RPITIT; keep `+ Send` on the returned future. Do not force object-safety in core.
+
+```rust
+use std::future::Future;
+
+pub trait Publisher: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Publishes `msg`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the broker rejects the message.
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+```
+
+## Public item with a doctest
+
+Every `pub` item carries a compiling example using `?`, not `unwrap()`.
+
+```rust
+/// Creates a name source bound to `name`.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::Name;
+/// let source = Name::new("orders");
+/// # let _ = source;
+/// ```
+#[must_use]
+pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+    Self(name.into())
+}
+```
+
+## Feature-gated default-codec API
+
+The default-codec convenience methods only exist when a codec feature is on.
+
+```rust
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+pub fn include<D>(&mut self, def: D)
+where
+    D: SubscriberDef,
+    // ...
+{
+    self.mount(def, crate::codec::DefaultCodec::default());
+}
+```
+
+## Conformance self-test
+
+The reference `MemoryBroker` runs the harness in `tests/`.
+
+```rust
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_lifecycle() {
+    harness::lifecycle(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+```
