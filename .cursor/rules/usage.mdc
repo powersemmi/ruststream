@@ -190,10 +190,12 @@ JSON Schema language (as in OpenAPI), independent of how bytes are encoded on th
 attach a codec to a type.
 
 ```rust
+use ruststream::Message;
+use ruststream::schemars::JsonSchema;
 use serde::Deserialize;
 
 /// An order placed on the orders channel.
-#[derive(Debug, Deserialize, ruststream::Message, ruststream::schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Message, JsonSchema)]
 struct Order {
     id: u64,
 }
