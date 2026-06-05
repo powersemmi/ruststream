@@ -36,3 +36,6 @@ coverage.xml
 
 node_modules/
 tmp/
+
+# mkdocs build output
+/site/
