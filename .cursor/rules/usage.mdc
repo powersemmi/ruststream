@@ -139,19 +139,43 @@ b.include_on(
 );
 ```
 
-## Context
+## Context (optional handler argument)
 
-Add `ctx: &mut Context` as the second parameter to read the topic, headers, or app state.
+`ctx: &mut Context` is an **optional** second handler parameter. Omit it when you do not use it - do
+not add it just in case. When present it exposes the delivery's runtime objects:
+
+- `ctx.name()` - the subject/channel the message arrived on.
+- `ctx.headers()` / `ctx.headers_mut()` - the working copy of the message headers.
+- `ctx.get::<T>()` - shared application state registered with `RustStream::insert_state`.
+- `ctx.publisher(name)` - a named publisher (registered with `RustStream::publisher`) for a manual
+  publish through the same middleware pipeline as a macro reply.
 
 ```rust
-use ruststream::runtime::{Context, HandlerResult};
+use ruststream::runtime::{Context, HandlerResult, Outgoing};
+
+struct Database; // connection pool, etc.
 
 #[subscriber("orders")]
 async fn handle(order: &Order, ctx: &mut Context) -> HandlerResult {
-    let topic = ctx.topic();
-    let db = ctx.get::<Database>(); // state inserted with RustStream::insert_state
+    let subject = ctx.name();                  // "orders"
+    if let Some(db) = ctx.get::<Database>() {   // application state
+        // db.store(order).await;
+        let _ = db;
+    }
+    if let Some(audit) = ctx.publisher("audit") {
+        let _ = audit.publish(Outgoing::new("audit", b"stored".to_vec())).await;
+    }
     HandlerResult::Ack
 }
+```
+
+Register state and named publishers on the app builder:
+
+```rust
+RustStream::new(AppInfo::new("orders", "0.1.0"))
+    .insert_state(Database)
+    .publisher("audit", broker.publisher())
+    .with_broker(broker, |b| b.include(handle))
 ```
 
 ## AsyncAPI metadata
