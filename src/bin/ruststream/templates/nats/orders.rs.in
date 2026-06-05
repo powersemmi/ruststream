@@ -5,15 +5,14 @@
 //! `on_cancel` handles `cancellations` with no reply.
 
 use ruststream::runtime::HandlerResult;
-use ruststream::schemars::JsonSchema;
 use ruststream::subscriber;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// An order placed on the `orders` subject.
 ///
 /// `JsonSchema` lets `asyncapi gen` emit this payload's schema into the generated document.
 #[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(crate = "ruststream::schemars")]
 pub struct Order {
     pub id: u64,
     pub item: String,
@@ -22,7 +21,6 @@ pub struct Order {
 
 /// The reply published to `confirmations` for each order.
 #[derive(Debug, Serialize, JsonSchema)]
-#[schemars(crate = "ruststream::schemars")]
 pub struct Confirmation {
     pub id: u64,
     pub accepted: bool,
