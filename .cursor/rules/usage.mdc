@@ -180,8 +180,14 @@ RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 ## AsyncAPI metadata
 
-Derive `Message` to name a type in the generated AsyncAPI document, and `JsonSchema` (feature
-`asyncapi`) for its payload schema.
+Decoding only needs `serde::Deserialize`. The extra derives are **documentation only** for the
+generated AsyncAPI spec and are optional: `ruststream::Message` names/describes the type, and
+`JsonSchema` (feature `asyncapi`) emits its payload schema.
+
+Neither selects a wire codec - that stays the default (`json` > `cbor` > `msgpack`) or whatever
+`with_codec` / `with_broker_codec` names. `JsonSchema` describes the payload's logical shape in the
+JSON Schema language (as in OpenAPI), independent of how bytes are encoded on the wire; you cannot
+attach a codec to a type.
 
 ```rust
 use serde::Deserialize;
