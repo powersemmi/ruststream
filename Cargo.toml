@@ -34,6 +34,47 @@ name = "quickstart"
 required-features = ["macros", "memory", "json"]
 
 [[example]]
+name = "tutorial"
+path = "examples/tutorial/main.rs"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "subscribers"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "publishing"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "routing"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "codecs"
+required-features = ["macros", "memory", "json", "cbor"]
+
+[[example]]
+name = "middleware"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "middleware_app_scope"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "middleware_router_scope"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "context"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "lifespan"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
 name = "asyncapi_http"
 required-features = ["macros", "memory", "asyncapi"]
 
@@ -112,7 +153,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tokio-stream = "0.1"
 tempfile = "3"
 axum = "0.8"
-ruststream-nats = "0.2"
+# `testing` pulls the in-memory NATS test broker used by tests/doc_testing_nats.rs (the
+# snippet source for the testing guide).
+ruststream-nats = { version = "0.2", features = ["testing"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
