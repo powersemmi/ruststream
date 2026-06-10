@@ -46,9 +46,11 @@ impl std::fmt::Debug for State {
 /// Per-delivery context, threaded through middleware and into the handler.
 ///
 /// Carries the channel ([`name`](Self::name)), a mutable working copy of the message
-/// [`headers`](Self::headers) (middleware may modify them; the copy is also what outgoing replies
-/// start from), shared application [state](Self::get), and access to named
-/// [`publisher`](Self::publisher)s for publishing from inside a handler.
+/// [`headers`](Self::headers) (middleware may enrich them for the handler; the broker message
+/// itself is untouched), shared application [state](Self::get), and access to named
+/// [`publisher`](Self::publisher)s for publishing from inside a handler. Outgoing messages do not
+/// inherit the copy: replies and manual publishes start from fresh headers, shaped by the publish
+/// pipeline.
 #[derive(Debug)]
 pub struct Context<'a> {
     name: &'a str,
