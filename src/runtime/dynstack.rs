@@ -81,8 +81,15 @@ impl<I> std::fmt::Debug for Next<'_, I> {
 }
 
 /// A [`Layer`] that runs a frozen list of [`DynMiddleware`] before the handler it wraps.
-#[derive(Clone)]
 pub struct DynStack<I>(Arc<[Arc<dyn DynMiddleware<I>>]>);
+
+// Manual impl: `derive(Clone)` would demand `I: Clone`, but the field is an `Arc` and the input
+// type (often a non-Clone broker message) is never cloned.
+impl<I> Clone for DynStack<I> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
 
 impl<I> DynStack<I> {
     /// Builds a stack from a list of middleware, applied in iteration order (first runs outermost).
