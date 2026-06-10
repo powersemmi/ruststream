@@ -37,7 +37,7 @@ async fn passes_conformance() {
 | Scenario | Asserts |
 |---|---|
 | ordering | messages are delivered in publish order |
-| publish after subscribe | a message published before a subscriber attaches is still delivered |
+| publish after subscribe | a subscriber receives only messages published after it attached; earlier publishes are not buffered |
 | ack consumes delivery | an acked message is not redelivered |
 | nack with requeue redelivers | `nack(requeue = true)` delivers the message again |
 | nack without requeue drops | `nack(requeue = false)` does not redeliver |

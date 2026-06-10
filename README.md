@@ -100,9 +100,9 @@ only, so you assert on handler behaviour, middleware, and decoding exactly as in
 
 ## Documentation
 
-- Guide and tutorials: <https://powersemmi.github.io/ruststream/>
+- Guide and tutorials: <https://powersemmi.github.io/ruststream/latest>
 - API reference: <https://docs.rs/ruststream>
-- Writing a broker: <https://powersemmi.github.io/ruststream/broker-authors/>
+- Writing a broker: <https://powersemmi.github.io/ruststream/latest/broker-authors/>
 
 ## Ecosystem
 
@@ -123,4 +123,4 @@ just test     # the test suite
 
 Licensed under the [Apache-2.0](./LICENSE) license.
 
-<sub>Inspired by [FastStream](https://github.com/airtai/faststream).</sub>
+<sub>Inspired by [FastStream](https://github.com/ag2ai/faststream).</sub>

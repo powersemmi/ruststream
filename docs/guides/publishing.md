@@ -11,10 +11,7 @@ sends it:
 ```rust
 use ruststream::subscriber;
 
-#[subscriber("requests", publish("responses"))]
-async fn respond(req: &Request) -> Response {
-    Response { ok: true }
-}
+--8<-- "examples/publishing.rs:reply"
 ```
 
 Mount it with `include_publishing`, handing it a [`TypedPublisher`] that carries the broker
@@ -30,8 +27,9 @@ RustStream::new(info).with_broker(broker, |b| {
 });
 ```
 
-The first `JsonCodec` decodes the incoming request; the `TypedPublisher`'s codec encodes the reply.
-They are separate seams, so the request and reply formats can differ.
+The `TypedPublisher`'s codec encodes the reply, and `include_publishing` reuses it to decode the
+incoming request. To decode the request with a different codec, mount with `include_publishing_on`
+and name it explicitly; see [Codecs](codecs.md#the-publish-side).
 
 ## Publishing from inside a handler
 
@@ -46,16 +44,9 @@ let app = RustStream::new(info)
 ```
 
 ```rust
-use ruststream::runtime::{Context, HandlerResult, Outgoing};
+use ruststream::runtime::{HandlerResult, Outgoing};
 
-#[subscriber("ingress")]
-async fn forward(event: &Event, ctx: &mut Context<'_>) -> HandlerResult {
-    if let Some(publisher) = ctx.publisher("egress") {
-        let out = Outgoing::new("egress", serde_json::to_vec(event).unwrap());
-        let _ = publisher.publish(out).await;
-    }
-    HandlerResult::Ack
-}
+--8<-- "examples/publishing.rs:forward"
 ```
 
 !!! note "Handlers that publish must own their context"
@@ -74,21 +65,28 @@ Two kinds of transform run before a message leaves the process, and they compose
   concerns (publish metrics, a dead-letter wrapper) applied to every published message. They run
   outside the static layers, then the message is sent.
 
-```rust
-// static, per-publisher
-let replies = TypedPublisher::new(b.broker().publisher())
-    .layer(EnvelopeLayer);
+A static `PublishLayer` implements `apply(&mut Outgoing)`:
 
-// dynamic, app-wide
-let app = RustStream::new(info)
-    .publish_layer(metrics.publish_layer())
-    .with_broker(broker, |b| b.include_publishing(respond, replies));
+```rust
+--8<-- "examples/publishing.rs:static_layer"
 ```
 
-A static `PublishLayer` implements `apply(&mut Outgoing)`. A dynamic middleware implements
-`PublishMiddleware` with an around/next signature, so it can short-circuit, retry, or observe.
+A dynamic middleware implements `PublishMiddleware` with an around/next signature, so it can
+short-circuit, retry, or observe:
+
+```rust
+--8<-- "examples/publishing.rs:dynamic_middleware"
+```
+
+Both levels compose on the application:
+
+```rust
+--8<-- "examples/publishing.rs:pipeline"
+```
+
 Manual publishes through `ctx.publisher(..)` run through the dynamic pipeline (the static layer is a
-property of a specific `TypedPublisher`).
+property of a specific `TypedPublisher`). The full program is
+[`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 
 ## Batch publishing
 

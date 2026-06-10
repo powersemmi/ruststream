@@ -37,11 +37,7 @@ a crate other than the working directory.
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, RustStream};
 
-#[ruststream::app]
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("my-service", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| { /* mount handlers */ })
-}
+--8<-- "examples/quickstart.rs:app"
 ```
 
 Because the dispatch lives in the generated binary, both `ruststream run` and a plain

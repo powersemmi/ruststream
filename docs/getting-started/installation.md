@@ -34,7 +34,8 @@ always compiled. Everything else is an additive, opt-in feature.
 | `conformance` | - | the broker-author conformance harness |
 | `cli` | clap, anyhow | the `ruststream` binary |
 
-Codec features are mutually compatible; enable as many as you need. To drop the bundled JSON codec
+Codec features are mutually compatible; enable as many as you need (see
+[Codecs](../guides/codecs.md)). To drop the bundled JSON codec
 (for a broker crate that only needs the trait surface and runtime), disable defaults:
 
 ```toml
@@ -59,9 +60,14 @@ The `memory` broker is for local development and tests. For production, depend o
 which re-exports what it needs from `ruststream`:
 
 ```toml
-# illustrative - substitute the real broker crate
+[dependencies]
+ruststream-nats = "0.2"
+
+[dev-dependencies]
+# the broker's in-memory test client, for handler tests
 ruststream-nats = { version = "0.2", features = ["testing"] }
 ```
 
-Each broker crate documents its own `Config` and capabilities. To write one yourself, see
+Each broker crate documents its own `Config` and capabilities; the available brokers are listed
+under [Brokers](../brokers/index.md). To write one yourself, see
 [Broker authors](../broker-authors/index.md).
