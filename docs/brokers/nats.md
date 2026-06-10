@@ -54,7 +54,28 @@ I/O. See the crate's documentation for connection options and authentication.
 ## Request-reply
 
 NATS supports request-reply natively, so `NatsPublisher` implements the `RequestReply` capability:
-`request(msg, timeout)` publishes with a reply inbox and resolves with the reply message.
+`request(msg, timeout)` publishes with a reply inbox and resolves with the reply message, or fails
+with a timeout error when nothing answers in time:
+
+```rust
+use std::time::Duration;
+
+use ruststream::{IncomingMessage, OutgoingMessage, RequestReply};
+
+--8<-- "examples/nats_request_reply.rs:request"
+```
+
+Any NATS responder answers it: another service, or `nats reply questions 'pong'` from the CLI. The
+runnable program is
+[`examples/nats_request_reply.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/nats_request_reply.rs) -
+it sends the request from an `after_startup` hook, through a publisher built before `connect` (the
+lazy-startup contract resolves the connection on first use).
+
+The in-memory test broker implements `RequestReply` too, and additionally hands the request's
+reply inbox to handlers as the `reply-to` header, so a responder is testable in-process: read
+`ctx.headers().reply_to()` and publish the answer to that subject. Against a real server the
+requester side above is fully supported; the reply inbox of an *incoming* request is not yet
+exposed to handlers, so the responder end of an RPC pair is today another NATS service.
 
 ## Testing
 

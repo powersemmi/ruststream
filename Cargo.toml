@@ -98,6 +98,10 @@ required-features = ["macros", "json"]
 name = "nats_jetstream"
 required-features = ["macros", "json"]
 
+[[example]]
+name = "nats_request_reply"
+required-features = ["macros"]
+
 [package]
 name = "ruststream"
 version.workspace = true
