@@ -7,6 +7,9 @@ on:
       - docs/**
       - mkdocs.yml
       - overrides/**
+      - examples/**
+      # the testing guide embeds its snippets from these test files
+      - tests/doc_testing_*.rs
       - Cargo.toml
       - .github/workflows/docs-deploy.yml
   workflow_dispatch:

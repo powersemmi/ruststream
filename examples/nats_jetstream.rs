@@ -40,6 +40,16 @@ async fn handle(order: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
+// The descriptor can also sit directly in the decorator: the macro follows the builder chain, so
+// this handler mounts with a plain `include` and no separate source argument.
+// --8<-- [start:decorator]
+#[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("orders-audit"))]
+async fn audit(order: &Order) -> HandlerResult {
+    println!("audited order {}", order.id);
+    HandlerResult::Ack
+}
+// --8<-- [end:decorator]
+
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
@@ -54,6 +64,7 @@ fn app() -> RustStream {
                 JsonCodec,
             );
             // --8<-- [end:include_on]
+            b.include(audit);
         },
     )
 }

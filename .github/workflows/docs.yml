@@ -8,6 +8,8 @@ on:
       - mkdocs.yml
       - overrides/**
       - examples/**
+      # the testing guide embeds its snippets from these test files
+      - tests/doc_testing_*.rs
       - .github/workflows/docs.yml
   pull_request:
     branches: [main]

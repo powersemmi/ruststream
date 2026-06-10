@@ -32,6 +32,7 @@ pub(crate) struct Confirmation {
 /// name - the slot where a real broker takes its own descriptor (a NATS `SubscribeOptions`, say).
 /// The return value is the reply: the `publish("confirmations")` clause makes the runtime encode it
 /// and send it through the publisher wired in [`routes`](crate::routes).
+// --8<-- [start:descriptor]
 #[subscriber(MemorySource::new("orders"), publish("confirmations"))]
 pub(crate) async fn confirm(order: &Order) -> Confirmation {
     Confirmation {
@@ -39,6 +40,7 @@ pub(crate) async fn confirm(order: &Order) -> Confirmation {
         accepted: order.quantity > 0,
     }
 }
+// --8<-- [end:descriptor]
 
 /// Logs cancellations, bound by plain name. No reply, so it returns a plain [`HandlerResult`].
 #[subscriber("cancellations")]

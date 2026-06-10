@@ -47,12 +47,14 @@ async fn reject(order: &Order) -> HandlerResult {
 ///
 /// The layer is added first, so both `confirm` and `reject` registered after it are wrapped.
 /// `TracingLayer::with_target("orders")` would route the events under a custom tracing target.
+// --8<-- [start:layered_router]
 fn routes() -> Router<MemoryBroker, Stack<TracingLayer, Identity>> {
     let mut router = Router::new().layer(TracingLayer::default());
     router.include(confirm);
     router.include(reject);
     router
 }
+// --8<-- [end:layered_router]
 
 #[ruststream::app]
 fn app() -> RustStream {

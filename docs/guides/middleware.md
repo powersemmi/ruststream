@@ -1,35 +1,45 @@
 # Middleware
 
 Middleware wraps handlers with cross-cutting logic: tracing, metrics, auth, retries. RustStream has
-two middleware levels, both built on the same `Layer` machinery, applied at different points in the
+two middleware scopes, both built on the same `Layer` machinery, applied at different points in the
 dispatch path.
 
-## Global middleware
+## Middleware scopes
 
-Add a layer to the whole application with `layer`, before `with_broker`. Every handler registered on
-a broker scope is wrapped with it.
+Today the two scopes are independent: a layer lives either on the **application** or on a
+**router**, and one does not see the other's handlers.
+
+**Application scope.** Add a layer to the whole application with `RustStream::layer`, before
+`with_broker`. Every handler registered directly on a broker scope is wrapped with it - but not the
+handlers a router brings in, because a router is finalized independently:
 
 ```rust
-use ruststream::runtime::layers::TracingLayer;
-
-let app = RustStream::new(info)
-    .layer(TracingLayer::default())
-    .with_broker(broker, |b| b.include(handle));
+--8<-- "examples/middleware_app_scope.rs:app_scope"
 ```
 
-The first layer added is the outermost. The global stack is static: it has zero runtime dispatch
-cost, and its type grows as you call `layer`.
+**Router scope.** Give a router its own middleware with `Router::layer`, which wraps every handler
+registered on it after the call (see [Routing](routing.md#router-middleware)). Handlers mounted
+directly on the broker scope stay outside it:
 
-!!! note "Routers carry their own stack"
-    The global stack does not wrap handlers brought in via `include_router`, because a router is
-    finalized independently. Give the router its own middleware with `Router::layer`, which wraps
-    every handler registered after it:
+```rust
+--8<-- "examples/middleware_router_scope.rs:router_scope"
+```
 
-    ```rust
-    let mut router = Router::new().layer(TracingLayer::default());
-    router.include(handle);
-    b.include_router(router);
-    ```
+The two programs are
+[`middleware_app_scope.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware_app_scope.rs)
+and
+[`middleware_router_scope.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware_router_scope.rs);
+`LogLayer` is the hand-written layer from the next section, and the built-in
+`layers::TracingLayer` mounts the same way.
+
+!!! warning "Planned for 0.3: routers inherit the application scope"
+    The separation above is the 0.2 behaviour. In 0.3 a router will inherit the application's
+    stack, so app-level layers will wrap router handlers too (composing outside the router's own
+    `Router::layer` stack). Until then, a layer that must cover everything has to be added in both
+    places explicitly.
+
+The first layer added is the outermost. Both stacks are static: zero runtime dispatch cost, and
+the type grows as you call `layer`.
 
 ## Writing a layer
 
@@ -38,28 +48,13 @@ A layer transforms one handler into another. Implement `Layer<H>`:
 ```rust
 use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
 
-struct LogLayer;
-
-struct Logged<H>(H);
-
-impl<H> Layer<H> for LogLayer {
-    type Handler = Logged<H>;
-    fn layer(&self, inner: H) -> Logged<H> {
-        Logged(inner)
-    }
-}
-
-impl<M, H: Handler<M>> Handler<M> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
-        // pre
-        let result = self.0.handle(msg, ctx).await;
-        // post
-        result
-    }
-}
+--8<-- "examples/middleware.rs:layer_impl"
 ```
 
 `Identity` is the no-op layer (the default global stack), and `Stack<Inner, Outer>` composes two.
+The `ctx` here is the same per-delivery [`Context`](context.md) the handler receives, so a layer
+can enrich the [headers working copy](context.md#the-headers-working-copy) before the handler
+reads it.
 
 ## Per-handler middleware
 
@@ -102,53 +97,34 @@ use std::pin::Pin;
 
 use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 
-struct Audit {
-    service: String,
-}
-
-impl<I: Send + Sync> DynMiddleware<I> for Audit {
-    fn handle<'a>(
-        &'a self,
-        input: &'a I,
-        ctx: &'a mut Context<'_>,
-        next: Next<'a, I>,
-    ) -> Pin<Box<dyn Future<Output = HandlerResult> + Send + 'a>> {
-        Box::pin(async move {
-            tracing::info!(service = %self.service, channel = ctx.name(), "handling");
-            next.run(input, ctx).await
-        })
-    }
-}
+--8<-- "examples/middleware.rs:dyn_middleware"
 ```
 
-Build the chain at runtime and fold it into a single `DynStack`, which is itself an ordinary
-`Layer` - apply it with `with`, `Router::layer`, or the global `layer`. Here it wraps one handler,
-running on the decoded `Order`:
+Only the *list* is dynamic. Build it at runtime, freeze it into a `DynStack`, and the result is an
+ordinary static `Layer` - compose it into the application stack with `layer`, exactly like a
+hand-written one. The rest of the dispatch chain stays static; the boxing cost is paid only inside
+the stack:
 
 ```rust
 use std::sync::Arc;
 
-use ruststream::codec::JsonCodec;
-use ruststream::runtime::{DynStack, HandlerExt, HandlerMetadata, typed};
+use ruststream::memory::MemoryMessage;
+use ruststream::runtime::DynStack;
 
-// inside with_broker(...):
-let subscriber = b.broker().subscribe("orders");
-
-let mut middleware: Vec<Arc<dyn DynMiddleware<Order>>> = Vec::new();
-if config.audit {
-    middleware.push(Arc::new(Audit { service: "orders".to_owned() }));
-}
-let stack = DynStack::new(middleware); // empty list -> a no-op layer
-
-let handler = (|order: &Order, _ctx: &mut Context| async { HandlerResult::Ack }).with(stack);
-b.handle(subscriber, typed(JsonCodec, handler), HandlerMetadata::typed::<Order>("orders"));
+--8<-- "examples/middleware.rs:dyn_stack"
 ```
 
-`DynStack<I>` is generic over the input it wraps: build it over the decoded type (`DynStack<Order>`)
-to run after decoding, or over the broker's raw message type to run before. Middleware in the same
-`DynStack` runs in list order, outermost first. Each dynamic layer costs one boxed future per call,
-against zero for the static layers, so keep the static chain as the default and reach for `DynStack`
-only where runtime composition earns it.
+The full program, with the chain toggled by an environment variable, is
+[`examples/middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware.rs).
+
+`DynStack<I>` is generic over the input it wraps. In the application stack it wraps the whole
+decoding handler, so it is built over the broker's raw message type (`DynStack<MemoryMessage>`
+above) and runs before decoding - a middleware generic over `I`, like `Audit`, works at either
+level. To run on the decoded value instead, build a `DynStack<Order>` and apply it to the inner
+typed handler with `with` (the manual registration form). Middleware in the same `DynStack` runs
+in list order, outermost first. Each dynamic layer costs one boxed future per call, against zero
+for the static layers, so keep the static chain as the default and reach for `DynStack` only where
+runtime composition earns it.
 
 ## Publish-side middleware
 

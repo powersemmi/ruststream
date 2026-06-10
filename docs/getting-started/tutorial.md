@@ -30,40 +30,26 @@ turns it into a mountable definition named after the function.
 ```rust title="src/orders.rs"
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
-pub struct Order {
-    pub id: u64,
-    pub quantity: u32,
-}
-
-#[subscriber("orders")]
-pub async fn handle(order: &Order) -> HandlerResult {
-    println!("order {} x{}", order.id, order.quantity);
-    HandlerResult::Ack
-}
+--8<-- "examples/tutorial/orders.rs:order"
 ```
 
 A handler returns a [`HandlerResult`](../guides/subscribers.md#acking): `Ack`, or a `nack` that drops
-or requeues the message. Returning `()` or `Result<_, E>` also works - they convert into a result.
+or requeues the message. Returning `()` or `Result<(), E>` also works - they convert into a result
+(`Ok` acks, `Err` drops).
 
 ## 3. Wire it into an app
 
 ```rust title="src/main.rs"
 mod orders;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, RustStream};
 
 use crate::orders::handle;
 
-#[ruststream::app]
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders-service", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle))
-}
+--8<-- "examples/quickstart.rs:app"
 ```
 
 The macro turns `handle` into a value named after the function, so you import and pass it directly.
@@ -71,7 +57,8 @@ The macro turns `handle` into a value named after the function, so you import an
 !!! tip "Codec defaults"
     `include` decodes with the default codec - `json` if enabled, otherwise `cbor`, otherwise
     `msgpack` - so it needs no codec argument. To decode with a different one everywhere, set it
-    once with `with_broker_codec(broker, codec, |b| ...)`.
+    once with `with_broker_codec(broker, codec, |b| ...)`. See
+    [Codecs](../guides/codecs.md) for the full resolution rules.
 
 Run it:
 
@@ -84,18 +71,7 @@ cargo run -- run
 To publish a reply, return the reply value and name the destination with `publish(..)`:
 
 ```rust title="src/orders.rs"
-use serde::Serialize;
-
-#[derive(Debug, Serialize)]
-pub struct Confirmation {
-    pub id: u64,
-    pub accepted: bool,
-}
-
-#[subscriber("orders", publish("confirmations"))]
-pub async fn confirm(order: &Order) -> Confirmation {
-    Confirmation { id: order.id, accepted: order.quantity > 0 }
-}
+--8<-- "examples/tutorial/orders.rs:confirm"
 ```
 
 Mount it with a publisher that carries the reply codec:
@@ -114,32 +90,14 @@ inside a handler.
 ## 5. Organize with a router
 
 As handlers grow, keep them in their own module and collect them into a
-[`Router`](../guides/subscribers.md#routers):
+[`Router`](../guides/routing.md):
 
 ```rust title="src/routes.rs"
-use ruststream::codec::JsonCodec;
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{Router, TypedPublisher};
-
-use crate::orders;
-
-pub fn orders(broker: &MemoryBroker) -> Router<MemoryBroker> {
-    let replies = TypedPublisher::new(broker.publisher());
-    let mut router = Router::new();
-    router.include_publishing(orders::confirm, replies);
-    router.include(orders::handle);
-    router
-}
+--8<-- "examples/tutorial/routes.rs:routes"
 ```
 
 ```rust title="src/main.rs"
-#[ruststream::app]
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let router = routes::orders(b.broker());
-        b.include_router(router);
-    })
-}
+--8<-- "examples/tutorial/main.rs:main"
 ```
 
 ## 6. Inspect the AsyncAPI document
@@ -181,11 +139,18 @@ line:
 
 Each broker crate documents its own `Config`. Subscriptions that need broker-specific options
 (consumer groups, durable names) use that broker's descriptor in the decorator, see
-[Subscribers & publishers](../guides/subscribers.md#broker-specific-descriptors). The available
+[broker-specific descriptors](../guides/subscribers.md#broker-specific-descriptors). The available
 brokers are listed under [Brokers](../brokers/index.md).
+
+!!! info "The complete service is a compiled example"
+    Every snippet on this page is embedded from
+    [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
+    in the repository, which CI builds on every change. Run it yourself with
+    `cargo run --example tutorial --features macros,memory,json -- run`.
 
 ## Next steps
 
 - [Middleware](../guides/middleware.md) - cross-cutting logic around handlers.
+- [Lifespan](../guides/lifespan.md) - shared state and startup/shutdown hooks.
+- [Testing](../guides/testing.md) - test the handlers you just wrote, in-process.
 - [Metrics](../guides/metrics.md) - Prometheus counters and histograms.
-- [Testing](../guides/testing.md) - the in-memory test client.

@@ -26,8 +26,8 @@ collect into an existing registry instead of a fresh one, use `Metrics::with_reg
 | `ruststream_consume_duration_seconds` | histogram | `name` |
 | `ruststream_messages_published_total` | counter | `name`, `status` |
 
-`name` is the subscription or destination name; `status` is the outcome (`ack`, `requeue`, `drop`
-for consume; `ok`, `error` for publish).
+`name` is the subscription or destination name; `status` is the outcome (`ack` or `nack` for
+consume; `ok` or `error` for publish).
 
 ## Exporting
 

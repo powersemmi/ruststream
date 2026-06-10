@@ -52,6 +52,7 @@ markdown_extensions:
   - pymdownx.snippets:
       base_path: ["."]
       check_paths: true
+      dedent_subsections: true
   - pymdownx.tabbed:
       alternate_style: true
 
@@ -72,18 +73,26 @@ nav:
       - getting-started/installation.md
       - getting-started/quickstart.md
       - getting-started/tutorial.md
-  - Guides:
+  - Writing services:
       - guides/subscribers.md
       - guides/publishing.md
-      - guides/lifespan.md
+      - guides/routing.md
+      - guides/codecs.md
       - guides/middleware.md
+      - guides/context.md
+      - guides/lifespan.md
+  - Observability:
       - guides/logging.md
-      - guides/asyncapi.md
       - guides/metrics.md
+      - guides/asyncapi.md
+  - Testing:
       - guides/testing.md
+  - CLI:
       - guides/cli.md
   - Brokers:
       - brokers/index.md
+      - brokers/memory.md
+      - brokers/nats.md
   - Broker authors:
       - broker-authors/index.md
       - broker-authors/example-nats.md

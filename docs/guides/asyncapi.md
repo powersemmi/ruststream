@@ -43,13 +43,18 @@ document.
 ## Servers
 
 Record the servers your service connects to so they appear in the document's `servers` section.
-Build a `ServerSpec` directly, or get one from a broker that implements `DescribeServer`:
+Build a `ServerSpec` directly:
 
 ```rust
+use ruststream::ServerSpec;
+
 let app = RustStream::new(info)
-    .server("production", broker.describe_server())
+    .server("production", ServerSpec::new("nats.example.com:4222", "nats"))
     .with_broker(broker, |b| b.include(handle));
 ```
+
+A broker crate may also implement the `DescribeServer` capability, in which case
+`broker.describe_server()` produces the spec for you (none of the shipped brokers do yet).
 
 ## Serving the document
 
@@ -66,7 +71,8 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 ```
 
 Serve that HTML and the spec JSON from two routes in your own server. By default the viewer loads its
-assets from a CDN; override the URLs through `ViewerOptions` for offline or locked-down deployments.
+assets from a CDN; override the base URL with `ViewerOptions::with_cdn_base` for offline or
+locked-down deployments (`with_title` sets the page title).
 
 ## A complete server
 
