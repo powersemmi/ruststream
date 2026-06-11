@@ -39,6 +39,18 @@ async fn respond(req: &Request) -> Response {
 }
 // --8<-- [end:reply]
 
+// --8<-- [start:reply_result]
+// `Ok` publishes the reply and acks; `Err` publishes nothing and the dispatcher acts on the
+// returned HandlerResult (here: drop the malformed request instead of replying).
+#[subscriber("validated-requests", publish("responses"))]
+async fn validate(req: &Request) -> Result<Response, HandlerResult> {
+    if req.id == 0 {
+        return Err(HandlerResult::drop());
+    }
+    Ok(Response { ok: true })
+}
+// --8<-- [end:reply_result]
+
 // --8<-- [start:forward]
 #[subscriber("ingress")]
 async fn forward(event: &Event, ctx: &mut Context<'_>) -> HandlerResult {
@@ -97,6 +109,8 @@ fn app() -> RustStream {
             // static, per-publisher: composed onto this TypedPublisher at compile time
             let replies = TypedPublisher::new(b.broker().publisher()).layer(EnvelopeLayer);
             b.include_publishing(respond, replies);
+            let validated = TypedPublisher::new(b.broker().publisher());
+            b.include_publishing(validate, validated);
             b.include(forward);
         })
     // --8<-- [end:pipeline]

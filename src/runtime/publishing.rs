@@ -51,8 +51,16 @@ pub trait PublishingDef: Send + Sync {
         None
     }
 
-    /// Runs the handler body, producing the reply.
-    fn call(&self, input: &Self::Input) -> impl Future<Output = Self::Reply> + Send;
+    /// Runs the handler body.
+    ///
+    /// `Ok(reply)` is encoded and published to [`reply_name`](Self::reply_name), then the incoming
+    /// message is acked. `Err(result)` skips publishing and the dispatcher acts on the returned
+    /// [`HandlerResult`] (for example [`HandlerResult::retry`] to ask for redelivery).
+    fn call(
+        &self,
+        input: &Self::Input,
+        ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
 }
 
 /// Builds the registration metadata for a publishing definition mounted under `name`.
@@ -72,7 +80,9 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 ///
 /// `C` decodes the incoming message; the reply is encoded by the [`TypedPublisher`] (with its static
 /// [`PublishLayer`] stack `PL`) and sent to the definition's
-/// [`reply_name`](PublishingDef::reply_name).
+/// [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)` skips the publish;
+/// a failed reply publish nacks the incoming message with `requeue = true`, so the broker
+/// redelivers it instead of silently losing the reply.
 pub struct PublishingHandler<D, C, P, PC, PL> {
     pub(crate) def: D,
     pub(crate) codec: C,
@@ -99,7 +109,7 @@ where
     PC: Codec,
     PL: PublishLayer,
 {
-    async fn handle(&self, msg: &M, _ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
             Ok(value) => value,
             Err(err) => {
@@ -107,10 +117,14 @@ where
                 return HandlerResult::drop();
             }
         };
-        let reply = self.def.call(&input).await;
+        let reply = match self.def.call(&input, ctx).await {
+            Ok(reply) => reply,
+            Err(result) => return result,
+        };
         let name = self.def.reply_name();
         if let Err(err) = self.publisher.publish(name, &reply, &self.pipeline).await {
             warn!(target: "ruststream::dispatch", error = %err, "reply publish failed");
+            return HandlerResult::retry();
         }
         HandlerResult::Ack
     }
