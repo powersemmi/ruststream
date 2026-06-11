@@ -172,3 +172,51 @@ fn message_impl_names_and_describes_the_component() {
         "the channel must reference the renamed component",
     );
 }
+
+/// A shipment, documented only by its doc comment.
+#[derive(serde::Deserialize, ruststream::schemars::JsonSchema)]
+#[schemars(title = "WireShipment")]
+struct Shipment {
+    #[allow(dead_code)]
+    id: u32,
+}
+
+/// Receives shipments.
+#[ruststream::subscriber("shipments")]
+async fn handle_shipment(shipment: &Shipment) -> HandlerResult {
+    let _ = shipment;
+    HandlerResult::Ack
+}
+
+#[test]
+fn schema_doc_comment_feeds_message_metadata() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_shipment));
+
+    let spec = build_spec(&app);
+
+    // No Message impl: the schemars title names the component and the type's own doc comment
+    // becomes the message description.
+    let message = spec
+        .components
+        .messages
+        .get("WireShipment")
+        .expect("the schema title must name the component");
+    assert_eq!(
+        message.description.as_deref(),
+        Some("A shipment, documented only by its doc comment."),
+        "the type's doc comment must describe the component",
+    );
+    assert!(
+        spec.channels["shipments"]
+            .messages
+            .contains_key("WireShipment"),
+        "the channel must reference the schema-titled component",
+    );
+
+    // The handler doc comment stays on the operation.
+    assert_eq!(
+        spec.operations["receive_shipments"].description.as_deref(),
+        Some("Receives shipments."),
+    );
+}
