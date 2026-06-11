@@ -42,10 +42,15 @@ document.
 
 ## Message names and descriptions
 
-By default a message component is named after the payload type, and its description falls back to
-the handler's doc comment (which also documents the `receive` operation). To name and describe the
-message itself, implement the `Message` trait - or derive it, which uses the type's name and doc
-comment:
+A documented payload type feeds the message component on its own: with the `JsonSchema` derive,
+the type's doc comment becomes the message description, and a `#[schemars(title = "...")]` (or
+rename) names the component. Without a schema, the component is named after the payload type and
+the description falls back to the handler's doc comment (which also documents the `receive`
+operation).
+
+To control the metadata explicitly - including for types without `JsonSchema` - implement the
+`Message` trait, which takes precedence over the schema; or derive it, which uses the type's name
+and doc comment:
 
 ```rust
 use ruststream::Message;

@@ -36,6 +36,7 @@
 //! ```
 
 use std::fmt;
+use std::fmt::Write as _;
 use std::io::IsTerminal as _;
 
 use thiserror::Error;
@@ -268,7 +269,6 @@ struct EventVisitor {
 
 impl Visit for EventVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        use std::fmt::Write as _;
         if field.name() == "message" {
             let _ = write!(self.message, "{value:?}");
         } else {
