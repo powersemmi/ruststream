@@ -27,7 +27,6 @@ use tokio::{
     sync::{Notify, mpsc},
     time::timeout,
 };
-use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
@@ -97,7 +96,7 @@ impl MemoryBroker {
         self.state.register(name.clone(), tx.clone());
         MemorySubscriber {
             name,
-            rx: Some(rx),
+            rx,
             requeue: tx,
         }
     }
@@ -181,7 +180,7 @@ impl SubscriptionSource<MemoryBroker> for MemorySource {
 /// delivery; consumers must call `ack` or `nack` on each.
 pub struct MemorySubscriber {
     name: String,
-    rx: Option<mpsc::UnboundedReceiver<MemoryDelivery>>,
+    rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
 }
 
@@ -198,15 +197,17 @@ impl Subscriber for MemorySubscriber {
     type Error = Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        let rx = self
-            .rx
-            .take()
-            .expect("MemorySubscriber::stream called more than once");
         let requeue = self.requeue.clone();
-        UnboundedReceiverStream::new(rx).map(move |delivery| {
-            Ok(MemoryMessage {
-                delivery: Some(delivery),
-                requeue: requeue.clone(),
+        // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
+        // be called again after the returned stream is dropped (helpers re-enter it per call).
+        futures::stream::poll_fn(move |cx| {
+            self.rx.poll_recv(cx).map(|next| {
+                next.map(|delivery| {
+                    Ok(MemoryMessage {
+                        delivery: Some(delivery),
+                        requeue: requeue.clone(),
+                    })
+                })
             })
         })
     }
@@ -379,5 +380,41 @@ impl TestClient for MemoryBroker {
 
     async fn shutdown(self) -> Result<(), Self::Error> {
         <Self as Broker>::shutdown(&self).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn stream_can_be_reentered() {
+        let broker = MemoryBroker::new();
+        let mut sub = MemoryBroker::subscribe(&broker, "test");
+        let publisher = broker.publisher();
+
+        publisher
+            .publish(OutgoingMessage::new("test", b"one".as_slice()))
+            .await
+            .unwrap();
+        {
+            let mut stream = std::pin::pin!(sub.stream());
+            let msg = stream.next().await.unwrap().unwrap();
+            assert_eq!(msg.payload(), b"one");
+            msg.ack().await.unwrap();
+        }
+
+        // Helpers like `conformance::helpers::next_message` re-enter `stream` per call; the
+        // subscriber must keep yielding after the first stream is dropped.
+        publisher
+            .publish(OutgoingMessage::new("test", b"two".as_slice()))
+            .await
+            .unwrap();
+        let mut stream = std::pin::pin!(sub.stream());
+        let msg = stream.next().await.unwrap().unwrap();
+        assert_eq!(msg.payload(), b"two");
+        msg.ack().await.unwrap();
     }
 }
