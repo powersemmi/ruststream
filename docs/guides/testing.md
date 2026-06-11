@@ -86,7 +86,7 @@ dev-dependencies:
 
 ```toml title="Cargo.toml"
 [dev-dependencies]
-ruststream-nats = { version = "0.2", features = ["testing"] }
+ruststream-nats = { version = "0.3", features = ["testing"] }
 ```
 
 The same pattern as above, with a wildcard subscriber that audits every order event (this file
@@ -105,14 +105,13 @@ A descriptor like `SubscribeOptions::new("orders.*").jetstream("ORDERS").durable
 a real JetStream consumer; it implements `SubscriptionSource` for the real `NatsBroker` only,
 because durable names and ack waits have no in-process meaning. To unit-test that handler's logic,
 mount the same definition on the test broker with an explicit by-name source - `include_on`
-overrides the macro's source and takes the codec explicitly:
+overrides the macro's source (the codec resolves the same way as for `include`):
 
 ```rust
 use ruststream::Name;
-use ruststream::codec::JsonCodec;
 
 .with_broker(client.broker().clone(), |b| {
-    b.include_on(Name::new("orders.created"), handle, JsonCodec);
+    b.include_on(Name::new("orders.created"), handle);
 })
 ```
 

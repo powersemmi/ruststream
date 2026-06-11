@@ -5,7 +5,7 @@ document from the application's handlers: each subscriber becomes a channel and 
 operation, and payload types contribute schemas.
 
 ```toml
-ruststream = { version = "0.2", features = ["macros", "memory", "asyncapi"] }
+ruststream = { version = "0.3", features = ["macros", "memory", "asyncapi"] }
 ```
 
 ## Generating the document
@@ -39,6 +39,27 @@ A handler's payload type appears as a schema when it derives `JsonSchema`. RustS
 
 A type without `JsonSchema` still works as a handler payload; it just contributes no schema to the
 document.
+
+## Message names and descriptions
+
+By default a message component is named after the payload type, and its description falls back to
+the handler's doc comment (which also documents the `receive` operation). To name and describe the
+message itself, implement the `Message` trait - or derive it, which uses the type's name and doc
+comment:
+
+```rust
+use ruststream::Message;
+
+/// An order placed by a customer.
+#[derive(Message, serde::Deserialize)]
+struct Order {
+    id: u64,
+}
+// In the document: components.messages.Order with that description.
+```
+
+A manual `impl Message` can name the component differently from the Rust type
+(`const NAME: &'static str = "CustomOrder";`), which keeps the wire contract stable across renames.
 
 ## Servers
 

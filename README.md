@@ -44,7 +44,7 @@ the framework.
 
 ```toml
 [dependencies]
-ruststream = { version = "0.2", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.3", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 schemars = "0.8"
 ```

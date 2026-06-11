@@ -5,7 +5,7 @@ which makes it ideal for examples, unit tests, and prototypes; the CLI scaffold 
 so a fresh project runs with zero dependencies.
 
 ```toml
-ruststream = { version = "0.2", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.3", features = ["macros", "memory", "json"] }
 ```
 
 ```rust

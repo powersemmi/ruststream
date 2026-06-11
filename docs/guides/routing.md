@@ -6,9 +6,10 @@ scope.
 
 ## Building a router
 
-A `Router` mirrors the broker scope: alongside `include` and `include_publishing` it has
-`with_codec` (a per-handler codec, see [Codecs](codecs.md#per-handler)) and the manual `handle` /
-`subscribe` registrations:
+A `Router` mirrors the broker scope: alongside `include` / `include_on` and `include_publishing` /
+`include_publishing_on` it has `with_codec` (switches the chain's decode codec, see
+[Codecs](codecs.md#per-handler)) and the manual `handle` / `subscribe` registrations. Every call
+consumes the router and returns a new one, so registrations chain:
 
 ```rust title="routes.rs"
 use ruststream::runtime::Router;
@@ -31,27 +32,25 @@ Handlers that publish a reply register on the router the same way as on the scop
 
 ## Router middleware
 
-The application's global middleware (added with `RustStream::layer`) does not wrap router handlers,
-since a router is finalized independently. Give the router its own stack with `Router::layer`,
-applied to every handler registered after it (the same composition as `RustStream::layer`). It
-changes the router's type, so let the builder function's return type follow from it:
+The application's global middleware (added with `RustStream::layer`) wraps router handlers too:
+`include_router` applies the app stack around each handler when the router is mounted. A layer used
+this way must be a `BlanketLayer` - the router hides its handlers' concrete types, so the wrap
+happens through one generic method; every bundled layer qualifies.
+
+```rust title="main.rs"
+--8<-- "examples/logging_middleware.rs:layered_router"
+```
+
+A router can also carry its own stack: `Router::layer` wraps every handler in that router when it
+is mounted, inside the app's global stack (scopes nest, app outermost):
 
 ```rust title="routes.rs"
-use ruststream::runtime::{Identity, Router, Stack};
-use ruststream::runtime::layers::TracingLayer;
-
---8<-- "examples/logging_middleware.rs:layered_router"
+--8<-- "examples/middleware_router_scope.rs:router_scope"
 ```
 
 See [Middleware](middleware.md) for what a layer is and how to write one, and
 [`examples/logging_middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/logging_middleware.rs)
-for this router in a running service.
-
-!!! warning "Planned for 0.3: routers inherit the application scope"
-    In 0.2 the router stack and the application stack are separate (`RustStream::layer` does not
-    wrap router handlers). In 0.3 routers will inherit the application scope, so app-level layers
-    will wrap router handlers too, composing outside the router's own stack. See
-    [middleware scopes](middleware.md#middleware-scopes).
+for the app-scope side in a running service.
 
 ## Composing and mounting
 
@@ -72,8 +71,9 @@ Or merge groups into one router before mounting (the whole program is
 --8<-- "examples/routing.rs:merge"
 ```
 
-`merge` appends another router's registrations in order; the merged router's own layer was already
-baked into its handlers, so the two need not share a middleware stack.
+`merge` appends another router's registrations in order. Each router keeps its own codec and layer
+stack; when the result is mounted, the outer router's layers (and the app's global stack) wrap
+around the merged router's own.
 
 ## Next
 

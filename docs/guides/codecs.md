@@ -62,8 +62,9 @@ When nothing above names a codec, `include` uses [`DefaultCodec`](#the-default-c
 Publishers mirror the same rules: `TypedPublisher::new(publisher)` encodes replies with the default
 codec, and `TypedPublisher::with_codec(publisher, codec)` names one. `include_publishing(def,
 publisher)` reuses the publisher's codec to decode the incoming request, so one mounting names one
-codec. The request and reply formats can still differ: mount with `include_publishing_on` and name
-the decode codec explicitly.
+codec. The request and reply formats can still differ: set the decode codec on the scope
+(`with_broker_codec`) or on the router chain (`Router::with_codec`) and keep the reply codec on the
+`TypedPublisher`.
 
 There is no per-message-type codec (no associated codec on a message trait): the codec is a
 property of the mounting, not of the type.
@@ -88,5 +89,5 @@ dead-letter or max-deliveries policy. The codec examples above are
 ## Custom codecs
 
 A codec is any type implementing the `Codec` trait, so you can supply your own (a schema-registry
-envelope, an encrypting wrapper) and pass it anywhere a built-in codec goes: `include_on`,
+envelope, an encrypting wrapper) and pass it anywhere a built-in codec goes:
 `with_broker_codec`, `Router::with_codec`, or `TypedPublisher::with_codec`.

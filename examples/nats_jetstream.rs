@@ -6,7 +6,8 @@
 //! durable consumer so progress survives restarts. The handler's [`HandlerResult::Ack`] acks the
 //! message back to `JetStream`; returning [`HandlerResult::Nack`] schedules redelivery.
 //!
-//! `include_on` is the source-override form, so it takes the codec explicitly (here [`JsonCodec`]).
+//! `include_on` is the source-override form; the codec resolves the same way as for `include`
+//! (the default, or a scope codec set with `with_broker_codec`).
 //! `NatsBroker::new` is synchronous, so this still fits `#[ruststream::app]`; the runtime connects
 //! the broker at startup and then opens the consumer. Create the stream once, then run:
 //!
@@ -23,7 +24,6 @@
 //!
 //! [`include_on`]: ruststream::runtime::BrokerScope::include_on
 
-use ruststream::codec::JsonCodec;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::subscriber;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
@@ -61,7 +61,6 @@ fn app() -> RustStream {
                     .jetstream("ORDERS")
                     .durable("orders-worker"),
                 handle,
-                JsonCodec,
             );
             // --8<-- [end:include_on]
             b.include(audit);
