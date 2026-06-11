@@ -154,7 +154,7 @@ autotests = false
 
 [features]
 default = ["json"]
-memory = ["dep:tokio-stream"]
+memory = []
 conformance = []
 json = ["dep:serde_json"]
 msgpack = ["dep:rmp-serde"]
@@ -183,7 +183,6 @@ ciborium = { version = "0.2", optional = true }
 prometheus = { version = "0.13", default-features = false, optional = true }
 schemars = { version = "0.8", optional = true }
 serde_norway = { version = "0.9", optional = true }
-tokio-stream = { version = "0.1", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
 
@@ -191,7 +190,6 @@ anyhow = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
-tokio-stream = "0.1"
 tempfile = "3"
 axum = "0.8"
 # `testing` pulls the in-memory NATS test broker used by tests/doc_testing_nats.rs (the snippet
