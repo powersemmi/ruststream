@@ -8,7 +8,8 @@ alwaysApply: false
   decoded payload by reference (`&T`, where `T: serde::Deserialize`); an optional second parameter is
   `ctx: &mut ruststream::runtime::Context`.
 - The return type drives acknowledgement: `HandlerResult`, `()` (always acks), or `Result<_, E>` (an
-  `Err` nacks). For a reply handler, return the reply value and add a `publish("subject")` clause.
+  `Err` nacks). For a reply handler, add a `publish("subject")` clause and return the reply value,
+  or `Result<Reply, HandlerResult>` for explicit ack control.
 - Build the service with `#[ruststream::app]` on a synchronous `fn app() -> RustStream`. Do not write
   your own `main` or `#[tokio::main]`.
 - Construct brokers synchronously (`MemoryBroker::new()`, `NatsBroker::new(url)`); the runtime
@@ -89,9 +90,25 @@ let replies = TypedPublisher::new(b.broker().publisher()); // default codec
 b.include_publishing(confirm, replies);
 ```
 
+Return `Result<Reply, HandlerResult>` to control acknowledgement: `Ok(reply)` publishes and acks,
+`Err(result)` publishes nothing and the dispatcher acts on the returned `HandlerResult`. Spell the
+`Result` out in the signature (a type alias is treated as a plain reply type). A failed reply
+publish nacks the incoming message with `requeue = true`.
+
+```rust
+#[subscriber("orders", publish("confirmations"))]
+async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
+    if order.id == 0 {
+        return Err(HandlerResult::drop());
+    }
+    Ok(Confirmation { id: order.id, accepted: true })
+}
+```
+
 ## Choosing a codec
 
-`include` uses `DefaultCodec`. Name one per scope, or per call on a `Router`.
+`include` uses `DefaultCodec`. No mounting call takes a codec argument; change the default for a
+scope with `with_broker_codec`, or for a `Router` chain with `with_codec`.
 
 ```rust
 use ruststream::codec::CborCodec;
@@ -101,8 +118,8 @@ RustStream::new(info).with_broker_codec(broker, CborCodec, |b| {
     b.include(handle);
 });
 
-// one handler, on a Router
-Router::<MemoryBroker>::new().include_with(handle, CborCodec);
+// on a Router: with_codec applies to the includes after it (it can change mid-chain)
+Router::<MemoryBroker>::new().with_codec(CborCodec).include(handle);
 ```
 
 ## Routers
@@ -131,16 +148,15 @@ fn orders(broker: &MemoryBroker) -> impl RouterDef<MemoryBroker> + use<> {
 ## Broker-specific subscriptions
 
 For options the by-name form can't express (NATS JetStream, consumer groups), override the source
-with `include_on`. It is the source-override form, so it takes the codec explicitly.
+with `include_on`. The codec resolves the same way as for `include` (the default, or the scope /
+chain codec).
 
 ```rust
-use ruststream::codec::JsonCodec;
 use ruststream_nats::SubscribeOptions;
 
 b.include_on(
     SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"),
     handle,
-    JsonCodec,
 );
 ```
 
