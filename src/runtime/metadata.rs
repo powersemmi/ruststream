@@ -23,6 +23,12 @@ pub struct HandlerMetadata {
     /// [`schemars::JsonSchema`] (captured under the `asyncapi` feature). Feeds the `AsyncAPI`
     /// message payload schema.
     pub payload_schema: Option<String>,
+    /// The input type's [`Message`](crate::Message) name, when it implements that trait. Overrides
+    /// the `input_type`-derived name in the `AsyncAPI` document.
+    pub message_name: Option<Cow<'static, str>>,
+    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// Feeds the `AsyncAPI` message description.
+    pub message_description: Option<Cow<'static, str>>,
 }
 
 impl HandlerMetadata {
@@ -36,6 +42,8 @@ impl HandlerMetadata {
             output_type: None,
             description: None,
             payload_schema: None,
+            message_name: None,
+            message_description: None,
         }
     }
 
@@ -51,6 +59,8 @@ impl HandlerMetadata {
             output_type: None,
             description: None,
             payload_schema: None,
+            message_name: None,
+            message_description: None,
         }
     }
 
@@ -79,6 +89,20 @@ impl HandlerMetadata {
     #[must_use]
     pub fn with_payload_schema(mut self, schema: impl Into<String>) -> Self {
         self.payload_schema = Some(schema.into());
+        self
+    }
+
+    /// Builder-style setter for the [`Message`](crate::Message) name of the input type.
+    #[must_use]
+    pub fn with_message_name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
+        self.message_name = Some(name.into());
+        self
+    }
+
+    /// Builder-style setter for the [`Message`](crate::Message) description of the input type.
+    #[must_use]
+    pub fn with_message_description(mut self, description: impl Into<Cow<'static, str>>) -> Self {
+        self.message_description = Some(description.into());
         self
     }
 }

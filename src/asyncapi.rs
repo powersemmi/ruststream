@@ -102,6 +102,9 @@ pub struct Operation {
     pub channel: Reference,
     /// The messages this operation handles.
     pub messages: Vec<Reference>,
+    /// Optional human description, typically from the handler's doc comment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Reusable `AsyncAPI` components.
@@ -206,7 +209,27 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
 
     for handler in app.handlers() {
         let name = handler.name.as_ref();
-        let message_name = message_name(handler.input_type);
+        let payload = handler
+            .payload_schema
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Value>(json).ok());
+        // The JsonSchema derive captures the type's own doc comment (and a schemars title /
+        // rename), so a documented payload type feeds the component without a Message impl.
+        let schema_str = |key: &str| {
+            payload
+                .as_ref()
+                .and_then(|schema| schema.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        // A `Message` impl on the input type names the component; the schema title is next; the
+        // type name is the fallback.
+        let message_name = handler
+            .message_name
+            .as_ref()
+            .map(ToString::to_string)
+            .or_else(|| schema_str("title"))
+            .unwrap_or_else(|| message_name(handler.input_type));
 
         channels.entry(name.to_owned()).or_insert_with(|| Channel {
             address: name.to_owned(),
@@ -224,18 +247,25 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
                 messages: vec![Reference::new(format!(
                     "#/channels/{name}/messages/{message_name}"
                 ))],
+                description: handler.description.as_ref().map(ToString::to_string),
             },
         );
+
+        // Message::DESCRIPTION wins, then the type's own doc comment from the schema, then the
+        // handler doc (already on the operation) so plain types keep their description.
+        let message_description = handler
+            .message_description
+            .as_ref()
+            .map(ToString::to_string)
+            .or_else(|| schema_str("description"))
+            .or_else(|| handler.description.as_ref().map(ToString::to_string));
 
         messages
             .entry(message_name.clone())
             .or_insert_with(|| MessageObject {
                 name: message_name,
-                description: handler.description.as_ref().map(ToString::to_string),
-                payload: handler
-                    .payload_schema
-                    .as_deref()
-                    .and_then(|json| serde_json::from_str(json).ok()),
+                description: message_description,
+                payload,
             });
     }
 

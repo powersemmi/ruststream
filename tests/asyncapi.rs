@@ -117,3 +117,106 @@ fn build_spec_emits_payload_schema() {
     assert!(props.get("id").is_some());
     assert!(props.get("total").is_some());
 }
+
+/// An order with custom `Message` metadata: the manual impl overrides both the component name and
+/// the description in the generated document.
+#[derive(serde::Deserialize)]
+struct RenamedOrder {
+    #[allow(dead_code)]
+    id: u32,
+}
+
+impl ruststream::Message for RenamedOrder {
+    const NAME: &'static str = "CustomOrder";
+    const DESCRIPTION: Option<&'static str> = Some("An order, renamed for the wire.");
+}
+
+/// Receives renamed orders.
+#[ruststream::subscriber("renamed-orders")]
+async fn handle_renamed(order: &RenamedOrder) -> HandlerResult {
+    let _ = order;
+    HandlerResult::Ack
+}
+
+#[test]
+fn message_impl_names_and_describes_the_component() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_renamed));
+
+    let spec = build_spec(&app);
+
+    let message = spec
+        .components
+        .messages
+        .get("CustomOrder")
+        .expect("Message::NAME must name the component");
+    assert_eq!(
+        message.description.as_deref(),
+        Some("An order, renamed for the wire."),
+        "Message::DESCRIPTION must describe the component",
+    );
+
+    let operation = spec
+        .operations
+        .get("receive_renamed_orders")
+        .expect("operation must exist");
+    assert_eq!(
+        operation.description.as_deref(),
+        Some("Receives renamed orders."),
+        "the handler doc comment must land on the operation",
+    );
+
+    let channel = spec.channels.get("renamed-orders").expect("channel");
+    assert!(
+        channel.messages.contains_key("CustomOrder"),
+        "the channel must reference the renamed component",
+    );
+}
+
+/// A shipment, documented only by its doc comment.
+#[derive(serde::Deserialize, ruststream::schemars::JsonSchema)]
+#[schemars(title = "WireShipment")]
+struct Shipment {
+    #[allow(dead_code)]
+    id: u32,
+}
+
+/// Receives shipments.
+#[ruststream::subscriber("shipments")]
+async fn handle_shipment(shipment: &Shipment) -> HandlerResult {
+    let _ = shipment;
+    HandlerResult::Ack
+}
+
+#[test]
+fn schema_doc_comment_feeds_message_metadata() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_shipment));
+
+    let spec = build_spec(&app);
+
+    // No Message impl: the schemars title names the component and the type's own doc comment
+    // becomes the message description.
+    let message = spec
+        .components
+        .messages
+        .get("WireShipment")
+        .expect("the schema title must name the component");
+    assert_eq!(
+        message.description.as_deref(),
+        Some("A shipment, documented only by its doc comment."),
+        "the type's doc comment must describe the component",
+    );
+    assert!(
+        spec.channels["shipments"]
+            .messages
+            .contains_key("WireShipment"),
+        "the channel must reference the schema-titled component",
+    );
+
+    // The handler doc comment stays on the operation.
+    assert_eq!(
+        spec.operations["receive_shipments"].description.as_deref(),
+        Some("Receives shipments."),
+    );
+}

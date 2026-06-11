@@ -153,4 +153,39 @@ pub mod __private {
             serde_json::to_string(&schemars::schema_for!(T)).ok()
         }
     }
+
+    /// The trait fallback for [`Message`](crate::Message) metadata: chosen for any `T` the
+    /// inherent methods below do not cover.
+    pub trait NoMessageProbe {
+        /// Returns `None` (the probed type does not implement `Message`).
+        fn message_name(&self) -> Option<&'static str>;
+        /// Returns `None` (the probed type does not implement `Message`).
+        fn message_description(&self) -> Option<&'static str>;
+    }
+
+    impl<T> NoMessageProbe for Probe<T> {
+        fn message_name(&self) -> Option<&'static str> {
+            None
+        }
+
+        fn message_description(&self) -> Option<&'static str> {
+            None
+        }
+    }
+
+    impl<T: crate::Message> Probe<T> {
+        /// Returns [`Message::NAME`](crate::Message::NAME) for `T` (inherent; preferred over the
+        /// trait fallback).
+        #[must_use]
+        pub fn message_name(&self) -> Option<&'static str> {
+            Some(T::NAME)
+        }
+
+        /// Returns [`Message::DESCRIPTION`](crate::Message::DESCRIPTION) for `T` (inherent;
+        /// preferred over the trait fallback).
+        #[must_use]
+        pub fn message_description(&self) -> Option<&'static str> {
+            T::DESCRIPTION
+        }
+    }
 }
