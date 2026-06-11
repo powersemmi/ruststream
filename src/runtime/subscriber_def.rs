@@ -37,6 +37,18 @@ pub trait SubscriberDef: Sized {
         None
     }
 
+    /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
+    /// fills this in; the default omits it.
+    fn message_name(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The macro fills this in; the default omits it.
+    fn message_description(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Consumes the definition, returning the handler.
     fn into_handler(self) -> Self::Handler;
 }
@@ -49,6 +61,12 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
     }
     if let Some(schema) = def.input_schema() {
         meta = meta.with_payload_schema(schema);
+    }
+    if let Some(message_name) = def.message_name() {
+        meta = meta.with_message_name(message_name);
+    }
+    if let Some(message_description) = def.message_description() {
+        meta = meta.with_message_description(message_description);
     }
     meta
 }

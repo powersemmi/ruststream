@@ -102,6 +102,9 @@ pub struct Operation {
     pub channel: Reference,
     /// The messages this operation handles.
     pub messages: Vec<Reference>,
+    /// Optional human description, typically from the handler's doc comment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Reusable `AsyncAPI` components.
@@ -206,7 +209,11 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
 
     for handler in app.handlers() {
         let name = handler.name.as_ref();
-        let message_name = message_name(handler.input_type);
+        // A `Message` impl on the input type names the component; the type name is the fallback.
+        let message_name = handler
+            .message_name
+            .as_ref()
+            .map_or_else(|| message_name(handler.input_type), ToString::to_string);
 
         channels.entry(name.to_owned()).or_insert_with(|| Channel {
             address: name.to_owned(),
@@ -224,6 +231,7 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
                 messages: vec![Reference::new(format!(
                     "#/channels/{name}/messages/{message_name}"
                 ))],
+                description: handler.description.as_ref().map(ToString::to_string),
             },
         );
 
@@ -231,7 +239,13 @@ pub fn build_spec<L>(app: &RustStream<L>) -> Spec {
             .entry(message_name.clone())
             .or_insert_with(|| MessageObject {
                 name: message_name,
-                description: handler.description.as_ref().map(ToString::to_string),
+                // The `Message` description documents the type itself; the handler doc (already
+                // on the operation) doubles as a fallback so plain types keep their description.
+                description: handler
+                    .message_description
+                    .as_ref()
+                    .or(handler.description.as_ref())
+                    .map(ToString::to_string),
                 payload: handler
                     .payload_schema
                     .as_deref()

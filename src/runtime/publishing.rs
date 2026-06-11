@@ -51,6 +51,18 @@ pub trait PublishingDef: Send + Sync {
         None
     }
 
+    /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
+    /// fills this in; the default omits it.
+    fn message_name(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The macro fills this in; the default omits it.
+    fn message_description(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Runs the handler body.
     ///
     /// `Ok(reply)` is encoded and published to [`reply_name`](Self::reply_name), then the incoming
@@ -72,6 +84,12 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
     }
     if let Some(schema) = def.input_schema() {
         meta = meta.with_payload_schema(schema);
+    }
+    if let Some(message_name) = def.message_name() {
+        meta = meta.with_message_name(message_name);
+    }
+    if let Some(message_description) = def.message_description() {
+        meta = meta.with_message_description(message_description);
     }
     meta
 }

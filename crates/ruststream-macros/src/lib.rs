@@ -241,6 +241,7 @@ struct HandlerParts<'a> {
     source_ty: TokenStream2,
     source_expr: TokenStream2,
     input_schema: TokenStream2,
+    message_meta: TokenStream2,
     ctx_param: TokenStream2,
 }
 
@@ -278,6 +279,22 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         }
     };
 
+    // Captures the input type's `Message` name / description when it implements that trait, via
+    // the same autoref-specialization probe; `None` otherwise.
+    let message_meta = quote! {
+        fn message_name(&self) -> ::core::option::Option<&'static str> {
+            #[allow(unused_imports)]
+            use ::ruststream::__private::NoMessageProbe as _;
+            ::ruststream::__private::Probe::<#input_ty>::new().message_name()
+        }
+
+        fn message_description(&self) -> ::core::option::Option<&'static str> {
+            #[allow(unused_imports)]
+            use ::ruststream::__private::NoMessageProbe as _;
+            ::ruststream::__private::Probe::<#input_ty>::new().message_description()
+        }
+    };
+
     // Optional second handler parameter: the per-delivery `&mut Context`. If the user declares it,
     // bind it to their name; otherwise generate an ignored binding.
     let ctx_param = if let Some(FnArg::Typed(PatType { pat, .. })) = func.sig.inputs.get(1) {
@@ -296,6 +313,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         source_ty,
         source_expr,
         input_schema,
+        message_meta,
         ctx_param,
     })
 }
@@ -325,6 +343,7 @@ fn expand_publishing(
         source_ty,
         source_expr,
         input_schema,
+        message_meta,
         ctx_param,
     } = parts;
 
@@ -365,6 +384,8 @@ fn expand_publishing(
 
             #input_schema
 
+            #message_meta
+
             async fn call(
                 &self,
                 #pat: &#input_ty,
@@ -387,6 +408,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         source_ty,
         source_expr,
         input_schema,
+        message_meta,
         ctx_param,
     } = parts;
 
@@ -419,6 +441,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
                 }
 
                 #input_schema
+
+                #message_meta
 
                 fn into_handler(self) -> Self { self }
             }

@@ -117,3 +117,58 @@ fn build_spec_emits_payload_schema() {
     assert!(props.get("id").is_some());
     assert!(props.get("total").is_some());
 }
+
+/// An order with custom `Message` metadata: the manual impl overrides both the component name and
+/// the description in the generated document.
+#[derive(serde::Deserialize)]
+struct RenamedOrder {
+    #[allow(dead_code)]
+    id: u32,
+}
+
+impl ruststream::Message for RenamedOrder {
+    const NAME: &'static str = "CustomOrder";
+    const DESCRIPTION: Option<&'static str> = Some("An order, renamed for the wire.");
+}
+
+/// Receives renamed orders.
+#[ruststream::subscriber("renamed-orders")]
+async fn handle_renamed(order: &RenamedOrder) -> HandlerResult {
+    let _ = order;
+    HandlerResult::Ack
+}
+
+#[test]
+fn message_impl_names_and_describes_the_component() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_renamed));
+
+    let spec = build_spec(&app);
+
+    let message = spec
+        .components
+        .messages
+        .get("CustomOrder")
+        .expect("Message::NAME must name the component");
+    assert_eq!(
+        message.description.as_deref(),
+        Some("An order, renamed for the wire."),
+        "Message::DESCRIPTION must describe the component",
+    );
+
+    let operation = spec
+        .operations
+        .get("receive_renamed_orders")
+        .expect("operation must exist");
+    assert_eq!(
+        operation.description.as_deref(),
+        Some("Receives renamed orders."),
+        "the handler doc comment must land on the operation",
+    );
+
+    let channel = spec.channels.get("renamed-orders").expect("channel");
+    assert!(
+        channel.messages.contains_key("CustomOrder"),
+        "the channel must reference the renamed component",
+    );
+}
