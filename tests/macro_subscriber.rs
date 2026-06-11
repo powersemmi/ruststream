@@ -450,3 +450,150 @@ async fn macro_publisher_replies_cross_broker() {
     shutdown.notify_one();
     run.await.unwrap().unwrap();
 }
+
+#[derive(Serialize, Deserialize)]
+struct Confirmation {
+    id: u32,
+    accepted: bool,
+}
+
+static CONFIRM_REJECTED: AtomicU32 = AtomicU32::new(0);
+static CONFIRM_ACCEPTED: AtomicU32 = AtomicU32::new(0);
+
+#[subscriber("confirm-in", publish("confirm-out"))]
+async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
+    if order.id == 0 {
+        CONFIRM_REJECTED.fetch_add(1, Ordering::SeqCst);
+        return Err(HandlerResult::drop());
+    }
+    Ok(Confirmation {
+        id: order.id,
+        accepted: true,
+    })
+}
+
+#[subscriber("confirm-out")]
+async fn confirm_sink(c: &Confirmation) -> HandlerResult {
+    if c.accepted {
+        CONFIRM_ACCEPTED.store(c.id, Ordering::SeqCst);
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publishing_result_form_controls_ack_and_publish() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+    let replies = TypedPublisher::new(broker.publisher());
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include_publishing(confirm, replies);
+        b.include(confirm_sink);
+    });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    // Err(HandlerResult) skips the publish entirely.
+    let rejected = serde_json::to_vec(&Order { id: 0, total: 0.0 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = ingress
+                .publish(OutgoingMessage::new("confirm-in", &rejected))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if CONFIRM_REJECTED.load(Ordering::SeqCst) >= 3 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "Err branch of the publishing handler did not run",
+    );
+    assert_eq!(
+        CONFIRM_ACCEPTED.load(Ordering::SeqCst),
+        0,
+        "Err(..) must not publish a reply",
+    );
+
+    // Ok(reply) publishes and acks.
+    let accepted = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = ingress
+                .publish(OutgoingMessage::new("confirm-in", &accepted))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if CONFIRM_ACCEPTED.load(Ordering::SeqCst) == 6 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "Ok branch did not publish the reply");
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+/// App state read from the publishing handler's optional `&mut Context` parameter.
+#[derive(Clone, Copy)]
+struct Bump(u32);
+
+static CTX_REPLY: AtomicU32 = AtomicU32::new(0);
+
+#[subscriber("ctx-in", publish("ctx-out"))]
+async fn ctx_reply(req: &Request, ctx: &mut Context) -> Response {
+    let bump = ctx.get::<Bump>().map_or(0, |b| b.0);
+    Response {
+        doubled: req.n + bump,
+    }
+}
+
+#[subscriber("ctx-out")]
+async fn ctx_sink(resp: &Response) -> HandlerResult {
+    CTX_REPLY.store(resp.doubled, Ordering::SeqCst);
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publishing_handler_reads_context_state() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+    let replies = TypedPublisher::new(broker.publisher());
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .insert_state(Bump(100))
+        .with_broker(broker, |b| {
+            b.include_publishing(ctx_reply, replies);
+            b.include(ctx_sink);
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Request { n: 1 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = ingress
+                .publish(OutgoingMessage::new("ctx-in", &payload))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if CTX_REPLY.load(Ordering::SeqCst) == 101 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "publishing handler did not read app state from the context",
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}

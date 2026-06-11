@@ -106,6 +106,38 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
     }))
 }
 
+/// If `ty` is syntactically `Result<Reply, HandlerResult>` (under any path prefix, e.g.
+/// `std::result::Result` / `ruststream::runtime::HandlerResult`), returns the reply type.
+///
+/// The check is token-based: a type alias hiding the `Result` is not recognized and is treated as
+/// a plain reply type, which then fails to compile with a `Serialize` error the user can act on.
+fn publish_result_reply(ty: &Type) -> Option<&Type> {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return None;
+    };
+    let last = path.segments.last()?;
+    if last.ident != "Result" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    let mut args = args.args.iter();
+    let (Some(syn::GenericArgument::Type(ok)), Some(syn::GenericArgument::Type(err)), None) =
+        (args.next(), args.next(), args.next())
+    else {
+        return None;
+    };
+    let Type::Path(TypePath {
+        qself: None,
+        path: err_path,
+    }) = err
+    else {
+        return None;
+    };
+    (err_path.segments.last()?.ident == "HandlerResult").then_some(ok)
+}
+
 fn unsupported_source(expr: &Expr) -> syn::Error {
     syn::Error::new_spanned(
         expr,
@@ -120,17 +152,28 @@ fn unsupported_source(expr: &Expr) -> syn::Error {
 /// /// Processes incoming orders.
 /// #[subscriber("orders")]
 /// async fn handle(order: &Order) -> HandlerResult { HandlerResult::Ack }
-/// // later: broker_scope.include(handle, JsonCodec);
+/// // later: broker_scope.include(handle);
 ///
 /// // reply form: the return value is encoded and published to "responses" through the
 /// // TypedPublisher (broker + reply codec) passed at wiring time.
 /// #[subscriber("requests", publish("responses"))]
 /// async fn reply(req: &Request) -> Response { /* ... */ }
-/// // later: broker_scope.include_publishing(reply, JsonCodec, typed_publisher);
+/// // later: broker_scope.include_publishing(reply, typed_publisher);
+///
+/// // reply form with explicit ack control: `Ok` publishes the reply, `Err` skips it and the
+/// // dispatcher acts on the returned HandlerResult.
+/// #[subscriber("requests", publish("responses"))]
+/// async fn confirm(req: &Request) -> Result<Response, HandlerResult> { /* ... */ }
 /// ```
 ///
 /// Without `publish(..)` the handler returns any `IntoHandlerResult` (a `HandlerResult`, `()`, or
-/// `Result<_, E>`). With `publish(..)` it returns the reply value to publish.
+/// `Result<_, E>`). With `publish(..)` it returns the reply value to publish, or
+/// `Result<Reply, HandlerResult>` to control acknowledgement: `Err(result)` publishes nothing and
+/// returns `result` to the dispatcher. The `Result` form is detected syntactically, so spell it
+/// out in the signature (a type alias is treated as a plain reply type).
+///
+/// In both forms the handler may declare an optional second parameter, the per-delivery
+/// `&mut Context`, to read app state or publish manually.
 #[proc_macro_attribute]
 pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as SubscriberArgs);
@@ -187,11 +230,21 @@ fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
     .into())
 }
 
-fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
-    let vis = &func.vis;
-    let name = &func.sig.ident;
-    let block = &func.block;
+/// The pieces of the handler shared by both expansion forms, extracted from the signature.
+struct HandlerParts<'a> {
+    vis: &'a syn::Visibility,
+    name: &'a Ident,
+    block: &'a syn::Block,
+    pat: &'a syn::Pat,
+    input_ty: &'a Type,
+    description: TokenStream2,
+    source_ty: TokenStream2,
+    source_expr: TokenStream2,
+    input_schema: TokenStream2,
+    ctx_param: TokenStream2,
+}
 
+fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
     let first = func.sig.inputs.first().ok_or_else(|| {
         syn::Error::new_spanned(
             &func.sig,
@@ -210,7 +263,7 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
             "the message parameter must be a reference `&T`",
         ));
     };
-    let input_ty = &reference.elem;
+    let input_ty = &*reference.elem;
     let description = doc_description(&func.attrs);
     let (source_ty, source_expr) = source_tokens(&args.source)?;
 
@@ -233,44 +286,111 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
         quote!(_ctx)
     };
 
+    Ok(HandlerParts {
+        vis: &func.vis,
+        name: &func.sig.ident,
+        block: &func.block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        ctx_param,
+    })
+}
+
+fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
+    let parts = handler_parts(args, func)?;
     let body = if let Some(reply_topic) = &args.publish {
-        let reply_ty = match &func.sig.output {
-            ReturnType::Type(_, ty) => &**ty,
-            ReturnType::Default => {
-                return Err(syn::Error::new_spanned(
-                    &func.sig,
-                    "a publishing handler must return the reply value",
-                ));
+        expand_publishing(&parts, func, reply_topic)?
+    } else {
+        expand_subscribing(&parts)
+    };
+    Ok(body.into())
+}
+
+fn expand_publishing(
+    parts: &HandlerParts<'_>,
+    func: &ItemFn,
+    reply_topic: &LitStr,
+) -> syn::Result<TokenStream2> {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        ctx_param,
+    } = parts;
+
+    let declared_ty = match &func.sig.output {
+        ReturnType::Type(_, ty) => &**ty,
+        ReturnType::Default => {
+            return Err(syn::Error::new_spanned(
+                &func.sig,
+                "a publishing handler must return the reply value",
+            ));
+        }
+    };
+    // `-> Result<Reply, HandlerResult>` lets the handler skip the publish: `Err(result)` is
+    // returned to the dispatcher as-is. A plain `-> Reply` is wrapped in `Ok` here. The check
+    // is syntactic, so a type alias hiding the `Result` is treated as a plain reply type.
+    let (reply_ty, call_body) = match publish_result_reply(declared_ty) {
+        Some(reply_ty) => (reply_ty, quote!((async move #block).await)),
+        None => (
+            declared_ty,
+            quote!(::core::result::Result::Ok((async move #block).await)),
+        ),
+    };
+    Ok(quote! {
+        #[allow(non_camel_case_types)]
+        #vis struct #name;
+
+        impl ::ruststream::runtime::PublishingDef for #name {
+            type Input = #input_ty;
+            type Reply = #reply_ty;
+            type Source = #source_ty;
+
+            fn source(&self) -> Self::Source { #source_expr }
+            fn reply_name(&self) -> &str { #reply_topic }
+
+            fn description(&self) -> ::core::option::Option<&str> {
+                #description
             }
-        };
-        quote! {
-            #[allow(non_camel_case_types)]
-            #vis struct #name;
 
-            impl ::ruststream::runtime::PublishingDef for #name {
-                type Input = #input_ty;
-                type Reply = #reply_ty;
-                type Source = #source_ty;
+            #input_schema
 
-                fn source(&self) -> Self::Source { #source_expr }
-                fn reply_name(&self) -> &str { #reply_topic }
-
-                fn description(&self) -> ::core::option::Option<&str> {
-                    #description
-                }
-
-                #input_schema
-
-                fn call(
-                    &self,
-                    #pat: &#input_ty,
-                ) -> impl ::core::future::Future<Output = #reply_ty> + ::core::marker::Send {
-                    async move #block
-                }
+            async fn call(
+                &self,
+                #pat: &#input_ty,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+            ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
+                #call_body
             }
         }
-    } else {
-        quote! {
+    })
+}
+
+fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        ctx_param,
+    } = parts;
+
+    quote! {
             #[derive(Clone, Copy)]
             #[allow(non_camel_case_types)]
             #vis struct #name;
@@ -302,10 +422,7 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
 
                 fn into_handler(self) -> Self { self }
             }
-        }
-    };
-
-    Ok(body.into())
+    }
 }
 
 /// Derives [`Message`](../ruststream/trait.Message.html) metadata: the type name and its doc
