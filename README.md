@@ -46,7 +46,7 @@ the framework.
 [dependencies]
 ruststream = { version = "0.3", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
-schemars = "0.8"
+schemars = "1"
 ```
 
 The CLI ships with the crate behind the `cli` feature:
