@@ -8,8 +8,7 @@
 use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, DecodeFailure, HandlerMetadata, HandlerResult, RustStream, SubscriberDef,
-    typed,
+    AppInfo, Context, DecodeFailure, HandlerMetadata, HandlerResult, Router, RustStream, typed,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -43,8 +42,8 @@ fn app() -> RustStream {
         // --8<-- [end:scope]
         .with_broker(MemoryBroker::new(), |b| {
             // --8<-- [start:per_handler]
-            // name the source and the codec for this one handler
-            b.include_on(handle.source(), handle, JsonCodec);
+            // name the codec for this one handler by mounting it through a router
+            b.include_router(Router::new().with_codec(JsonCodec).include(handle));
             // --8<-- [end:per_handler]
             // --8<-- [start:decode_failure]
             let strict = typed(JsonCodec, |_order: &Order, _ctx: &mut Context| async {

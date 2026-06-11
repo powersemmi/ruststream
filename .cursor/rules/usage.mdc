@@ -102,25 +102,30 @@ RustStream::new(info).with_broker_codec(broker, CborCodec, |b| {
 });
 
 // one handler, on a Router
-router.with_codec(CborCodec).include(handle);
+Router::<MemoryBroker>::new().include_with(handle, CborCodec);
 ```
 
 ## Routers
 
-Collect handlers in their own module, then mount the group.
+Collect handlers in their own module, then mount the group. A `Router` is a consuming builder
+(each call returns a new type), so the calls chain and the function returns `impl RouterDef<B>`.
+The app's global `.layer(..)` reaches router handlers, so cross-cutting middleware (logging,
+metrics) goes on the app and applies everywhere; that global layer must be a `BlanketLayer`
+(every bundled layer is).
 
 ```rust
-use ruststream::runtime::Router;
+use ruststream::runtime::{Router, RouterDef};
 
-fn orders() -> Router<MemoryBroker> {
-    let mut router = Router::new();
-    router.include(handle);
-    router.include_publishing(confirm, replies);
-    router
+// `use<>` opts out of borrowing the broker (the router owns its Arc-backed publisher).
+fn orders(broker: &MemoryBroker) -> impl RouterDef<MemoryBroker> + use<> {
+    let replies = TypedPublisher::new(broker.publisher());
+    Router::new()
+        .include(handle)
+        .include_publishing(confirm, replies)
 }
 
 // in main
-.with_broker(MemoryBroker::new(), |b| b.include_router(orders()))
+.with_broker(MemoryBroker::new(), |b| b.include_router(orders(b.broker())))
 ```
 
 ## Broker-specific subscriptions

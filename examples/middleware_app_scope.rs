@@ -1,9 +1,6 @@
 //! Application-scope middleware: a layer added with `RustStream::layer` wraps every handler
-//! registered directly on a broker scope.
-//!
-//! It does NOT wrap handlers mounted through `include_router` - a router carries its own stack
-//! (see `middleware_router_scope.rs`). Planned for 0.3: routers inherit the application scope,
-//! and this distinction goes away.
+//! registered after it, including handlers mounted through `include_router` (the global stack
+//! composes around a router's own layers; see `middleware_router_scope.rs` for that side).
 //!
 //! ```text
 //! cargo run --example middleware_app_scope --features macros,memory,json -- run
@@ -11,7 +8,8 @@
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerResult, Identity, Layer, Router, RustStream, Stack,
+    AppInfo, BlanketLayer, Context, Handler, HandlerResult, Identity, Layer, Router, RustStream,
+    Stack,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -58,6 +56,18 @@ impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
     }
 }
 
+// Reaching router handlers requires the layer to be a BlanketLayer: the router hides its
+// handlers' concrete types, so the wrap happens through this generic method at mount time.
+impl BlanketLayer for LogLayer {
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static,
+    {
+        Logged(handler)
+    }
+}
+
 // --8<-- [start:app_scope]
 #[ruststream::app]
 fn app() -> RustStream<Stack<LogLayer, Identity>> {
@@ -68,10 +78,8 @@ fn app() -> RustStream<Stack<LogLayer, Identity>> {
             b.include(orders); //    wrapped by LogLayer
             b.include(shipments); // wrapped by LogLayer
 
-            // Mounted through a router: NOT wrapped by the app stack (until 0.3).
-            let mut router = Router::new();
-            router.include(audit);
-            b.include_router(router);
+            // Mounted through a router: also wrapped by the app stack.
+            b.include_router(Router::new().include(audit));
         })
 }
 // --8<-- [end:app_scope]

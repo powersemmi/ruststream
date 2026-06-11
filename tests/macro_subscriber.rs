@@ -86,7 +86,6 @@ async fn macro_def_mounts_on_arbitrary_source() {
                 name: "events.stream".to_owned(),
             },
             on_stream,
-            JsonCodec,
         );
     });
 

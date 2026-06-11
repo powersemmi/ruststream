@@ -11,8 +11,8 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerMetadata, HandlerResult, Layer, Outgoing, PublishMiddleware,
-    PublishNext, Router, RustStream, State,
+    AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerResult, Layer, Outgoing,
+    PublishMiddleware, PublishNext, Router, RustStream, State,
 };
 use ruststream::{Name, OutgoingMessage, Publisher};
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,20 @@ where
     async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.inner.handle(msg, ctx).await
+    }
+}
+
+// Lets CountLayer be an app-global layer that reaches router handlers via include_router.
+impl BlanketLayer for CountLayer {
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static,
+    {
+        CountHandler {
+            inner: handler,
+            count: Arc::clone(&self.0),
+        }
     }
 }
 
@@ -155,9 +169,8 @@ async fn included_router_handlers_dispatch() {
     let seen = Arc::new(AtomicU32::new(0));
     let seen_clone = Arc::clone(&seen);
 
-    // Router defined independently of any live broker, then mounted.
-    let mut router = Router::<MemoryBroker>::new();
-    router.subscribe(
+    // Router defined independently of any live broker, then mounted. Consuming builder.
+    let router = Router::<MemoryBroker>::new().subscribe(
         Name::new("events"),
         move |_msg: &_, _ctx: &mut Context| {
             let seen = Arc::clone(&seen_clone);
@@ -183,7 +196,7 @@ async fn included_router_handlers_dispatch() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn router_layer_wraps_handlers() {
+async fn global_layer_reaches_router_handlers() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
@@ -191,9 +204,8 @@ async fn router_layer_wraps_handlers() {
     let handler_hits = Arc::new(AtomicU32::new(0));
     let handler_hits_clone = Arc::clone(&handler_hits);
 
-    // The app's global stack does not reach router handlers, so the router carries its own layer.
-    let mut router = Router::<MemoryBroker>::new().layer(CountLayer(Arc::clone(&layer_hits)));
-    router.subscribe(
+    // The app-global stack must reach handlers mounted through include_router.
+    let router = Router::<MemoryBroker>::new().subscribe(
         Name::new("events"),
         move |_msg: &_, _ctx: &mut Context| {
             let handler_hits = Arc::clone(&handler_hits_clone);
@@ -206,6 +218,7 @@ async fn router_layer_wraps_handlers() {
     );
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
+        .layer(CountLayer(Arc::clone(&layer_hits)))
         .with_broker(broker, |b| b.include_router(router));
 
     let shutdown = Arc::new(Notify::new());
@@ -216,7 +229,7 @@ async fn router_layer_wraps_handlers() {
 
     assert!(
         layer_hits.load(Ordering::SeqCst) >= 1,
-        "router layer did not wrap the handler"
+        "global layer did not reach the router handler"
     );
 
     shutdown.notify_one();
