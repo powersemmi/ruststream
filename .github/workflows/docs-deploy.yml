@@ -3,15 +3,14 @@ name: Deploy docs
 on:
   push:
     branches: [main]
+    # Deliberately narrower than docs.yml: examples / snippet sources / Cargo.toml feed the
+    # rendered site but must not trigger a deploy on their own, or a code-only merge after a
+    # version bump would publish stale docs under the new version. A snippet-only change is
+    # deployed by the next docs change or manually via workflow_dispatch.
     paths:
       - docs/**
       - mkdocs.yml
       - overrides/**
-      - examples/**
-      # the testing guide embeds its snippets from these test files
-      - tests/doc_testing_*.rs
-      - Cargo.toml
-      - .github/workflows/docs-deploy.yml
   workflow_dispatch:
 
 permissions:

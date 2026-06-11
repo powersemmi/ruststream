@@ -1,4 +1,4 @@
-//! Rust core of the [`RustStream`](https://github.com/ruststream/ruststream-rs) messaging
+//! Rust core of the [`RustStream`](https://github.com/powersemmi/ruststream) messaging
 //! framework: broker-agnostic traits, message types, codecs, router runtime, and a
 //! conformance harness for broker authors.
 //!
