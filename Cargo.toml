@@ -180,8 +180,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
 ciborium = { version = "0.2", optional = true }
-prometheus = { version = "0.13", default-features = false, optional = true }
-schemars = { version = "0.8", optional = true }
+prometheus = { version = "0.14", default-features = false, optional = true }
+schemars = { version = "1", optional = true }
 serde_norway = { version = "0.9", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
