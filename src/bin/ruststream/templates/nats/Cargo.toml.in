@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 ruststream = { version = "0.3", features = ["macros", "json", "asyncapi", "logging"] }
 ruststream-nats = "0.3"
-schemars = "0.8"
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
