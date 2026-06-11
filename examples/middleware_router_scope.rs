@@ -1,9 +1,9 @@
-//! Router-scope middleware: a layer added with `Router::layer` wraps every handler registered
-//! after it on that router.
+//! Router-scope middleware: a layer added with `Router::layer` wraps every handler on that
+//! router when it is mounted.
 //!
 //! Handlers mounted directly on the broker scope are outside the router's stack (and the app has
-//! none here). Planned for 0.3: routers inherit the application scope, and the two scopes
-//! compose instead of being separate (see `middleware_app_scope.rs` for the other side).
+//! none here). The app's global stack composes around the router's own layers (see
+//! `middleware_app_scope.rs` for the other side).
 //!
 //! ```text
 //! cargo run --example middleware_router_scope --features macros,memory,json -- run
@@ -11,7 +11,7 @@
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerResult, Identity, Layer, Router, RustStream, Stack,
+    AppInfo, BlanketLayer, Context, Handler, HandlerResult, Layer, Router, RouterDef, RustStream,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -51,6 +51,17 @@ impl<H> Layer<H> for LogLayer {
     }
 }
 
+// A router hides its handlers' concrete types, so a router-scope layer must be a BlanketLayer.
+impl BlanketLayer for LogLayer {
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static,
+    {
+        Logged(handler)
+    }
+}
+
 impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
     async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
         println!("router layer -> {}", ctx.name());
@@ -59,12 +70,12 @@ impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
 }
 
 // --8<-- [start:router_scope]
-fn routes() -> Router<MemoryBroker, Stack<LogLayer, Identity>> {
-    // wraps every handler registered on this router after it
-    let mut router = Router::new().layer(LogLayer);
-    router.include(orders); //    wrapped by LogLayer
-    router.include(shipments); // wrapped by LogLayer
-    router
+fn routes() -> impl RouterDef<MemoryBroker> {
+    // wraps every handler on this router when it is mounted
+    Router::new()
+        .layer(LogLayer)
+        .include(orders) //    wrapped by LogLayer
+        .include(shipments) // wrapped by LogLayer
 }
 
 #[ruststream::app]

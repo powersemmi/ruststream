@@ -28,10 +28,10 @@ use super::dispatch::{Delivery, spawn_dispatch};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
-use super::middleware::BlanketLayer;
+use super::middleware::{BlanketLayer, Identity, Stack};
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
-use super::publishing::{PublishingDef, PublishingHandler};
-use super::subscriber_def::SubscriberDef;
+use super::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
+use super::subscriber_def::{SubscriberDef, subscriber_metadata};
 use super::typed::{Typed, typed};
 
 /// A deferred registration: given the broker (after connect), shared state, the per-scope publish
@@ -51,33 +51,26 @@ pub(crate) type BoundStarter<B> = Box<
 /// and return types.
 type SourceMessage<B, S> = <<S as SubscriptionSource<B>>::Subscriber as Subscriber>::Message;
 
-/// The router that mounting a [`SubscriberDef`] `D` (decoded with `C`) onto `R` produces. Names the
-/// otherwise unwieldy builder return type.
-type IncludedRouter<B, D, C, R> = Router<
-    B,
-    (
-        SubscribeRoute<
-            <D as SubscriberDef>::Source,
-            Typed<
-                SourceMessage<B, <D as SubscriberDef>::Source>,
-                <D as SubscriberDef>::Input,
-                C,
-                <D as SubscriberDef>::Handler,
-            >,
-        >,
-        R,
-    ),
+/// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
+/// otherwise unwieldy registration type.
+type TypedRoute<B, S, D, C> = SubscribeRoute<
+    S,
+    Typed<SourceMessage<B, S>, <D as SubscriberDef>::Input, C, <D as SubscriberDef>::Handler>,
 >;
 
-/// The router that mounting a publishing [`PublishingDef`] `D` (replying through a `P`/`PC`/`PL`
-/// publisher) onto `R` produces.
-type PublishingRouter<B, D, P, PC, PL, R> = Router<
-    B,
-    (
-        SubscribeRoute<<D as PublishingDef>::Source, PublishingHandler<D, PC, P, PC, PL>>,
-        R,
-    ),
->;
+/// The router that mounting a [`SubscriberDef`] `D` on source `S` (decoded with `C`) onto `R`
+/// produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
+type IncludedRouter<B, S, D, C, RC, RL, R> = Router<B, (TypedRoute<B, S, D, C>, R), RC, RL>;
+
+/// The router that mounting a publishing [`PublishingDef`] `D` on source `S` (decoded with `C`,
+/// replying through a `P`/`PC`/`PL` publisher) onto `R` produces. `RC` / `RL` are the router's own
+/// codec and layer parameters, carried unchanged.
+type PublishingRouter<B, S, D, C, P, PC, PL, RC, RL, R> =
+    Router<B, (SubscribeRoute<S, PublishingHandler<D, C, P, PC, PL>>, R), RC, RL>;
+
+/// The router that [`Router::merge`] produces: the merged router becomes one registration in the
+/// list.
+type MergedRouter<B, R2, C2, L2, RC, RL, R> = Router<B, (Router<B, R2, C2, L2>, R), RC, RL>;
 
 /// The runtime collector a router mounts into: type-erased starters plus handler metadata.
 ///
@@ -259,6 +252,14 @@ where
 /// [`include_router`](super::BrokerScope::include_router). The registration list `R` is an opaque
 /// nested tuple, so a builder function returns `impl RouterDef<B>` instead of naming the type.
 ///
+/// The codec parameter `C` is the codec `include` / `include_on` / `include_publishing*` decode
+/// with. It starts as `()`, meaning the [`DefaultCodec`](crate::codec::DefaultCodec); switch it
+/// for the rest of the chain with [`with_codec`](Self::with_codec).
+///
+/// The layer parameter `L` is the router's own middleware stack, grown with
+/// [`layer`](Self::layer). It wraps every handler in the router when the router is mounted, inside
+/// the app's global stack.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -278,35 +279,92 @@ where
 /// // later: app.with_broker(broker, |b| b.include_router(routes()));
 /// # }
 /// ```
-pub struct Router<B, R = ()> {
+pub struct Router<B, R = (), C = (), L = Identity> {
     routes: R,
+    codec: C,
+    layers: L,
     _broker: PhantomData<fn() -> B>,
 }
 
-impl<B: Broker + 'static> Default for Router<B, ()> {
+impl<B: Broker + 'static> Default for Router<B, (), (), Identity> {
     fn default() -> Self {
         Self {
             routes: (),
+            codec: (),
+            layers: Identity,
             _broker: PhantomData,
         }
     }
 }
 
-impl<B, R> std::fmt::Debug for Router<B, R> {
+impl<B, R, C, L> std::fmt::Debug for Router<B, R, C, L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Router").finish_non_exhaustive()
     }
 }
 
 impl<B: Broker + 'static> Router<B, ()> {
-    /// Creates an empty router.
+    /// Creates an empty router decoding with the [`DefaultCodec`](crate::codec::DefaultCodec).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<B: Broker + 'static, R> Router<B, R> {
+impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
+    /// Sets the codec that subsequent `include` / `include_on` / `include_publishing*` calls
+    /// decode with, replacing the default.
+    ///
+    /// Registrations already in the chain keep the codec they were mounted with, so the codec can
+    /// change mid-chain.
+    #[must_use]
+    pub fn with_codec<C>(self, codec: C) -> Router<B, R, C, RL> {
+        Router {
+            routes: self.routes,
+            codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
+    /// Adds a router-scope middleware layer, wrapping every handler in this router (regardless of
+    /// registration order) when the router is mounted. The first layer added runs outermost within
+    /// the router; the app's global [`layer`](super::RustStream::layer) stack wraps outside it.
+    ///
+    /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
+    /// router hides), like the app-global stack.
+    #[must_use]
+    pub fn layer<N>(self, layer: N) -> Router<B, R, RC, Stack<N, RL>> {
+        Router {
+            routes: self.routes,
+            codec: self.codec,
+            layers: Stack::new(layer, self.layers),
+            _broker: PhantomData,
+        }
+    }
+
+    /// Appends every registration of `other` after this router's own, keeping each router's codec
+    /// and layer stack.
+    ///
+    /// The merged router's handlers stay wrapped by its own layers; this router's layers wrap
+    /// around them as well once mounted (scopes nest).
+    #[must_use]
+    pub fn merge<R2, C2, L2>(
+        self,
+        other: Router<B, R2, C2, L2>,
+    ) -> MergedRouter<B, R2, C2, L2, RC, RL, R>
+    where
+        R2: RouterDef<B>,
+        L2: BlanketLayer,
+    {
+        Router {
+            routes: (other, self.routes),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
     /// Attaches `handler` to an already-created `subscriber`.
     ///
     /// The subscriber is created up front (before connect). Use this for brokers whose subscription
@@ -316,7 +374,7 @@ impl<B: Broker + 'static, R> Router<B, R> {
         subscriber: S,
         handler: H,
         meta: HandlerMetadata,
-    ) -> Router<B, (HandleRoute<S, H>, R)>
+    ) -> Router<B, (HandleRoute<S, H>, R), RC, RL>
     where
         S: Subscriber + Send + 'static,
         H: Handler<S::Message> + 'static,
@@ -330,6 +388,8 @@ impl<B: Broker + 'static, R> Router<B, R> {
                 },
                 self.routes,
             ),
+            codec: self.codec,
+            layers: self.layers,
             _broker: PhantomData,
         }
     }
@@ -343,7 +403,7 @@ impl<B: Broker + 'static, R> Router<B, R> {
         source: S,
         handler: H,
         meta: HandlerMetadata,
-    ) -> Router<B, (SubscribeRoute<S, H>, R)>
+    ) -> Router<B, (SubscribeRoute<S, H>, R), RC, RL>
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
@@ -358,48 +418,109 @@ impl<B: Broker + 'static, R> Router<B, R> {
                 },
                 self.routes,
             ),
+            codec: self.codec,
+            layers: self.layers,
             _broker: PhantomData,
         }
     }
 
-    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
-    /// [`DefaultCodec`](crate::codec::DefaultCodec).
-    ///
-    /// Name a codec explicitly with [`include_with`](Self::include_with). The router-level
-    /// counterpart of [`BrokerScope::include`](super::BrokerScope::include).
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-    pub fn include<D>(self, def: D) -> IncludedRouter<B, D, crate::codec::DefaultCodec, R>
+    /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
+    /// `include` / `include_on` forms.
+    fn mount_subscriber<S, D, C>(
+        self,
+        source: S,
+        def: D,
+        codec: C,
+    ) -> IncludedRouter<B, S, D, C, RC, RL, R>
     where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
         D: SubscriberDef,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
-    {
-        self.include_with(def, crate::codec::DefaultCodec::default())
-    }
-
-    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
-    /// explicit `codec`.
-    pub fn include_with<D, C>(self, def: D, codec: C) -> IncludedRouter<B, D, C, R>
-    where
-        D: SubscriberDef,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
         C: Codec + 'static,
     {
-        let source = def.source();
-        let mut meta = HandlerMetadata::typed::<D::Input>(source.name().to_owned());
-        if let Some(description) = def.description() {
-            meta = meta.with_description(description.to_owned());
-        }
-        if let Some(schema) = def.input_schema() {
-            meta = meta.with_payload_schema(schema);
-        }
+        let meta = subscriber_metadata(source.name().to_owned(), &def);
         let handler = typed(codec, def.into_handler());
         self.subscribe(source, handler, meta)
+    }
+
+    /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
+    /// `publisher`. The shared tail of the `include_publishing` / `include_publishing_on` forms.
+    fn mount_publishing<S, D, C, P, PC, PL>(
+        self,
+        source: S,
+        def: D,
+        codec: C,
+        publisher: TypedPublisher<P, PC, PL>,
+    ) -> PublishingRouter<B, S, D, C, P, PC, PL, RC, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        C: Codec + 'static,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        PL: PublishLayer + 'static,
+    {
+        let meta = publishing_metadata(source.name().to_owned(), &def);
+        let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
+        let handler = PublishingHandler {
+            def,
+            codec,
+            publisher,
+            pipeline,
+        };
+        self.subscribe(source, handler, meta)
+    }
+}
+
+impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
+    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// Name a codec for the chain with [`with_codec`](Self::with_codec). The router-level
+    /// counterpart of [`BrokerScope::include`](super::BrokerScope::include).
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include<D>(
+        self,
+        def: D,
+    ) -> IncludedRouter<B, D::Source, D, crate::codec::DefaultCodec, (), RL, R>
+    where
+        D: SubscriberDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let source = def.source();
+        self.mount_subscriber(source, def, crate::codec::DefaultCodec::default())
+    }
+
+    /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`
+    /// (overriding the macro's own source), decoding its input with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// Useful to retarget a handler - e.g. mount it on an in-memory source in tests, or a
+    /// different broker descriptor per deployment. The subscription name in metadata comes from
+    /// `source`. The router-level counterpart of
+    /// [`BrokerScope::include_on`](super::BrokerScope::include_on).
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_on<S, D>(
+        self,
+        source: S,
+        def: D,
+    ) -> IncludedRouter<B, S, D, crate::codec::DefaultCodec, (), RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        D: SubscriberDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        self.mount_subscriber(source, def, crate::codec::DefaultCodec::default())
     }
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
@@ -412,7 +533,7 @@ impl<B: Broker + 'static, R> Router<B, R> {
         self,
         def: D,
         publisher: TypedPublisher<P, PC, PL>,
-    ) -> PublishingRouter<B, D, P, PC, PL, R>
+    ) -> PublishingRouter<B, D::Source, D, PC, P, PC, PL, (), RL, R>
     where
         D: PublishingDef + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
@@ -423,30 +544,110 @@ impl<B: Broker + 'static, R> Router<B, R> {
         PC: Codec + Clone + 'static,
         PL: PublishLayer + 'static,
     {
-        let source = def.source();
-        let description = def.description().map(str::to_owned);
-        let schema = def.input_schema();
-        let mut meta = HandlerMetadata::typed::<D::Input>(source.name().to_owned())
-            .with_output_type(std::any::type_name::<D::Reply>());
-        if let Some(description) = description {
-            meta = meta.with_description(description);
-        }
-        if let Some(schema) = schema {
-            meta = meta.with_payload_schema(schema);
-        }
         let codec = publisher.codec().clone();
-        let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
-        let handler = PublishingHandler {
-            def,
-            codec,
-            publisher,
-            pipeline,
-        };
-        self.subscribe(source, handler, meta)
+        let source = def.source();
+        self.mount_publishing(source, def, codec, publisher)
+    }
+
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on an explicit
+    /// subscription `source`, decoding its input with the `publisher`'s own codec.
+    pub fn include_publishing_on<S, D, P, PC, PL>(
+        self,
+        source: S,
+        def: D,
+        publisher: TypedPublisher<P, PC, PL>,
+    ) -> PublishingRouter<B, S, D, PC, P, PC, PL, (), RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        P: Publisher + 'static,
+        PC: Codec + Clone + 'static,
+        PL: PublishLayer + 'static,
+    {
+        let codec = publisher.codec().clone();
+        self.mount_publishing(source, def, codec, publisher)
     }
 }
 
-impl<B: Broker + 'static, R: RouterDef<B>> Router<B, R> {
+impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL> {
+    /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
+    /// chain's codec (set by [`with_codec`](Self::with_codec)).
+    pub fn include<D>(self, def: D) -> IncludedRouter<B, D::Source, D, C, C, RL, R>
+    where
+        D: SubscriberDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        let source = def.source();
+        self.mount_subscriber(source, def, codec)
+    }
+
+    /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`, decoding
+    /// its input with the chain's codec (set by [`with_codec`](Self::with_codec)).
+    pub fn include_on<S, D>(self, source: S, def: D) -> IncludedRouter<B, S, D, C, C, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        D: SubscriberDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_subscriber(source, def, codec)
+    }
+
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
+    /// decoding its input with the chain's codec and replying through `publisher`.
+    pub fn include_publishing<D, P, PC, PL>(
+        self,
+        def: D,
+        publisher: TypedPublisher<P, PC, PL>,
+    ) -> PublishingRouter<B, D::Source, D, C, P, PC, PL, C, RL, R>
+    where
+        D: PublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        PL: PublishLayer + 'static,
+    {
+        let codec = self.codec.clone();
+        let source = def.source();
+        self.mount_publishing(source, def, codec, publisher)
+    }
+
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on an explicit
+    /// subscription `source`, decoding its input with the chain's codec.
+    pub fn include_publishing_on<S, D, P, PC, PL>(
+        self,
+        source: S,
+        def: D,
+        publisher: TypedPublisher<P, PC, PL>,
+    ) -> PublishingRouter<B, S, D, C, P, PC, PL, C, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        PL: PublishLayer + 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_publishing(source, def, codec, publisher)
+    }
+}
+
+impl<B: Broker + 'static, R: RouterDef<B>, C, L> Router<B, R, C, L> {
     /// Returns metadata for every registered handler, in registration order.
     #[must_use]
     pub fn handlers(&self) -> Vec<HandlerMetadata> {
@@ -456,12 +657,54 @@ impl<B: Broker + 'static, R: RouterDef<B>> Router<B, R> {
     }
 }
 
-impl<B: Broker + 'static, R: RouterDef<B>> RouterDef<B> for Router<B, R> {
+/// Composes the mount-time global stack (outer) with a router's own layer stack (inner) by
+/// reference, so [`RouterDef::mount`] can pass both down without cloning either.
+struct ComposedBlanket<'a, Outer, Inner> {
+    outer: &'a Outer,
+    inner: &'a Inner,
+}
+
+impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<'_, Outer, Inner> {
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static,
+    {
+        self.outer.apply::<M, _>(self.inner.apply::<M, _>(handler))
+    }
+}
+
+impl<B, R, C, L> RouterDef<B> for Router<B, R, C, L>
+where
+    B: Broker + 'static,
+    R: RouterDef<B>,
+    L: BlanketLayer,
+{
     fn mount<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
-        self.routes.mount(global, sink);
+        let composed = ComposedBlanket {
+            outer: global,
+            inner: &self.layers,
+        };
+        self.routes.mount(&composed, sink);
     }
 
     fn collect_handlers(&self, out: &mut Vec<HandlerMetadata>) {
+        self.routes.collect_handlers(out);
+    }
+}
+
+// Lets a whole router be a single registration inside another router's list (`Router::merge`).
+impl<B, R, C, L> MountRoute<B> for Router<B, R, C, L>
+where
+    B: Broker + 'static,
+    R: RouterDef<B>,
+    L: BlanketLayer,
+{
+    fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
+        RouterDef::mount(self, global, sink);
+    }
+
+    fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.routes.collect_handlers(out);
     }
 }

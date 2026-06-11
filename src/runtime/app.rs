@@ -28,9 +28,9 @@ use super::metadata::HandlerMetadata;
 use super::middleware::{BlanketLayer, Identity, Layer, Stack};
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 use super::publisher_registry::ErasedPublisher;
-use super::publishing::{PublishingDef, PublishingHandler};
+use super::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
 use super::router::{RouterDef, RouterSink};
-use super::subscriber_def::SubscriberDef;
+use super::subscriber_def::{SubscriberDef, subscriber_metadata};
 use super::typed::{Typed, typed};
 
 /// A registration deferred until [`RustStream::run`]: given the shutdown token, it opens the
@@ -657,9 +657,12 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     ///
     /// Name a codec by setting a scope default with
     /// [`with_broker_codec`](RustStream::with_broker_codec), or per handler with
-    /// [`include_on`](Self::include_on). The source comes from the macro: a [`Name`] for
+    /// [`include_with`](Self::include_with). The source comes from the macro: a [`Name`] for
     /// `#[subscriber("topic")]` (the broker must implement [`Subscribe`]) or a broker descriptor for
     /// `#[subscriber(RedisStream::new(..))]`.
+    ///
+    /// [`Name`]: crate::Name
+    /// [`Subscribe`]: crate::Subscribe
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn include<D>(&mut self, def: D)
     where
@@ -681,14 +684,40 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
             + 'static,
     {
         let source = def.source();
-        self.include_on(source, def, crate::codec::DefaultCodec::default());
+        self.mount_subscriber(source, def, crate::codec::DefaultCodec::default());
+    }
+
+    /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`, decoding
+    /// its input with the [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// See [`include_on_with`](Self::include_on_with) for the explicit-codec form.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_on<S, D>(&mut self, source: S, def: D)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        <S::Subscriber as Subscriber>::Message: 'static,
+        D: SubscriberDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        L: Layer<
+            Typed<
+                <S::Subscriber as Subscriber>::Message,
+                D::Input,
+                crate::codec::DefaultCodec,
+                D::Handler,
+            >,
+        >,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+    {
+        self.mount_subscriber(source, def, crate::codec::DefaultCodec::default());
     }
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
     /// decoding its input with the `publisher`'s own codec and replying through it.
     ///
     /// Name the codec once, on the `publisher`. Override the decode codec per handler with
-    /// [`include_publishing_on`](Self::include_publishing_on), or set a scope default with
+    /// [`include_publishing_with`](Self::include_publishing_with), or set a scope default with
     /// [`with_broker_codec`](RustStream::with_broker_codec).
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
@@ -707,7 +736,31 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     {
         let codec = publisher.codec().clone();
         let source = def.source();
-        self.include_publishing_on(source, def, codec, publisher);
+        self.mount_publishing(source, def, codec, publisher);
+    }
+
+    /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on an explicit
+    /// subscription `source`, decoding its input with the `publisher`'s own codec.
+    pub fn include_publishing_on<S, D, P, PC, PL>(
+        &mut self,
+        source: S,
+        def: D,
+        publisher: TypedPublisher<P, PC, PL>,
+    ) where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        <S::Subscriber as Subscriber>::Message: 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        P: Publisher + 'static,
+        PC: Codec + Clone + 'static,
+        PL: PublishLayer + 'static,
+        L: Layer<PublishingHandler<D, PC, P, PC, PL>>,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let codec = publisher.codec().clone();
+        self.mount_publishing(source, def, codec, publisher);
     }
 }
 
@@ -735,7 +788,24 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
     {
         let codec = self.codec.clone();
         let source = def.source();
-        self.include_on(source, def, codec);
+        self.mount_subscriber(source, def, codec);
+    }
+
+    /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`, decoding
+    /// its input with the scope's default codec.
+    pub fn include_on<S, D>(&mut self, source: S, def: D)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        <S::Subscriber as Subscriber>::Message: 'static,
+        D: SubscriberDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        L: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>>,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_subscriber(source, def, codec);
     }
 
     /// Mounts a `#[subscriber(.., publish)]`-generated definition on its own source, decoding its
@@ -757,17 +827,38 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
     {
         let codec = self.codec.clone();
         let source = def.source();
-        self.include_publishing_on(source, def, codec, publisher);
+        self.mount_publishing(source, def, codec, publisher);
+    }
+
+    /// Mounts a `#[subscriber(.., publish)]`-generated definition on an explicit subscription
+    /// `source`, decoding its input with the scope's default codec.
+    pub fn include_publishing_on<S, D, P, PC, PL>(
+        &mut self,
+        source: S,
+        def: D,
+        publisher: TypedPublisher<P, PC, PL>,
+    ) where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        <S::Subscriber as Subscriber>::Message: 'static,
+        D: PublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        PL: PublishLayer + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_publishing(source, def, codec, publisher);
     }
 }
 
 impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
-    /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`,
-    /// overriding the macro's own source. Useful to retarget a handler - e.g. mount it on an
-    /// in-memory source in tests, or a different broker descriptor per deployment. The subscription
-    /// name in metadata comes from `source`. [`include`](BrokerScope::include) uses the def's own
-    /// [`source`](SubscriberDef::source) instead.
-    pub fn include_on<S, D, C>(&mut self, source: S, def: D, codec: C)
+    /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
+    /// `include` / `include_on` forms.
+    fn mount_subscriber<S, D, C>(&mut self, source: S, def: D, codec: C)
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
@@ -779,20 +870,14 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>>,
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
-        let mut meta = HandlerMetadata::typed::<D::Input>(source.name().to_owned());
-        if let Some(description) = def.description() {
-            meta = meta.with_description(description.to_owned());
-        }
-        if let Some(schema) = def.input_schema() {
-            meta = meta.with_payload_schema(schema);
-        }
+        let meta = subscriber_metadata(source.name().to_owned(), &def);
         let handler = typed(codec, def.into_handler());
         self.subscribe(source, handler, meta);
     }
 
-    /// Mounts a `#[subscriber(.., publish(..))]`-generated definition on an arbitrary subscription
-    /// `source`. See [`include_publishing`](BrokerScope::include_publishing) for the by-name form.
-    pub fn include_publishing_on<S, D, C, P, PC, PL>(
+    /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
+    /// `publisher`. The shared tail of the `include_publishing` / `include_publishing_on` forms.
+    fn mount_publishing<S, D, C, P, PC, PL>(
         &mut self,
         source: S,
         def: D,
@@ -812,15 +897,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L: Layer<PublishingHandler<D, C, P, PC, PL>>,
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
-        let description = def.description().map(str::to_owned);
-        let mut meta = HandlerMetadata::typed::<D::Input>(source.name().to_owned())
-            .with_output_type(std::any::type_name::<D::Reply>());
-        if let Some(description) = description {
-            meta = meta.with_description(description);
-        }
-        if let Some(schema) = def.input_schema() {
-            meta = meta.with_payload_schema(schema);
-        }
+        let meta = publishing_metadata(source.name().to_owned(), &def);
         let handler = PublishingHandler {
             def,
             codec,

@@ -15,6 +15,7 @@ use crate::{IncomingMessage, Publisher};
 
 use super::context::Context;
 use super::handler::{Handler, HandlerResult};
+use super::metadata::HandlerMetadata;
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 
 /// A subscriber definition that produces a reply to publish.
@@ -52,6 +53,19 @@ pub trait PublishingDef: Send + Sync {
 
     /// Runs the handler body, producing the reply.
     fn call(&self, input: &Self::Input) -> impl Future<Output = Self::Reply> + Send;
+}
+
+/// Builds the registration metadata for a publishing definition mounted under `name`.
+pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> HandlerMetadata {
+    let mut meta = HandlerMetadata::typed::<D::Input>(name)
+        .with_output_type(std::any::type_name::<D::Reply>());
+    if let Some(description) = def.description() {
+        meta = meta.with_description(description.to_owned());
+    }
+    if let Some(schema) = def.input_schema() {
+        meta = meta.with_payload_schema(schema);
+    }
+    meta
 }
 
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, encode the reply, publish, ack.

@@ -6,7 +6,7 @@
 //! ```
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, Router, RouterDef, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -33,16 +33,12 @@ async fn dispatch(shipment: &Shipment) -> HandlerResult {
 }
 
 // --8<-- [start:builders]
-fn orders() -> Router<MemoryBroker> {
-    let mut router = Router::new();
-    router.include(accept);
-    router
+fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    Router::new().include(accept)
 }
 
-fn shipping() -> Router<MemoryBroker> {
-    let mut router = Router::new();
-    router.include(dispatch);
-    router
+fn shipping() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    Router::new().include(dispatch)
 }
 // --8<-- [end:builders]
 
@@ -51,8 +47,7 @@ fn app() -> RustStream {
     RustStream::new(AppInfo::new("routing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         // --8<-- [start:merge]
         // Merge groups into one router, then mount the result.
-        let mut all = orders();
-        all.merge(shipping());
+        let all = orders().merge(shipping());
         b.include_router(all);
         // --8<-- [end:merge]
     })

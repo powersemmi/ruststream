@@ -2,6 +2,7 @@
 //! [`BrokerScope::include`](super::BrokerScope::include).
 
 use super::handler::Handler;
+use super::metadata::HandlerMetadata;
 
 /// A handler definition produced by the `#[subscriber]` macro.
 ///
@@ -38,4 +39,16 @@ pub trait SubscriberDef: Sized {
 
     /// Consumes the definition, returning the handler.
     fn into_handler(self) -> Self::Handler;
+}
+
+/// Builds the registration metadata for a subscriber definition mounted under `name`.
+pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> HandlerMetadata {
+    let mut meta = HandlerMetadata::typed::<D::Input>(name);
+    if let Some(description) = def.description() {
+        meta = meta.with_description(description.to_owned());
+    }
+    if let Some(schema) = def.input_schema() {
+        meta = meta.with_payload_schema(schema);
+    }
+    meta
 }

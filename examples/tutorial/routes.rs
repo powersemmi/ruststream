@@ -2,15 +2,14 @@
 
 // --8<-- [start:routes]
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{Router, TypedPublisher};
+use ruststream::runtime::{Router, RouterDef, TypedPublisher};
 
 use crate::orders;
 
-pub(crate) fn orders(broker: &MemoryBroker) -> Router<MemoryBroker> {
+pub(crate) fn orders(broker: &MemoryBroker) -> impl RouterDef<MemoryBroker> + use<> {
     let replies = TypedPublisher::new(broker.publisher());
-    let mut router = Router::new();
-    router.include_publishing(orders::confirm, replies);
-    router.include(orders::handle);
-    router
+    Router::new()
+        .include_publishing(orders::confirm, replies)
+        .include(orders::handle)
 }
 // --8<-- [end:routes]
