@@ -47,15 +47,36 @@ jobs:
               - 'Cargo.lock'
               - '.github/workflows/ci.yml'
 
+  toolchains:
+    name: Resolve toolchain range
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.range.outputs.list }}
+    steps:
+      # Multi-MSRV: the crate keeps rust-version = 1.85 and CI proves the build on
+      # every stable toolchain from that floor up to current stable, so broker
+      # crates can adopt any MSRV in the range without waiting for a core release.
+      # The list is resolved from the release manifest, so a new stable joins the
+      # matrix on its release day with no workflow edit.
+      - name: Build the 1.85..stable toolchain list
+        id: range
+        run: |
+          stable_minor=$(curl -sSf https://static.rust-lang.org/dist/channel-rust-stable.toml \
+            | grep -A1 '^\[pkg\.rust\]' | grep -m1 'version' | sed -E 's/.*"1\.([0-9]+)\..*/\1/')
+          versions=$(seq 85 "$((stable_minor - 1))" | sed 's/^/"1./; s/$/"/' | paste -sd, -)
+          echo "list=[\"stable\",${versions}]" >> "$GITHUB_OUTPUT"
+
   rust:
     name: Rust ${{ matrix.toolchain }}
-    needs: changes
+    needs: [changes, toolchains]
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, "1.85"]
+        toolchain: ${{ fromJSON(needs.toolchains.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,7 +105,10 @@ jobs:
       - name: cargo check (all features)
         run: cargo check --workspace --all-targets --all-features
 
+      # The intermediate toolchains exist to prove the build (the two checks
+      # above); the full suite runs at the edges of the range only.
       - name: cargo test
+        if: matrix.toolchain == 'stable' || matrix.toolchain == '1.85'
         run: cargo test --workspace --all-features
 
   package:

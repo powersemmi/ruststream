@@ -114,6 +114,20 @@ only, so you assert on handler behaviour, middleware, and decoding exactly as in
 
 Concrete brokers live in their own crates and pull `ruststream` from crates.io.
 
+## Minimum supported Rust version
+
+The MSRV is **1.85** (edition 2024, native `async fn in trait`). CI builds the crate on every
+stable toolchain from 1.85 up to current stable, so any floor in that range works.
+
+The policy:
+
+- The published `rust-version` stays at the floor. Raising it is a breaking change (a minor
+  version bump pre-1.0) and is reviewed against the broker crates' client requirements at each
+  minor release.
+- Broker crates (`ruststream-nats`, ...) may require a newer toolchain than the core when their
+  underlying clients do; cargo allows a dependent crate to have a stricter floor than its
+  dependency. Check the broker crate's own `rust-version` for its floor.
+
 ## Contributing
 
 ```bash
