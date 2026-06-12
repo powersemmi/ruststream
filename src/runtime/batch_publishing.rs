@@ -243,7 +243,8 @@ mod tests {
         publish_numbers(&broker, "orders", &[1, 2]).await;
         let state = State::default();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("orders", Headers::new(), &state, &delivery);
+        let headers = Headers::new();
+        let mut ctx = Context::new("orders", &headers, &state, &delivery);
         let batch = pull_batch(&mut input).await;
         handler.handle_batch(batch, &mut ctx).await;
 
@@ -279,7 +280,8 @@ mod tests {
         publish_numbers(&broker, "orders", &[1, 2]).await;
         let state = State::default();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("orders", Headers::new(), &state, &delivery);
+        let headers = Headers::new();
+        let mut ctx = Context::new("orders", &headers, &state, &delivery);
         let batch = pull_batch(&mut input).await;
         handler.handle_batch(batch, &mut ctx).await;
 
