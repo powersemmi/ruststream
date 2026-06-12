@@ -130,12 +130,28 @@ The semantics differ from single-message handlers in a few ways:
 
 - Elements that fail to decode are nacked individually (per the decode-failure policy) and never
   reach the handler; the rest arrive as one slice.
-- The returned `HandlerResult` settles **every** message of the batch: `Ack` acks them all,
-  `retry()` requeues them all.
+- The returned value settles the batch. A single `HandlerResult` (or `()` / `Result<_, E>`)
+  settles **every** message uniformly: `Ack` acks them all, `retry()` requeues them all.
 - Per-message headers are not accessible in the `&[T]` form, and the context starts with empty
   headers.
 - App-global and router middleware wrap per-message handlers and do not apply to batch
   registrations.
+
+### Selective acknowledgement
+
+A common case is partial readiness: some messages of the page are processed, others are not
+ready yet and should be redelivered without retrying the ones that succeeded. Return
+`Vec<HandlerResult>` to settle element `i` of the slice with outcome `i`:
+
+```rust
+--8<-- "examples/subscribers.rs:batch_selective"
+```
+
+Broker semantics are exactly those of per-message `nack(requeue = true)`: brokers with
+per-message redelivery honour selective retry natively; a positional broker degrades the same
+way it does for a single-message nack (the crate of that broker documents it). Returning a
+vector whose length does not match the batch is a bug in the handler: the unmatched remainder is
+retried (an extra redelivery beats a silently lost message) and the mismatch is logged.
 
 ## Macro or manual
 

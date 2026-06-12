@@ -5,7 +5,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -170,6 +170,87 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
     })
     .await;
     assert!(result.is_ok(), "buffered batch did not arrive");
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+static SETTLED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static RETRIED_ONCE: AtomicBool = AtomicBool::new(false);
+
+/// Retries order 11 on first sight; settles everything else, per element.
+#[subscriber(batch("pages"))]
+async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
+    orders
+        .iter()
+        .map(|o| {
+            if o.id == 11 && !RETRIED_ONCE.swap(true, Ordering::SeqCst) {
+                HandlerResult::retry()
+            } else {
+                SETTLED.lock().unwrap().push(o.id);
+                HandlerResult::Ack
+            }
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn per_element_outcomes_retry_individually() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
+        .with_broker(broker, |b| b.include_batch(reconcile));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    // Warm up until the subscription is live, then publish the real page exactly once, so the
+    // retry accounting below is deterministic.
+    let warmup = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("pages", &order_bytes(0)))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if SETTLED.lock().unwrap().contains(&0) {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(warmup.is_ok(), "subscription did not come up");
+
+    for id in [10u32, 11, 12] {
+        publisher
+            .publish(OutgoingMessage::new("pages", &order_bytes(id)))
+            .await
+            .unwrap();
+    }
+
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let settled = SETTLED.lock().unwrap().clone();
+            if [10, 11, 12].iter().all(|id| settled.contains(id)) {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "retried element was not redelivered");
+
+    // 11 was retried exactly once and settled only on redelivery; 10 and 12 settled first try.
+    assert!(RETRIED_ONCE.load(Ordering::SeqCst));
+    let settled = SETTLED.lock().unwrap().clone();
+    for id in [10u32, 11, 12] {
+        assert_eq!(
+            settled.iter().filter(|s| **s == id).count(),
+            1,
+            "{id} must settle exactly once; settled: {settled:?}",
+        );
+    }
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
