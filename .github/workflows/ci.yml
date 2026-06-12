@@ -162,7 +162,12 @@ jobs:
       # multi-package form resolves in-workspace dependencies through a local overlay instead.
       # Still not `--workspace`: the dev-only `[patch.crates-io]` self-patch used by the `nats_*`
       # examples trips its checksum.
+      #
+      # CARGO_HTTP_MULTIPLEXING=false works around recurring "[16] Error in the HTTP2 framing
+      # layer" curl failures on the runners when this job re-downloads registry deps.
       - name: cargo publish dry-run (no upload)
+        env:
+          CARGO_HTTP_MULTIPLEXING: "false"
         run: cargo publish --dry-run -p ruststream-macros -p ruststream --all-features
 
   security:
