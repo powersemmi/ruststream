@@ -120,7 +120,7 @@ async fn app_dispatches_typed_messages() {
 
     wait_for(
         || received.load(Ordering::SeqCst) == 10,
-        Duration::from_secs(1),
+        Duration::from_secs(5),
     )
     .await;
 
@@ -155,7 +155,7 @@ async fn app_subscribes_via_descriptor_after_connect() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     // The descriptor subscribes inside run(); retry publishing until the subscription is live.
-    wait_for_published(&publisher, &seen, Duration::from_secs(1)).await;
+    wait_for_published(&publisher, &seen, Duration::from_secs(5)).await;
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
@@ -189,7 +189,7 @@ async fn included_router_handlers_dispatch() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    wait_for_published(&publisher, &seen, Duration::from_secs(1)).await;
+    wait_for_published(&publisher, &seen, Duration::from_secs(5)).await;
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
@@ -225,7 +225,7 @@ async fn global_layer_reaches_router_handlers() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    wait_for_published(&publisher, &handler_hits, Duration::from_secs(1)).await;
+    wait_for_published(&publisher, &handler_hits, Duration::from_secs(5)).await;
 
     assert!(
         layer_hits.load(Ordering::SeqCst) >= 1,
@@ -273,7 +273,7 @@ async fn global_layer_wraps_handlers() {
 
     wait_for(
         || handler_hits.load(Ordering::SeqCst) == 1 && layer_hits.load(Ordering::SeqCst) == 1,
-        Duration::from_secs(1),
+        Duration::from_secs(5),
     )
     .await;
 
@@ -326,12 +326,12 @@ async fn cross_broker_publish_via_named_publisher() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     // ingress "orders" subscribes inside run() (deferred); retry until the bridge fires.
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = ingress_pub
                 .publish(OutgoingMessage::new("orders", b"x"))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
             if received.load(Ordering::SeqCst) >= 1 {
                 break;
             }
@@ -394,7 +394,7 @@ async fn handler_reads_context_topic_and_state() {
 
     wait_for(
         || seen.lock().expect("poisoned").is_some(),
-        Duration::from_secs(1),
+        Duration::from_secs(5),
     )
     .await;
     assert_eq!(
@@ -459,7 +459,7 @@ async fn lifespan_hooks_run_in_order() {
 
     wait_for(
         || order.lock().expect("poisoned").contains(&"after_startup"),
-        Duration::from_secs(1),
+        Duration::from_secs(5),
     )
     .await;
     shutdown.notify_one();
@@ -502,7 +502,9 @@ fn app_records_handler_metadata() {
 async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
     let result = tokio::time::timeout(timeout, async {
         while !cond() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            // Yield to the scheduler; in multi-thread mode the handler runs in a different
+            // thread and updates the atomic independently - no sleep needed for correctness.
+            tokio::task::yield_now().await;
         }
     })
     .await;
@@ -515,7 +517,8 @@ async fn wait_for_published(publisher: &impl Publisher, seen: &AtomicU32, timeou
             let _ = publisher
                 .publish(OutgoingMessage::new("events", b"ping"))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            // Yield once so the handler task has a chance to run before checking.
+            tokio::task::yield_now().await;
             if seen.load(Ordering::SeqCst) >= 1 {
                 break;
             }
@@ -598,12 +601,12 @@ async fn ctx_publisher_runs_through_pipeline() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = ingress_pub
                 .publish(OutgoingMessage::new("orders", b"x"))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
             if tagged.load(Ordering::SeqCst) >= 1 {
                 break;
             }

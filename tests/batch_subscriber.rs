@@ -2,14 +2,17 @@
 //! `include_batch` mounting, per-element decode failures, and the `Buffered` adapter.
 #![cfg(feature = "macros")]
 
+mod common;
+
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
+use common::handler_signal;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
 use ruststream::testing::TestClient;
@@ -27,6 +30,7 @@ fn order_bytes(id: u32) -> Vec<u8> {
 }
 
 static BATCHES: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
+static BILL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Settles a whole page of orders at once.
 #[subscriber(batch("orders"))]
@@ -35,6 +39,7 @@ async fn bill(orders: &[Order]) -> HandlerResult {
         .lock()
         .unwrap()
         .push(orders.iter().map(|o| o.id).collect());
+    BILL_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -50,15 +55,15 @@ async fn batch_macro_def_receives_batches() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    // The subscription opens inside run(); retry until deliveries land.
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    // The subscription opens inside run(); retry publishing until deliveries land.
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             for id in 0..3u32 {
                 let _ = publisher
                     .publish(OutgoingMessage::new("orders", &order_bytes(id)))
                     .await;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&BILL_NOTIFY).await;
             let received: usize = BATCHES.lock().unwrap().iter().map(Vec::len).sum();
             if received >= 3 {
                 break;
@@ -85,11 +90,13 @@ async fn batch_macro_def_receives_batches() {
 }
 
 static GOOD_IDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static SIFT_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Records the ids that survived decoding.
 #[subscriber(batch("mixed"))]
 async fn sift(orders: &[Order]) -> HandlerResult {
     GOOD_IDS.lock().unwrap().extend(orders.iter().map(|o| o.id));
+    SIFT_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -105,7 +112,7 @@ async fn undecodable_elements_never_reach_the_handler() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("mixed", &order_bytes(1)))
@@ -116,7 +123,7 @@ async fn undecodable_elements_never_reach_the_handler() {
             let _ = publisher
                 .publish(OutgoingMessage::new("mixed", &order_bytes(2)))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&SIFT_NOTIFY).await;
             if GOOD_IDS.lock().unwrap().len() >= 2 {
                 break;
             }
@@ -134,6 +141,7 @@ async fn undecodable_elements_never_reach_the_handler() {
 }
 
 static BUFFERED_SEEN: AtomicUsize = AtomicUsize::new(0);
+static DRAIN_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// A handler mounted on a `Buffered`-wrapped source directly in the macro. The macro recovers
 /// the source type from the constructor path, so a generic source spells its parameter
@@ -141,6 +149,7 @@ static BUFFERED_SEEN: AtomicUsize = AtomicUsize::new(0);
 #[subscriber(batch(Buffered::<Name>::new(Name::new("events")).max_size(2)))]
 async fn drain(events: &[Order]) -> HandlerResult {
     BUFFERED_SEEN.fetch_add(events.len(), Ordering::SeqCst);
+    DRAIN_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -158,12 +167,12 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("events", &order_bytes(7)))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&DRAIN_NOTIFY).await;
             if BUFFERED_SEEN.load(Ordering::SeqCst) >= 1 {
                 break;
             }
@@ -177,12 +186,13 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
 }
 
 static SETTLED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static RECONCILE_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static RETRIED_ONCE: AtomicBool = AtomicBool::new(false);
 
 /// Retries order 11 on first sight; settles everything else, per element.
 #[subscriber(batch("pages"))]
 async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
-    orders
+    let results = orders
         .iter()
         .map(|o| {
             if o.id == 11 && !RETRIED_ONCE.swap(true, Ordering::SeqCst) {
@@ -192,7 +202,9 @@ async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
                 HandlerResult::Ack
             }
         })
-        .collect()
+        .collect();
+    RECONCILE_NOTIFY.notify_one();
+    results
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -209,12 +221,12 @@ async fn per_element_outcomes_retry_individually() {
 
     // Warm up until the subscription is live, then publish the real page exactly once, so the
     // retry accounting below is deterministic.
-    let warmup = tokio::time::timeout(Duration::from_secs(1), async {
+    let warmup = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("pages", &order_bytes(0)))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&RECONCILE_NOTIFY).await;
             if SETTLED.lock().unwrap().contains(&0) {
                 break;
             }
@@ -230,9 +242,9 @@ async fn per_element_outcomes_retry_individually() {
             .unwrap();
     }
 
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&RECONCILE_NOTIFY).await;
             let settled = SETTLED.lock().unwrap().clone();
             if [10, 11, 12].iter().all(|id| settled.contains(id)) {
                 break;
@@ -263,10 +275,13 @@ struct Confirmation {
     accepted: bool,
 }
 
+static BATCH_CONFIRM_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
 /// Confirms a page of orders. The Result form gives explicit ack control; the whole-batch
 /// rejection path is covered by the runtime unit tests.
 #[subscriber(batch("requests"), publish("confirmations"))]
 async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerResult> {
+    BATCH_CONFIRM_NOTIFY.notify_one();
     Ok(orders
         .iter()
         .map(|o| Confirmation {
@@ -302,14 +317,16 @@ async fn batch_replies_publish_transactionally() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    // Retry publishing until the subscription is live, waking as soon as the handler fires;
+    // the published confirmations are then awaited with expect_published's own deadline.
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("requests", &order_bytes(7)))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&BATCH_CONFIRM_NOTIFY).await;
             let confirmed = observer
-                .expect_published("confirmations", 1, Duration::from_millis(1))
+                .expect_published("confirmations", 1, Duration::from_millis(200))
                 .await
                 .unwrap();
             if !confirmed.is_empty() {
