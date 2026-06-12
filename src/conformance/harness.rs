@@ -336,7 +336,7 @@ async fn expect_published_observes_publishes<T: TestClient>(client: T) {
     client.shutdown().await.expect("shutdown failed");
 }
 
-async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M
+pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
     M: IncomingMessage,
@@ -349,7 +349,7 @@ where
     item.unwrap_or_else(|err| panic!("{label}: stream yielded error: {err:?}"))
 }
 
-async fn expect_no_more<S, M, E>(stream: &mut S, label: &str)
+pub(crate) async fn expect_no_more<S, M, E>(stream: &mut S, label: &str)
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
     M: IncomingMessage,

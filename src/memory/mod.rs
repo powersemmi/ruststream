@@ -9,11 +9,20 @@
 //! harness runs against. It does not model any broker-specific semantics (`JetStream` ack
 //! timing, `Kafka` offsets, `RabbitMQ` exchanges); for those, use the corresponding broker
 //! crate.
+//!
+//! Every capability trait has a native implementation here, as a first-class feature of the
+//! broker's own in-process semantics (not a simulation of someone else's): request / reply via
+//! [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
+//! [`MemoryPublisher`], and partition keys on [`MemoryMessage`].
+
+mod capability;
+
+pub use capability::{MemoryRequester, PARTITION_KEY_HEADER, RequestError};
 
 use std::{
     collections::HashMap,
     convert::Infallible,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, atomic::AtomicU64},
     time::Duration,
 };
 
@@ -42,6 +51,7 @@ struct MemoryState {
     subscribers: Mutex<HashMap<String, Vec<Sender>>>,
     published: Mutex<HashMap<String, Vec<RawMessage>>>,
     notify: Notify,
+    inbox_seq: AtomicU64,
 }
 
 impl MemoryState {
@@ -51,6 +61,16 @@ impl MemoryState {
             .lock()
             .expect("memory broker mutex poisoned");
         subs.entry(name).or_default().push(tx);
+    }
+
+    // Request inboxes are single-use; dropping the whole entry keeps the subscriber map from
+    // accumulating one dead sender per completed request.
+    fn unregister(&self, name: &str) {
+        let mut subs = self
+            .subscribers
+            .lock()
+            .expect("memory broker mutex poisoned");
+        subs.remove(name);
     }
 
     fn fanout(&self, delivery: &MemoryDelivery) {
@@ -98,6 +118,7 @@ impl MemoryBroker {
             name,
             rx,
             requeue: tx,
+            batch_limit: DEFAULT_BATCH_LIMIT,
         }
     }
 
@@ -106,7 +127,18 @@ impl MemoryBroker {
     pub fn publisher(&self) -> MemoryPublisher {
         MemoryPublisher {
             state: Arc::clone(&self.state),
+            txn: Mutex::new(None),
         }
+    }
+
+    /// Returns a request / reply-capable publisher bound to this broker.
+    ///
+    /// Unlike [`MemoryBroker::publisher`], whose fire-and-forget operations cannot fail, a
+    /// requester awaits a correlated reply that may never arrive, so its operations report
+    /// [`RequestError`].
+    #[must_use]
+    pub fn requester(&self) -> MemoryRequester {
+        MemoryRequester::new(Arc::clone(&self.state))
     }
 }
 
@@ -176,12 +208,30 @@ impl SubscriptionSource<MemoryBroker> for MemorySource {
     }
 }
 
+/// Default cap on how many buffered deliveries one batch drains.
+const DEFAULT_BATCH_LIMIT: usize = 64;
+
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
+///
+/// Also consumable in batches through the
+/// [`BatchSubscriber`](crate::BatchSubscriber) capability; see
+/// [`set_batch_limit`](Self::set_batch_limit) for the batch size cap.
 pub struct MemorySubscriber {
     name: String,
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
+    batch_limit: usize,
+}
+
+impl MemorySubscriber {
+    /// Caps how many buffered deliveries one batch yielded by
+    /// [`BatchSubscriber::batches`](crate::BatchSubscriber::batches) may carry (default 64).
+    ///
+    /// A batch always carries at least one delivery, so a limit of zero behaves like one.
+    pub fn set_batch_limit(&mut self, limit: usize) {
+        self.batch_limit = limit;
+    }
 }
 
 impl std::fmt::Debug for MemorySubscriber {
@@ -215,9 +265,24 @@ impl Subscriber for MemorySubscriber {
 
 /// Publisher returned by [`MemoryBroker::publisher`]. Fanout copy to every subscriber of the
 /// target name at publish time.
-#[derive(Clone)]
+///
+/// Also implements [`TransactionalPublisher`](crate::TransactionalPublisher): while a
+/// transaction is active on this handle, publishes are buffered and fan out together on commit.
 pub struct MemoryPublisher {
     state: Arc<MemoryState>,
+    // Active transaction buffer of this handle. `None` outside a transaction.
+    txn: Mutex<Option<Vec<MemoryDelivery>>>,
+}
+
+impl Clone for MemoryPublisher {
+    /// A clone is an independent handle on the same broker: it does not join (or carry over)
+    /// this handle's active transaction.
+    fn clone(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            txn: Mutex::new(None),
+        }
+    }
 }
 
 impl std::fmt::Debug for MemoryPublisher {
@@ -235,6 +300,13 @@ impl Publisher for MemoryPublisher {
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         };
+        {
+            let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
+            if let Some(buffered) = txn.as_mut() {
+                buffered.push(delivery);
+                return Ok(());
+            }
+        }
         self.state.fanout(&delivery);
         Ok(())
     }
