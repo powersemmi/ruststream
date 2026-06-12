@@ -46,6 +46,23 @@ async fn settle(orders: &[Order]) -> HandlerResult {
 }
 // --8<-- [end:batch]
 
+// --8<-- [start:batch_selective]
+/// Retries only the entries that are not ready yet; the rest of the page settles.
+#[subscriber(batch("orders"))]
+async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
+    orders
+        .iter()
+        .map(|order| {
+            if order.id == 0 {
+                HandlerResult::retry()
+            } else {
+                HandlerResult::Ack
+            }
+        })
+        .collect()
+}
+// --8<-- [end:batch_selective]
+
 // --8<-- [start:batch_buffered]
 // Client-side batching for sources without native batches: close a batch at 128 deliveries or
 // 20 ms after its first one. The macro recovers the source type from the constructor path, so
@@ -67,6 +84,7 @@ fn app() -> RustStream {
         // --8<-- [start:batch_mount]
         b.include_batch(settle);
         // --8<-- [end:batch_mount]
+        b.include_batch(reconcile);
         b.include_batch(drain);
         // --8<-- [start:manual]
         b.subscribe(

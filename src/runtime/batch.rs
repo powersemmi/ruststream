@@ -11,7 +11,7 @@
 use std::{future::Future, marker::PhantomData};
 
 use serde::de::DeserializeOwned;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::IncomingMessage;
 use crate::codec::Codec;
@@ -21,24 +21,106 @@ use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
 use super::typed::DecodeFailure;
 
+/// The settlement of one dispatched batch.
+///
+/// Returned by batch handlers (usually through [`IntoBatchResult`]) and applied by the
+/// dispatcher to each message's own `ack` / `nack`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BatchResult {
+    /// One outcome settles every message of the batch.
+    Uniform(HandlerResult),
+    /// Outcome `i` settles slice element `i`. A length mismatch with the dispatched batch is a
+    /// bug in the handler: the unmatched remainder is retried (an extra redelivery beats a
+    /// silently lost message) and the mismatch is logged.
+    PerElement(Vec<HandlerResult>),
+}
+
+/// Conversion into a [`BatchResult`], so `#[subscriber(batch(..))]` handlers can return a plain
+/// value.
+///
+/// Implemented for [`BatchResult`] (identity), [`HandlerResult`] / `()` / `Result<(), E>` /
+/// `Result<HandlerResult, E>` (one outcome for the whole batch, with the same conventions as
+/// [`IntoHandlerResult`](super::IntoHandlerResult)), and `Vec<HandlerResult>` (element `i`
+/// settles slice element `i`).
+pub trait IntoBatchResult {
+    /// Converts `self` into the settlement the dispatcher applies.
+    fn into_batch_result(self) -> BatchResult;
+}
+
+impl IntoBatchResult for BatchResult {
+    fn into_batch_result(self) -> BatchResult {
+        self
+    }
+}
+
+impl IntoBatchResult for HandlerResult {
+    fn into_batch_result(self) -> BatchResult {
+        BatchResult::Uniform(self)
+    }
+}
+
+impl IntoBatchResult for () {
+    fn into_batch_result(self) -> BatchResult {
+        BatchResult::Uniform(HandlerResult::Ack)
+    }
+}
+
+impl<E> IntoBatchResult for Result<(), E> {
+    fn into_batch_result(self) -> BatchResult {
+        BatchResult::Uniform(match self {
+            Ok(()) => HandlerResult::Ack,
+            Err(_) => HandlerResult::drop(),
+        })
+    }
+}
+
+impl<E> IntoBatchResult for Result<HandlerResult, E> {
+    fn into_batch_result(self) -> BatchResult {
+        BatchResult::Uniform(self.unwrap_or_else(|_| HandlerResult::drop()))
+    }
+}
+
+impl IntoBatchResult for Vec<HandlerResult> {
+    fn into_batch_result(self) -> BatchResult {
+        BatchResult::PerElement(self)
+    }
+}
+
 /// A handler invoked with one whole decoded batch.
 ///
 /// The batch parameter is a slice: per-message broker handles stay with the dispatcher, which
-/// acknowledges every message of the batch according to the returned [`HandlerResult`].
+/// settles every message of the batch according to the returned [`BatchResult`] - one uniform
+/// outcome, or one outcome per element.
 ///
 /// # Examples
 ///
-/// Closures implement `SliceHandler` automatically:
+/// Closures returning any [`IntoBatchResult`] implement `SliceHandler` automatically:
 ///
 /// ```
 /// use ruststream::runtime::{Context, HandlerResult, SliceHandler};
 ///
 /// fn assert_slice_handler<T, H: SliceHandler<T>>(_: H) {}
 ///
-/// fn use_closure() {
+/// fn use_closures() {
+///     // One outcome for the whole batch.
 ///     assert_slice_handler::<u32, _>(|batch: &[u32], _ctx: &mut Context| {
 ///         let _ = batch.len();
 ///         async { HandlerResult::Ack }
+///     });
+///     // One outcome per element: entries that are not ready yet retry individually.
+///     assert_slice_handler::<u32, _>(|batch: &[u32], _ctx: &mut Context| {
+///         let outcomes: Vec<HandlerResult> = batch
+///             .iter()
+///             .map(|n| {
+///                 if *n == 0 {
+///                     HandlerResult::retry()
+///                 } else {
+///                     HandlerResult::Ack
+///                 }
+///             })
+///             .collect();
+///         async move { outcomes }
 ///     });
 /// }
 /// ```
@@ -48,20 +130,24 @@ pub trait SliceHandler<T>: Send + Sync {
         &self,
         batch: &[T],
         ctx: &mut Context,
-    ) -> impl Future<Output = HandlerResult> + Send;
+    ) -> impl Future<Output = BatchResult> + Send;
 }
 
 impl<T, F, Fut> SliceHandler<T> for F
 where
     F: Fn(&[T], &mut Context) -> Fut + Send + Sync,
-    Fut: Future<Output = HandlerResult> + Send,
+    Fut: Future + Send,
+    Fut::Output: IntoBatchResult,
 {
     fn handle_slice(
         &self,
         batch: &[T],
         ctx: &mut Context,
-    ) -> impl Future<Output = HandlerResult> + Send {
-        (self)(batch, ctx)
+    ) -> impl Future<Output = BatchResult> + Send {
+        // Build the inner future before the async block so the returned future does not hold
+        // `&[T]` (which would demand `T: Sync` for it to be `Send`).
+        let fut = (self)(batch, ctx);
+        async move { fut.await.into_batch_result() }
     }
 }
 
@@ -158,7 +244,8 @@ where
 ///
 /// Each element decodes independently: failures are settled individually per the
 /// [`DecodeFailure`] policy and never reach the handler; the rest are passed on as one slice.
-/// The [`HandlerResult`] the handler returns is applied to every delivery behind that slice.
+/// The [`BatchResult`] the handler returns settles the deliveries behind that slice - uniformly,
+/// or element by element.
 pub struct TypedBatch<M, T, C, H> {
     codec: C,
     inner: H,
@@ -216,15 +303,152 @@ where
         if accepted.is_empty() {
             return;
         }
-        let outcome = self.inner.handle_slice(&values, ctx).await;
-        for msg in accepted {
-            let ack_result = match outcome {
-                HandlerResult::Ack => msg.ack().await,
-                HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-            };
-            if let Err(err) = ack_result {
-                warn!(target: "ruststream::dispatch", error = %err, "ack / nack failed");
+        match self.inner.handle_slice(&values, ctx).await {
+            BatchResult::Uniform(result) => {
+                for msg in accepted {
+                    settle(msg, result).await;
+                }
             }
+            BatchResult::PerElement(results) => {
+                if results.len() != accepted.len() {
+                    error!(
+                        target: "ruststream::dispatch",
+                        expected = accepted.len(),
+                        returned = results.len(),
+                        "per-element outcome count does not match the batch; \
+                         retrying the unmatched remainder",
+                    );
+                }
+                let mut results = results.into_iter();
+                for msg in accepted {
+                    // An unmatched message gets retried: an extra redelivery beats losing it.
+                    let result = results.next().unwrap_or_else(HandlerResult::retry);
+                    settle(msg, result).await;
+                }
+            }
+        }
+    }
+}
+
+async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult) {
+    let ack_result = match result {
+        HandlerResult::Ack => msg.ack().await,
+        HandlerResult::Nack { requeue } => msg.nack(requeue).await,
+    };
+    if let Err(err) = ack_result {
+        warn!(target: "ruststream::dispatch", error = %err, "ack / nack failed");
+    }
+}
+
+#[cfg(all(test, feature = "memory", feature = "json"))]
+mod tests {
+    use futures::StreamExt;
+
+    use super::super::context::State;
+    use super::super::dispatch::Delivery;
+    use super::*;
+    use crate::codec::JsonCodec;
+    use crate::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
+    use crate::{BatchSubscriber, Headers, OutgoingMessage, Publisher, Subscriber};
+
+    async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
+        let publisher = broker.publisher();
+        for n in numbers {
+            publisher
+                .publish(OutgoingMessage::new(name, &serde_json::to_vec(n).unwrap()))
+                .await
+                .unwrap();
+        }
+    }
+
+    async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
+        let mut stream = std::pin::pin!(sub.batches());
+        stream.next().await.unwrap().unwrap()
+    }
+
+    #[tokio::test]
+    async fn per_element_outcomes_settle_individually() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("selective");
+        publish_numbers(&broker, "selective", &[0, 1, 2]).await;
+
+        // 0 acks, 1 retries, 2 drops: only 1 may come back.
+        let handler = typed_batch(JsonCodec, |batch: &[u32], _ctx: &mut Context| {
+            let outcomes: Vec<HandlerResult> = batch
+                .iter()
+                .map(|n| match n {
+                    1 => HandlerResult::retry(),
+                    2 => HandlerResult::drop(),
+                    _ => HandlerResult::Ack,
+                })
+                .collect();
+            async move { outcomes }
+        });
+
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let mut ctx = Context::new("selective", Headers::new(), &state, &delivery);
+        let batch = pull_batch(&mut sub).await;
+        assert_eq!(batch.len(), 3);
+        handler.handle_batch(batch, &mut ctx).await;
+
+        let redelivered = pull_batch(&mut sub).await;
+        let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
+        assert_eq!(payloads, [b"1"]);
+        for msg in redelivered {
+            msg.ack().await.unwrap();
+        }
+        let mut stream = std::pin::pin!(sub.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
+    }
+
+    #[tokio::test]
+    async fn unmatched_remainder_is_retried() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("short");
+        publish_numbers(&broker, "short", &[0, 1, 2]).await;
+
+        // A buggy handler returning one outcome for a batch of three: the unmatched two retry.
+        let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
+            vec![HandlerResult::Ack]
+        });
+
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let mut ctx = Context::new("short", Headers::new(), &state, &delivery);
+        let batch = pull_batch(&mut sub).await;
+        assert_eq!(batch.len(), 3);
+        handler.handle_batch(batch, &mut ctx).await;
+
+        let redelivered = pull_batch(&mut sub).await;
+        let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
+        assert_eq!(payloads, [b"1", b"2"]);
+        for msg in redelivered {
+            msg.ack().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn uniform_outcome_settles_the_whole_batch() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("uniform");
+        publish_numbers(&broker, "uniform", &[0, 1]).await;
+
+        let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
+            HandlerResult::retry()
+        });
+
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let mut ctx = Context::new("uniform", Headers::new(), &state, &delivery);
+        let batch = pull_batch(&mut sub).await;
+        assert_eq!(batch.len(), 2);
+        handler.handle_batch(batch, &mut ctx).await;
+
+        let redelivered = pull_batch(&mut sub).await;
+        assert_eq!(redelivered.len(), 2);
+        for msg in redelivered {
+            msg.ack().await.unwrap();
         }
     }
 }

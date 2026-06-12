@@ -206,9 +206,11 @@ fn unsupported_source(expr: &Expr) -> syn::Error {
 ///
 /// Wrapping the source in `batch(..)` switches the definition to a `BatchDef`: the handler takes
 /// `&[T]` and runs once per batch pulled from the broker's `BatchSubscriber` (use the `Buffered`
-/// adapter for brokers without native batching). `batch(..)` cannot be combined with
-/// `publish(..)`. The source type is recovered from the constructor path, so a generic source
-/// spells its parameters: `batch(Buffered::<Name>::new(Name::new("orders")))`.
+/// adapter for brokers without native batching). It returns any `IntoBatchResult` - one outcome
+/// for the whole batch (`HandlerResult`, `()`, `Result<_, E>`), or `Vec<HandlerResult>` to settle
+/// element `i` of the slice with outcome `i`. `batch(..)` cannot be combined with `publish(..)`.
+/// The source type is recovered from the constructor path, so a generic source spells its
+/// parameters: `batch(Buffered::<Name>::new(Name::new("orders")))`.
 ///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
 /// `&mut Context`, to read app state or publish manually.
@@ -385,7 +387,7 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
                 "batch(..) cannot be combined with publish(..)",
             ));
         }
-        expand_batch(&parts)
+        expand_batch(&parts, func)
     } else if let Some(reply_topic) = &args.publish {
         expand_publishing(&parts, func, reply_topic)?
     } else {
@@ -394,7 +396,7 @@ fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     Ok(body.into())
 }
 
-fn expand_batch(parts: &HandlerParts<'_>) -> TokenStream2 {
+fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
     let HandlerParts {
         vis,
         name,
@@ -409,6 +411,14 @@ fn expand_batch(parts: &HandlerParts<'_>) -> TokenStream2 {
         ctx_param,
     } = parts;
 
+    // Pin the body's type to the declared return type before the `IntoBatchResult` conversion:
+    // the trait has several impls, so an open-ended tail like `.collect()` cannot infer through
+    // the conversion alone.
+    let outcome_ty = match &func.sig.output {
+        ReturnType::Type(_, ty) => quote!(#ty),
+        ReturnType::Default => quote!(()),
+    };
+
     quote! {
             #[derive(Clone, Copy)]
             #[allow(non_camel_case_types)]
@@ -419,10 +429,9 @@ fn expand_batch(parts: &HandlerParts<'_>) -> TokenStream2 {
                     &self,
                     #pat: &[#input_ty],
                     #ctx_param: &mut ::ruststream::runtime::Context<'_>,
-                ) -> ::ruststream::runtime::HandlerResult {
-                    ::ruststream::runtime::IntoHandlerResult::into_handler_result(
-                        (async move #block).await,
-                    )
+                ) -> ::ruststream::runtime::BatchResult {
+                    let outcome: #outcome_ty = (async move #block).await;
+                    ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)
                 }
             }
 

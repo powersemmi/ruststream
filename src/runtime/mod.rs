@@ -18,7 +18,7 @@ mod subscriber_def;
 mod typed;
 
 pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
-pub use batch::{BatchDef, SliceHandler, TypedBatch};
+pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
 pub use context::{Context, State};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use handler::{Handler, HandlerResult, IntoHandlerResult};
