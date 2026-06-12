@@ -23,8 +23,11 @@ use tokio_util::sync::CancellationToken;
 use crate::codec::Codec;
 use crate::{Broker, Publisher, Subscriber, SubscriptionSource};
 
+use crate::BatchSubscriber;
+
+use super::batch::{BatchDef, BatchHandler, TypedBatch, batch_metadata, typed_batch};
 use super::context::State;
-use super::dispatch::{Delivery, spawn_dispatch};
+use super::dispatch::{Delivery, spawn_batch_dispatch, spawn_dispatch};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
@@ -61,6 +64,17 @@ type TypedRoute<B, S, D, C> = SubscribeRoute<
 /// The router that mounting a [`SubscriberDef`] `D` on source `S` (decoded with `C`) onto `R`
 /// produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
 type IncludedRouter<B, S, D, C, RC, RL, R> = Router<B, (TypedRoute<B, S, D, C>, R), RC, RL>;
+
+/// The route a [`BatchDef`] `D` mounted on source `S` (decoded with `C`) becomes.
+type BatchTypedRoute<B, S, D, C> = BatchRoute<
+    S,
+    TypedBatch<SourceMessage<B, S>, <D as BatchDef>::Input, C, <D as BatchDef>::Handler>,
+>;
+
+/// The router that mounting a [`BatchDef`] `D` on source `S` (decoded with `C`) onto `R`
+/// produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
+type IncludedBatchRouter<B, S, D, C, RC, RL, R> =
+    Router<B, (BatchTypedRoute<B, S, D, C>, R), RC, RL>;
 
 /// The router that mounting a publishing [`PublishingDef`] `D` on source `S` (decoded with `C`,
 /// replying through a `P`/`PC`/`PL` publisher) onto `R` produces. `RC` / `RL` are the router's own
@@ -116,6 +130,35 @@ impl<B: Broker + 'static> RouterSink<B> {
         self.handlers.push(meta);
     }
 
+    /// Erases a source and its batch handler into a starter driving
+    /// [`BatchSubscriber::batches`]; the subscription opens after connect.
+    pub(crate) fn push_subscribe_batch<S, H>(
+        &mut self,
+        source: S,
+        handler: H,
+        meta: HandlerMetadata,
+    ) where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        H: BatchHandler<SourceMessage<B, S>> + 'static,
+    {
+        let handler = Arc::new(handler);
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        self.starters
+            .push(Box::new(move |broker: Arc<B>, state, delivery, token| {
+                Box::pin(async move {
+                    let subscriber = source
+                        .subscribe(broker.as_ref())
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
+                    Ok(spawn_batch_dispatch(
+                        subscriber, handler, token, name, state, delivery,
+                    ))
+                })
+            }));
+        self.handlers.push(meta);
+    }
+
     /// Erases a source and its handler into a starter; the subscription opens after connect.
     pub(crate) fn push_subscribe<S, H>(&mut self, source: S, handler: H, meta: HandlerMetadata)
     where
@@ -164,6 +207,16 @@ pub struct HandleRoute<S, H> {
     meta: HandlerMetadata,
 }
 
+/// One batch-subscription registration: a source plus the batch handler consuming its batches.
+/// An implementation detail of [`Router`]'s registration list.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct BatchRoute<S, H> {
+    source: S,
+    handler: H,
+    meta: HandlerMetadata,
+}
+
 /// One mountable registration: applies the global blanket layer to its handler and registers it.
 trait MountRoute<B> {
     fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>);
@@ -181,6 +234,24 @@ where
     fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
         let handler = global.apply::<SourceMessage<B, S>, H>(self.handler);
         sink.push_subscribe(self.source, handler, self.meta);
+    }
+
+    fn collect(&self, out: &mut Vec<HandlerMetadata>) {
+        out.push(self.meta.clone());
+    }
+}
+
+impl<B, S, H> MountRoute<B> for BatchRoute<S, H>
+where
+    B: Broker + 'static,
+    S: SubscriptionSource<B> + Send + 'static,
+    S::Subscriber: BatchSubscriber + Send + 'static,
+    H: BatchHandler<SourceMessage<B, S>> + 'static,
+{
+    fn mount_one<G: BlanketLayer>(self, _global: &G, sink: &mut RouterSink<B>) {
+        // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
+        // nor the router's own layers apply to batch registrations.
+        sink.push_subscribe_batch(self.source, self.handler, self.meta);
     }
 
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
@@ -445,6 +516,39 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         self.subscribe(source, handler, meta)
     }
 
+    /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
+    /// `include_batch` / `include_batch_on` forms.
+    fn mount_batch<S, D, C>(
+        self,
+        source: S,
+        def: D,
+        codec: C,
+    ) -> IncludedBatchRouter<B, S, D, C, RC, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        C: Codec + 'static,
+    {
+        let meta = batch_metadata(source.name().to_owned(), &def);
+        let handler = typed_batch(codec, def.into_handler());
+        Router {
+            routes: (
+                BatchRoute {
+                    source,
+                    handler,
+                    meta,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
     /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
     /// `publisher`. The shared tail of the `include_publishing` / `include_publishing_on` forms.
     fn mount_publishing<S, D, C, P, PC, PL>(
@@ -521,6 +625,47 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         D::Handler: 'static,
     {
         self.mount_subscriber(source, def, crate::codec::DefaultCodec::default())
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on its own source, decoding each
+    /// element with the [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// The source's subscriber must implement [`BatchSubscriber`] - natively, or through the
+    /// [`Buffered`](crate::Buffered) adapter. Router and app middleware wrap per-message handlers
+    /// and do not apply to batch registrations.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_batch<D>(
+        self,
+        def: D,
+    ) -> IncludedBatchRouter<B, D::Source, D, crate::codec::DefaultCodec, (), RL, R>
+    where
+        D: BatchDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let source = def.source();
+        self.mount_batch(source, def, crate::codec::DefaultCodec::default())
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on an explicit subscription
+    /// `source` (overriding the macro's own source), decoding each element with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_batch_on<S, D>(
+        self,
+        source: S,
+        def: D,
+    ) -> IncludedBatchRouter<B, S, D, crate::codec::DefaultCodec, (), RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        self.mount_batch(source, def, crate::codec::DefaultCodec::default())
     }
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
@@ -600,6 +745,40 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
     {
         let codec = self.codec.clone();
         self.mount_subscriber(source, def, codec)
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on its own source, decoding each
+    /// element with the chain's codec (set by [`with_codec`](Self::with_codec)).
+    pub fn include_batch<D>(self, def: D) -> IncludedBatchRouter<B, D::Source, D, C, C, RL, R>
+    where
+        D: BatchDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        let source = def.source();
+        self.mount_batch(source, def, codec)
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on an explicit subscription
+    /// `source`, decoding each element with the chain's codec (set by
+    /// [`with_codec`](Self::with_codec)).
+    pub fn include_batch_on<S, D>(
+        self,
+        source: S,
+        def: D,
+    ) -> IncludedBatchRouter<B, S, D, C, C, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_batch(source, def, codec)
     }
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,

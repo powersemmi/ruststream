@@ -31,6 +31,7 @@
 #![forbid(unsafe_code)]
 
 mod broker;
+mod buffered;
 mod capability;
 mod error;
 mod headers;
@@ -42,6 +43,7 @@ mod subscription;
 pub mod testing;
 
 pub use broker::Broker;
+pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     BatchSubscriber, DescribeServer, Partitioned, RequestReply, ServerSpec, Subscribe,
     TransactionalPublisher,

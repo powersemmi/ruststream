@@ -100,6 +100,43 @@ handler, per scope, or the feature-selected default. See
 To group handlers per module and mount them all at once, collect them into a `Router`; see
 [Routing](routing.md).
 
+## Batch subscribers
+
+Wrapping the source in `batch(..)` switches the handler to whole-batch consumption: it takes the
+decoded batch as a slice and runs once per batch the broker delivers - one database round-trip,
+one bulk API call.
+
+```rust
+--8<-- "examples/subscribers.rs:batch"
+```
+
+Mount it with `include_batch` (the batch counterpart of `include`):
+
+```rust
+--8<-- "examples/subscribers.rs:batch_mount"
+```
+
+The source's subscriber must implement the `BatchSubscriber` capability. Brokers whose clients
+batch natively (Kafka poll, JetStream pull consumers) expose it directly, and batch sizing lives
+in their subscription options; the in-memory broker batches natively too. For any other source,
+the `Buffered` adapter buffers single deliveries client-side, closing a batch by size or by a
+deadline after its first delivery:
+
+```rust
+--8<-- "examples/subscribers.rs:batch_buffered"
+```
+
+The semantics differ from single-message handlers in a few ways:
+
+- Elements that fail to decode are nacked individually (per the decode-failure policy) and never
+  reach the handler; the rest arrive as one slice.
+- The returned `HandlerResult` settles **every** message of the batch: `Ack` acks them all,
+  `retry()` requeues them all.
+- Per-message headers are not accessible in the `&[T]` form, and the context starts with empty
+  headers.
+- App-global and router middleware wrap per-message handlers and do not apply to batch
+  registrations.
+
 ## Macro or manual
 
 `#[subscriber]` is sugar over a generic API. The macro generates a typed handler and its metadata;

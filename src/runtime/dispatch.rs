@@ -10,8 +10,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use crate::{IncomingMessage, Subscriber};
+use crate::{BatchSubscriber, Headers, IncomingMessage, Subscriber};
 
+use super::batch::BatchHandler;
 use super::context::{Context, State};
 use super::handler::{Handler, HandlerResult};
 use super::publish::PublishMiddleware;
@@ -70,6 +71,56 @@ where
                 () = shutdown.cancelled() => break,
                 next = stream.next() => match next {
                     Some(Ok(msg)) => dispatch(&*handler, msg, &name, &state, &delivery).await,
+                    Some(Err(err)) => {
+                        error!(
+                            target: "ruststream::dispatch",
+                            error = %err,
+                            "subscriber stream error",
+                        );
+                    }
+                    None => {
+                        debug!(
+                            target: "ruststream::dispatch",
+                            subscriber = %name,
+                            "subscriber stream ended",
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Spawns a task that drives `subscriber` through a batch `handler`, one
+/// [`BatchSubscriber::batches`] item per invocation, until `shutdown` is triggered or the stream
+/// terminates. The handler owns the batch's deliveries and settles each of them.
+pub(crate) fn spawn_batch_dispatch<S, H>(
+    mut subscriber: S,
+    handler: Arc<H>,
+    shutdown: CancellationToken,
+    name: Arc<str>,
+    state: Arc<State>,
+    delivery: Arc<Delivery>,
+) -> JoinHandle<()>
+where
+    S: BatchSubscriber + Send + 'static,
+    H: BatchHandler<S::Message> + 'static,
+{
+    tokio::spawn(async move {
+        let mut stream = std::pin::pin!(subscriber.batches());
+        loop {
+            tokio::select! {
+                () = shutdown.cancelled() => break,
+                next = stream.next() => match next {
+                    Some(Ok(batch)) => {
+                        // A batch has no single working copy of headers, so the context starts
+                        // with an empty set; per-message headers stay on the broker deliveries.
+                        let mut ctx = Context::new(&name, Headers::new(), &state, &delivery);
+                        handler
+                            .handle_batch(batch.into_iter().collect(), &mut ctx)
+                            .await;
+                    }
                     Some(Err(err)) => {
                         error!(
                             target: "ruststream::dispatch",

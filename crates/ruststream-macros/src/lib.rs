@@ -14,16 +14,39 @@ use syn::{
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
-/// descriptor constructor `Type::new(..)` / `Type { .. }`) and an optional `publish("topic")`
-/// clause naming the reply destination.
+/// descriptor constructor `Type::new(..)` / `Type { .. }`), optionally wrapped in `batch(..)`
+/// to consume whole batches, and an optional `publish("topic")` clause naming the reply
+/// destination.
 struct SubscriberArgs {
     source: Expr,
+    batch: bool,
     publish: Option<LitStr>,
 }
 
 impl Parse for SubscriberArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let source: Expr = input.parse()?;
+        let mut source: Expr = input.parse()?;
+        // `batch(<source>)` is a marker around the usual source argument, not a constructor:
+        // unwrap it and remember the form. A real constructor is never a bare one-segment call
+        // (free functions are rejected by `source_tokens`), so this cannot misfire.
+        let mut batch = false;
+        if let Expr::Call(call) = &source {
+            if let Expr::Path(ExprPath {
+                path, qself: None, ..
+            }) = &*call.func
+            {
+                if path.is_ident("batch") {
+                    if call.args.len() != 1 {
+                        return Err(syn::Error::new_spanned(
+                            call,
+                            "batch(..) takes exactly one source argument",
+                        ));
+                    }
+                    batch = true;
+                    source = call.args[0].clone();
+                }
+            }
+        }
         let mut publish = None;
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
@@ -38,7 +61,11 @@ impl Parse for SubscriberArgs {
             parenthesized!(content in input);
             publish = Some(content.parse()?);
         }
-        Ok(Self { source, publish })
+        Ok(Self {
+            source,
+            batch,
+            publish,
+        })
     }
 }
 
@@ -164,6 +191,11 @@ fn unsupported_source(expr: &Expr) -> syn::Error {
 /// // dispatcher acts on the returned HandlerResult.
 /// #[subscriber("requests", publish("responses"))]
 /// async fn confirm(req: &Request) -> Result<Response, HandlerResult> { /* ... */ }
+///
+/// // batch form: the handler takes the whole decoded batch as a slice; the source's
+/// // subscriber must implement BatchSubscriber. Mounted with include_batch.
+/// #[subscriber(batch("orders"))]
+/// async fn bill(orders: &[Order]) -> HandlerResult { /* settles the whole batch */ }
 /// ```
 ///
 /// Without `publish(..)` the handler returns any `IntoHandlerResult` (a `HandlerResult`, `()`, or
@@ -171,6 +203,12 @@ fn unsupported_source(expr: &Expr) -> syn::Error {
 /// `Result<Reply, HandlerResult>` to control acknowledgement: `Err(result)` publishes nothing and
 /// returns `result` to the dispatcher. The `Result` form is detected syntactically, so spell it
 /// out in the signature (a type alias is treated as a plain reply type).
+///
+/// Wrapping the source in `batch(..)` switches the definition to a `BatchDef`: the handler takes
+/// `&[T]` and runs once per batch pulled from the broker's `BatchSubscriber` (use the `Buffered`
+/// adapter for brokers without native batching). `batch(..)` cannot be combined with
+/// `publish(..)`. The source type is recovered from the constructor path, so a generic source
+/// spells its parameters: `batch(Buffered::<Name>::new(Name::new("orders")))`.
 ///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
 /// `&mut Context`, to read app state or publish manually.
@@ -264,7 +302,27 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
             "the message parameter must be a reference `&T`",
         ));
     };
-    let input_ty = &*reference.elem;
+    // In the batch(..) form the parameter is the whole batch `&[T]`; the def's `Input` is the
+    // element type either way.
+    let input_ty = if args.batch {
+        match &*reference.elem {
+            Type::Slice(slice) => &*slice.elem,
+            other => {
+                return Err(syn::Error::new_spanned(
+                    other,
+                    "a batch handler takes the whole batch as a slice: `&[T]`",
+                ));
+            }
+        }
+    } else {
+        if matches!(&*reference.elem, Type::Slice(_)) {
+            return Err(syn::Error::new_spanned(
+                &reference.elem,
+                "a slice parameter needs the batch source form: #[subscriber(batch(..))]",
+            ));
+        }
+        &*reference.elem
+    };
     let description = doc_description(&func.attrs);
     let (source_ty, source_expr) = source_tokens(&args.source)?;
 
@@ -320,12 +378,72 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
 
 fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     let parts = handler_parts(args, func)?;
-    let body = if let Some(reply_topic) = &args.publish {
+    let body = if args.batch {
+        if let Some(publish) = &args.publish {
+            return Err(syn::Error::new(
+                publish.span(),
+                "batch(..) cannot be combined with publish(..)",
+            ));
+        }
+        expand_batch(&parts)
+    } else if let Some(reply_topic) = &args.publish {
         expand_publishing(&parts, func, reply_topic)?
     } else {
         expand_subscribing(&parts)
     };
     Ok(body.into())
+}
+
+fn expand_batch(parts: &HandlerParts<'_>) -> TokenStream2 {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        message_meta,
+        ctx_param,
+    } = parts;
+
+    quote! {
+            #[derive(Clone, Copy)]
+            #[allow(non_camel_case_types)]
+            #vis struct #name;
+
+            impl ::ruststream::runtime::SliceHandler<#input_ty> for #name {
+                async fn handle_slice(
+                    &self,
+                    #pat: &[#input_ty],
+                    #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+                ) -> ::ruststream::runtime::HandlerResult {
+                    ::ruststream::runtime::IntoHandlerResult::into_handler_result(
+                        (async move #block).await,
+                    )
+                }
+            }
+
+            impl ::ruststream::runtime::BatchDef for #name {
+                type Input = #input_ty;
+                type Handler = Self;
+                type Source = #source_ty;
+
+                fn source(&self) -> Self::Source { #source_expr }
+
+                fn description(&self) -> ::core::option::Option<&str> {
+                    #description
+                }
+
+                #input_schema
+
+                #message_meta
+
+                fn into_handler(self) -> Self { self }
+            }
+    }
 }
 
 fn expand_publishing(
