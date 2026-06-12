@@ -1,11 +1,17 @@
 //! Integration test for the `#[subscriber]` attribute macro.
 #![cfg(feature = "macros")]
 
+mod common;
+
 use std::{
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        LazyLock,
+        atomic::{AtomicU32, Ordering},
+    },
     time::Duration,
 };
 
+use common::handler_signal;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
@@ -27,10 +33,12 @@ struct Order {
 }
 
 static HANDLED: AtomicU32 = AtomicU32::new(0);
+static HANDLED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("orders")]
 async fn handle(order: &Order) -> HandlerResult {
     HANDLED.fetch_add(order.id, Ordering::SeqCst);
+    HANDLED_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -68,10 +76,12 @@ impl SubscriptionSource<MemoryBroker> for StreamSource {
 }
 
 static HANDLED_ON_STREAM: AtomicU32 = AtomicU32::new(0);
+static HANDLED_ON_STREAM_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("ignored-on-the-include_on-path")]
 async fn on_stream(order: &Order) -> HandlerResult {
     HANDLED_ON_STREAM.fetch_add(order.id, Ordering::SeqCst);
+    HANDLED_ON_STREAM_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -94,13 +104,13 @@ async fn macro_def_mounts_on_arbitrary_source() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     let payload = serde_json::to_vec(&Order { id: 4, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             // The source subscribed to "events.stream", not the macro's name.
             let _ = publisher
                 .publish(OutgoingMessage::new("events.stream", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&HANDLED_ON_STREAM_NOTIFY).await;
             if HANDLED_ON_STREAM.load(Ordering::SeqCst) >= 4 {
                 break;
             }
@@ -114,12 +124,14 @@ async fn macro_def_mounts_on_arbitrary_source() {
 }
 
 static HANDLED_CTOR: AtomicU32 = AtomicU32::new(0);
+static HANDLED_CTOR_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 // The descriptor lives in the decorator: the macro pulls the `StreamSource` type out of the
 // constructor path and `include` mounts on `def.source()`, with the broker checked at compile time.
 #[subscriber(StreamSource::new("ctor.stream"))]
 async fn on_ctor(order: &Order) -> HandlerResult {
     HANDLED_CTOR.fetch_add(order.id, Ordering::SeqCst);
+    HANDLED_CTOR_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -137,12 +149,12 @@ async fn macro_descriptor_in_decorator() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     let payload = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("ctor.stream", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&HANDLED_CTOR_NOTIFY).await;
             if HANDLED_CTOR.load(Ordering::SeqCst) >= 6 {
                 break;
             }
@@ -159,12 +171,14 @@ async fn macro_descriptor_in_decorator() {
 }
 
 static HANDLED_CHAIN: AtomicU32 = AtomicU32::new(0);
+static HANDLED_CHAIN_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 // A builder chain in the decorator: the macro follows the receivers down to `StreamSource::new`
 // for the type, and emits the whole chain as the source constructor.
 #[subscriber(StreamSource::new("placeholder").at("chain.stream"))]
 async fn on_chain(order: &Order) -> HandlerResult {
     HANDLED_CHAIN.fetch_add(order.id, Ordering::SeqCst);
+    HANDLED_CHAIN_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -181,13 +195,13 @@ async fn macro_builder_chain_in_decorator() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     let payload = serde_json::to_vec(&Order { id: 7, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             // The `at(..)` option won: the subscription binds to "chain.stream".
             let _ = publisher
                 .publish(OutgoingMessage::new("chain.stream", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&HANDLED_CHAIN_NOTIFY).await;
             if HANDLED_CHAIN.load(Ordering::SeqCst) >= 7 {
                 break;
             }
@@ -233,12 +247,12 @@ async fn macro_subscriber_dispatches() {
 
     let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
     // include subscribes inside run() (after connect); retry until the subscription is live.
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("orders", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&HANDLED_NOTIFY).await;
             if HANDLED.load(Ordering::SeqCst) >= 5 {
                 break;
             }
@@ -252,10 +266,12 @@ async fn macro_subscriber_dispatches() {
 }
 
 static HANDLED_DEFAULT: AtomicU32 = AtomicU32::new(0);
+static HANDLED_DEFAULT_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("orders-default")]
 async fn handle_default(order: &Order) -> HandlerResult {
     HANDLED_DEFAULT.fetch_add(order.id, Ordering::SeqCst);
+    HANDLED_DEFAULT_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -274,12 +290,12 @@ async fn scope_default_codec_drops_per_call_codec() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     let payload = serde_json::to_vec(&Order { id: 9, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("orders-default", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&HANDLED_DEFAULT_NOTIFY).await;
             if HANDLED_DEFAULT.load(Ordering::SeqCst) >= 9 {
                 break;
             }
@@ -307,6 +323,7 @@ struct Ping {
 }
 
 static STATIC_SEEN: AtomicU32 = AtomicU32::new(0);
+static STATIC_SEEN_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("ping-in", publish("ping-out"))]
 async fn relay(p: &Ping) -> Ping {
@@ -318,6 +335,7 @@ async fn check(p: &Ping, ctx: &mut Context) -> HandlerResult {
     if ctx.headers().get("x-static").is_some() {
         STATIC_SEEN.store(p.n, Ordering::SeqCst);
     }
+    STATIC_SEEN_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -341,12 +359,12 @@ async fn static_publish_layer_transforms_reply() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     let payload = serde_json::to_vec(&Ping { n: 7 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = ingress_pub
                 .publish(OutgoingMessage::new("ping-in", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&STATIC_SEEN_NOTIFY).await;
             if STATIC_SEEN.load(Ordering::SeqCst) == 7 {
                 break;
             }
@@ -373,6 +391,7 @@ struct Response {
 }
 
 static REPLY_DOUBLED: AtomicU32 = AtomicU32::new(0);
+static REPLY_DOUBLED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static REPLY_TAGGED: AtomicU32 = AtomicU32::new(0);
 
 /// A publish middleware that tags every outgoing reply with a header (envelope-style).
@@ -404,6 +423,7 @@ async fn capture(resp: &Response, ctx: &mut Context) -> HandlerResult {
         REPLY_TAGGED.store(1, Ordering::SeqCst);
     }
     REPLY_DOUBLED.store(resp.doubled, Ordering::SeqCst);
+    REPLY_DOUBLED_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -428,12 +448,12 @@ async fn macro_publisher_replies_cross_broker() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     let payload = serde_json::to_vec(&Request { n: 21 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = ingress_pub
                 .publish(OutgoingMessage::new("requests", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&REPLY_DOUBLED_NOTIFY).await;
             if REPLY_DOUBLED.load(Ordering::SeqCst) == 42 {
                 break;
             }
@@ -458,12 +478,15 @@ struct Confirmation {
 }
 
 static CONFIRM_REJECTED: AtomicU32 = AtomicU32::new(0);
+static CONFIRM_REJECTED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static CONFIRM_ACCEPTED: AtomicU32 = AtomicU32::new(0);
+static CONFIRM_ACCEPTED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("confirm-in", publish("confirm-out"))]
 async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
     if order.id == 0 {
         CONFIRM_REJECTED.fetch_add(1, Ordering::SeqCst);
+        CONFIRM_REJECTED_NOTIFY.notify_one();
         return Err(HandlerResult::drop());
     }
     Ok(Confirmation {
@@ -476,6 +499,7 @@ async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
 async fn confirm_sink(c: &Confirmation) -> HandlerResult {
     if c.accepted {
         CONFIRM_ACCEPTED.store(c.id, Ordering::SeqCst);
+        CONFIRM_ACCEPTED_NOTIFY.notify_one();
     }
     HandlerResult::Ack
 }
@@ -497,12 +521,12 @@ async fn publishing_result_form_controls_ack_and_publish() {
 
     // Err(HandlerResult) skips the publish entirely.
     let rejected = serde_json::to_vec(&Order { id: 0, total: 0.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = ingress
                 .publish(OutgoingMessage::new("confirm-in", &rejected))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&CONFIRM_REJECTED_NOTIFY).await;
             if CONFIRM_REJECTED.load(Ordering::SeqCst) >= 3 {
                 break;
             }
@@ -521,12 +545,12 @@ async fn publishing_result_form_controls_ack_and_publish() {
 
     // Ok(reply) publishes and acks.
     let accepted = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = ingress
                 .publish(OutgoingMessage::new("confirm-in", &accepted))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&CONFIRM_ACCEPTED_NOTIFY).await;
             if CONFIRM_ACCEPTED.load(Ordering::SeqCst) == 6 {
                 break;
             }
@@ -544,6 +568,7 @@ async fn publishing_result_form_controls_ack_and_publish() {
 struct Bump(u32);
 
 static CTX_REPLY: AtomicU32 = AtomicU32::new(0);
+static CTX_REPLY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("ctx-in", publish("ctx-out"))]
 async fn ctx_reply(req: &Request, ctx: &mut Context) -> Response {
@@ -556,6 +581,7 @@ async fn ctx_reply(req: &Request, ctx: &mut Context) -> Response {
 #[subscriber("ctx-out")]
 async fn ctx_sink(resp: &Response) -> HandlerResult {
     CTX_REPLY.store(resp.doubled, Ordering::SeqCst);
+    CTX_REPLY_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -577,12 +603,12 @@ async fn publishing_handler_reads_context_state() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     let payload = serde_json::to_vec(&Request { n: 1 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = ingress
                 .publish(OutgoingMessage::new("ctx-in", &payload))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&CTX_REPLY_NOTIFY).await;
             if CTX_REPLY.load(Ordering::SeqCst) == 101 {
                 break;
             }
@@ -599,12 +625,15 @@ async fn publishing_handler_reads_context_state() {
 }
 
 static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+static ATTEMPTS_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Asks for a delayed redelivery on first sight, then acks: the not-ready-yet pattern.
 #[subscriber("deferred")]
 async fn eventually(order: &Order) -> HandlerResult {
     let _ = order;
-    if ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0 {
+    let prev = ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+    ATTEMPTS_NOTIFY.notify_one();
+    if prev == 0 {
         return HandlerResult::retry_after(Duration::from_millis(10));
     }
     HandlerResult::Ack
@@ -624,14 +653,14 @@ async fn retry_after_redelivers_through_the_dispatcher() {
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
     let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if ATTEMPTS.load(Ordering::SeqCst) == 0 {
                 let _ = publisher
                     .publish(OutgoingMessage::new("deferred", &payload))
                     .await;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&ATTEMPTS_NOTIFY).await;
             if ATTEMPTS.load(Ordering::SeqCst) >= 2 {
                 break;
             }

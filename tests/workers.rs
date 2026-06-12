@@ -2,6 +2,8 @@
 //! and batch pools.
 #![cfg(feature = "macros")]
 
+mod common;
+
 use std::{
     sync::{
         Arc, LazyLock, Mutex,
@@ -10,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use common::handler_signal;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::{Headers, OutgoingMessage, Publisher, subscriber};
@@ -26,7 +29,9 @@ fn order_bytes(id: u32) -> Vec<u8> {
 }
 
 static WARMED: AtomicU32 = AtomicU32::new(0);
+static WARMED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static CRUNCHED: AtomicU32 = AtomicU32::new(0);
+static CRUNCHED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static GATE: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(4));
 
 /// Four deliveries must be in flight at once to pass the barrier; a sequential loop would
@@ -35,10 +40,12 @@ static GATE: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(4));
 async fn crunch(job: &Order) -> HandlerResult {
     if job.id == 0 {
         WARMED.fetch_add(1, Ordering::SeqCst);
+        WARMED_NOTIFY.notify_one();
         return HandlerResult::Ack;
     }
     GATE.wait().await;
     CRUNCHED.fetch_add(1, Ordering::SeqCst);
+    CRUNCHED_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -55,12 +62,12 @@ async fn pool_processes_deliveries_concurrently() {
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
     // Warm up until the subscription is live, then submit exactly the barrier's worth of jobs.
-    let warmup = tokio::time::timeout(Duration::from_secs(1), async {
+    let warmup = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("jobs", &order_bytes(0)))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&WARMED_NOTIFY).await;
             if WARMED.load(Ordering::SeqCst) >= 1 {
                 break;
             }
@@ -76,9 +83,9 @@ async fn pool_processes_deliveries_concurrently() {
             .unwrap();
     }
 
-    let result = tokio::time::timeout(Duration::from_secs(2), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         while CRUNCHED.load(Ordering::SeqCst) < 4 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            CRUNCHED_NOTIFY.notified().await;
         }
     })
     .await;
@@ -92,6 +99,7 @@ async fn pool_processes_deliveries_concurrently() {
 }
 
 static KEYED_SEEN: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
+static KEYED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Records (key, id) pairs; per-key arrival order must match publish order.
 #[subscriber("keyed", workers(4, by_key))]
@@ -104,6 +112,7 @@ async fn keyed(order: &Order, ctx: &mut ruststream::runtime::Context<'_>) -> Han
     // Encourage interleaving between lanes; each lane itself stays sequential.
     tokio::task::yield_now().await;
     KEYED_SEEN.lock().unwrap().push((key, order.id));
+    KEYED_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -133,10 +142,10 @@ async fn by_key_lanes_preserve_per_key_order() {
     };
 
     // Warm up until the subscription is live (warmup deliveries carry their own key).
-    let warmup = tokio::time::timeout(Duration::from_secs(1), async {
+    let warmup = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = keyed_publish("warmup", 0).await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&KEYED_NOTIFY).await;
             if !KEYED_SEEN.lock().unwrap().is_empty() {
                 break;
             }
@@ -150,9 +159,9 @@ async fn by_key_lanes_preserve_per_key_order() {
         keyed_publish("beta", id + 100).await.unwrap();
     }
 
-    let result = tokio::time::timeout(Duration::from_secs(2), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            KEYED_NOTIFY.notified().await;
             let counted = KEYED_SEEN
                 .lock()
                 .unwrap()
@@ -185,11 +194,13 @@ async fn by_key_lanes_preserve_per_key_order() {
 }
 
 static PAGES: AtomicUsize = AtomicUsize::new(0);
+static PAGES_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Batch form composing with a pool: up to two pages in flight.
 #[subscriber(batch("pages"), workers(2))]
 async fn settle(orders: &[Order]) -> HandlerResult {
     PAGES.fetch_add(orders.len(), Ordering::SeqCst);
+    PAGES_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -205,12 +216,12 @@ async fn batch_pool_dispatches_batches() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    let result = tokio::time::timeout(Duration::from_secs(1), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher
                 .publish(OutgoingMessage::new("pages", &order_bytes(1)))
                 .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            handler_signal(&PAGES_NOTIFY).await;
             if PAGES.load(Ordering::SeqCst) >= 1 {
                 break;
             }
