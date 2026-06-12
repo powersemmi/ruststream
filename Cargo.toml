@@ -136,6 +136,14 @@ name = "metrics"
 required-features = ["metrics", "memory", "json"]
 
 [[test]]
+name = "router_include"
+required-features = ["macros", "memory", "json"]
+
+[[test]]
+name = "router_publishing"
+required-features = ["macros", "memory", "json"]
+
+[[test]]
 name = "workers"
 required-features = ["macros", "memory", "json"]
 
