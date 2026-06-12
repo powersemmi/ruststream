@@ -24,13 +24,16 @@ use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Publisher, ServerSpec, Subscriber, SubscriptionSource};
 
 use super::batch::{BatchDef, batch_metadata, typed_batch};
+use super::batch_publishing::{
+    BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
+};
 use super::context::State;
 use super::dispatch::{Delivery, Publishers};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture, BrokerLifecycle};
 use super::metadata::HandlerMetadata;
 use super::middleware::{BlanketLayer, Identity, Layer, Stack};
-use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
+use super::publish::{PublishLayer, PublishMiddleware, ReplyPublisher, TypedPublisher};
 use super::publisher_registry::ErasedPublisher;
 use super::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
 use super::router::{RouterDef, RouterSink};
@@ -755,6 +758,45 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         self.mount_batch(source, def, crate::codec::DefaultCodec::default());
     }
 
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on its own
+    /// source, decoding each element with the `publisher`'s own codec and publishing the replies
+    /// through it.
+    ///
+    /// `publisher` is either a plain [`TypedPublisher`] (each reply published independently) or
+    /// a [`Transactional`](super::Transactional) one built with
+    /// [`TypedPublisher::transactional`]: per batch, the runtime begins a transaction, publishes
+    /// every reply, commits, then acks the batch; any failure aborts and the batch is retried.
+    pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
+    where
+        D: BatchPublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+        RP::Codec: Clone + 'static,
+    {
+        let codec = publisher.reply_codec().clone();
+        let source = def.source();
+        self.mount_batch_publishing(source, def, codec, publisher);
+    }
+
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on an explicit
+    /// subscription `source`, decoding each element with the `publisher`'s own codec.
+    pub fn include_batch_publishing_on<S, D, RP>(&mut self, source: S, def: D, publisher: RP)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchPublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+        RP::Codec: Clone + 'static,
+    {
+        let codec = publisher.reply_codec().clone();
+        self.mount_batch_publishing(source, def, codec, publisher);
+    }
+
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
     /// decoding its input with the `publisher`'s own codec and replying through it.
     ///
@@ -880,6 +922,38 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         self.mount_batch(source, def, codec);
     }
 
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on its own
+    /// source, decoding each element with the scope's default codec and publishing the replies
+    /// through `publisher`.
+    pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
+    where
+        D: BatchPublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+    {
+        let codec = self.codec.clone();
+        let source = def.source();
+        self.mount_batch_publishing(source, def, codec, publisher);
+    }
+
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on an explicit
+    /// subscription `source`, decoding each element with the scope's default codec.
+    pub fn include_batch_publishing_on<S, D, RP>(&mut self, source: S, def: D, publisher: RP)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchPublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_batch_publishing(source, def, codec, publisher);
+    }
+
     /// Mounts a `#[subscriber(.., publish)]`-generated definition on its own source, decoding its
     /// input with the scope's default codec and sending the reply through `publisher`.
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
@@ -961,6 +1035,29 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let handler = typed_batch(codec, def.into_handler());
+        self.sink.push_subscribe_batch(source, handler, meta);
+    }
+
+    /// Mounts a batch publishing definition on `source`, decoding each element with `codec` and
+    /// publishing the replies through `publisher`. The shared tail of the
+    /// `include_batch_publishing` / `include_batch_publishing_on` forms.
+    fn mount_batch_publishing<S, D, C, RP>(&mut self, source: S, def: D, codec: C, publisher: RP)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchPublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        C: Codec + 'static,
+        RP: ReplyPublisher + 'static,
+    {
+        let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let handler = BatchPublishingHandler {
+            def,
+            codec,
+            publisher,
+            pipeline: self.pipeline.clone(),
+        };
         self.sink.push_subscribe_batch(source, handler, meta);
     }
 

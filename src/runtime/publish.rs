@@ -9,9 +9,10 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use serde::Serialize;
+use tracing::warn;
 
 use crate::codec::Codec;
-use crate::{Headers, Publisher};
+use crate::{Headers, Publisher, TransactionalPublisher};
 
 use super::lifecycle::BoxError;
 use super::publisher_registry::ErasedPublisher;
@@ -284,6 +285,24 @@ impl<P, C, PL> TypedPublisher<P, C, PL> {
             },
         }
     }
+
+    /// Switches batch reply publishing to one broker transaction per batch: the replies of a
+    /// `#[subscriber(batch(..), publish(..))]` handler all become visible atomically on commit,
+    /// or none of them do.
+    ///
+    /// Exists only when the underlying publisher implements
+    /// [`TransactionalPublisher`](crate::TransactionalPublisher); for brokers without
+    /// transactions, the method does not exist and the compiler enforces it. The returned wiring
+    /// is accepted by the batch publishing mounts only: a one-message transaction adds broker
+    /// round-trips for no atomicity gain, so the single-message `include_publishing` forms keep
+    /// taking a plain [`TypedPublisher`].
+    #[must_use]
+    pub fn transactional(self) -> Transactional<P, C, PL>
+    where
+        P: TransactionalPublisher,
+    {
+        Transactional { inner: self }
+    }
 }
 
 impl<P: Publisher, C: Codec, PL: PublishLayer> TypedPublisher<P, C, PL> {
@@ -307,5 +326,136 @@ impl<P: Publisher, C: Codec, PL: PublishLayer> TypedPublisher<P, C, PL> {
 impl<P, C, PL> std::fmt::Debug for TypedPublisher<P, C, PL> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TypedPublisher").finish_non_exhaustive()
+    }
+}
+
+/// A [`TypedPublisher`] whose batch replies are published inside one broker transaction.
+///
+/// Built with [`TypedPublisher::transactional`]; accepted by the
+/// `include_batch_publishing` mounts. Per batch, the runtime begins a transaction, publishes
+/// every reply, then commits before the incoming batch is acked; any failure aborts the
+/// transaction and the batch is retried, so replies are never half-visible.
+pub struct Transactional<P, C, PL = PublishIdentity> {
+    inner: TypedPublisher<P, C, PL>,
+}
+
+impl<P, C, PL> std::fmt::Debug for Transactional<P, C, PL> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Transactional").finish_non_exhaustive()
+    }
+}
+
+mod sealed {
+    /// Seals [`ReplyPublisher`](super::ReplyPublisher): the reply-publishing strategies are the
+    /// two wirings above, not an extension point.
+    pub trait Sealed {}
+
+    impl<P, C, PL> Sealed for super::TypedPublisher<P, C, PL> {}
+    impl<P, C, PL> Sealed for super::Transactional<P, C, PL> {}
+}
+
+/// The reply wiring accepted by the `include_batch_publishing` mounts.
+///
+/// Implemented by a plain [`TypedPublisher`] (each reply published independently) and by a
+/// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by
+/// exactly those two types.
+pub trait ReplyPublisher: sealed::Sealed + Send + Sync {
+    /// The codec replies are encoded with (also reused as the decode codec when a batch
+    /// publishing handler is mounted without an explicit one).
+    type Codec: Codec;
+
+    /// Returns the reply codec.
+    #[doc(hidden)]
+    fn reply_codec(&self) -> &Self::Codec;
+
+    /// Publishes one batch's replies to `name` through `pipeline`.
+    #[doc(hidden)]
+    fn publish_batch<'a, T>(
+        &'a self,
+        name: &'a str,
+        replies: &'a [T],
+        pipeline: &'a [Arc<dyn PublishMiddleware>],
+    ) -> impl Future<Output = Result<(), BoxError>> + Send
+    where
+        T: Serialize + Sync;
+}
+
+impl<P, C, PL> ReplyPublisher for TypedPublisher<P, C, PL>
+where
+    P: Publisher,
+    C: Codec,
+    PL: PublishLayer,
+{
+    type Codec = C;
+
+    fn reply_codec(&self) -> &C {
+        self.codec()
+    }
+
+    /// Each reply is published independently: a mid-batch failure leaves the earlier replies
+    /// visible, and the retried batch may publish them again (at-least-once).
+    async fn publish_batch<'a, T>(
+        &'a self,
+        name: &'a str,
+        replies: &'a [T],
+        pipeline: &'a [Arc<dyn PublishMiddleware>],
+    ) -> Result<(), BoxError>
+    where
+        T: Serialize + Sync,
+    {
+        for reply in replies {
+            self.publish(name, reply, pipeline).await?;
+        }
+        Ok(())
+    }
+}
+
+impl<P, C, PL> ReplyPublisher for Transactional<P, C, PL>
+where
+    P: TransactionalPublisher,
+    C: Codec,
+    PL: PublishLayer,
+{
+    type Codec = C;
+
+    fn reply_codec(&self) -> &C {
+        self.inner.codec()
+    }
+
+    /// All replies publish inside one transaction: begin, publish each, commit. Any failure
+    /// aborts the transaction, so none of the batch's replies become visible.
+    async fn publish_batch<'a, T>(
+        &'a self,
+        name: &'a str,
+        replies: &'a [T],
+        pipeline: &'a [Arc<dyn PublishMiddleware>],
+    ) -> Result<(), BoxError>
+    where
+        T: Serialize + Sync,
+    {
+        let publisher = &self.inner.publisher;
+        publisher
+            .begin_transaction()
+            .await
+            .map_err(|e| Box::new(e) as BoxError)?;
+        for reply in replies {
+            if let Err(err) = self.inner.publish(name, reply, pipeline).await {
+                abort_quietly(publisher).await;
+                return Err(err);
+            }
+        }
+        if let Err(err) = publisher.commit().await {
+            abort_quietly(publisher).await;
+            return Err(Box::new(err) as BoxError);
+        }
+        Ok(())
+    }
+}
+
+/// Aborts a failed transaction; an abort failure is logged, not propagated, because the
+/// original publish / commit error is the one the caller acts on.
+async fn abort_quietly<P: TransactionalPublisher>(publisher: &P) {
+    if let Err(err) = publisher.abort().await {
+        warn!(target: "ruststream::dispatch", error = %err, "transaction abort failed");
     }
 }

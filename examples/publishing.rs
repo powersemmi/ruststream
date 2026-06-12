@@ -95,6 +95,17 @@ impl PublishMiddleware for AuditPublish {
 }
 // --8<-- [end:dynamic_middleware]
 
+// --8<-- [start:batch_publishing]
+/// Confirms a whole page of orders; the replies become visible atomically on commit.
+#[subscriber(batch("orders"), publish("confirmations"))]
+async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
+    if orders.is_empty() {
+        return Err(HandlerResult::drop()); // nothing published, whole batch settled
+    }
+    Ok(orders.iter().map(|o| Event { id: o.id }).collect())
+}
+// --8<-- [end:batch_publishing]
+
 #[ruststream::app]
 fn app() -> RustStream {
     let broker = MemoryBroker::new();
@@ -112,6 +123,12 @@ fn app() -> RustStream {
             let validated = TypedPublisher::new(b.broker().publisher());
             b.include_publishing(validate, validated);
             b.include(forward);
+            // --8<-- [start:batch_publishing_mount]
+            // .transactional() exists only because MemoryPublisher implements
+            // TransactionalPublisher; without it, each reply publishes independently.
+            let confirmations = TypedPublisher::new(b.broker().publisher()).transactional();
+            b.include_batch_publishing(confirm, confirmations);
+            // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]
 }
