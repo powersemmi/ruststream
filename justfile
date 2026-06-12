@@ -17,6 +17,11 @@ test:
 fmt:
     cargo fmt --all
 
+# Dependency-graph checks (advisories, licenses, duplicates, sources).
+# Needs cargo-deny: cargo install cargo-deny --locked
+deny:
+    cargo deny check
+
 build:
     cargo build --workspace --release
 
