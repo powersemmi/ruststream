@@ -14,6 +14,7 @@ use crate::codec::Codec;
 use crate::{IncomingMessage, Publisher};
 
 use super::context::Context;
+use super::dispatch::Workers;
 use super::handler::{Handler, HandlerResult};
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
@@ -39,6 +40,12 @@ pub trait PublishingDef: Send + Sync {
 
     /// The name (subject / channel) the reply is published to.
     fn reply_name(&self) -> &str;
+
+    /// The concurrency policy for this subscriber's dispatch loop. The macro fills this in from
+    /// the `workers(..)` argument; the default is sequential dispatch.
+    fn workers(&self) -> Workers {
+        Workers::sequential()
+    }
 
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
     fn description(&self) -> Option<&str> {

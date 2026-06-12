@@ -151,6 +151,17 @@ pub trait IncomingMessage: Send + Sync {
     /// Returns the headers attached to the message.
     fn headers(&self) -> &Headers;
 
+    /// Returns the routing key the broker partitioned this message by, or `None` when the
+    /// message carries no key.
+    ///
+    /// Defaulted to `None` so existing implementations keep compiling. Brokers whose messages
+    /// implement the [`Partitioned`](crate::Partitioned) capability override this to return the
+    /// same key, which lets the runtime preserve per-key ordering in keyed worker lanes
+    /// (`workers(n, by_key)`) without a `Partitioned` bound on every dispatch path.
+    fn partition_key(&self) -> Option<&[u8]> {
+        None
+    }
+
     /// Acknowledges successful processing. Consumes the message handle.
     ///
     /// # Errors

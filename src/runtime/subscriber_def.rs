@@ -1,6 +1,7 @@
 //! The contract a `#[subscriber]`-generated type implements so it can be mounted with
 //! [`BrokerScope::include`](super::BrokerScope::include).
 
+use super::dispatch::Workers;
 use super::handler::Handler;
 use super::metadata::HandlerMetadata;
 
@@ -47,6 +48,12 @@ pub trait SubscriberDef: Sized {
     /// The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None
+    }
+
+    /// The concurrency policy for this subscriber's dispatch loop. The macro fills this in from
+    /// the `workers(..)` argument; the default is sequential dispatch.
+    fn workers(&self) -> Workers {
+        Workers::sequential()
     }
 
     /// Consumes the definition, returning the handler.

@@ -454,11 +454,19 @@ mod tests {
 
         let mut stream = std::pin::pin!(sub.stream());
         let keyed = stream.next().await.unwrap().unwrap();
-        assert_eq!(keyed.partition_key(), Some(b"user-42".as_slice()));
+        assert_eq!(
+            Partitioned::partition_key(&keyed),
+            Some(b"user-42".as_slice())
+        );
+        // The IncomingMessage hook must agree with the capability trait.
+        assert_eq!(
+            IncomingMessage::partition_key(&keyed),
+            Some(b"user-42".as_slice())
+        );
         keyed.ack().await.unwrap();
 
         let unkeyed = stream.next().await.unwrap().unwrap();
-        assert_eq!(unkeyed.partition_key(), None);
+        assert_eq!(Partitioned::partition_key(&unkeyed), None);
         unkeyed.ack().await.unwrap();
     }
 }
