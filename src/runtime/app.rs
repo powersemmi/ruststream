@@ -21,8 +21,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{Broker, Publisher, ServerSpec, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Publisher, ServerSpec, Subscriber, SubscriptionSource};
 
+use super::batch::{BatchDef, batch_metadata, typed_batch};
 use super::context::State;
 use super::dispatch::{Delivery, Publishers};
 use super::handler::Handler;
@@ -716,6 +717,44 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         self.mount_subscriber(source, def, crate::codec::DefaultCodec::default());
     }
 
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on its own source, decoding each
+    /// element with the [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// The source's subscriber must implement [`BatchSubscriber`] - natively, or through the
+    /// [`Buffered`](crate::Buffered) adapter. The handler consumes the whole decoded batch as a
+    /// slice and its [`HandlerResult`](super::HandlerResult) settles every message in the batch;
+    /// elements that fail to decode are nacked individually and never reach the handler.
+    ///
+    /// App-global middleware ([`RustStream::layer`]) wraps per-message handlers and does not
+    /// apply to batch registrations.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_batch<D>(&mut self, def: D)
+    where
+        D: BatchDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let source = def.source();
+        self.mount_batch(source, def, crate::codec::DefaultCodec::default());
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on an explicit subscription
+    /// `source` (overriding the macro's own source), decoding each element with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_batch_on<S, D>(&mut self, source: S, def: D)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        self.mount_batch(source, def, crate::codec::DefaultCodec::default());
+    }
+
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
     /// decoding its input with the `publisher`'s own codec and replying through it.
     ///
@@ -811,6 +850,36 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         self.mount_subscriber(source, def, codec);
     }
 
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on its own source, decoding each
+    /// element with the scope's default codec (set by
+    /// [`with_broker_codec`](RustStream::with_broker_codec)).
+    pub fn include_batch<D>(&mut self, def: D)
+    where
+        D: BatchDef,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        let source = def.source();
+        self.mount_batch(source, def, codec);
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition on an explicit subscription
+    /// `source`, decoding each element with the scope's default codec.
+    pub fn include_batch_on<S, D>(&mut self, source: S, def: D)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_batch(source, def, codec);
+    }
+
     /// Mounts a `#[subscriber(.., publish)]`-generated definition on its own source, decoding its
     /// input with the scope's default codec and sending the reply through `publisher`.
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
@@ -876,6 +945,23 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
         let handler = typed(codec, def.into_handler());
         self.subscribe(source, handler, meta);
+    }
+
+    /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
+    /// tail of the `include_batch` / `include_batch_on` forms. Batch handlers are not wrapped by
+    /// the global stack: per-message layers cannot wrap a whole-batch handler.
+    fn mount_batch<S, D, C>(&mut self, source: S, def: D, codec: C)
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchDef,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Handler: 'static,
+        C: Codec + 'static,
+    {
+        let meta = batch_metadata(source.name().to_owned(), &def);
+        let handler = typed_batch(codec, def.into_handler());
+        self.sink.push_subscribe_batch(source, handler, meta);
     }
 
     /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
