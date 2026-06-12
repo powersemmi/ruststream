@@ -342,6 +342,7 @@ async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult) {
     let ack_result = match result {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
+        HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
     };
     if let Err(err) = ack_result {
         warn!(target: "ruststream::dispatch", error = %err, "ack / nack failed");
@@ -434,6 +435,41 @@ mod tests {
         for msg in redelivered {
             msg.ack().await.unwrap();
         }
+    }
+
+    // Paused time (current-thread runtime): the per-element delay auto-advances.
+    #[tokio::test(start_paused = true)]
+    async fn per_element_outcomes_carry_delays() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("delayed");
+        publish_numbers(&broker, "delayed", &[0, 1]).await;
+
+        // 0 acks; 1 retries no sooner than five seconds from now.
+        let handler = typed_batch(JsonCodec, |batch: &[u32], _ctx: &mut Context| {
+            let outcomes: Vec<HandlerResult> = batch
+                .iter()
+                .map(|n| match n {
+                    1 => HandlerResult::retry_after(std::time::Duration::from_secs(5)),
+                    _ => HandlerResult::Ack,
+                })
+                .collect();
+            async move { outcomes }
+        });
+
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let mut ctx = Context::new("delayed", Headers::new(), &state, &delivery);
+        let batch = pull_batch(&mut sub).await;
+        handler.handle_batch(batch, &mut ctx).await;
+
+        let mut stream = std::pin::pin!(sub.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+
+        let redelivered = stream.next().await.unwrap().unwrap();
+        assert_eq!(redelivered.payload(), b"1");
+        redelivered.ack().await.unwrap();
     }
 
     #[tokio::test]

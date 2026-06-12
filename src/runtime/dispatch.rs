@@ -435,6 +435,7 @@ where
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
+        HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
     };
     if let Err(err) = ack_result {
         warn!(

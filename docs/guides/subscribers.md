@@ -40,12 +40,20 @@ The return type is anything that converts into a [`HandlerResult`]:
 |---|---|
 | `HandlerResult::Ack` | acknowledge; the broker removes the message |
 | `HandlerResult::retry()` | nack with requeue (redeliver later) |
+| `HandlerResult::retry_after(delay)` | nack asking for redelivery no sooner than `delay` |
 | `HandlerResult::drop()` | nack without requeue (discard or dead-letter) |
 | `()` | always `Ack` |
 | `Result<(), E>` | `Ack` on `Ok`, `drop` on `Err` |
 | `Result<HandlerResult, E>` | the inner result on `Ok`, `drop` on `Err` |
 
 On the message itself, ack consumes `self`, so the type system prevents acking twice.
+
+`retry_after` covers the not-ready-yet case (a dependency has not arrived, an upstream is
+rate-limited), where an immediate redelivery would just spin. The delay is a hint: brokers with
+native delayed redelivery (JetStream `NAK` with delay, the in-memory broker) honour it, others
+fall back to an immediate requeue. It composes with
+[selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` can carry
+per-element delays.
 
 ## Choosing the subscription source
 

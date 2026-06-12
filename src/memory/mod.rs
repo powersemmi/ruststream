@@ -385,6 +385,19 @@ impl IncomingMessage for MemoryMessage {
         }
         Ok(())
     }
+
+    /// Native delayed redelivery: the message returns to the same subscriber's queue once
+    /// `delay` has elapsed, not immediately.
+    async fn nack_after(mut self, delay: Duration) -> Result<(), AckError> {
+        let delivery = self.delivery.take().expect("delivery already consumed");
+        let requeue = self.requeue.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            // The subscriber may be gone by then; a dropped receiver is not an error.
+            let _ = requeue.send(delivery);
+        });
+        Ok(())
+    }
 }
 
 impl TestClient for MemoryBroker {
@@ -464,6 +477,34 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
+
+    // Paused time needs the current-thread runtime; the redelivery timer auto-advances instead
+    // of sleeping for real.
+    #[tokio::test(start_paused = true)]
+    async fn nack_after_redelivers_after_the_delay() {
+        let broker = MemoryBroker::new();
+        let mut sub = MemoryBroker::subscribe(&broker, "delayed");
+        let publisher = broker.publisher();
+
+        publisher
+            .publish(OutgoingMessage::new("delayed", b"later".as_slice()))
+            .await
+            .unwrap();
+
+        let mut stream = std::pin::pin!(sub.stream());
+        let msg = stream.next().await.unwrap().unwrap();
+        msg.nack_after(Duration::from_secs(5)).await.unwrap();
+
+        // Nothing is redelivered while the delay has not elapsed.
+        assert!(futures::poll!(stream.next()).is_pending());
+        tokio::time::advance(Duration::from_secs(5)).await;
+        // The timer task needs a tick to run before the redelivery is visible.
+        tokio::task::yield_now().await;
+
+        let redelivered = stream.next().await.unwrap().unwrap();
+        assert_eq!(redelivered.payload(), b"later");
+        redelivered.ack().await.unwrap();
+    }
 
     #[tokio::test]
     async fn stream_can_be_reentered() {
