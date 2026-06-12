@@ -26,13 +26,16 @@ use crate::{Broker, Publisher, Subscriber, SubscriptionSource};
 use crate::BatchSubscriber;
 
 use super::batch::{BatchDef, BatchHandler, TypedBatch, batch_metadata, typed_batch};
+use super::batch_publishing::{
+    BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
+};
 use super::context::State;
 use super::dispatch::{Delivery, spawn_batch_dispatch, spawn_dispatch};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
 use super::middleware::{BlanketLayer, Identity, Stack};
-use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
+use super::publish::{PublishLayer, PublishMiddleware, ReplyPublisher, TypedPublisher};
 use super::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
 use super::subscriber_def::{SubscriberDef, subscriber_metadata};
 use super::typed::{Typed, typed};
@@ -81,6 +84,11 @@ type IncludedBatchRouter<B, S, D, C, RC, RL, R> =
 /// codec and layer parameters, carried unchanged.
 type PublishingRouter<B, S, D, C, P, PC, PL, RC, RL, R> =
     Router<B, (SubscribeRoute<S, PublishingHandler<D, C, P, PC, PL>>, R), RC, RL>;
+
+/// The router that mounting a batch publishing [`BatchPublishingDef`] `D` on source `S` (decoded
+/// with `C`, replying through the [`ReplyPublisher`] `RP`) onto `R` produces.
+type BatchPublishingRouter<B, S, D, C, RP, RC, RL, R> =
+    Router<B, (BatchRoute<S, BatchPublishingHandler<D, C, RP>>, R), RC, RL>;
 
 /// The router that [`Router::merge`] produces: the merged router becomes one registration in the
 /// list.
@@ -549,6 +557,48 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         }
     }
 
+    /// Mounts a batch publishing definition on `source`, decoding with `codec` and replying
+    /// through `publisher`. The shared tail of the `include_batch_publishing` /
+    /// `include_batch_publishing_on` forms.
+    fn mount_batch_publishing<S, D, C, RP>(
+        self,
+        source: S,
+        def: D,
+        codec: C,
+        publisher: RP,
+    ) -> BatchPublishingRouter<B, S, D, C, RP, RC, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchPublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        C: Codec + 'static,
+        RP: ReplyPublisher + 'static,
+    {
+        let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
+        let handler = BatchPublishingHandler {
+            def,
+            codec,
+            publisher,
+            pipeline,
+        };
+        Router {
+            routes: (
+                BatchRoute {
+                    source,
+                    handler,
+                    meta,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
     /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
     /// `publisher`. The shared tail of the `include_publishing` / `include_publishing_on` forms.
     fn mount_publishing<S, D, C, P, PC, PL>(
@@ -668,6 +718,54 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         self.mount_batch(source, def, crate::codec::DefaultCodec::default())
     }
 
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on its own
+    /// source, decoding each element with the `publisher`'s own codec and publishing the replies
+    /// through it.
+    ///
+    /// `publisher` is either a plain [`TypedPublisher`] (each reply published independently) or
+    /// a [`Transactional`](super::Transactional) one (the batch's replies inside one
+    /// transaction). Router handlers run with an empty dynamic publish pipeline, like
+    /// [`include_publishing`](Self::include_publishing).
+    pub fn include_batch_publishing<D, RP>(
+        self,
+        def: D,
+        publisher: RP,
+    ) -> BatchPublishingRouter<B, D::Source, D, RP::Codec, RP, (), RL, R>
+    where
+        D: BatchPublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+        RP::Codec: Clone + 'static,
+    {
+        let codec = publisher.reply_codec().clone();
+        let source = def.source();
+        self.mount_batch_publishing(source, def, codec, publisher)
+    }
+
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on an explicit
+    /// subscription `source`, decoding each element with the `publisher`'s own codec.
+    pub fn include_batch_publishing_on<S, D, RP>(
+        self,
+        source: S,
+        def: D,
+        publisher: RP,
+    ) -> BatchPublishingRouter<B, S, D, RP::Codec, RP, (), RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchPublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+        RP::Codec: Clone + 'static,
+    {
+        let codec = publisher.reply_codec().clone();
+        self.mount_batch_publishing(source, def, codec, publisher)
+    }
+
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
     /// decoding its input with the `publisher`'s own codec and sending the reply through it.
     ///
@@ -779,6 +877,47 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
     {
         let codec = self.codec.clone();
         self.mount_batch(source, def, codec)
+    }
+
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on its own
+    /// source, decoding each element with the chain's codec and publishing the replies through
+    /// `publisher`.
+    pub fn include_batch_publishing<D, RP>(
+        self,
+        def: D,
+        publisher: RP,
+    ) -> BatchPublishingRouter<B, D::Source, D, C, RP, C, RL, R>
+    where
+        D: BatchPublishingDef + 'static,
+        D::Source: SubscriptionSource<B> + Send + 'static,
+        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+    {
+        let codec = self.codec.clone();
+        let source = def.source();
+        self.mount_batch_publishing(source, def, codec, publisher)
+    }
+
+    /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on an explicit
+    /// subscription `source`, decoding each element with the chain's codec.
+    pub fn include_batch_publishing_on<S, D, RP>(
+        self,
+        source: S,
+        def: D,
+        publisher: RP,
+    ) -> BatchPublishingRouter<B, S, D, C, RP, C, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        D: BatchPublishingDef + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        RP: ReplyPublisher + 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_batch_publishing(source, def, codec, publisher)
     }
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,

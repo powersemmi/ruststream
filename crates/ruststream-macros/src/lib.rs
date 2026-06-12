@@ -208,9 +208,16 @@ fn unsupported_source(expr: &Expr) -> syn::Error {
 /// `&[T]` and runs once per batch pulled from the broker's `BatchSubscriber` (use the `Buffered`
 /// adapter for brokers without native batching). It returns any `IntoBatchResult` - one outcome
 /// for the whole batch (`HandlerResult`, `()`, `Result<_, E>`), or `Vec<HandlerResult>` to settle
-/// element `i` of the slice with outcome `i`. `batch(..)` cannot be combined with `publish(..)`.
-/// The source type is recovered from the constructor path, so a generic source spells its
-/// parameters: `batch(Buffered::<Name>::new(Name::new("orders")))`.
+/// element `i` of the slice with outcome `i`. The source type is recovered from the constructor
+/// path, so a generic source spells its parameters:
+/// `batch(Buffered::<Name>::new(Name::new("orders")))`.
+///
+/// Combining `batch(..)` with `publish(..)` produces a `BatchPublishingDef` (mounted with
+/// `include_batch_publishing`): the handler returns `Vec<Reply>` (or
+/// `Result<Vec<Reply>, HandlerResult>` for explicit ack control, all-or-nothing - selective
+/// outcomes do not compose with a transaction), every reply is published to the reply name, and
+/// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply
+/// publishes, or `.transactional()` for one transaction per batch.
 ///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
 /// `&mut Context`, to read app state or publish manually.
@@ -380,20 +387,120 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
 
 fn expand(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     let parts = handler_parts(args, func)?;
-    let body = if args.batch {
-        if let Some(publish) = &args.publish {
-            return Err(syn::Error::new(
-                publish.span(),
-                "batch(..) cannot be combined with publish(..)",
-            ));
-        }
-        expand_batch(&parts, func)
-    } else if let Some(reply_topic) = &args.publish {
-        expand_publishing(&parts, func, reply_topic)?
-    } else {
-        expand_subscribing(&parts)
+    let body = match (&args.batch, &args.publish) {
+        (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
+        (true, None) => expand_batch(&parts, func),
+        (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
+        (false, None) => expand_subscribing(&parts),
     };
     Ok(body.into())
+}
+
+/// If `ty` is syntactically `Vec<Reply>` (under any path prefix), returns the element type.
+fn vec_element(ty: &Type) -> Option<&Type> {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return None;
+    };
+    let last = path.segments.last()?;
+    if last.ident != "Vec" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    let mut args = args.args.iter();
+    let (Some(syn::GenericArgument::Type(elem)), None) = (args.next(), args.next()) else {
+        return None;
+    };
+    Some(elem)
+}
+
+fn expand_batch_publishing(
+    parts: &HandlerParts<'_>,
+    func: &ItemFn,
+    reply_topic: &LitStr,
+) -> syn::Result<TokenStream2> {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        message_meta,
+        ctx_param,
+    } = parts;
+
+    let declared_ty = match &func.sig.output {
+        ReturnType::Type(_, ty) => &**ty,
+        ReturnType::Default => {
+            return Err(syn::Error::new_spanned(
+                &func.sig,
+                "a batch publishing handler must return the replies: Vec<Reply>, or \
+                 Result<Vec<Reply>, HandlerResult>",
+            ));
+        }
+    };
+    // `-> Result<Vec<Reply>, HandlerResult>` lets the handler skip the publish; a plain
+    // `-> Vec<Reply>` is wrapped in `Ok` here. Both checks are syntactic, like the
+    // single-message publish form: a type alias is not seen through.
+    let (reply_elem, call_body) = if let Some(ok_ty) = publish_result_reply(declared_ty) {
+        let Some(elem) = vec_element(ok_ty) else {
+            return Err(syn::Error::new_spanned(
+                ok_ty,
+                "a batch publishing handler replies with a Vec: \
+                 Result<Vec<Reply>, HandlerResult>",
+            ));
+        };
+        (elem, quote!((async move #block).await))
+    } else {
+        let Some(elem) = vec_element(declared_ty) else {
+            return Err(syn::Error::new_spanned(
+                declared_ty,
+                "a batch publishing handler returns the replies: Vec<Reply>, or \
+                 Result<Vec<Reply>, HandlerResult>",
+            ));
+        };
+        (
+            elem,
+            quote!(::core::result::Result::Ok((async move #block).await)),
+        )
+    };
+    Ok(quote! {
+        #[allow(non_camel_case_types)]
+        #vis struct #name;
+
+        impl ::ruststream::runtime::BatchPublishingDef for #name {
+            type Input = #input_ty;
+            type Reply = #reply_elem;
+            type Source = #source_ty;
+
+            fn source(&self) -> Self::Source { #source_expr }
+            fn reply_name(&self) -> &str { #reply_topic }
+
+            fn description(&self) -> ::core::option::Option<&str> {
+                #description
+            }
+
+            #input_schema
+
+            #message_meta
+
+            async fn call(
+                &self,
+                #pat: &[#input_ty],
+                #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<#reply_elem>,
+                ::ruststream::runtime::HandlerResult,
+            > {
+                #call_body
+            }
+        }
+    })
 }
 
 fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {

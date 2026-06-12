@@ -11,7 +11,8 @@ use std::{
 };
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
+use ruststream::testing::TestClient;
 use ruststream::{Buffered, Name, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -254,6 +255,99 @@ async fn per_element_outcomes_retry_individually() {
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Confirmation {
+    id: u32,
+    accepted: bool,
+}
+
+/// Confirms a page of orders. The Result form gives explicit ack control; the whole-batch
+/// rejection path is covered by the runtime unit tests.
+#[subscriber(batch("requests"), publish("confirmations"))]
+async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerResult> {
+    Ok(orders
+        .iter()
+        .map(|o| Confirmation {
+            id: o.id,
+            accepted: true,
+        })
+        .collect())
+}
+
+/// The plain reply form: every page is confirmed (compile coverage for `-> Vec<Reply>`).
+#[subscriber(batch("requests"), publish("audit"))]
+async fn audit(orders: &[Order]) -> Vec<Confirmation> {
+    orders
+        .iter()
+        .map(|o| Confirmation {
+            id: o.id,
+            accepted: true,
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_replies_publish_transactionally() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    let observer = broker.clone();
+
+    let replies = TypedPublisher::new(broker.publisher()).transactional();
+    let app = RustStream::new(AppInfo::new("confirmations", "0.1.0"))
+        .with_broker(broker, |b| b.include_batch_publishing(confirm, replies));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("requests", &order_bytes(7)))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let confirmed = observer
+                .expect_published("confirmations", 1, Duration::from_millis(1))
+                .await
+                .unwrap();
+            if !confirmed.is_empty() {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "no confirmation arrived");
+
+    let confirmed = observer
+        .expect_published("confirmations", 1, Duration::from_millis(100))
+        .await
+        .unwrap();
+    for raw in &confirmed {
+        let confirmation: Confirmation = serde_json::from_slice(raw.payload()).unwrap();
+        assert_eq!(confirmation.id, 7);
+        assert!(confirmation.accepted);
+    }
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+#[test]
+fn batch_publishing_def_records_metadata() {
+    let broker = MemoryBroker::new();
+    let replies = TypedPublisher::new(broker.publisher());
+    let app = RustStream::new(AppInfo::new("audit", "0.1.0"))
+        .with_broker(broker, |b| b.include_batch_publishing(audit, replies));
+
+    assert_eq!(app.handlers().len(), 1);
+    assert_eq!(app.handlers()[0].name, "requests");
+    assert!(
+        app.handlers()[0]
+            .output_type
+            .is_some_and(|t| t.contains("Confirmation")),
+    );
 }
 
 #[test]

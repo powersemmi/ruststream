@@ -108,8 +108,37 @@ Manual publishes through `ctx.publisher(..)` run through the dynamic pipeline (t
 property of a specific `TypedPublisher`). The full program is
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 
+## Batch replies and transactions
+
+A `#[subscriber(batch(..), publish(..))]` handler consumes a whole decoded batch and returns the
+replies for it - the consume-transform-produce pattern. `Ok(replies)` publishes every reply to
+the reply name and acks the batch; `Err(result)` publishes nothing and settles the whole batch
+with `result` (all-or-nothing: selective per-element outcomes do not compose with a
+transaction):
+
+```rust
+--8<-- "examples/publishing.rs:batch_publishing"
+```
+
+Mount it with `include_batch_publishing`, handing it the reply wiring:
+
+```rust
+--8<-- "examples/publishing.rs:batch_publishing_mount"
+```
+
+With a plain `TypedPublisher`, each reply publishes independently; a mid-batch failure retries
+the whole batch, so the earlier replies may be published again on redelivery (at-least-once).
+Calling `.transactional()` on the `TypedPublisher` switches the wiring to one broker transaction
+per batch: the runtime begins a transaction, publishes every reply, commits, and only then acks
+the incoming batch; any failure aborts, so replies are never half-visible. The method exists
+only when the underlying publisher implements the `TransactionalPublisher` capability - for
+brokers without transactions the compiler rejects it. The single-message `include_publishing`
+forms keep taking a plain `TypedPublisher`: a one-message transaction adds broker round-trips
+for no atomicity gain.
+
 ## Batch publishing
 
-There is no batch-publish API. For most brokers (NATS, Kafka) the client already coalesces writes,
-so a per-message `publish` loop achieves the same throughput. Where a broker has a genuine pipeline
-primitive (Redis), the broker crate exposes it as a broker-specific capability.
+There is no direct batch-publish API on `Publisher`. For most brokers (NATS, Kafka) the client
+already coalesces writes, so a per-message `publish` loop achieves the same throughput. Where a
+broker has a genuine pipeline primitive (Redis), the broker crate exposes it as a broker-specific
+capability.

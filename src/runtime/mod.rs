@@ -2,6 +2,7 @@
 
 mod app;
 mod batch;
+mod batch_publishing;
 pub mod cli;
 mod context;
 mod dispatch;
@@ -19,6 +20,7 @@ mod typed;
 
 pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
+pub use batch_publishing::{BatchPublishingDef, BatchPublishingHandler};
 pub use context::{Context, State};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use handler::{Handler, HandlerResult, IntoHandlerResult};
@@ -26,7 +28,7 @@ pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     Outgoing, PublishIdentity, PublishLayer, PublishMiddleware, PublishNext, PublishStack,
-    ScopedPublisher, TypedPublisher,
+    ReplyPublisher, ScopedPublisher, Transactional, TypedPublisher,
 };
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingDef, PublishingHandler};
