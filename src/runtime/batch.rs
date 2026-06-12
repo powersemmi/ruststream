@@ -406,7 +406,8 @@ mod tests {
 
         let state = State::default();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("selective", Headers::new(), &state, &delivery);
+        let headers = Headers::new();
+        let mut ctx = Context::new("selective", &headers, &state, &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 3);
         handler.handle_batch(batch, &mut ctx).await;
@@ -434,7 +435,8 @@ mod tests {
 
         let state = State::default();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("short", Headers::new(), &state, &delivery);
+        let headers = Headers::new();
+        let mut ctx = Context::new("short", &headers, &state, &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 3);
         handler.handle_batch(batch, &mut ctx).await;
@@ -468,7 +470,8 @@ mod tests {
 
         let state = State::default();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("delayed", Headers::new(), &state, &delivery);
+        let headers = Headers::new();
+        let mut ctx = Context::new("delayed", &headers, &state, &delivery);
         let batch = pull_batch(&mut sub).await;
         handler.handle_batch(batch, &mut ctx).await;
 
@@ -494,7 +497,8 @@ mod tests {
 
         let state = State::default();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("uniform", Headers::new(), &state, &delivery);
+        let headers = Headers::new();
+        let mut ctx = Context::new("uniform", &headers, &state, &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
         handler.handle_batch(batch, &mut ctx).await;

@@ -387,7 +387,8 @@ where
                             // A batch has no single working copy of headers, so the context
                             // starts with an empty set; per-message headers stay on the broker
                             // deliveries.
-                            let mut ctx = Context::new(&name, Headers::new(), &state, &delivery);
+                            let empty = Headers::new();
+                            let mut ctx = Context::new(&name, &empty, &state, &delivery);
                             handler.handle_batch(batch, &mut ctx).await;
                         } else {
                             let handler = Arc::clone(&handler);
@@ -395,8 +396,8 @@ where
                             let state = Arc::clone(&state);
                             let delivery = Arc::clone(&delivery);
                             tasks.spawn(async move {
-                                let mut ctx =
-                                    Context::new(&name, Headers::new(), &state, &delivery);
+                                let empty = Headers::new();
+                                let mut ctx = Context::new(&name, &empty, &state, &delivery);
                                 handler.handle_batch(batch, &mut ctx).await;
                             });
                         }
@@ -430,7 +431,7 @@ where
     H: Handler<M>,
     M: IncomingMessage,
 {
-    let mut ctx = Context::new(name, msg.headers().clone(), state, delivery);
+    let mut ctx = Context::new(name, msg.headers(), state, delivery);
     let outcome = handler.handle(&msg, &mut ctx).await;
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,

@@ -117,7 +117,7 @@ where
     fn layer(&self, inner: H) -> Self::Handler {
         DynStackHandler {
             chain: self.0.clone(),
-            inner: Arc::new(inner),
+            inner,
         }
     }
 }
@@ -126,7 +126,7 @@ where
 /// handler.
 pub struct DynStackHandler<I, H> {
     chain: Arc<[Arc<dyn DynMiddleware<I>>]>,
-    inner: Arc<H>,
+    inner: H,
 }
 
 impl<I, H> std::fmt::Debug for DynStackHandler<I, H> {
@@ -142,13 +142,16 @@ where
     I: Sync,
     H: Handler<I>,
 {
-    fn handle(&self, input: &I, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
-        let chain = self.chain.clone();
-        let inner = self.inner.clone();
-        async move {
-            let tail: &dyn ErasedHandler<I> = &inner;
-            Next { rest: &chain, tail }.run(input, ctx).await
+    // The returned future captures &self, so the chain and the wrapped handler are borrowed:
+    // no Arc refcount traffic per message.
+    async fn handle(&self, input: &I, ctx: &mut Context<'_>) -> HandlerResult {
+        let tail: &dyn ErasedHandler<I> = &self.inner;
+        Next {
+            rest: &self.chain,
+            tail,
         }
+        .run(input, ctx)
+        .await
     }
 }
 
@@ -198,7 +201,8 @@ mod tests {
         let handler = inner.with(stack);
         let state = State::default();
         let delivery = crate::runtime::dispatch::Delivery::empty();
-        let mut ctx = Context::new("test", Headers::new(), &state, &delivery);
+        let headers = Headers::new();
+        let mut ctx = Context::new("test", &headers, &state, &delivery);
         assert_eq!(handler.handle(&Input, &mut ctx).await, HandlerResult::Ack);
         assert_eq!(*log.lock().expect("poisoned"), vec!["a", "b", "inner"]);
     }
