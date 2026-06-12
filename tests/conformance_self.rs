@@ -6,7 +6,7 @@
 use std::convert::Infallible;
 
 use ruststream::{
-    conformance::harness,
+    conformance::{capabilities, harness},
     memory::{MemoryBroker, MemorySource},
 };
 
@@ -22,6 +22,40 @@ async fn memory_broker_passes_conformance_suite() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_lifecycle() {
     harness::lifecycle(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_request_reply_suite() {
+    capabilities::request_reply(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.requester(),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_batches_suite() {
+    capabilities::batches(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_transactions_suite() {
+    capabilities::transactions(
         MemoryBroker::new,
         |name| MemorySource::new(name),
         |broker| broker.publisher(),

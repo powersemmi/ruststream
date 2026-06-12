@@ -5,5 +5,6 @@
 //! reference [`crate::memory::MemoryBroker`], which lives in the always-available `memory`
 //! module so applications can use it without the conformance feature.
 
+pub mod capabilities;
 pub mod harness;
 pub mod helpers;

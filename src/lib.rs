@@ -19,9 +19,10 @@
 //! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`
 //!   ([`logging::init`]). The generated `cli` `run` command installs it automatically.
-//! * `conformance`: the [`conformance::harness`] contract suite and broker-agnostic
-//!   [`conformance::helpers`] for application tests. Generic over any broker's `TestClient`, so it
-//!   pulls in no concrete broker (enable `memory` too to run it against [`memory::MemoryBroker`]).
+//! * `conformance`: the [`conformance::harness`] contract suite, per-capability suites in
+//!   [`conformance::capabilities`], and broker-agnostic [`conformance::helpers`] for application
+//!   tests. Generic over any broker's `TestClient`, so it pulls in no concrete broker (enable
+//!   `memory` too to run it against [`memory::MemoryBroker`]).
 //! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
 //!
 //! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,

@@ -82,6 +82,40 @@ the check accepts that as well as a successful ack. Because `lifecycle` performs
 run it against a live server (gate it behind an env var like `NATS_TEST_URL`); the in-memory broker
 can run it in-process.
 
+## Capability suites
+
+If your broker implements a capability trait, run the matching suite from
+`conformance::capabilities` to prove the implementation honours the trait contract; brokers
+without the capability simply do not call it. Each suite takes the same factory shape as
+`lifecycle` and performs a real `connect`, so gate it the same way:
+
+| Suite | Requires | Asserts |
+|---|---|---|
+| `capabilities::request_reply` | `RequestReply` | the request reaches a responder with a usable `reply-to` header, the correlated reply resolves the request, an unanswered request fails after its timeout |
+| `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
+| `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it |
+
+```rust
+use ruststream::conformance::capabilities;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
+async fn passes_request_reply() {
+    let url = std::env::var("NATS_TEST_URL").unwrap();
+    capabilities::request_reply(
+        || NatsBroker::new(url.clone()),
+        |subject| SubscribeOptions::new(subject),
+        |broker| broker.publisher(),   // the RequestReply publisher under test
+        |broker| broker.publisher(),   // the plain publisher the responder replies through
+    )
+    .await;
+}
+```
+
+The in-memory broker implements every capability natively and passes all three suites in-process
+(see [Memory](../brokers/memory.md#capabilities)); it is the executable reference for what each
+suite expects.
+
 ## Author checklist
 
 Before publishing a broker crate:
@@ -91,7 +125,8 @@ Before publishing a broker crate:
 - [ ] `shutdown` performs all fallible teardown and never blocks or panics.
 - [ ] Ack consumes `self`; nack honours the `requeue` flag.
 - [ ] The crate owns its `Config`; fields without a sane default do not get a `Default`.
-- [ ] Capability traits are implemented only where the broker genuinely supports them.
+- [ ] Capability traits are implemented only where the broker genuinely supports them, and each
+      implemented capability passes its `conformance::capabilities` suite.
 - [ ] A `TestClient` is shipped under a `testing` feature, doing core routing only.
 - [ ] `harness::run_suite` passes (the routing surface).
 - [ ] `harness::lifecycle` passes against a real server, gated behind an environment variable (the
