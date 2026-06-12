@@ -105,4 +105,30 @@ impl HandlerMetadata {
         self.message_description = Some(description.into());
         self
     }
+
+    /// Attaches the optional descriptive fields that every generated definition trait exposes
+    /// with identical signatures (`description`, `input_schema`, `message_name`,
+    /// `message_description`). Shared tail of the per-definition metadata builders.
+    #[must_use]
+    pub(crate) fn with_def_details(
+        mut self,
+        description: Option<&str>,
+        input_schema: Option<String>,
+        message_name: Option<&'static str>,
+        message_description: Option<&'static str>,
+    ) -> Self {
+        if let Some(description) = description {
+            self = self.with_description(description.to_owned());
+        }
+        if let Some(schema) = input_schema {
+            self = self.with_payload_schema(schema);
+        }
+        if let Some(name) = message_name {
+            self = self.with_message_name(name);
+        }
+        if let Some(description) = message_description {
+            self = self.with_message_description(description);
+        }
+        self
+    }
 }

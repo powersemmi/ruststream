@@ -15,12 +15,13 @@ use tracing::warn;
 use crate::IncomingMessage;
 use crate::codec::Codec;
 
-use super::batch::BatchHandler;
+use super::batch::{BatchHandler, decode_batch, settle};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishMiddleware, ReplyPublisher};
+use super::typed::DecodeFailure;
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -92,21 +93,14 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
     name: String,
     def: &D,
 ) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::typed::<D::Input>(name)
-        .with_output_type(std::any::type_name::<D::Reply>());
-    if let Some(description) = def.description() {
-        meta = meta.with_description(description.to_owned());
-    }
-    if let Some(schema) = def.input_schema() {
-        meta = meta.with_payload_schema(schema);
-    }
-    if let Some(message_name) = def.message_name() {
-        meta = meta.with_message_name(message_name);
-    }
-    if let Some(message_description) = def.message_description() {
-        meta = meta.with_message_description(message_description);
-    }
-    meta
+    HandlerMetadata::typed::<D::Input>(name)
+        .with_output_type(std::any::type_name::<D::Reply>())
+        .with_def_details(
+            def.description(),
+            def.input_schema(),
+            def.message_name(),
+            def.message_description(),
+        )
 }
 
 /// The [`BatchHandler`] built from a [`BatchPublishingDef`]: decode the batch, run the handler,
@@ -141,26 +135,8 @@ where
     R: ReplyPublisher,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
-        let mut values = Vec::with_capacity(batch.len());
-        let mut accepted = Vec::with_capacity(batch.len());
-        for msg in batch {
-            match self.codec.decode::<D::Input>(msg.payload()) {
-                Ok(value) => {
-                    values.push(value);
-                    accepted.push(msg);
-                }
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        error = %err,
-                        "codec decode failed",
-                    );
-                    if let Err(err) = msg.nack(false).await {
-                        warn!(target: "ruststream::dispatch", error = %err, "nack failed");
-                    }
-                }
-            }
-        }
+        let (values, accepted) =
+            decode_batch::<M, D::Input, C>(batch, &self.codec, DecodeFailure::default()).await;
         if accepted.is_empty() {
             return;
         }
@@ -186,14 +162,7 @@ where
             Err(result) => result,
         };
         for msg in accepted {
-            let ack_result = match outcome {
-                HandlerResult::Ack => msg.ack().await,
-                HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-                HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
-            };
-            if let Err(err) = ack_result {
-                warn!(target: "ruststream::dispatch", error = %err, "ack / nack failed");
-            }
+            settle(msg, outcome).await;
         }
     }
 }
