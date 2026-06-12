@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
+use crate::runtime::batch::{BatchDef, SliceHandler, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{
     BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
 };
@@ -26,7 +26,7 @@ use super::routes::{BatchRoute, HandleRoute, MountRoute, RouterDef, SubscribeRou
 use super::sink::RouterSink;
 use super::{
     BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, MergedRouter, PublishingRouter,
-    SourceMessage,
+    SourceMessage, SubscribedBatchRouter,
 };
 
 /// A statically-typed, lazily-bound group of handler registrations, not attached to any broker.
@@ -211,6 +211,38 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         }
     }
 
+    /// Wraps `handler` in a [`TypedBatch`](crate::runtime::TypedBatch) decoding with `codec` and
+    /// prepends the batch registration. The shared tail of the `subscribe_batch` forms.
+    pub(super) fn push_batch_route<S, T, C, H>(
+        self,
+        source: S,
+        handler: H,
+        codec: C,
+        meta: HandlerMetadata,
+    ) -> SubscribedBatchRouter<B, S, T, C, H, RC, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        T: DeserializeOwned + Send + Sync + 'static,
+        C: Codec + 'static,
+        H: SliceHandler<T> + 'static,
+    {
+        Router {
+            routes: (
+                BatchRoute {
+                    source,
+                    handler: typed_batch(codec, handler),
+                    meta,
+                    workers: Workers::sequential(),
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
     /// `include` / `include_on` forms.
     pub(super) fn mount_subscriber<S, D, C>(
@@ -368,6 +400,54 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
             layers: self.layers,
             _broker: PhantomData,
         }
+    }
+}
+
+impl<B, S, H, R, RC, RL> Router<B, (SubscribeRoute<S, H>, R), RC, RL> {
+    /// Sets the concurrency policy of the registration just added (the preceding `subscribe` /
+    /// `include` call), replacing its default.
+    ///
+    /// The functional-path counterpart of the macro's `workers(..)` clause: [`Workers::pool`]
+    /// processes up to `n` deliveries of this subscriber concurrently, [`Workers::keyed`]
+    /// dispatches over per-key sequential lanes. On an `include`d definition this overrides the
+    /// attribute's `workers(..)` clause.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "memory")]
+    /// # fn build() {
+    /// use ruststream::Name;
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router, Workers};
+    ///
+    /// let router = Router::<MemoryBroker>::new()
+    ///     .subscribe(
+    ///         Name::new("jobs"),
+    ///         |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+    ///         HandlerMetadata::raw("jobs"),
+    ///     )
+    ///     .workers(Workers::pool(4));
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn workers(mut self, workers: Workers) -> Self {
+        self.routes.0.workers = workers;
+        self
+    }
+}
+
+impl<B, S, H, R, RC, RL> Router<B, (BatchRoute<S, H>, R), RC, RL> {
+    /// Sets the concurrency policy of the batch registration just added (the preceding
+    /// `subscribe_batch` / `include_batch` call), replacing its default.
+    ///
+    /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed lanes order single
+    /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves
+    /// like a plain pool of the same size.
+    #[must_use]
+    pub fn workers(mut self, workers: Workers) -> Self {
+        self.routes.0.workers = workers;
+        self
     }
 }
 

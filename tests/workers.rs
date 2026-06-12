@@ -13,9 +13,12 @@ use std::{
 };
 
 use common::handler_signal;
+use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::{Headers, OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{
+    AppInfo, Context, HandlerMetadata, HandlerResult, Router, RustStream, Workers, typed,
+};
+use ruststream::{Headers, Name, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Barrier, Notify};
 
@@ -229,6 +232,153 @@ async fn batch_pool_dispatches_batches() {
     })
     .await;
     assert!(result.is_ok(), "no batch was dispatched through the pool");
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+/// The functional-path pool: a `Router::subscribe` closure with `.workers(Workers::pool(3))`.
+/// Three deliveries must be in flight at once to pass the barrier; the default sequential loop
+/// would deadlock on the first one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closure_subscription_pool_runs_concurrently() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let warmed = Arc::new(AtomicU32::new(0));
+    let crunched = Arc::new(AtomicU32::new(0));
+    let signal = Arc::new(Notify::new());
+    let gate = Arc::new(Barrier::new(3));
+
+    let handler = {
+        let warmed = Arc::clone(&warmed);
+        let crunched = Arc::clone(&crunched);
+        let signal = Arc::clone(&signal);
+        let gate = Arc::clone(&gate);
+        typed(JsonCodec, move |order: &Order, _ctx: &mut Context| {
+            let warmed = Arc::clone(&warmed);
+            let crunched = Arc::clone(&crunched);
+            let signal = Arc::clone(&signal);
+            let gate = Arc::clone(&gate);
+            let id = order.id;
+            async move {
+                if id == 0 {
+                    warmed.fetch_add(1, Ordering::SeqCst);
+                    signal.notify_one();
+                    return HandlerResult::Ack;
+                }
+                gate.wait().await;
+                crunched.fetch_add(1, Ordering::SeqCst);
+                signal.notify_one();
+                HandlerResult::Ack
+            }
+        })
+    };
+
+    let router = Router::<MemoryBroker>::new()
+        .subscribe(
+            Name::new("fn-jobs"),
+            handler,
+            HandlerMetadata::raw("fn-jobs"),
+        )
+        .workers(Workers::pool(3));
+
+    let app = RustStream::new(AppInfo::new("fn-jobs", "0.1.0"))
+        .with_broker(broker, |b| b.include_router(router));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let warmup = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("fn-jobs", &order_bytes(0)))
+                .await;
+            handler_signal(&signal).await;
+            if warmed.load(Ordering::SeqCst) >= 1 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(warmup.is_ok(), "subscription did not come up");
+
+    for id in 1..=3u32 {
+        publisher
+            .publish(OutgoingMessage::new("fn-jobs", &order_bytes(id)))
+            .await
+            .unwrap();
+    }
+
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        while crunched.load(Ordering::SeqCst) < 3 {
+            signal.notified().await;
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "3 deliveries never ran concurrently (sequential dispatch would deadlock the barrier)",
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+/// The functional batch path: a `Router::subscribe_batch` slice closure receives whole decoded
+/// batches without a macro definition.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closure_batch_subscription_receives_batches() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let seen = Arc::new(AtomicUsize::new(0));
+    let signal = Arc::new(Notify::new());
+
+    let handler = {
+        let seen = Arc::clone(&seen);
+        let signal = Arc::clone(&signal);
+        move |orders: &[Order], _ctx: &mut Context| {
+            let count = orders.len();
+            let seen = Arc::clone(&seen);
+            let signal = Arc::clone(&signal);
+            async move {
+                seen.fetch_add(count, Ordering::SeqCst);
+                signal.notify_one();
+                HandlerResult::Ack
+            }
+        }
+    };
+
+    let router = Router::<MemoryBroker>::new()
+        .subscribe_batch(
+            Name::new("fn-pages"),
+            handler,
+            HandlerMetadata::raw("fn-pages"),
+        )
+        .workers(Workers::pool(2));
+
+    let app = RustStream::new(AppInfo::new("fn-pages", "0.1.0"))
+        .with_broker(broker, |b| b.include_router(router));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("fn-pages", &order_bytes(1)))
+                .await;
+            handler_signal(&signal).await;
+            if seen.load(Ordering::SeqCst) >= 1 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "no batch reached the slice closure");
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
