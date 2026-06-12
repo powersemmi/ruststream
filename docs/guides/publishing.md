@@ -28,8 +28,28 @@ RustStream::new(info).with_broker(broker, |b| {
 ```
 
 The `TypedPublisher`'s codec encodes the reply, and `include_publishing` reuses it to decode the
-incoming request. To decode the request with a different codec, mount with `include_publishing_on`
-and name it explicitly; see [Codecs](codecs.md#the-publish-side).
+incoming request. To decode the request with a different codec, set a scope default with
+`with_broker_codec` (or `Router::with_codec` on a router chain); see
+[Codecs](codecs.md#the-publish-side).
+
+## Controlling the acknowledgement
+
+A plain reply form always publishes and acks. Return `Result<Reply, HandlerResult>` instead to
+take control: `Ok(reply)` publishes and acks, `Err(result)` publishes nothing and the dispatcher
+acts on the returned `HandlerResult` (`HandlerResult::drop()` to dead-letter,
+`HandlerResult::retry()` to ask for redelivery):
+
+```rust
+--8<-- "examples/publishing.rs:reply_result"
+```
+
+The `Result` form is detected from the written signature, so spell it out (a type alias hiding the
+`Result` is treated as a plain reply type). Like any handler, a publishing handler may declare an
+optional second `&mut Context` parameter to read app state or publish manually.
+
+If the reply publish itself fails (broker rejected it, connection lost), the incoming message is
+nacked with `requeue = true`: the broker redelivers it instead of the reply being silently lost.
+Make publishing handlers idempotent under redelivery.
 
 ## Publishing from inside a handler
 

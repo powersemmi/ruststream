@@ -5,8 +5,8 @@ Core NATS subjects and JetStream durable consumers, and ships an in-memory test 
 `testing` feature.
 
 ```toml
-ruststream = { version = "0.2", features = ["macros"] }
-ruststream-nats = "0.2"
+ruststream = { version = "0.3", features = ["macros"] }
+ruststream-nats = "0.3"
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -32,8 +32,8 @@ Wire it onto the broker; the `with_broker` / `include` part is identical to the 
 
 To consume from JetStream instead, override the handler's by-name source with `SubscribeOptions`,
 naming the stream and a durable consumer so progress survives restarts. The handler's
-`HandlerResult::Ack` acks back to JetStream. `include_on` is the source-override form, so it takes
-the codec explicitly.
+`HandlerResult::Ack` acks back to JetStream. `include_on` is the source-override form; the codec
+resolves the same way as for `include`.
 
 ```rust
 --8<-- "examples/nats_jetstream.rs:include_on"

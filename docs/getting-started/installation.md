@@ -5,7 +5,7 @@ features. Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.2", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.3", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -40,7 +40,7 @@ Codec features are mutually compatible; enable as many as you need (see
 
 ```toml
 [dependencies]
-ruststream = { version = "0.2", default-features = false }
+ruststream = { version = "0.3", default-features = false }
 ```
 
 ## The CLI
@@ -61,11 +61,11 @@ which re-exports what it needs from `ruststream`:
 
 ```toml
 [dependencies]
-ruststream-nats = "0.2"
+ruststream-nats = "0.3"
 
 [dev-dependencies]
 # the broker's in-memory test client, for handler tests
-ruststream-nats = { version = "0.2", features = ["testing"] }
+ruststream-nats = { version = "0.3", features = ["testing"] }
 ```
 
 Each broker crate documents its own `Config` and capabilities; the available brokers are listed

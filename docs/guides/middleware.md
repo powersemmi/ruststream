@@ -6,19 +6,19 @@ dispatch path.
 
 ## Middleware scopes
 
-Today the two scopes are independent: a layer lives either on the **application** or on a
-**router**, and one does not see the other's handlers.
+The two scopes compose: the application stack is the outer one, a router's own stack sits inside
+it.
 
 **Application scope.** Add a layer to the whole application with `RustStream::layer`, before
-`with_broker`. Every handler registered directly on a broker scope is wrapped with it - but not the
-handlers a router brings in, because a router is finalized independently:
+`with_broker`. Every handler registered after it is wrapped - both handlers registered directly on
+a broker scope and handlers a router brings in via `include_router`:
 
 ```rust
 --8<-- "examples/middleware_app_scope.rs:app_scope"
 ```
 
 **Router scope.** Give a router its own middleware with `Router::layer`, which wraps every handler
-registered on it after the call (see [Routing](routing.md#router-middleware)). Handlers mounted
+on that router when it is mounted (see [Routing](routing.md#router-middleware)). Handlers mounted
 directly on the broker scope stay outside it:
 
 ```rust
@@ -32,14 +32,14 @@ and
 `LogLayer` is the hand-written layer from the next section, and the built-in
 `layers::TracingLayer` mounts the same way.
 
-!!! warning "Planned for 0.3: routers inherit the application scope"
-    The separation above is the 0.2 behaviour. In 0.3 a router will inherit the application's
-    stack, so app-level layers will wrap router handlers too (composing outside the router's own
-    `Router::layer` stack). Until then, a layer that must cover everything has to be added in both
-    places explicitly.
-
 The first layer added is the outermost. Both stacks are static: zero runtime dispatch cost, and
 the type grows as you call `layer`.
+
+!!! note "Reaching router handlers requires a `BlanketLayer`"
+    A router hides its handlers' concrete types, so a layer that wraps them (the app stack at
+    `include_router`, or `Router::layer`) must implement `BlanketLayer` - one generic method that
+    wraps any handler. The bundled layers implement it; for a custom layer it is a few lines next
+    to its `Layer` impl (see `LogLayer` in the examples above).
 
 ## Writing a layer
 

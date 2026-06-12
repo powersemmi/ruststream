@@ -15,7 +15,7 @@ When the `logging` feature is enabled, the `#[ruststream::app]` CLI calls the lo
 `run` command, so a scaffolded service logs out of the box:
 
 ```toml
-ruststream = { version = "0.2", features = ["macros", "memory", "json", "logging"] }
+ruststream = { version = "0.3", features = ["macros", "memory", "json", "logging"] }
 ```
 
 ```bash

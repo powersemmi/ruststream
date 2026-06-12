@@ -9,6 +9,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(unix)]
+use tokio::signal::unix::{SignalKind, signal};
+
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -948,7 +951,6 @@ async fn drain_handles(
 async fn wait_for_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{SignalKind, signal};
         let Ok(mut term) = signal(SignalKind::terminate()) else {
             let _ = tokio::signal::ctrl_c().await;
             return;
