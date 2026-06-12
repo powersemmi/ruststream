@@ -111,6 +111,34 @@ jobs:
         if: matrix.toolchain == 'stable' || matrix.toolchain == '1.85'
         run: cargo test --workspace --all-features
 
+  coverage:
+    name: Coverage
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Line-coverage gate. The floor ratchets up toward the 90% target as the
+      # coverage backlog items land; raise it here and in the justfile together.
+      - name: cargo llvm-cov
+        run: cargo llvm-cov --workspace --all-features --fail-under-lines 73
+
   package:
     name: Package (publish dry-run)
     needs: changes
@@ -134,7 +162,12 @@ jobs:
       # multi-package form resolves in-workspace dependencies through a local overlay instead.
       # Still not `--workspace`: the dev-only `[patch.crates-io]` self-patch used by the `nats_*`
       # examples trips its checksum.
+      #
+      # CARGO_HTTP_MULTIPLEXING=false works around recurring "[16] Error in the HTTP2 framing
+      # layer" curl failures on the runners when this job re-downloads registry deps.
       - name: cargo publish dry-run (no upload)
+        env:
+          CARGO_HTTP_MULTIPLEXING: "false"
         run: cargo publish --dry-run -p ruststream-macros -p ruststream --all-features
 
   security:
