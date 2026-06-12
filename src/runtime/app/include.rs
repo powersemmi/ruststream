@@ -23,8 +23,10 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     /// [`DefaultCodec`](crate::codec::DefaultCodec) and wrapping the handler with the global stack.
     ///
     /// Name a codec by setting a scope default with
-    /// [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec), or per handler with
-    /// [`include_with`](Self::include_with). The source comes from the macro: a [`Name`] for
+    /// [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec), or per handler by
+    /// mounting through a codec-carrying router
+    /// ([`Router::with_codec`](crate::runtime::Router::with_codec) +
+    /// [`include_router`](Self::include_router)). The source comes from the macro: a [`Name`] for
     /// `#[subscriber("topic")]` (the broker must implement [`Subscribe`]) or a broker descriptor for
     /// `#[subscriber(RedisStream::new(..))]`.
     ///
@@ -57,7 +59,9 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`, decoding
     /// its input with the [`DefaultCodec`](crate::codec::DefaultCodec).
     ///
-    /// See [`include_on_with`](Self::include_on_with) for the explicit-codec form.
+    /// To decode with another codec, set a scope default with
+    /// [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec) or mount through a
+    /// codec-carrying router ([`Router::with_codec`](crate::runtime::Router::with_codec)).
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn include_on<S, D>(&mut self, source: S, def: D)
     where
@@ -160,9 +164,8 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
     /// decoding its input with the `publisher`'s own codec and replying through it.
     ///
-    /// Name the codec once, on the `publisher`. Override the decode codec per handler with
-    /// [`include_publishing_with`](Self::include_publishing_with), or set a scope default with
-    /// [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec).
+    /// Name the codec once, on the `publisher`. Override the decode codec by setting a scope
+    /// default with [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec).
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
         D: PublishingDef + 'static,
