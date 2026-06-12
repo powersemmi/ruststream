@@ -70,6 +70,11 @@ type PublishingRouter<B, S, D, C, P, PC, PL, RC, RL, R> =
 type BatchPublishingRouter<B, S, D, C, RP, RC, RL, R> =
     Router<B, (BatchRoute<S, BatchPublishingHandler<D, C, RP>>, R), RC, RL>;
 
+/// The router that a [`Router::subscribe_batch`] closure registration produces: the slice
+/// handler `H` is wrapped in a [`TypedBatch`] decoding elements to `T` with `C`.
+type SubscribedBatchRouter<B, S, T, C, H, RC, RL, R> =
+    Router<B, (BatchRoute<S, TypedBatch<SourceMessage<B, S>, T, C, H>>, R), RC, RL>;
+
 /// The router that [`Router::merge`] produces: the merged router becomes one registration in the
 /// list.
 type MergedRouter<B, R2, C2, L2, RC, RL, R> = Router<B, (Router<B, R2, C2, L2>, R), RC, RL>;

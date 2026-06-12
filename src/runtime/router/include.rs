@@ -7,14 +7,18 @@ use serde::de::DeserializeOwned;
 use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Publisher, SubscriptionSource};
 
-use crate::runtime::batch::BatchDef;
+use crate::runtime::batch::{BatchDef, SliceHandler};
 use crate::runtime::batch_publishing::BatchPublishingDef;
+use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::publish::{PublishLayer, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::subscriber_def::SubscriberDef;
 
 use super::builder::Router;
-use super::{BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, PublishingRouter};
+use super::{
+    BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, PublishingRouter,
+    SubscribedBatchRouter,
+};
 
 impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
     /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
@@ -101,6 +105,30 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         D::Handler: 'static,
     {
         self.mount_batch(source, def, crate::codec::DefaultCodec::default())
+    }
+
+    /// Attaches a slice handler to a batch subscription described by `source`, decoding each
+    /// element with the [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// The functional-path counterpart of [`include_batch`](Self::include_batch): `handler` is
+    /// any [`SliceHandler`](crate::runtime::SliceHandler), typically a closure
+    /// `|batch: &[T], ctx: &mut Context| async { .. }`. The source's subscriber must implement
+    /// [`BatchSubscriber`] - natively, or through the [`Buffered`](crate::Buffered) adapter.
+    /// Set the dispatch concurrency with [`workers`](Router::workers) on the returned router.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn subscribe_batch<S, T, H>(
+        self,
+        source: S,
+        handler: H,
+        meta: HandlerMetadata,
+    ) -> SubscribedBatchRouter<B, S, T, crate::codec::DefaultCodec, H, (), RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        T: DeserializeOwned + Send + Sync + 'static,
+        H: SliceHandler<T> + 'static,
+    {
+        self.push_batch_route(source, handler, crate::codec::DefaultCodec::default(), meta)
     }
 
     /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on its own
@@ -262,6 +290,26 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
     {
         let codec = self.codec.clone();
         self.mount_batch(source, def, codec)
+    }
+
+    /// Attaches a slice handler to a batch subscription described by `source`, decoding each
+    /// element with the chain's codec (set by [`with_codec`](Self::with_codec)).
+    ///
+    /// See the default-codec form for details on the handler shape.
+    pub fn subscribe_batch<S, T, H>(
+        self,
+        source: S,
+        handler: H,
+        meta: HandlerMetadata,
+    ) -> SubscribedBatchRouter<B, S, T, C, H, C, RL, R>
+    where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        T: DeserializeOwned + Send + Sync + 'static,
+        H: SliceHandler<T> + 'static,
+    {
+        let codec = self.codec.clone();
+        self.push_batch_route(source, handler, codec, meta)
     }
 
     /// Mounts a `#[subscriber(batch(..), publish("name"))]`-generated definition on its own
