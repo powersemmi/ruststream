@@ -84,21 +84,14 @@ pub trait PublishingDef: Send + Sync {
 
 /// Builds the registration metadata for a publishing definition mounted under `name`.
 pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::typed::<D::Input>(name)
-        .with_output_type(std::any::type_name::<D::Reply>());
-    if let Some(description) = def.description() {
-        meta = meta.with_description(description.to_owned());
-    }
-    if let Some(schema) = def.input_schema() {
-        meta = meta.with_payload_schema(schema);
-    }
-    if let Some(message_name) = def.message_name() {
-        meta = meta.with_message_name(message_name);
-    }
-    if let Some(message_description) = def.message_description() {
-        meta = meta.with_message_description(message_description);
-    }
-    meta
+    HandlerMetadata::typed::<D::Input>(name)
+        .with_output_type(std::any::type_name::<D::Reply>())
+        .with_def_details(
+            def.description(),
+            def.input_schema(),
+            def.message_name(),
+            def.message_description(),
+        )
 }
 
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, encode the reply, publish, ack.

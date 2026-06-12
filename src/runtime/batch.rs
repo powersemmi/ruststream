@@ -208,20 +208,12 @@ pub trait BatchDef: Sized {
 
 /// Builds the registration metadata for a batch definition mounted under `name`.
 pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::typed::<D::Input>(name);
-    if let Some(description) = def.description() {
-        meta = meta.with_description(description.to_owned());
-    }
-    if let Some(schema) = def.input_schema() {
-        meta = meta.with_payload_schema(schema);
-    }
-    if let Some(message_name) = def.message_name() {
-        meta = meta.with_message_name(message_name);
-    }
-    if let Some(message_description) = def.message_description() {
-        meta = meta.with_message_description(message_description);
-    }
-    meta
+    HandlerMetadata::typed::<D::Input>(name).with_def_details(
+        def.description(),
+        def.input_schema(),
+        def.message_name(),
+        def.message_description(),
+    )
 }
 
 /// The dispatch-side consumer of one raw batch: decode, run the handler, settle every delivery.
@@ -287,27 +279,7 @@ where
     H: SliceHandler<T>,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
-        let mut values = Vec::with_capacity(batch.len());
-        let mut accepted = Vec::with_capacity(batch.len());
-        for msg in batch {
-            match self.codec.decode::<T>(msg.payload()) {
-                Ok(value) => {
-                    values.push(value);
-                    accepted.push(msg);
-                }
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        error = %err,
-                        "codec decode failed",
-                    );
-                    let requeue = matches!(self.on_decode_failure, DecodeFailure::Requeue);
-                    if let Err(err) = msg.nack(requeue).await {
-                        warn!(target: "ruststream::dispatch", error = %err, "nack failed");
-                    }
-                }
-            }
-        }
+        let (values, accepted) = decode_batch(batch, &self.codec, self.on_decode_failure).await;
         if accepted.is_empty() {
             return;
         }
@@ -338,7 +310,45 @@ where
     }
 }
 
-async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult) {
+/// Decodes each element of one raw batch independently: failures are nacked per
+/// `on_decode_failure` and never reach the handler; the rest pass through, each decoded value
+/// paired with its delivery (`values[i]` decodes `accepted[i]`).
+pub(crate) async fn decode_batch<M, T, C>(
+    batch: Vec<M>,
+    codec: &C,
+    on_decode_failure: DecodeFailure,
+) -> (Vec<T>, Vec<M>)
+where
+    M: IncomingMessage,
+    T: DeserializeOwned,
+    C: Codec,
+{
+    let mut values = Vec::with_capacity(batch.len());
+    let mut accepted = Vec::with_capacity(batch.len());
+    for msg in batch {
+        match codec.decode::<T>(msg.payload()) {
+            Ok(value) => {
+                values.push(value);
+                accepted.push(msg);
+            }
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    error = %err,
+                    "codec decode failed",
+                );
+                let requeue = matches!(on_decode_failure, DecodeFailure::Requeue);
+                if let Err(err) = msg.nack(requeue).await {
+                    warn!(target: "ruststream::dispatch", error = %err, "nack failed");
+                }
+            }
+        }
+    }
+    (values, accepted)
+}
+
+/// Applies one settlement to one delivery's own `ack` / `nack`.
+pub(crate) async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult) {
     let ack_result = match result {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
