@@ -197,6 +197,9 @@ pub mod layers {
                     HandlerResult::Nack { requeue } => {
                         warn!(target: "ruststream::dispatch", requeue, "handler nack");
                     }
+                    HandlerResult::NackAfter { delay } => {
+                        warn!(target: "ruststream::dispatch", ?delay, "handler delayed nack");
+                    }
                 }
                 result
             }

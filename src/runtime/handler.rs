@@ -1,6 +1,6 @@
 //! Handler abstraction and the [`HandlerResult`] enum returned to the router.
 
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use super::context::Context;
 
@@ -15,6 +15,16 @@ pub enum HandlerResult {
         /// Whether the broker should redeliver the message.
         requeue: bool,
     },
+    /// Negatively acknowledge the message, asking the broker to redeliver it no sooner than
+    /// `delay` from now.
+    ///
+    /// The delay is a hint, honoured by brokers with native delayed redelivery (`JetStream`
+    /// `NAK` with delay); brokers without it fall back to an immediate requeue (see
+    /// [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after)).
+    NackAfter {
+        /// How long the broker should wait before redelivering.
+        delay: Duration,
+    },
 }
 
 impl HandlerResult {
@@ -22,6 +32,14 @@ impl HandlerResult {
     #[must_use]
     pub const fn retry() -> Self {
         Self::Nack { requeue: true }
+    }
+
+    /// Convenience constructor for [`NackAfter`](Self::NackAfter): redeliver, but not before
+    /// `delay` has passed - the not-ready-yet case (a dependency has not arrived, an upstream is
+    /// rate-limited), where an immediate redelivery would just spin.
+    #[must_use]
+    pub const fn retry_after(delay: Duration) -> Self {
+        Self::NackAfter { delay }
     }
 
     /// Convenience constructor for `Nack { requeue: false }`.

@@ -1,6 +1,6 @@
 //! Message types and the [`IncomingMessage`] trait.
 
-use std::future::Future;
+use std::{future::Future, time::Duration};
 
 use bytes::Bytes;
 
@@ -180,6 +180,25 @@ pub trait IncomingMessage: Send + Sync {
     ///
     /// [`ack`]: Self::ack
     fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> + Send;
+
+    /// Negatively acknowledges the message, asking the broker to redeliver it no sooner than
+    /// `delay` from now.
+    ///
+    /// Defaulted to a plain `nack(true)` (immediate requeue), so existing implementations keep
+    /// compiling and the delay degrades to a hint. Brokers with native delayed redelivery
+    /// (`JetStream` `NAK` with delay) override it; the in-memory broker re-delivers after the
+    /// delay via a timer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AckError`] under the same conditions as [`nack`](Self::nack).
+    fn nack_after(self, delay: Duration) -> impl Future<Output = Result<(), AckError>> + Send
+    where
+        Self: Sized,
+    {
+        let _ = delay;
+        self.nack(true)
+    }
 }
 
 #[cfg(test)]

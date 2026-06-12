@@ -597,3 +597,52 @@ async fn publishing_handler_reads_context_state() {
     shutdown.notify_one();
     run.await.unwrap().unwrap();
 }
+
+static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+
+/// Asks for a delayed redelivery on first sight, then acks: the not-ready-yet pattern.
+#[subscriber("deferred")]
+async fn eventually(order: &Order) -> HandlerResult {
+    let _ = order;
+    if ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0 {
+        return HandlerResult::retry_after(Duration::from_millis(10));
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_after_redelivers_through_the_dispatcher() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(broker, |b| b.include(eventually));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    // One publish is enough: the second attempt must come from the delayed redelivery.
+    let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if ATTEMPTS.load(Ordering::SeqCst) == 0 {
+                let _ = publisher
+                    .publish(OutgoingMessage::new("deferred", &payload))
+                    .await;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if ATTEMPTS.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "the delayed nack never came back through the dispatcher",
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}

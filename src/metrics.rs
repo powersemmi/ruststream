@@ -160,7 +160,8 @@ impl Metrics {
 const fn consume_status(result: HandlerResult) -> &'static str {
     match result {
         HandlerResult::Ack => "ack",
-        HandlerResult::Nack { .. } => "nack",
+        // A delayed nack is still a nack for counting purposes.
+        HandlerResult::Nack { .. } | HandlerResult::NackAfter { .. } => "nack",
     }
 }
 
