@@ -46,6 +46,24 @@ async fn settle(orders: &[Order]) -> HandlerResult {
 }
 // --8<-- [end:batch]
 
+// --8<-- [start:workers]
+/// Up to 16 orders processed concurrently; global order is lost by design.
+#[subscriber("orders", workers(16))]
+async fn fan_out(order: &Order) -> HandlerResult {
+    println!("processing order {}", order.id);
+    HandlerResult::Ack
+}
+// --8<-- [end:workers]
+
+// --8<-- [start:workers_by_key]
+/// 16 lanes keyed by the message's partition key: per-key order is preserved.
+#[subscriber("orders", workers(16, by_key))]
+async fn per_customer(order: &Order) -> HandlerResult {
+    println!("processing order {}", order.id);
+    HandlerResult::Ack
+}
+// --8<-- [end:workers_by_key]
+
 // --8<-- [start:batch_selective]
 /// Retries only the entries that are not ready yet; the rest of the page settles.
 #[subscriber(batch("orders"))]
@@ -86,6 +104,8 @@ fn app() -> RustStream {
         // --8<-- [end:batch_mount]
         b.include_batch(reconcile);
         b.include_batch(drain);
+        b.include(fan_out);
+        b.include(per_customer);
         // --8<-- [start:manual]
         b.subscribe(
             Name::new("orders"),

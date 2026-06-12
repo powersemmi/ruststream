@@ -15,12 +15,18 @@ use syn::{
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
 /// descriptor constructor `Type::new(..)` / `Type { .. }`), optionally wrapped in `batch(..)`
-/// to consume whole batches, and an optional `publish("topic")` clause naming the reply
-/// destination.
+/// to consume whole batches, plus optional `publish("topic")` (the reply destination) and
+/// `workers(n[, by_key])` (the dispatch concurrency) clauses, in any order.
 struct SubscriberArgs {
     source: Expr,
     batch: bool,
     publish: Option<LitStr>,
+    workers: Option<WorkersArg>,
+}
+
+struct WorkersArg {
+    count: syn::LitInt,
+    by_key: Option<Ident>,
 }
 
 impl Parse for SubscriberArgs {
@@ -48,23 +54,49 @@ impl Parse for SubscriberArgs {
             }
         }
         let mut publish = None;
-        if input.peek(Token![,]) {
+        let mut workers = None;
+        while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let keyword: Ident = input.parse()?;
-            if keyword != "publish" {
+            if keyword == "publish" {
+                if publish.is_some() {
+                    return Err(syn::Error::new(keyword.span(), "duplicate publish(..)"));
+                }
+                let content;
+                parenthesized!(content in input);
+                publish = Some(content.parse()?);
+            } else if keyword == "workers" {
+                if workers.is_some() {
+                    return Err(syn::Error::new(keyword.span(), "duplicate workers(..)"));
+                }
+                let content;
+                parenthesized!(content in input);
+                let count: syn::LitInt = content.parse()?;
+                let mut by_key = None;
+                if content.peek(Token![,]) {
+                    content.parse::<Token![,]>()?;
+                    let marker: Ident = content.parse()?;
+                    if marker != "by_key" {
+                        return Err(syn::Error::new(
+                            marker.span(),
+                            "expected `by_key`: workers(n) or workers(n, by_key)",
+                        ));
+                    }
+                    by_key = Some(marker);
+                }
+                workers = Some(WorkersArg { count, by_key });
+            } else {
                 return Err(syn::Error::new(
                     keyword.span(),
-                    "expected `publish(\"reply-topic\")`",
+                    "expected `publish(\"reply-topic\")` or `workers(n[, by_key])`",
                 ));
             }
-            let content;
-            parenthesized!(content in input);
-            publish = Some(content.parse()?);
         }
         Ok(Self {
             source,
             batch,
             publish,
+            workers,
         })
     }
 }
@@ -219,6 +251,12 @@ fn unsupported_source(expr: &Expr) -> syn::Error {
 /// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply
 /// publishes, or `.transactional()` for one transaction per batch.
 ///
+/// A `workers(n)` clause processes up to `n` deliveries (or batches) of this subscriber
+/// concurrently, each in its own task; global processing order is lost by design, and
+/// back-pressure holds at `n` in-flight deliveries. `workers(n, by_key)` switches to `n`
+/// sequential lanes keyed by the message's partition key, preserving per-key ordering
+/// (single-message forms only). The default is the sequential loop.
+///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
 /// `&mut Context`, to read app state or publish manually.
 #[proc_macro_attribute]
@@ -290,6 +328,40 @@ struct HandlerParts<'a> {
     input_schema: TokenStream2,
     message_meta: TokenStream2,
     ctx_param: TokenStream2,
+    workers_method: TokenStream2,
+}
+
+/// Renders the `workers(..)` clause as an override of the def's defaulted `workers` method, or
+/// nothing when the clause is absent.
+fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
+    let Some(WorkersArg { count, by_key }) = &args.workers else {
+        return Ok(quote!());
+    };
+    if count.base10_parse::<usize>()? == 0 {
+        return Err(syn::Error::new(
+            count.span(),
+            "workers(0) is not a policy; the minimum is 1",
+        ));
+    }
+    if let Some(marker) = by_key {
+        if args.batch {
+            return Err(syn::Error::new(
+                marker.span(),
+                "by_key lanes order single messages per key; they do not apply to batch(..) \
+                 forms",
+            ));
+        }
+        return Ok(quote! {
+            fn workers(&self) -> ::ruststream::runtime::Workers {
+                ::ruststream::runtime::Workers::keyed(#count)
+            }
+        });
+    }
+    Ok(quote! {
+        fn workers(&self) -> ::ruststream::runtime::Workers {
+            ::ruststream::runtime::Workers::pool(#count)
+        }
+    })
 }
 
 fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
@@ -370,6 +442,8 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         quote!(_ctx)
     };
 
+    let workers_method = workers_method(args)?;
+
     Ok(HandlerParts {
         vis: &func.vis,
         name: &func.sig.ident,
@@ -382,6 +456,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         input_schema,
         message_meta,
         ctx_param,
+        workers_method,
     })
 }
 
@@ -432,6 +507,7 @@ fn expand_batch_publishing(
         input_schema,
         message_meta,
         ctx_param,
+        workers_method,
     } = parts;
 
     let declared_ty = match &func.sig.output {
@@ -481,6 +557,8 @@ fn expand_batch_publishing(
             fn source(&self) -> Self::Source { #source_expr }
             fn reply_name(&self) -> &str { #reply_topic }
 
+            #workers_method
+
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
             }
@@ -516,6 +594,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         input_schema,
         message_meta,
         ctx_param,
+        workers_method,
     } = parts;
 
     // Pin the body's type to the declared return type before the `IntoBatchResult` conversion:
@@ -549,6 +628,8 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
 
                 fn source(&self) -> Self::Source { #source_expr }
 
+                #workers_method
+
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description
                 }
@@ -579,6 +660,7 @@ fn expand_publishing(
         input_schema,
         message_meta,
         ctx_param,
+        workers_method,
     } = parts;
 
     let declared_ty = match &func.sig.output {
@@ -612,6 +694,8 @@ fn expand_publishing(
             fn source(&self) -> Self::Source { #source_expr }
             fn reply_name(&self) -> &str { #reply_topic }
 
+            #workers_method
+
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
             }
@@ -644,6 +728,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         input_schema,
         message_meta,
         ctx_param,
+        workers_method,
     } = parts;
 
     quote! {
@@ -669,6 +754,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
                 type Source = #source_ty;
 
                 fn source(&self) -> Self::Source { #source_expr }
+
+                #workers_method
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description

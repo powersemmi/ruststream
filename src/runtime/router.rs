@@ -30,7 +30,9 @@ use super::batch_publishing::{
     BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
 };
 use super::context::State;
-use super::dispatch::{Delivery, spawn_batch_dispatch, spawn_dispatch};
+use super::dispatch::{
+    Delivery, Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers,
+};
 use super::handler::Handler;
 use super::lifecycle::{BoxError, BoxFuture};
 use super::metadata::HandlerMetadata;
@@ -145,9 +147,11 @@ impl<B: Broker + 'static> RouterSink<B> {
         source: S,
         handler: H,
         meta: HandlerMetadata,
+        workers: Workers,
     ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
+        SourceMessage<B, S>: Send + 'static,
         H: BatchHandler<SourceMessage<B, S>> + 'static,
     {
         let handler = Arc::new(handler);
@@ -160,7 +164,38 @@ impl<B: Broker + 'static> RouterSink<B> {
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
                     Ok(spawn_batch_dispatch(
-                        subscriber, handler, token, name, state, delivery,
+                        subscriber, handler, token, name, state, delivery, workers,
+                    ))
+                })
+            }));
+        self.handlers.push(meta);
+    }
+
+    /// Erases a source and its handler into a starter dispatching under the `workers` policy;
+    /// the subscription opens after connect.
+    pub(crate) fn push_subscribe_workers<S, H>(
+        &mut self,
+        source: S,
+        handler: H,
+        meta: HandlerMetadata,
+        workers: Workers,
+    ) where
+        S: SubscriptionSource<B> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        SourceMessage<B, S>: Send + Sync + 'static,
+        H: Handler<SourceMessage<B, S>> + 'static,
+    {
+        let handler = Arc::new(handler);
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        self.starters
+            .push(Box::new(move |broker: Arc<B>, state, delivery, token| {
+                Box::pin(async move {
+                    let subscriber = source
+                        .subscribe(broker.as_ref())
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
+                    Ok(spawn_dispatch_workers(
+                        subscriber, handler, token, name, state, delivery, workers,
                     ))
                 })
             }));
@@ -204,6 +239,7 @@ pub struct SubscribeRoute<S, H> {
     source: S,
     handler: H,
     meta: HandlerMetadata,
+    workers: Workers,
 }
 
 /// One registration bound to an already-created subscriber. An implementation detail of [`Router`].
@@ -223,6 +259,7 @@ pub struct BatchRoute<S, H> {
     source: S,
     handler: H,
     meta: HandlerMetadata,
+    workers: Workers,
 }
 
 /// One mountable registration: applies the global blanket layer to its handler and registers it.
@@ -241,7 +278,7 @@ where
 {
     fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
         let handler = global.apply::<SourceMessage<B, S>, H>(self.handler);
-        sink.push_subscribe(self.source, handler, self.meta);
+        sink.push_subscribe_workers(self.source, handler, self.meta, self.workers);
     }
 
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
@@ -254,12 +291,13 @@ where
     B: Broker + 'static,
     S: SubscriptionSource<B> + Send + 'static,
     S::Subscriber: BatchSubscriber + Send + 'static,
+    SourceMessage<B, S>: Send + 'static,
     H: BatchHandler<SourceMessage<B, S>> + 'static,
 {
     fn mount_one<G: BlanketLayer>(self, _global: &G, sink: &mut RouterSink<B>) {
         // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
         // nor the router's own layers apply to batch registrations.
-        sink.push_subscribe_batch(self.source, self.handler, self.meta);
+        sink.push_subscribe_batch(self.source, self.handler, self.meta, self.workers);
     }
 
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
@@ -494,6 +532,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     source,
                     handler,
                     meta,
+                    workers: Workers::sequential(),
                 },
                 self.routes,
             ),
@@ -520,8 +559,22 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         C: Codec + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
+        let workers = def.workers();
         let handler = typed(codec, def.into_handler());
-        self.subscribe(source, handler, meta)
+        Router {
+            routes: (
+                SubscribeRoute {
+                    source,
+                    handler,
+                    meta,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
     }
 
     /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
@@ -541,6 +594,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         C: Codec + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
+        let workers = def.workers();
         let handler = typed_batch(codec, def.into_handler());
         Router {
             routes: (
@@ -548,6 +602,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     source,
                     handler,
                     meta,
+                    workers,
                 },
                 self.routes,
             ),
@@ -577,6 +632,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         RP: ReplyPublisher + 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let workers = def.workers();
         let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
         let handler = BatchPublishingHandler {
             def,
@@ -590,6 +646,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     source,
                     handler,
                     meta,
+                    workers,
                 },
                 self.routes,
             ),
@@ -620,6 +677,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         PL: PublishLayer + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
+        let workers = def.workers();
         let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
         let handler = PublishingHandler {
             def,
@@ -627,7 +685,20 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
             publisher,
             pipeline,
         };
-        self.subscribe(source, handler, meta)
+        Router {
+            routes: (
+                SubscribeRoute {
+                    source,
+                    handler,
+                    meta,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
     }
 }
 

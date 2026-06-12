@@ -17,6 +17,7 @@ use crate::IncomingMessage;
 use crate::codec::Codec;
 
 use super::context::Context;
+use super::dispatch::Workers;
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
 use super::typed::DecodeFailure;
@@ -170,6 +171,13 @@ pub trait BatchDef: Sized {
 
     /// Builds the subscription source (fresh each call).
     fn source(&self) -> Self::Source;
+
+    /// The concurrency policy for this subscriber's dispatch loop (how many batches are in
+    /// flight at once). The macro fills this in from the `workers(..)` argument; the default is
+    /// sequential dispatch.
+    fn workers(&self) -> Workers {
+        Workers::sequential()
+    }
 
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
     fn description(&self) -> Option<&str> {

@@ -1017,8 +1017,10 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
-        let handler = typed(codec, def.into_handler());
-        self.subscribe(source, handler, meta);
+        let workers = def.workers();
+        let handler = self.global.layer(typed(codec, def.into_handler()));
+        self.sink
+            .push_subscribe_workers(source, handler, meta, workers);
     }
 
     /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
@@ -1034,8 +1036,10 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         C: Codec + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
+        let workers = def.workers();
         let handler = typed_batch(codec, def.into_handler());
-        self.sink.push_subscribe_batch(source, handler, meta);
+        self.sink
+            .push_subscribe_batch(source, handler, meta, workers);
     }
 
     /// Mounts a batch publishing definition on `source`, decoding each element with `codec` and
@@ -1052,13 +1056,15 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         RP: ReplyPublisher + 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let workers = def.workers();
         let handler = BatchPublishingHandler {
             def,
             codec,
             publisher,
             pipeline: self.pipeline.clone(),
         };
-        self.sink.push_subscribe_batch(source, handler, meta);
+        self.sink
+            .push_subscribe_batch(source, handler, meta, workers);
     }
 
     /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
@@ -1084,13 +1090,15 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
-        let handler = PublishingHandler {
+        let workers = def.workers();
+        let handler = self.global.layer(PublishingHandler {
             def,
             codec,
             publisher,
             pipeline: self.pipeline.clone(),
-        };
-        self.subscribe(source, handler, meta);
+        });
+        self.sink
+            .push_subscribe_workers(source, handler, meta, workers);
     }
 }
 

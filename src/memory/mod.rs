@@ -362,6 +362,10 @@ impl IncomingMessage for MemoryMessage {
             .unwrap_or_default()
     }
 
+    fn partition_key(&self) -> Option<&[u8]> {
+        crate::Partitioned::partition_key(self)
+    }
+
     fn headers(&self) -> &Headers {
         static EMPTY: OnceLock<Headers> = OnceLock::new();
         self.delivery

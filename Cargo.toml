@@ -135,6 +135,10 @@ required-features = ["macros", "memory", "json"]
 name = "metrics"
 required-features = ["metrics", "memory", "json"]
 
+[[test]]
+name = "workers"
+required-features = ["macros", "memory", "json"]
+
 # [[test]]
 # name = "doc_testing_nats"
 # required-features = ["macros", "json"]

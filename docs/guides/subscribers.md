@@ -153,6 +153,35 @@ way it does for a single-message nack (the crate of that broker documents it). R
 vector whose length does not match the batch is a bug in the handler: the unmatched remainder is
 retried (an extra redelivery beats a silently lost message) and the mismatch is logged.
 
+## Worker pools
+
+The dispatch loop is sequential per subscriber: one delivery is handled and settled before the
+next is pulled, so one slow handler stalls the whole subscription. A `workers(n)` clause
+processes up to `n` deliveries of this subscriber concurrently, each in its own task on the
+multi-thread runtime:
+
+```rust
+--8<-- "examples/subscribers.rs:workers"
+```
+
+Back-pressure holds: the stream is not polled while `n` deliveries are in flight, which plays
+well with broker-side limits like JetStream `max_ack_pending`. **Global processing order is lost
+by design** - if any ordering matters, either stay sequential or use keyed lanes:
+
+```rust
+--8<-- "examples/subscribers.rs:workers_by_key"
+```
+
+`workers(n, by_key)` runs `n` sequential lanes. A delivery goes to the lane its partition key
+hashes to, so messages sharing a key never overlap or reorder - the in-process analogue of
+Kafka partition semantics. The key comes from the broker message's `partition_key()` (brokers
+whose messages implement the `Partitioned` capability expose it; the in-memory broker reads the
+`partition-key` header). Messages without a key rotate over the lanes. `by_key` applies to
+single-message subscribers; batch forms take a plain `workers(n)` pool of batches.
+
+On shutdown, the subscriber stops pulling new deliveries and in-flight workers drain under the
+app's `shutdown_timeout`.
+
 ## Macro or manual
 
 `#[subscriber]` is sugar over a generic API. The macro generates a typed handler and its metadata;
