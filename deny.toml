@@ -1,0 +1,28 @@
+# cargo-deny configuration: the dependency-graph half of the security gate.
+# Checks RustSec advisories, license compatibility, duplicate versions, and
+# registry sources. Run locally with `just deny`.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+# Apache-2.0/MIT-compatible permissive licenses only.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    # unicode-ident is (MIT OR Apache-2.0) AND Unicode-3.0; the Unicode license
+    # only covers the embedded character tables and is permissive.
+    "Unicode-3.0",
+]
+
+[bans]
+# clippy::cargo warns on duplicates; this is the enforcing counterpart. Known
+# unavoidable duplicates get a targeted skip with the chain that pulls them in.
+multiple-versions = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

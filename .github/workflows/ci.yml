@@ -112,3 +112,17 @@ jobs:
       # examples trips its checksum.
       - name: cargo publish dry-run (no upload)
         run: cargo publish --dry-run -p ruststream-macros -p ruststream --all-features
+
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Dependency-graph gate: RustSec advisories, license allow-list, duplicate
+      # versions, and registry sources, per the checked-in deny.toml. Not path-
+      # gated: advisories arrive over time, not only with manifest changes.
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
