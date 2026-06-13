@@ -8,6 +8,7 @@ so a fresh project runs with zero dependencies.
 ruststream = { version = "0.3", features = ["macros", "memory", "json"] }
 ```
 
+<!-- inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) -->
 ```rust
 use ruststream::memory::MemoryBroker;
 

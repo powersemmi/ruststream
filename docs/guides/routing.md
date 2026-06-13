@@ -17,6 +17,7 @@ use ruststream::runtime::Router;
 --8<-- "examples/routing.rs:builders"
 ```
 
+<!-- inline-rust: minimal mount fragment with placeholder routes module; the full compiled program is examples/routing.rs (merge form pulled in below) -->
 ```rust title="main.rs"
 RustStream::new(info).with_broker(broker, |b| {
     b.include_router(routes::orders());
@@ -56,6 +57,7 @@ for the app-scope side in a running service.
 
 Build routers per module, then combine them however suits the service:
 
+<!-- inline-rust: illustrative multi-router composition with placeholder route modules; the compiled merge form is examples/routing.rs:merge, pulled in below -->
 ```rust
 // Mount several routers on one broker - include_router can be called more than once.
 RustStream::new(info).with_broker(broker, |b| {

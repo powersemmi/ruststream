@@ -29,6 +29,7 @@ automatically when stderr is a terminal.
 
 Install the default logger once, early in `main`:
 
+<!-- inline-rust: manual logger-init fragment; the shipped logging example uses the automatic #[ruststream::app] installer, so there is no compiled call site for the by-hand path -->
 ```rust
 ruststream::logging::init()?;
 tracing::info!("service starting");
@@ -37,6 +38,7 @@ tracing::info!("service starting");
 `init` reads the filter from `RUST_LOG`, falling back to `info`. Tune the defaults through the
 `Logging` builder:
 
+<!-- inline-rust: manual Logging-builder fragment; the by-hand init path has no compiled call site (the logging example uses the automatic installer) -->
 ```rust
 use ruststream::logging::Logging;
 

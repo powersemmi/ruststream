@@ -33,6 +33,7 @@ consume; `ok` or `error` for publish).
 
 `export` renders the current values in the Prometheus exposition format:
 
+<!-- inline-rust: one-line export() API shape; the complete server, including this call, is compiled in metrics_http.rs and pulled in below -->
 ```rust
 let body = metrics.export()?;
 ```

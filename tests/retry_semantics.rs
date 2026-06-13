@@ -53,7 +53,7 @@ async fn deferred(_o: &Order) -> HandlerResult {
 /// The dispatcher must hold the redelivery back for the full `retry_after` delay, measured on
 /// the paused clock - not merely redeliver eventually.
 ///
-/// `start_paused` requires the current-thread runtime (tokio cannot pause a multi-threaded
+/// `start_paused` requires the current-thread runtime (tokio cannot pause a multithreaded
 /// clock); the auto-advancing timer makes the test instant while keeping the measured interval
 /// exact.
 #[tokio::test(start_paused = true)]
@@ -141,7 +141,7 @@ async fn retry_completes_inside_a_worker_pool() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    // Warm up with id 0 until the subscription is live, then submit ids 1..=4 exactly once.
+    // Warm up with id 0 until the subscription is live, then submit ids 1-4 exactly once.
     let warmup = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let _ = publisher

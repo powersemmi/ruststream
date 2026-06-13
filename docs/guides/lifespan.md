@@ -9,6 +9,7 @@ plus lifecycle hooks that run at fixed points around the run loop.
 `State` is a type-map: one value per type. Put ready-made values in at build time with
 `insert_state` (or from a [startup hook](#lifecycle-hooks), as the `Database` below is):
 
+<!-- inline-rust: minimal insert_state fragment with placeholder Config; the startup-hook form is compiled in lifespan.rs:hooks, pulled in below -->
 ```rust
 RustStream::new(info)
     .insert_state(Config::from_env())
@@ -79,6 +80,7 @@ By default `run` waits indefinitely for in-flight handlers to finish after shutd
 Bound that wait with `shutdown_timeout`, as the example above does; handlers still running after it
 are aborted:
 
+<!-- inline-rust: isolates the shutdown_timeout call; the full chain is compiled in lifespan.rs:hooks, shown earlier on this page -->
 ```rust
 use std::time::Duration;
 

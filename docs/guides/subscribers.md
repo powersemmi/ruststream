@@ -82,6 +82,7 @@ carries per-element delays, so pending entries back off without holding up the r
 When a subscription needs broker-specific options (a consumer group, a durable name, a delivery
 policy), the broker crate exposes a descriptor type. Use its constructor directly in the decorator:
 
+<!-- inline-rust: illustrative descriptor sketch; OrdersStream is a stand-in for a broker crate's SubscriptionSource type, which lives in another crate and has no in-repo compiled home (the real NATS form is pulled in just below) -->
 ```rust
 #[subscriber(OrdersStream::new("orders", "workers"))]
 async fn handle(order: &Order) -> HandlerResult {
@@ -110,6 +111,7 @@ macro.
 
 Inside `with_broker`, mount a definition with `include`:
 
+<!-- inline-rust: minimal include mount fragment with placeholder info/broker; the full compiled program is examples/subscribers.rs (its app is pulled in via other anchors on this page) -->
 ```rust
 RustStream::new(info).with_broker(broker, |b| {
     b.include(handle);

@@ -8,8 +8,10 @@ on:
       - mkdocs.yml
       - overrides/**
       - examples/**
-      # the testing guide embeds its snippets from these test files
-      - tests/doc_testing_*.rs
+      # the testing and conformance guides embed their snippets from these test files
+      - tests/doc_*.rs
+      - tests/conformance_self.rs
+      - scripts/lint_doc_fences.py
       - .github/workflows/docs.yml
   pull_request:
     branches: [main]
@@ -38,6 +40,9 @@ jobs:
 
       - name: Install docs toolchain
         run: pip install -r docs/requirements.txt
+
+      - name: Lint doc code fences
+        run: python3 scripts/lint_doc_fences.py
 
       - name: Build site (strict)
         run: mkdocs build --strict

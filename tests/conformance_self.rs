@@ -10,10 +10,12 @@ use ruststream::{
     memory::{MemoryBroker, MemorySource},
 };
 
+// --8<-- [start:run_suite]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_conformance_suite() {
     harness::run_suite(|| async { Ok::<_, Infallible>(MemoryBroker::new()) }).await;
 }
+// --8<-- [end:run_suite]
 
 // `make_source` / `make_publisher` must stay closures: their bounds are higher-ranked
 // (`Fn(&str) -> _` / `Fn(&B) -> _`), so a bare method path - which binds one concrete lifetime -

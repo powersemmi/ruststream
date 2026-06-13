@@ -76,6 +76,7 @@ To publish a reply, return the reply value and name the destination with `publis
 
 Mount it with a publisher that carries the reply codec:
 
+<!-- inline-rust: minimal mount fragment isolating the publisher wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
 ```rust
 use ruststream::runtime::TypedPublisher;
 
@@ -117,6 +118,7 @@ line:
 
 === "Memory"
 
+    <!-- inline-rust: side-by-side broker-swap comparison; the NATS half depends on the external ruststream-nats crate and has no in-repo compiled home, so both halves stay inline to read in parallel -->
     ```rust
     use ruststream::memory::MemoryBroker;
 
@@ -128,6 +130,7 @@ line:
 
 === "NATS"
 
+    <!-- inline-rust: NATS half of the broker-swap comparison; depends on the external ruststream-nats crate, no in-repo compiled home -->
     ```rust
     use ruststream_nats::NatsBroker;
 

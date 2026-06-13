@@ -52,6 +52,7 @@ To control the metadata explicitly - including for types without `JsonSchema` - 
 `Message` trait, which takes precedence over the schema; or derive it, which uses the type's name
 and doc comment:
 
+<!-- inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema -->
 ```rust
 use ruststream::Message;
 
@@ -72,11 +73,7 @@ Record the servers your service connects to so they appear in the document's `se
 Build a `ServerSpec` directly:
 
 ```rust
-use ruststream::ServerSpec;
-
-let app = RustStream::new(info)
-    .server("production", ServerSpec::new("nats.example.com:4222", "nats"))
-    .with_broker(broker, |b| b.include(handle));
+--8<-- "examples/asyncapi_http.rs:server"
 ```
 
 A broker crate may also implement the `DescribeServer` capability, in which case
@@ -90,6 +87,7 @@ the bytes; you mount them in whatever HTTP stack you already run (axum, actix, o
 For an interactive viewer, `render_viewer_html` returns a self-contained HTML page that loads the
 AsyncAPI React component and points it at your spec URL:
 
+<!-- inline-rust: two-line API-shape fragment; the compiled call lives in asyncapi_http.rs:generate -->
 ```rust
 use ruststream::asyncapi::{render_viewer_html, ViewerOptions};
 

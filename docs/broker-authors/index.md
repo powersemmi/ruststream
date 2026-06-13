@@ -21,6 +21,7 @@ traits for the features your broker supports, and prove the result with the
 The broker is pure lifecycle: connect and shut down. It carries no subscriber or publisher type, so a
 single application can mix broker kinds.
 
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/broker.rs (which carries Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Broker: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -35,6 +36,7 @@ pub trait Broker: Send + Sync {
 
 Implement `Subscribe` to support subscribing by name. This is what `#[subscriber("name")]` uses.
 
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Subscribe: Broker {
     type Subscriber: Subscriber;
@@ -46,6 +48,7 @@ pub trait Subscribe: Broker {
 
 A subscriber is a `Stream` of incoming messages. Back-pressure comes for free from the stream.
 
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Subscriber: Send {
     type Message: IncomingMessage;
@@ -62,6 +65,7 @@ which keeps it cancel-safe.
 A delivered message exposes its payload and headers, and is acked or nacked. Ack consumes `self`, so
 double-ack is a compile error.
 
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
@@ -86,6 +90,7 @@ immediate requeue and keyed lanes rotating keyless messages.
 
 ### `Publisher`
 
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -101,6 +106,7 @@ pub trait Publisher: Send + Sync {
 group, a durable name, a delivery policy), expose a descriptor type that implements
 `SubscriptionSource`:
 
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait SubscriptionSource<B: Broker> {
     type Subscriber: Subscriber;
