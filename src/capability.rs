@@ -47,7 +47,7 @@ pub trait TransactionalPublisher: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] when the broker refuses to start a transaction, for example
+    /// Returns `Self::Error` when the broker refuses to start a transaction, for example
     /// because transactions are already in progress or the broker is misconfigured.
     ///
     /// [`commit`]: Self::commit
@@ -58,7 +58,7 @@ pub trait TransactionalPublisher: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] when the broker rejects the commit. The transaction state after
+    /// Returns `Self::Error` when the broker rejects the commit. The transaction state after
     /// a failed commit is implementation-defined; implementors must document it.
     fn commit(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
@@ -66,7 +66,7 @@ pub trait TransactionalPublisher: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] when the broker rejects the abort.
+    /// Returns `Self::Error` when the broker rejects the abort.
     fn abort(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
@@ -83,7 +83,7 @@ pub trait RequestReply: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] when the broker rejects the publish, the reply times out, or
+    /// Returns `Self::Error` when the broker rejects the publish, the reply times out, or
     /// the underlying transport fails before a reply arrives.
     fn request(
         &self,

@@ -103,7 +103,7 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
         )
 }
 
-/// The [`BatchHandler`] built from a [`BatchPublishingDef`]: decode the batch, run the handler,
+/// The `BatchHandler` built from a [`BatchPublishingDef`]: decode the batch, run the handler,
 /// publish the replies through the [`ReplyPublisher`], then ack the batch.
 ///
 /// Elements that fail to decode are nacked individually and never reach the handler. A failed

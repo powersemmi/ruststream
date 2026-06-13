@@ -1,6 +1,6 @@
 //! Prometheus metrics for consume and publish paths.
 //!
-//! A single [`Metrics`] object owns the counters and the [`Registry`](prometheus::Registry) they are
+//! A single [`Metrics`] object owns the counters and the [`Registry`] they are
 //! registered in, and hands out two middleware: a static consume-side [`Layer`] and a publish-side
 //! [`PublishMiddleware`]. Both share the same registry, so one [`Metrics::export`] renders the whole
 //! picture. The registry is the global default unless you pass your own.

@@ -223,7 +223,7 @@ impl<Inner: PublishLayer, Outer: PublishLayer> PublishLayer for PublishStack<Inn
 /// The publish-side counterpart to a typed subscriber: it carries *how* a value is encoded and the
 /// per-publisher transforms ([`layer`](Self::layer)), while *where* it goes (the destination name)
 /// is supplied per send - so one `TypedPublisher` is reused across handlers replying to different
-/// names. The [`#[subscriber(.., publish("name"))]`](macro) reply form supplies the name; the
+/// names. The `#[subscriber(.., publish("name"))]` reply form supplies the name; the
 /// `TypedPublisher` is passed at wiring.
 ///
 /// ```
