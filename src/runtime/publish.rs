@@ -11,11 +11,11 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use serde::Serialize;
 use tracing::warn;
 
-use crate::codec::{Codec, DefaultCodec};
-use crate::{Headers, Publisher, TransactionalPublisher};
-use crate::runtime::publish::sealed::Sealed;
 use super::lifecycle::BoxError;
 use super::publisher_registry::ErasedPublisher;
+use crate::codec::{Codec, DefaultCodec};
+use crate::runtime::publish::sealed::Sealed;
+use crate::{Headers, Publisher, TransactionalPublisher};
 
 type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
 
