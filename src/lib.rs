@@ -74,7 +74,7 @@ pub use ruststream_macros::subscriber;
 /// Attribute macro that generates a `main` entry point from a `RustStream` builder function.
 ///
 /// Available with the `macros` feature. See [`ruststream_macros::app`] and
-/// [`runtime::cli`](crate::runtime::cli).
+/// [`runtime::cli`].
 #[cfg(feature = "macros")]
 pub use ruststream_macros::app;
 

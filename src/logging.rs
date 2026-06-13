@@ -1,4 +1,4 @@
-//! Colorful, environment-driven console logging built on [`tracing-subscriber`].
+//! Colorful, environment-driven console logging built on [`tracing_subscriber`].
 //!
 //! RustStream emits structured [`tracing`] events throughout dispatch, publishing and the service
 //! lifecycle, but - like any well-behaved library - installs no subscriber on its own. That choice
