@@ -48,12 +48,27 @@ The return type is anything that converts into a [`HandlerResult`]:
 
 On the message itself, ack consumes `self`, so the type system prevents acking twice.
 
+### Delayed redelivery
+
 `retry_after` covers the not-ready-yet case (a dependency has not arrived, an upstream is
-rate-limited), where an immediate redelivery would just spin. The delay is a hint: brokers with
-native delayed redelivery (JetStream `NAK` with delay, the in-memory broker) honour it, others
-fall back to an immediate requeue. It composes with
-[selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` can carry
-per-element delays.
+rate-limited), where an immediate redelivery would just spin:
+
+```rust
+--8<-- "examples/retry.rs:retry_after"
+```
+
+Under the hood the dispatcher settles the message with `IncomingMessage::nack_after(delay)`. A
+broker overrides that method when the transport has native delayed redelivery (JetStream `NAK`
+with delay; the in-memory broker re-delivers on a timer); the trait's default degrades to a
+plain `nack(requeue = true)`. The delay is therefore a hint, not a guarantee - on a broker
+without the capability the message comes back immediately.
+
+It composes with [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>`
+carries per-element delays, so pending entries back off without holding up the rest of the page:
+
+```rust
+--8<-- "examples/retry.rs:batch_retry_after"
+```
 
 ## Choosing the subscription source
 

@@ -68,8 +68,21 @@ pub trait IncomingMessage: Send + Sync {
     fn headers(&self) -> &Headers;
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
+
+    // Defaulted: a plain nack(true). Override when the transport has native
+    // delayed redelivery (JetStream NAK with delay); handlers reach it through
+    // HandlerResult::retry_after.
+    async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
+
+    // Defaulted: None. Override (with the Partitioned capability) to feed the
+    // runtime's keyed worker lanes, workers(n, by_key).
+    fn partition_key(&self) -> Option<&[u8]>;
 }
 ```
+
+The two defaulted methods are how optional broker behaviour degrades gracefully: a broker that
+overrides neither still works with every runtime feature, with `retry_after` falling back to an
+immediate requeue and keyed lanes rotating keyless messages.
 
 ### `Publisher`
 
