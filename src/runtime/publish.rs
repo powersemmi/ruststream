@@ -11,11 +11,15 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use serde::Serialize;
 use tracing::warn;
 
-use crate::codec::Codec;
-use crate::{Headers, Publisher, TransactionalPublisher};
-
 use super::lifecycle::BoxError;
 use super::publisher_registry::ErasedPublisher;
+use crate::codec::Codec;
+// `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
+// way, so an ungated import would break `--no-default-features`.
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::codec::DefaultCodec;
+use crate::runtime::publish::sealed::Sealed;
+use crate::{Headers, Publisher, TransactionalPublisher};
 
 type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
 
@@ -256,12 +260,12 @@ impl<P, C> TypedPublisher<P, C, PublishIdentity> {
 }
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-impl<P> TypedPublisher<P, crate::codec::DefaultCodec, PublishIdentity> {
-    /// Pairs `publisher` with the [`DefaultCodec`](crate::codec::DefaultCodec) and no static
+impl<P> TypedPublisher<P, DefaultCodec, PublishIdentity> {
+    /// Pairs `publisher` with the [`DefaultCodec`](DefaultCodec) and no static
     /// transforms. Use [`with_codec`](Self::with_codec) to name a codec explicitly.
     #[must_use]
     pub fn new(publisher: P) -> Self {
-        Self::with_codec(publisher, crate::codec::DefaultCodec::default())
+        Self::with_codec(publisher, DefaultCodec::default())
     }
 }
 
@@ -359,7 +363,7 @@ mod sealed {
 /// Implemented by a plain [`TypedPublisher`] (each reply published independently) and by a
 /// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by
 /// exactly those two types.
-pub trait ReplyPublisher: sealed::Sealed + Send + Sync {
+pub trait ReplyPublisher: Sealed + Send + Sync {
     /// The codec replies are encoded with (also reused as the decode codec when a batch
     /// publishing handler is mounted without an explicit one).
     type Codec: Codec;

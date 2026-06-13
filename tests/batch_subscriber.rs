@@ -124,7 +124,14 @@ async fn undecodable_elements_never_reach_the_handler() {
                 .publish(OutgoingMessage::new("mixed", &order_bytes(2)))
                 .await;
             handler_signal(&SIFT_NOTIFY).await;
-            if GOOD_IDS.lock().unwrap().len() >= 2 {
+            // Subscriptions open inside run(), so the first publishes can be lost and the loop
+            // republishes; wait until both decodable ids have actually arrived rather than for a
+            // bare count, which a partial first batch would satisfy out of order.
+            let both_seen = {
+                let seen = GOOD_IDS.lock().unwrap();
+                seen.contains(&1) && seen.contains(&2)
+            };
+            if both_seen {
                 break;
             }
         }
@@ -132,9 +139,13 @@ async fn undecodable_elements_never_reach_the_handler() {
     .await;
     assert!(result.is_ok(), "decodable elements did not arrive");
 
-    // Only decodable elements reach the handler; the garbage one is dropped individually.
+    // The undecodable element is dropped individually, never failing the batch around it: only the
+    // two decodable ids ever reach the handler (the loop above already confirmed both did).
     let ids = GOOD_IDS.lock().unwrap().clone();
-    assert!(ids.starts_with(&[1, 2]), "got {ids:?}");
+    assert!(
+        ids.iter().all(|&id| id == 1 || id == 2),
+        "an undecodable element reached the handler: {ids:?}"
+    );
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, Router, RustStream};
 use ruststream::{Name, OutgoingMessage, Publisher};
 use tokio::sync::Notify;
 
@@ -51,6 +51,55 @@ async fn consume_metrics_are_recorded() {
     let text = metrics.export().unwrap();
     assert!(text.contains(r#"ruststream_messages_consumed_total{name="pings",status="ack"}"#));
     assert!(text.contains("ruststream_consume_duration_seconds"));
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn consume_metrics_are_recorded_through_a_router() {
+    let metrics = Metrics::with_registry(prometheus::Registry::new()).unwrap();
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    // The consume layer rides a Router (via `Router::layer`) and must still reach the
+    // router-mounted handler, whose concrete type the router hides. That works only because
+    // `MetricsLayer` implements `BlanketLayer`.
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include_router(Router::new().layer(metrics.consume_layer()).subscribe(
+            Name::new("pings"),
+            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            HandlerMetadata::raw("pings"),
+        ));
+    });
+
+    let shutdown = Arc::new(Notify::new());
+    let signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+
+    let recorded = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("pings", b"{}"))
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if metrics
+                .export()
+                .unwrap()
+                .contains("ruststream_messages_consumed_total")
+            {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        recorded.is_ok(),
+        "consume metric was never recorded for a router handler"
+    );
+
+    let text = metrics.export().unwrap();
+    assert!(text.contains(r#"ruststream_messages_consumed_total{name="pings",status="ack"}"#));
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();

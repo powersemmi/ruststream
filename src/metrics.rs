@@ -33,7 +33,7 @@ use prometheus::{
 };
 
 use crate::runtime::{
-    Context, Handler, HandlerResult, Layer, Outgoing, PublishMiddleware, PublishNext,
+    BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishMiddleware, PublishNext,
 };
 
 /// Default histogram buckets (seconds) for handler duration.
@@ -185,6 +185,20 @@ impl<H> Layer<H> for MetricsLayer {
             inner,
             metrics: Arc::clone(&self.inner),
         }
+    }
+}
+
+// Lets the consume metric ride the application-wide stack and reach handlers mounted through a
+// router (whose concrete types the router hides), the same way [`TracingLayer`] does. The wrapped
+// `MetricsHandler<H>` is already `Handler<M>` for any `H: Handler<M>`, so the blanket form just
+// delegates to the static one.
+impl BlanketLayer for MetricsLayer {
+    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    where
+        M: Send + Sync + 'static,
+        H: Handler<M> + 'static,
+    {
+        self.layer(handler)
     }
 }
 
