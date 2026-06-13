@@ -1,0 +1,5 @@
+error: #[ruststream::app] takes no arguments
+ --> tests/ui/app_takes_arguments.rs:4:7
+  |
+4 | #[app(something)]
+  |       ^^^^^^^^^

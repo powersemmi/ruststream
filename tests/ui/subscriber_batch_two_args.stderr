@@ -1,0 +1,5 @@
+error: batch(..) takes exactly one source argument
+ --> tests/ui/subscriber_batch_two_args.rs:4:14
+  |
+4 | #[subscriber(batch("a", "b"))]
+  |              ^^^^^^^^^^^^^^^
