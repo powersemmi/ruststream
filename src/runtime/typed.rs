@@ -87,6 +87,8 @@ where
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    message_type = std::any::type_name::<T>(),
                     error = %err,
                     "codec decode failed",
                 );
@@ -210,5 +212,76 @@ mod tests {
             .nack(true)
             .await
             .unwrap();
+    }
+
+    // Captures the fields of the one event emitted on a decode failure, so the test can assert the
+    // diagnostic carries the subscription name and target type (needs a tracing subscriber, hence
+    // the `logging` feature gate).
+    #[cfg(feature = "logging")]
+    #[tokio::test]
+    async fn decode_failure_log_names_subscription_and_type() {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+
+        use tracing::field::{Field, Visit};
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
+
+        #[derive(Default)]
+        struct FieldGrab(HashMap<String, String>);
+
+        impl Visit for FieldGrab {
+            fn record_str(&mut self, field: &Field, value: &str) {
+                self.0.insert(field.name().to_owned(), value.to_owned());
+            }
+
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                self.0
+                    .entry(field.name().to_owned())
+                    .or_insert_with(|| format!("{value:?}"));
+            }
+        }
+
+        struct Capture(Arc<Mutex<Vec<HashMap<String, String>>>>);
+
+        impl<S: tracing::Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
+                let mut grab = FieldGrab::default();
+                event.record(&mut grab);
+                self.0.lock().unwrap().push(grab.0);
+            }
+        }
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
+        );
+
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("orders.inbound", &headers, &state, &delivery);
+        let msg = StubMsg(b"not json".to_vec(), Headers::new());
+        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::drop());
+        drop(guard);
+
+        let decode_event = {
+            let captured = events.lock().unwrap();
+            captured
+                .iter()
+                .find(|f| f.get("message").is_some_and(|m| m == "codec decode failed"))
+                .cloned()
+                .expect("a codec-decode-failed event must be emitted")
+        };
+        assert_eq!(
+            decode_event.get("subscription").map(String::as_str),
+            Some("orders.inbound")
+        );
+        assert_eq!(
+            decode_event.get("message_type").map(String::as_str),
+            Some("u32")
+        );
     }
 }

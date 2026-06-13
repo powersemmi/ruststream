@@ -441,6 +441,7 @@ where
     if let Err(err) = ack_result {
         warn!(
             target: "ruststream::dispatch",
+            subscription = %name,
             error = %err,
             "ack / nack failed",
         );
