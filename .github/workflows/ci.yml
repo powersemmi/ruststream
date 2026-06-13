@@ -137,7 +137,7 @@ jobs:
       # Line-coverage gate. The floor ratchets up toward the 90% target as the
       # coverage backlog items land; raise it here and in the justfile together.
       - name: cargo llvm-cov
-        run: cargo llvm-cov --workspace --all-features --fail-under-lines 73
+        run: cargo llvm-cov --workspace --all-features --fail-under-lines 81
 
   package:
     name: Package (publish dry-run)
