@@ -29,7 +29,7 @@ always compiled. Everything else is an additive, opt-in feature.
 | `json` *(default)* | serde_json | `JsonCodec` |
 | `msgpack` | rmp-serde | `MsgpackCodec` |
 | `cbor` | ciborium | `CborCodec` |
-| `memory` | tokio-stream | `MemoryBroker`, the in-memory reference broker |
+| `memory` | - | `MemoryBroker`, the in-memory reference broker |
 | `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]`, `#[derive(Message)]` |
 | `asyncapi` | schemars, serde_norway | AsyncAPI generation and the HTML viewer |
 | `metrics` | prometheus | Prometheus middleware and exporter |
