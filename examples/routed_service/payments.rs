@@ -3,6 +3,7 @@
 
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
+use std::time::Duration;
 
 use crate::domain::{Clearing, Payment, Repository, Settlement};
 
@@ -22,7 +23,7 @@ pub(crate) async fn process_payment(payment: &Payment, ctx: &mut Context<'_>) ->
         .await
         .is_err()
     {
-        return HandlerResult::retry_after(std::time::Duration::from_secs(2));
+        return HandlerResult::retry_after(Duration::from_secs(2));
     }
     HandlerResult::Ack
 }
@@ -30,19 +31,17 @@ pub(crate) async fn process_payment(payment: &Payment, ctx: &mut Context<'_>) ->
 
 /// Settles a page of cleared payments and publishes the settlements on `settlements`. Mounted with
 /// a transactional publisher in [`routes`](crate::routes), so the whole page becomes visible
-/// atomically on commit; an empty page drops without publishing anything.
+/// atomically on commit. The batch contract guarantees a non-empty page, so the handler maps it
+/// straight to replies; returning the bare `Vec` publishes them all and acks the batch.
 // --8<-- [start:batch]
 #[subscriber(batch("clearings"), publish("settlements"))]
-pub(crate) async fn settle(clearings: &[Clearing]) -> Result<Vec<Settlement>, HandlerResult> {
-    if clearings.is_empty() {
-        return Err(HandlerResult::drop());
-    }
-    Ok(clearings
+pub(crate) async fn settle(clearings: &[Clearing]) -> Vec<Settlement> {
+    clearings
         .iter()
         .map(|c| Settlement {
             order_id: c.order_id,
             amount_cents: c.amount_cents,
         })
-        .collect())
+        .collect()
 }
 // --8<-- [end:batch]
