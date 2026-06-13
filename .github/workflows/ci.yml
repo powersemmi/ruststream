@@ -134,10 +134,39 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # Run the suite under instrumentation once, then format the collected data twice:
+      # a human-readable table into the run's job summary, and an lcov file as a downloadable
+      # artifact. `report` reuses the profile from `--no-report`, so neither re-runs the tests.
+      - name: Run tests under coverage
+        run: cargo llvm-cov --no-report --workspace --all-features
+
       # Line-coverage gate. The floor ratchets up toward the 90% target as the
-      # coverage backlog items land; raise it here and in the justfile together.
-      - name: cargo llvm-cov
-        run: cargo llvm-cov --workspace --all-features --fail-under-lines 81
+      # coverage backlog items land; raise it here and in the justfile together. The summary is
+      # written before the gate's exit code propagates, so it shows up even on a failure.
+      - name: Coverage summary and gate
+        run: |
+          set +e
+          cargo llvm-cov report --summary-only --fail-under-lines 81 | tee coverage.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo '## Coverage'
+            echo
+            echo '```'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Export lcov report
+        if: always()
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
 
   package:
     name: Package (publish dry-run)
