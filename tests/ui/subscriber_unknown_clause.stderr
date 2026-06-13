@@ -1,0 +1,5 @@
+error: expected `publish("reply-topic")` or `workers(n[, by_key])`
+ --> tests/ui/subscriber_unknown_clause.rs:4:24
+  |
+4 | #[subscriber("orders", frobnicate)]
+  |                        ^^^^^^^^^^

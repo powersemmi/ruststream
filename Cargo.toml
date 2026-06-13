@@ -162,6 +162,10 @@ required-features = ["macros", "memory", "json"]
 name = "doc_testing_nats"
 required-features = ["macros", "json"]
 
+[[test]]
+name = "ui"
+required-features = ["macros", "memory", "json"]
+
 [package]
 name = "ruststream"
 version.workspace = true
@@ -216,6 +220,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tempfile = "3"
 axum = "0.8"
 ruststream-nats = { version = "0.3", features = ["testing"] }
+trybuild = "1"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

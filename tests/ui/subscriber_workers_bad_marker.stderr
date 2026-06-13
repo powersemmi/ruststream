@@ -1,0 +1,5 @@
+error: expected `by_key`: workers(n) or workers(n, by_key)
+ --> tests/ui/subscriber_workers_bad_marker.rs:4:35
+  |
+4 | #[subscriber("orders", workers(8, nope))]
+  |                                   ^^^^

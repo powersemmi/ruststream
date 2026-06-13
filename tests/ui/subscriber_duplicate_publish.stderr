@@ -1,0 +1,5 @@
+error: duplicate publish(..)
+ --> tests/ui/subscriber_duplicate_publish.rs:4:38
+  |
+4 | #[subscriber("orders", publish("a"), publish("b"))]
+  |                                      ^^^^^^^

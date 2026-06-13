@@ -1,0 +1,5 @@
+error: #[ruststream::app] requires a synchronous builder returning `RustStream`
+ --> tests/ui/app_async_builder.rs:5:1
+  |
+5 | async fn build() -> u8 {
+  | ^^^^^
