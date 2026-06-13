@@ -119,6 +119,10 @@ name = "batch_subscriber"
 required-features = ["macros", "memory", "json"]
 
 [[test]]
+name = "codecs"
+required-features = ["macros", "memory", "cbor", "msgpack"]
+
+[[test]]
 name = "composition_rules"
 required-features = ["macros", "memory", "json"]
 

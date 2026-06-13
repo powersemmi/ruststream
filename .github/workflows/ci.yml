@@ -105,6 +105,15 @@ jobs:
       - name: cargo check (all features)
         run: cargo check --workspace --all-targets --all-features
 
+      # The `DefaultCodec` fallback aliases (cbor, then msgpack) are cfg'd out whenever `json` is
+      # on, so neither the all-features build nor the all-features tests ever compile them. Build
+      # each single-codec configuration so the alias and its default-codec call sites stay valid.
+      - name: cargo check (single-codec default fallbacks)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo check --no-default-features --features cbor,memory,macros
+          cargo check --no-default-features --features msgpack,memory,macros
+
       # The intermediate toolchains exist to prove the build (the two checks
       # above); the full suite runs at the edges of the range only.
       #
