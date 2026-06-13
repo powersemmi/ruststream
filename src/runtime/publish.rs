@@ -13,7 +13,11 @@ use tracing::warn;
 
 use super::lifecycle::BoxError;
 use super::publisher_registry::ErasedPublisher;
-use crate::codec::{Codec, DefaultCodec};
+use crate::codec::Codec;
+// `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
+// way, so an ungated import would break `--no-default-features`.
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
 use crate::{Headers, Publisher, TransactionalPublisher};
 
