@@ -107,4 +107,71 @@ mod tests {
         let outcome = wait_until(|| false, Duration::from_millis(50)).await;
         assert!(!outcome);
     }
+
+    #[tokio::test]
+    async fn wait_until_async_resolves_and_times_out() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_clone = Arc::clone(&flag);
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(20)).await;
+            flag_clone.store(true, Ordering::SeqCst);
+        });
+        assert!(
+            wait_until_async(
+                || {
+                    let flag = Arc::clone(&flag);
+                    async move { flag.load(Ordering::SeqCst) }
+                },
+                Duration::from_millis(500),
+            )
+            .await
+        );
+        assert!(
+            !wait_until_async(|| async { false }, Duration::from_millis(50)).await,
+            "a never-true condition must time out"
+        );
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn next_message_returns_the_next_delivery() {
+        use crate::{IncomingMessage, OutgoingMessage, Publisher, memory::MemoryBroker};
+
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("conf-next");
+        broker
+            .publisher()
+            .publish(OutgoingMessage::new("conf-next", b"hi".as_slice()))
+            .await
+            .unwrap();
+
+        let msg = next_message(&mut sub, Duration::from_secs(1)).await;
+        assert_eq!(msg.payload(), b"hi");
+        msg.ack().await.unwrap();
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn wait_for_no_messages_distinguishes_quiet_from_delivery() {
+        use crate::{OutgoingMessage, Publisher, memory::MemoryBroker};
+
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("conf-quiet");
+
+        // No publish yet: the subscriber stays quiet within the window.
+        assert!(
+            wait_for_no_messages(&mut sub, Duration::from_millis(50))
+                .await
+                .is_ok()
+        );
+
+        broker
+            .publisher()
+            .publish(OutgoingMessage::new("conf-quiet", b"surprise".as_slice()))
+            .await
+            .unwrap();
+        // Now a delivery arrives, so the helper hands it back as an error.
+        let unexpected = wait_for_no_messages(&mut sub, Duration::from_millis(200)).await;
+        assert!(unexpected.is_err());
+    }
 }

@@ -264,3 +264,39 @@ impl PublishMiddleware for MetricsPublish {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use prometheus::Registry;
+
+    use super::{Metrics, consume_status};
+    use crate::runtime::{Context, HandlerResult, Layer};
+
+    #[test]
+    fn debug_impls_registry_and_status_mapping() {
+        let metrics = Metrics::with_registry(Registry::new()).unwrap();
+        assert!(format!("{metrics:?}").contains("Metrics"));
+        assert!(format!("{:?}", metrics.consume_layer()).contains("MetricsLayer"));
+        assert!(format!("{:?}", metrics.publish_layer()).contains("MetricsPublish"));
+
+        let handler = metrics
+            .consume_layer()
+            .layer(|_: &u32, _: &mut Context| async { HandlerResult::Ack });
+        assert!(format!("{handler:?}").contains("MetricsHandler"));
+
+        // registry() exposes the registry the three collectors were registered in: registering a
+        // duplicate name there fails, which proves it is that same registry.
+        let dup = prometheus::IntCounter::new("ruststream_messages_consumed_total", "dup").unwrap();
+        assert!(metrics.registry().register(Box::new(dup)).is_err());
+
+        // Every outcome maps to its counter label.
+        assert_eq!(consume_status(HandlerResult::Ack), "ack");
+        assert_eq!(consume_status(HandlerResult::drop()), "nack");
+        assert_eq!(
+            consume_status(HandlerResult::retry_after(Duration::from_secs(1))),
+            "nack"
+        );
+    }
+}

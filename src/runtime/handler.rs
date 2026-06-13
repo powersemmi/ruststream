@@ -134,3 +134,47 @@ where
         (**self).handle(msg, ctx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{HandlerResult, IntoHandlerResult};
+
+    #[test]
+    fn convenience_constructors_map_to_variants() {
+        assert_eq!(
+            HandlerResult::retry(),
+            HandlerResult::Nack { requeue: true }
+        );
+        assert_eq!(
+            HandlerResult::drop(),
+            HandlerResult::Nack { requeue: false }
+        );
+        assert_eq!(
+            HandlerResult::retry_after(Duration::from_secs(2)),
+            HandlerResult::NackAfter {
+                delay: Duration::from_secs(2)
+            }
+        );
+    }
+
+    #[test]
+    fn into_handler_result_covers_every_return_shape() {
+        assert_eq!(HandlerResult::Ack.into_handler_result(), HandlerResult::Ack);
+        assert_eq!(().into_handler_result(), HandlerResult::Ack);
+        assert_eq!(Ok::<(), ()>(()).into_handler_result(), HandlerResult::Ack);
+        assert_eq!(
+            Err::<(), ()>(()).into_handler_result(),
+            HandlerResult::drop()
+        );
+        assert_eq!(
+            Ok::<HandlerResult, ()>(HandlerResult::retry()).into_handler_result(),
+            HandlerResult::retry()
+        );
+        assert_eq!(
+            Err::<HandlerResult, ()>(()).into_handler_result(),
+            HandlerResult::drop()
+        );
+    }
+}

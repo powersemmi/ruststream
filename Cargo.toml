@@ -151,6 +151,10 @@ name = "retry_semantics"
 required-features = ["macros", "memory", "json"]
 
 [[test]]
+name = "scope_codec"
+required-features = ["macros", "memory", "json"]
+
+[[test]]
 name = "router_include"
 required-features = ["macros", "memory", "json"]
 

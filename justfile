@@ -22,11 +22,11 @@ fmt:
 deny:
     cargo deny check
 
-# Line-coverage gate, same threshold as CI. The floor ratchets up toward the
-# 90% target as the coverage backlog items land; raise it here and in ci.yml
-# together. Needs cargo-llvm-cov: cargo install cargo-llvm-cov --locked
+# Line-coverage gate, same threshold as CI. The floor sits at the 90% target;
+# raise it here and in ci.yml together if coverage climbs further. Needs
+# cargo-llvm-cov: cargo install cargo-llvm-cov --locked
 cov:
-    cargo llvm-cov --workspace --all-features --fail-under-lines 81
+    cargo llvm-cov --workspace --all-features --fail-under-lines 90
 
 # HTML coverage report at target/llvm-cov/html/index.html, for finding the
 # uncovered lines the gate complains about.
