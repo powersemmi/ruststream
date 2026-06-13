@@ -205,6 +205,21 @@ single-message subscribers; batch forms take a plain `workers(n)` pool of batche
 On shutdown, the subscriber stops pulling new deliveries and in-flight workers drain under the
 app's `shutdown_timeout`.
 
+## Composition rules
+
+The subscriber features compose; these are the rules at each intersection, each pinned by an
+integration test.
+
+| Combination | Rule |
+|---|---|
+| `workers(n)` × `batch(..)` | The pool holds up to `n` **batches** in flight. `by_key` does not apply to batch forms: lanes order single messages per key, and the macro rejects the combination at compile time. |
+| `retry()` / `retry_after` × `workers(n)` | Retried deliveries re-enter the pool and complete like any other delivery. |
+| `retry()` / `retry_after` × `workers(n, by_key)` | Retries complete, but per-key ordering across a retry is **not** promised: a requeued message rejoins the stream from the back. If a key's messages must stay ordered even through failures, the handler has to absorb the failure instead of nacking. |
+| `.transactional()` × `workers(n)` | One transaction per batch, exactly as in the sequential loop. Concurrent batches run concurrent, independent transactions; each stays atomic (commit-then-ack per batch). |
+| `Buffered` × `workers(n)` | Batches still close by `max_size` / `max_wait` only; the pool bounds how many closed batches are processed at once and never affects batch boundaries. |
+| `publish(..)` × `workers(n)` | Replies are produced concurrently, so reply order across deliveries is not promised. A failed reply publish retries only its own delivery. |
+| middleware × `batch(..)` | App-global and router layers wrap per-message handlers and do not apply to batch registrations (a per-message layer cannot wrap a whole-batch handler). |
+
 ## Macro or manual
 
 `#[subscriber]` is sugar over a generic API. The macro generates a typed handler and its metadata;
