@@ -98,3 +98,94 @@ where
         }
     }
 }
+
+#[cfg(all(test, feature = "json"))]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
+
+    use super::{DecodeFailure, typed};
+    use crate::codec::JsonCodec;
+    use crate::runtime::context::{Context, State};
+    use crate::runtime::dispatch::Delivery;
+    use crate::runtime::handler::{Handler, HandlerResult};
+    use crate::{AckError, Headers, IncomingMessage};
+
+    struct StubMsg(Vec<u8>, Headers);
+
+    impl IncomingMessage for StubMsg {
+        fn payload(&self) -> &[u8] {
+            &self.0
+        }
+
+        fn headers(&self) -> &Headers {
+            &self.1
+        }
+
+        async fn ack(self) -> Result<(), AckError> {
+            Ok(())
+        }
+
+        async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+            Ok(())
+        }
+    }
+
+    fn counting_inner(seen: &Arc<AtomicU32>) -> impl Handler<u32> {
+        let seen = Arc::clone(seen);
+        move |value: &u32, _ctx: &mut Context| {
+            let seen = Arc::clone(&seen);
+            let value = *value;
+            async move {
+                seen.store(value, Ordering::SeqCst);
+                HandlerResult::Ack
+            }
+        }
+    }
+
+    // Plain #[tokio::test]: nothing is spawned, the handler future is awaited inline.
+    #[tokio::test]
+    async fn decoded_value_reaches_inner() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+
+        let msg = StubMsg(b"7".to_vec(), Headers::new());
+        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::Ack);
+        assert_eq!(seen.load(Ordering::SeqCst), 7);
+    }
+
+    #[tokio::test]
+    async fn decode_failure_drops_by_default() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+
+        let msg = StubMsg(b"not json".to_vec(), Headers::new());
+        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::drop());
+        assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
+    }
+
+    #[tokio::test]
+    async fn decode_failure_requeues_when_overridden() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler =
+            typed(JsonCodec, counting_inner(&seen)).on_decode_failure(DecodeFailure::Requeue);
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+
+        let msg = StubMsg(b"not json".to_vec(), Headers::new());
+        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::retry());
+        assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
+    }
+}

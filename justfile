@@ -34,7 +34,7 @@ cov-html:
     cargo llvm-cov --workspace --all-features --html
 
 build:
-    cargo build --workspace --release
+    cargo build --workspace --release --all-features
 
 clean:
     cargo clean

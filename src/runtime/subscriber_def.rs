@@ -77,3 +77,52 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
     }
     meta
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{SubscriberDef, subscriber_metadata};
+    use crate::Name;
+    use crate::runtime::context::Context;
+    use crate::runtime::dispatch::Workers;
+    use crate::runtime::handler::{Handler, HandlerResult};
+
+    struct Noop;
+
+    impl Handler<u32> for Noop {
+        async fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> HandlerResult {
+            HandlerResult::Ack
+        }
+    }
+
+    /// A hand-written def overriding nothing: pins the trait's default contract, which the
+    /// macro-generated defs always override.
+    struct ManualDef;
+
+    impl SubscriberDef for ManualDef {
+        type Input = u32;
+        type Handler = Noop;
+        type Source = Name;
+
+        fn source(&self) -> Name {
+            Name::new("manual")
+        }
+
+        fn into_handler(self) -> Noop {
+            Noop
+        }
+    }
+
+    #[test]
+    fn defaults_omit_metadata_and_dispatch_sequentially() {
+        let def = ManualDef;
+        assert_eq!(def.workers(), Workers::sequential());
+        assert!(def.description().is_none());
+        assert!(def.input_schema().is_none());
+        assert!(def.message_name().is_none());
+        assert!(def.message_description().is_none());
+
+        let meta = subscriber_metadata("manual".to_owned(), &def);
+        assert_eq!(meta.name, "manual");
+        assert_eq!(meta.input_type, "u32");
+    }
+}

@@ -2,7 +2,7 @@
 members = ["crates/ruststream-macros"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -90,22 +90,17 @@ required-features = ["macros", "memory", "json", "logging"]
 name = "logging_middleware"
 required-features = ["macros", "memory", "json", "logging"]
 
-# The nats_* examples and the doc_testing_nats test depend on ruststream-nats, which is still on
-# ruststream 0.2 and cannot compile against this 0.3 tree. autoexamples/autotests are off so the
-# files stay in place (the docs embed snippets from them) without being built. Re-enable these
-# entries and the ruststream-nats dev-dependency once ruststream-nats 0.3 is published.
-#
-# [[example]]
-# name = "nats_core"
-# required-features = ["macros", "json"]
-#
-# [[example]]
-# name = "nats_jetstream"
-# required-features = ["macros", "json"]
-#
-# [[example]]
-# name = "nats_request_reply"
-# required-features = ["macros"]
+[[example]]
+name = "nats_core"
+required-features = ["macros", "json"]
+
+[[example]]
+name = "nats_jetstream"
+required-features = ["macros", "json"]
+
+[[example]]
+name = "nats_request_reply"
+required-features = ["macros"]
 
 [[test]]
 name = "app_dispatch"
@@ -136,12 +131,20 @@ name = "metrics"
 required-features = ["metrics", "memory", "json"]
 
 [[test]]
+name = "router_include"
+required-features = ["macros", "memory", "json"]
+
+[[test]]
+name = "router_publishing"
+required-features = ["macros", "memory", "json"]
+
+[[test]]
 name = "workers"
 required-features = ["macros", "memory", "json"]
 
-# [[test]]
-# name = "doc_testing_nats"
-# required-features = ["macros", "json"]
+[[test]]
+name = "doc_testing_nats"
+required-features = ["macros", "json"]
 
 [package]
 name = "ruststream"
@@ -155,10 +158,6 @@ description = "Async messaging framework for Rust: broker-agnostic traits, route
 readme = "README.md"
 keywords = ["messaging", "async", "broker", "faststream", "nats"]
 categories = ["asynchronous", "network-programming"]
-# Examples and tests are listed explicitly so the parked nats_* targets (see the commented-out
-# entries above) are not auto-discovered while ruststream-nats is still on 0.2.
-autoexamples = false
-autotests = false
 
 [features]
 default = ["json"]
@@ -183,7 +182,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 
-ruststream-macros = { version = "0.3.0", path = "crates/ruststream-macros", optional = true }
+ruststream-macros = { version = "0.3", path = "crates/ruststream-macros", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
@@ -200,10 +199,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 tempfile = "3"
 axum = "0.8"
-# `testing` pulls the in-memory NATS test broker used by tests/doc_testing_nats.rs (the snippet
-# source for the testing guide). Parked until ruststream-nats 0.3 is published; see the note on
-# the nats_* example entries.
-# ruststream-nats = { version = "0.2", features = ["testing"] }
+ruststream-nats = { version = "0.3", features = ["testing"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
