@@ -12,15 +12,19 @@ use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{Router, RouterDef, TypedPublisher};
 
+use crate::observability::StampSource;
 use crate::{orders, payments};
 
 /// The order-lifecycle router: a publishing handler that replies to `confirmations`, plus the
 /// cancellation handler.
 ///
 /// `confirm` needs a publisher for its reply; `TypedPublisher::new` pairs the broker's publisher
-/// with the default codec, and `include_publishing` reuses that codec to decode the order.
-/// `on_cancel` has no reply, so it is mounted with `include`. The router is a consuming builder, so
-/// the calls chain; the registration list is opaque, hence `impl RouterDef`.
+/// with the default codec, and `.layer(StampSource)` composes a static publish layer onto it that
+/// stamps a provenance header on every confirmation - publisher settings live here, on the
+/// `TypedPublisher`, not in the `publish("..")` decorator (which only names the destination).
+/// `include_publishing` reuses the publisher's codec to decode the order. `on_cancel` has no reply,
+/// so it is mounted with `include`. The router is a consuming builder, so the calls chain; the
+/// registration list is opaque, hence `impl RouterDef`.
 ///
 /// `use<>` opts out of capturing the `broker`/`metrics` borrows: the router owns its publisher and
 /// layer (both `Arc`-backed), so it borrows neither argument past this call, and the caller can
@@ -29,7 +33,7 @@ pub(crate) fn orders(
     broker: &MemoryBroker,
     metrics: &Metrics,
 ) -> impl RouterDef<MemoryBroker> + use<> {
-    let confirmations = TypedPublisher::new(broker.publisher());
+    let confirmations = TypedPublisher::new(broker.publisher()).layer(StampSource);
 
     Router::new()
         .layer(metrics.consume_layer())

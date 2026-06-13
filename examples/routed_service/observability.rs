@@ -1,5 +1,6 @@
-//! Cross-cutting observability: an application-scope middleware that logs and times every
-//! delivery.
+//! Cross-cutting observability: a consume-side middleware ([`Observe`]) that logs and times every
+//! delivery, and a publish-side layer ([`StampSource`]) that stamps a provenance header on every
+//! reply.
 //!
 //! It implements both [`Layer`] (to wrap handlers mounted directly on a scope) and
 //! [`BlanketLayer`] - the latter is what lets `RustStream::layer` reach handlers mounted through a
@@ -10,7 +11,9 @@
 
 use std::time::Instant;
 
-use ruststream::runtime::{BlanketLayer, Context, Handler, HandlerResult, Layer};
+use ruststream::runtime::{
+    BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishLayer,
+};
 
 /// The layer value added with `RustStream::layer`.
 #[derive(Clone)]
@@ -43,5 +46,21 @@ impl<M: Send + Sync, H: Handler<M>> Handler<M> for Observed<H> {
         let result = self.0.handle(msg, ctx).await;
         tracing::info!(channel = %channel, elapsed = ?started.elapsed(), "handled");
         result
+    }
+}
+
+/// A static publish-side layer: stamps a provenance header on every message a publisher sends.
+///
+/// This is the other kind of publisher customisation. Where the consume `Observe` layer wraps
+/// handlers, a [`PublishLayer`] is composed onto one [`TypedPublisher`](ruststream::runtime::TypedPublisher)
+/// at build time with `.layer(..)` - zero-cost and scoped to that publisher, unlike the dynamic,
+/// app-wide metrics middleware added with `RustStream::publish_layer`. [`routes`](crate::routes)
+/// attaches it to the confirmations publisher, so every confirmation carries the header.
+pub(crate) struct StampSource;
+
+impl PublishLayer for StampSource {
+    fn apply(&self, out: &mut Outgoing) {
+        out.headers_mut()
+            .insert("x-source-service", b"orders-service".to_vec());
     }
 }
