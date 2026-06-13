@@ -279,20 +279,23 @@ where
     H: SliceHandler<T>,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
-        let (values, accepted) = decode_batch(batch, &self.codec, self.on_decode_failure).await;
+        let subscription = ctx.name().to_owned();
+        let (values, accepted) =
+            decode_batch(batch, &self.codec, self.on_decode_failure, &subscription).await;
         if accepted.is_empty() {
             return;
         }
         match self.inner.handle_slice(&values, ctx).await {
             BatchResult::Uniform(result) => {
                 for msg in accepted {
-                    settle(msg, result).await;
+                    settle(msg, result, &subscription).await;
                 }
             }
             BatchResult::PerElement(results) => {
                 if results.len() != accepted.len() {
                     error!(
                         target: "ruststream::dispatch",
+                        subscription = %subscription,
                         expected = accepted.len(),
                         returned = results.len(),
                         "per-element outcome count does not match the batch; \
@@ -303,7 +306,7 @@ where
                 for msg in accepted {
                     // An unmatched message gets retried: an extra redelivery beats losing it.
                     let result = results.next().unwrap_or_else(HandlerResult::retry);
-                    settle(msg, result).await;
+                    settle(msg, result, &subscription).await;
                 }
             }
         }
@@ -317,6 +320,7 @@ pub(crate) async fn decode_batch<M, T, C>(
     batch: Vec<M>,
     codec: &C,
     on_decode_failure: DecodeFailure,
+    subscription: &str,
 ) -> (Vec<T>, Vec<M>)
 where
     M: IncomingMessage,
@@ -334,12 +338,19 @@ where
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",
+                    subscription = %subscription,
+                    message_type = std::any::type_name::<T>(),
                     error = %err,
                     "codec decode failed",
                 );
                 let requeue = matches!(on_decode_failure, DecodeFailure::Requeue);
                 if let Err(err) = msg.nack(requeue).await {
-                    warn!(target: "ruststream::dispatch", error = %err, "nack failed");
+                    warn!(
+                        target: "ruststream::dispatch",
+                        subscription = %subscription,
+                        error = %err,
+                        "nack failed",
+                    );
                 }
             }
         }
@@ -348,14 +359,19 @@ where
 }
 
 /// Applies one settlement to one delivery's own `ack` / `nack`.
-pub(crate) async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult) {
+pub(crate) async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult, subscription: &str) {
     let ack_result = match result {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
         HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
     };
     if let Err(err) = ack_result {
-        warn!(target: "ruststream::dispatch", error = %err, "ack / nack failed");
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %subscription,
+            error = %err,
+            "ack / nack failed",
+        );
     }
 }
 

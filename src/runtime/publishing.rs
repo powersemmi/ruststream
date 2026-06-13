@@ -131,7 +131,13 @@ where
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
             Ok(value) => value,
             Err(err) => {
-                warn!(target: "ruststream::dispatch", error = %err, "codec decode failed");
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    message_type = std::any::type_name::<D::Input>(),
+                    error = %err,
+                    "codec decode failed",
+                );
                 return HandlerResult::drop();
             }
         };
@@ -141,7 +147,14 @@ where
         };
         let name = self.def.reply_name();
         if let Err(err) = self.publisher.publish(name, &reply, &self.pipeline).await {
-            warn!(target: "ruststream::dispatch", error = %err, "reply publish failed");
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %ctx.name(),
+                reply = %name,
+                reply_type = std::any::type_name::<D::Reply>(),
+                error = %err,
+                "reply publish failed",
+            );
             return HandlerResult::retry();
         }
         HandlerResult::Ack

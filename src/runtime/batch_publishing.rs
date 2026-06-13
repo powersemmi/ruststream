@@ -135,8 +135,14 @@ where
     R: ReplyPublisher,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
-        let (values, accepted) =
-            decode_batch::<M, D::Input, C>(batch, &self.codec, DecodeFailure::default()).await;
+        let subscription = ctx.name().to_owned();
+        let (values, accepted) = decode_batch::<M, D::Input, C>(
+            batch,
+            &self.codec,
+            DecodeFailure::default(),
+            &subscription,
+        )
+        .await;
         if accepted.is_empty() {
             return;
         }
@@ -152,6 +158,9 @@ where
                     Err(err) => {
                         warn!(
                             target: "ruststream::dispatch",
+                            subscription = %subscription,
+                            reply = %name,
+                            reply_type = std::any::type_name::<D::Reply>(),
                             error = %err,
                             "batch reply publish failed",
                         );
@@ -162,7 +171,7 @@ where
             Err(result) => result,
         };
         for msg in accepted {
-            settle(msg, outcome).await;
+            settle(msg, outcome, &subscription).await;
         }
     }
 }
