@@ -18,6 +18,7 @@ Mount it with `include_publishing`, handing it a [`TypedPublisher`] that carries
 connection and the reply codec (`TypedPublisher::new` uses the default codec; name one with
 `TypedPublisher::with_codec`). `include_publishing` reuses that codec to decode the request too:
 
+<!-- inline-rust: minimal mount fragment for a reply publisher; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
 ```rust
 use ruststream::runtime::TypedPublisher;
 
@@ -56,6 +57,7 @@ Make publishing handlers idempotent under redelivery.
 To publish to a destination other than a single reply (fan-out, side effects, routing to a different
 broker), register a named publisher on the application and resolve it from the context.
 
+<!-- inline-rust: minimal named-publisher registration fragment; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
 ```rust
 // register at build time
 let app = RustStream::new(info)

@@ -21,15 +21,13 @@ ship there.
 
 `harness::run_suite` takes a factory that builds a fresh client per scenario. The factory is
 fallible (it returns the `TestClient::start` result) and is invoked once per scenario, so scenarios
-cannot leak state into each other:
+cannot leak state into each other. This is the in-memory reference broker's own suite run,
+verbatim; substitute your `TestClient::start` in the factory:
 
 ```rust
 use ruststream::conformance::harness;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn passes_conformance() {
-    harness::run_suite(|| async { MyTestClient::start().await }).await;
-}
+--8<-- "tests/conformance_self.rs:run_suite"
 ```
 
 ### What it checks
@@ -58,18 +56,9 @@ broker-agnostic:
 
 ```rust
 use ruststream::conformance::harness;
+use ruststream_nats::{NatsBroker, SubscribeOptions};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
-async fn passes_lifecycle() {
-    let url = std::env::var("NATS_TEST_URL").unwrap();
-    harness::lifecycle(
-        || NatsBroker::new(url.clone()),         // sync construction (no I/O)
-        |subject| SubscribeOptions::new(subject), // the broker's SubscriptionSource
-        |broker| broker.publisher(),              // a publisher from the connected broker
-    )
-    .await;
-}
+--8<-- "tests/doc_conformance_nats.rs:lifecycle"
 ```
 
 - **`make_broker`** is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
@@ -97,19 +86,9 @@ without the capability simply do not call it. Each suite takes the same factory 
 
 ```rust
 use ruststream::conformance::capabilities;
+use ruststream_nats::{NatsBroker, SubscribeOptions};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
-async fn passes_request_reply() {
-    let url = std::env::var("NATS_TEST_URL").unwrap();
-    capabilities::request_reply(
-        || NatsBroker::new(url.clone()),
-        |subject| SubscribeOptions::new(subject),
-        |broker| broker.publisher(),   // the RequestReply publisher under test
-        |broker| broker.publisher(),   // the plain publisher the responder replies through
-    )
-    .await;
-}
+--8<-- "tests/doc_conformance_nats.rs:request_reply"
 ```
 
 The in-memory broker implements every capability natively and passes all three suites in-process

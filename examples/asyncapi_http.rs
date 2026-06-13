@@ -21,7 +21,8 @@ use ruststream::subscriber;
 use serde::Deserialize;
 
 // --8<-- [start:payload]
-#[derive(Debug, Deserialize, ruststream::schemars::JsonSchema)]
+/// An order placed by a customer.
+#[derive(Debug, Deserialize, ruststream::Message, ruststream::schemars::JsonSchema)]
 struct Order {
     id: u64,
     item: String,
@@ -34,10 +35,16 @@ async fn handle(order: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
+// --8<-- [start:server]
 fn service() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .server(
+            "production",
+            ruststream::ServerSpec::new("nats.example.com:4222", "nats"),
+        )
         .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
+// --8<-- [end:server]
 
 // --8<-- [start:generate]
 /// Builds the AsyncAPI document and the viewer HTML from the service.

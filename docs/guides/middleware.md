@@ -60,6 +60,7 @@ reads it.
 
 Wrap a single handler with `HandlerExt::with` instead of the whole application:
 
+<!-- inline-rust: HandlerExt::with API-shape fragment with placeholder handler and layer; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above -->
 ```rust
 use ruststream::runtime::HandlerExt;
 

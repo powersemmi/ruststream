@@ -127,6 +127,10 @@ name = "conformance_self"
 required-features = ["conformance", "memory"]
 
 [[test]]
+name = "doc_conformance_nats"
+required-features = ["conformance"]
+
+[[test]]
 name = "doc_testing_memory"
 required-features = ["memory", "macros", "json"]
 

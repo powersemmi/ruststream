@@ -107,6 +107,7 @@ because durable names and ack waits have no in-process meaning. To unit-test tha
 mount the same definition on the test broker with an explicit by-name source - `include_on`
 overrides the macro's source (the codec resolves the same way as for `include`):
 
+<!-- inline-rust: include_on override fragment; the handler under test is declared with a real NatsBroker JetStream descriptor, which has no in-process compiled home, so the by-name remount is shown inline -->
 ```rust
 use ruststream::Name;
 
@@ -123,6 +124,7 @@ exactly what the integration suite is for.
 Behaviour that depends on real broker semantics belongs in a separate suite gated behind an
 environment variable, so the default `cargo test` stays fast and offline:
 
+<!-- inline-rust: integration-test skeleton with a pseudocode body; it drives a real NatsBroker (external crate) behind an env gate, so it has no compiled home here (the real gated suite is doc_conformance_nats.rs) -->
 ```rust title="tests/integration_nats.rs"
 fn test_url() -> Option<String> {
     std::env::var("NATS_TEST_URL").ok()
