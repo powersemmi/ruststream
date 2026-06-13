@@ -119,6 +119,10 @@ name = "batch_subscriber"
 required-features = ["macros", "memory", "json"]
 
 [[test]]
+name = "composition_rules"
+required-features = ["macros", "memory", "json"]
+
+[[test]]
 name = "conformance_self"
 required-features = ["conformance", "memory"]
 
