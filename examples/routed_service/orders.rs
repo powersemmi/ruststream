@@ -1,50 +1,68 @@
-//! Domain types and handlers, written as `#[subscriber]` functions.
+//! Order-lifecycle handlers: confirming a new order (a publishing handler that replies and handles
+//! transient failures) and cancelling one (a plain handler that retries on a blip).
 //!
-//! The first parameter is the decoded payload; the macro turns each function into a mountable
-//! definition (a value named after the function) that [`routes`](crate::routes) collects into a
-//! [`Router`](ruststream::runtime::Router). `confirm` binds through the memory broker's
-//! [`MemorySource`](ruststream::memory::MemorySource) descriptor (the macro's descriptor form);
-//! `on_cancel` binds by plain name.
+//! Both read the shared [`Repository`](crate::domain::Repository) from the per-delivery
+//! [`Context`], inserted once by the startup hook in [`main`](crate::main).
 
 use ruststream::memory::MemorySource;
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
 
-/// An order placed on the `orders` channel.
-#[derive(Debug, Deserialize)]
-pub(crate) struct Order {
-    pub(crate) id: u64,
-    pub(crate) item: String,
-    pub(crate) quantity: u32,
-}
+use crate::domain::{Cancellation, Confirmation, Order, Repository};
 
-/// The reply published to `confirmations` for each order.
-#[derive(Debug, Serialize)]
-pub(crate) struct Confirmation {
-    pub(crate) id: u64,
-    pub(crate) accepted: bool,
-}
-
-/// Confirms an incoming order and publishes a [`Confirmation`] to `confirmations`.
+/// Confirms an order and replies on `confirmations`.
 ///
 /// Bound through the macro's descriptor form, `MemorySource::new("orders")`, rather than a bare
 /// name - the slot where a real broker takes its own descriptor (a NATS `SubscribeOptions`, say).
-/// The return value is the reply: the `publish("confirmations")` clause makes the runtime encode it
-/// and send it through the publisher wired in [`routes`](crate::routes).
+/// Returning `Result<Confirmation, HandlerResult>` keeps control of the acknowledgement: `Ok`
+/// publishes the reply and acks, while `Err` publishes nothing and hands the dispatcher a
+/// [`HandlerResult`] - here, retry on a transient store error and drop on a permanent one. The
+/// `publish("confirmations")` clause names the reply channel; its publisher is wired in
+/// [`routes`](crate::routes).
 // --8<-- [start:descriptor]
 #[subscriber(MemorySource::new("orders"), publish("confirmations"))]
-pub(crate) async fn confirm(order: &Order) -> Confirmation {
-    Confirmation {
-        id: order.id,
-        accepted: order.quantity > 0,
+pub(crate) async fn confirm(
+    order: &Order,
+    ctx: &mut Context<'_>,
+) -> Result<Confirmation, HandlerResult> {
+    let repo = ctx
+        .get::<Repository>()
+        .expect("repository set in on_startup");
+    tracing::debug!(
+        order = order.id,
+        customer = %order.customer,
+        item = %order.item,
+        "confirming order"
+    );
+    match repo.record_order(order.id).await {
+        Ok(()) => Ok(Confirmation {
+            order_id: order.id,
+            accepted: order.quantity > 0,
+        }),
+        Err(e) if e.is_transient() => {
+            tracing::warn!(order = order.id, "store busy, asking for redelivery");
+            Err(HandlerResult::retry())
+        }
+        Err(e) => {
+            tracing::error!(order = order.id, error = %e, "dropping order");
+            Err(HandlerResult::drop())
+        }
     }
 }
 // --8<-- [end:descriptor]
 
-/// Logs cancellations, bound by plain name. No reply, so it returns a plain [`HandlerResult`].
+/// Cancels an order, bound by plain name. No reply, so it returns a plain [`HandlerResult`]: retry
+/// a transient store error, ack everything else (an unknown order is nothing to undo).
+// --8<-- [start:retry]
 #[subscriber("cancellations")]
-pub(crate) async fn on_cancel(order: &Order) -> HandlerResult {
-    println!("order {} ({}) cancelled", order.id, order.item);
-    HandlerResult::Ack
+pub(crate) async fn on_cancel(cancel: &Cancellation, ctx: &mut Context<'_>) -> HandlerResult {
+    let repo = ctx
+        .get::<Repository>()
+        .expect("repository set in on_startup");
+    match repo.cancel(cancel.order_id).await {
+        // A transient blip is worth a redelivery; an unknown order (or success) is nothing to undo.
+        Err(e) if e.is_transient() => HandlerResult::retry(),
+        _ => HandlerResult::Ack,
+    }
 }
+// --8<-- [end:retry]

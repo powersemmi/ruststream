@@ -27,7 +27,7 @@ required-features = ["macros", "memory"]
 [[example]]
 name = "routed_service"
 path = "examples/routed_service/main.rs"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "metrics", "asyncapi", "logging"]
 
 [[example]]
 name = "quickstart"
