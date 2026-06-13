@@ -279,7 +279,81 @@ impl Visit for EventVisitor {
 
 #[cfg(test)]
 mod tests {
-    use super::Logging;
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    use super::{ColorFormatter, Logging};
+
+    /// A `MakeWriter` that appends every formatted event to a shared buffer, so a test can read
+    /// back what `ColorFormatter` rendered.
+    #[derive(Clone)]
+    struct BufWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for BufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for BufWriter {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Renders one event at every level through `ColorFormatter` and returns the captured output.
+    fn render(ansi: bool, target: bool) -> String {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::new("trace"))
+            .with_writer(BufWriter(buf.clone()))
+            .event_format(ColorFormatter { ansi, target })
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::error!(code = 500, "boom");
+            tracing::warn!("careful");
+            tracing::info!(answer = 42, "hello");
+            tracing::debug!("trace details");
+            tracing::trace!("noisy");
+        });
+        let bytes = buf.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn colored_formatter_renders_levels_message_and_fields() {
+        let out = render(true, true);
+        // Every level badge is present (exercises level_color end to end).
+        for level in ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"] {
+            assert!(out.contains(level), "missing {level} in: {out:?}");
+        }
+        // ANSI escapes are emitted, the message renders, and non-message fields are appended.
+        assert!(out.contains("\x1b["));
+        assert!(out.contains("hello"));
+        assert!(out.contains("answer=42"));
+        assert!(out.contains("code=500"));
+        // The dim cyan target (this module path) is shown.
+        assert!(out.contains(module_path!()));
+    }
+
+    #[test]
+    fn plain_formatter_drops_ansi_and_target() {
+        let out = render(false, false);
+        assert!(out.contains("careful"));
+        assert!(out.contains("INFO"));
+        // No ANSI escapes and no target column when both are off.
+        assert!(!out.contains("\x1b["));
+        assert!(!out.contains(module_path!()));
+    }
 
     #[test]
     fn defaults_are_info_auto_color_with_targets() {

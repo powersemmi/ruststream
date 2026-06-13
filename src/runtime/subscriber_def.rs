@@ -81,9 +81,10 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
 #[cfg(test)]
 mod tests {
     use super::{SubscriberDef, subscriber_metadata};
+    use crate::Headers;
     use crate::Name;
-    use crate::runtime::context::Context;
-    use crate::runtime::dispatch::Workers;
+    use crate::runtime::context::{Context, State};
+    use crate::runtime::dispatch::{Delivery, Workers};
     use crate::runtime::handler::{Handler, HandlerResult};
 
     struct Noop;
@@ -112,17 +113,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn defaults_omit_metadata_and_dispatch_sequentially() {
+    #[tokio::test]
+    async fn defaults_omit_metadata_and_dispatch_sequentially() {
         let def = ManualDef;
         assert_eq!(def.workers(), Workers::sequential());
         assert!(def.description().is_none());
         assert!(def.input_schema().is_none());
         assert!(def.message_name().is_none());
         assert!(def.message_description().is_none());
+        let _source = def.source();
 
         let meta = subscriber_metadata("manual".to_owned(), &def);
         assert_eq!(meta.name, "manual");
         assert_eq!(meta.input_type, "u32");
+
+        // Drive the consumed handler so source(), into_handler() and the Noop body are exercised.
+        let handler = def.into_handler();
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("manual", &headers, &state, &delivery);
+        assert_eq!(handler.handle(&7u32, &mut ctx).await, HandlerResult::Ack);
     }
 }

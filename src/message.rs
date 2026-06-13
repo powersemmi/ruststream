@@ -231,4 +231,52 @@ mod tests {
         assert_eq!(msg.name(), "orders");
         assert_eq!(msg.payload(), &[1, 2, 3]);
     }
+
+    #[test]
+    fn raw_message_payload_bytes_and_headers_mut() {
+        let mut msg = RawMessage::new("n", b"data".as_slice());
+        assert_eq!(msg.payload_bytes(), Bytes::from_static(b"data"));
+        msg.headers_mut().insert("k", "v");
+        assert_eq!(msg.headers().get_str("k"), Some("v"));
+    }
+
+    #[tokio::test]
+    async fn incoming_message_defaults_apply_without_override() {
+        use crate::AckError;
+
+        // A minimal IncomingMessage that overrides nothing optional, pinning the trait defaults
+        // (the in-memory and broker impls override them).
+        struct Stub {
+            payload: Vec<u8>,
+            headers: Headers,
+        }
+
+        impl IncomingMessage for Stub {
+            fn payload(&self) -> &[u8] {
+                &self.payload
+            }
+
+            fn headers(&self) -> &Headers {
+                &self.headers
+            }
+
+            async fn ack(self) -> Result<(), AckError> {
+                Ok(())
+            }
+
+            async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+                Ok(())
+            }
+        }
+
+        let stub = Stub {
+            payload: b"body".to_vec(),
+            headers: Headers::new(),
+        };
+        assert_eq!(stub.payload(), b"body");
+        // The default partition_key is None (no key).
+        assert!(stub.partition_key().is_none());
+        // The default nack_after degrades to an immediate nack(true).
+        stub.nack_after(Duration::from_secs(1)).await.unwrap();
+    }
 }

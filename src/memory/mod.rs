@@ -478,6 +478,36 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test]
+    async fn debug_formats_and_message_accessors() {
+        let broker = MemoryBroker::new();
+        assert!(format!("{broker:?}").contains("MemoryBroker"));
+
+        let source = MemorySource::new("orders");
+        assert_eq!(source.name(), "orders");
+
+        let publisher = broker.publisher();
+        assert!(format!("{publisher:?}").contains("MemoryPublisher"));
+
+        let mut sub = broker.subscribe("dbg");
+        assert!(format!("{sub:?}").contains("MemorySubscriber"));
+
+        publisher
+            .publish(OutgoingMessage::new("dbg", b"payload".as_slice()))
+            .await
+            .unwrap();
+
+        let mut stream = std::pin::pin!(sub.stream());
+        let msg = stream.next().await.unwrap().unwrap();
+        assert!(format!("{msg:?}").contains("MemoryMessage"));
+        assert_eq!(msg.name(), "dbg");
+
+        // into_raw consumes the delivery without acking, yielding a broker-agnostic message.
+        let raw = msg.into_raw();
+        assert_eq!(raw.name(), "dbg");
+        assert_eq!(raw.payload(), b"payload");
+    }
+
     // Paused time needs the current-thread runtime; the redelivery timer auto-advances instead
     // of sleeping for real.
     #[tokio::test(start_paused = true)]

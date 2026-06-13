@@ -147,3 +147,59 @@ where
         HandlerResult::Ack
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PublishingDef, publishing_metadata};
+    use crate::Headers;
+    use crate::Name;
+    use crate::runtime::context::{Context, State};
+    use crate::runtime::dispatch::{Delivery, Workers};
+    use crate::runtime::handler::HandlerResult;
+
+    /// A hand-written publishing def overriding nothing optional, pinning the trait defaults that
+    /// the macro always fills in.
+    struct ManualPub;
+
+    impl PublishingDef for ManualPub {
+        type Input = u32;
+        type Reply = u32;
+        type Source = Name;
+
+        fn source(&self) -> Name {
+            Name::new("in")
+        }
+
+        // The trait signature returns `&str` (tied to `&self`); the macro-generated impls do the
+        // same, so this hand-written one cannot narrow to `&'static str` without diverging.
+        #[allow(clippy::unnecessary_literal_bound)]
+        fn reply_name(&self) -> &str {
+            "out"
+        }
+
+        async fn call(&self, input: &u32, _ctx: &mut Context<'_>) -> Result<u32, HandlerResult> {
+            Ok(*input)
+        }
+    }
+
+    #[tokio::test]
+    async fn defaults_metadata_and_call() {
+        let def = ManualPub;
+        assert_eq!(def.workers(), Workers::sequential());
+        assert!(def.description().is_none());
+        assert!(def.input_schema().is_none());
+        assert!(def.message_name().is_none());
+        assert!(def.message_description().is_none());
+        assert_eq!(def.reply_name(), "out");
+        let _source = def.source();
+
+        let meta = publishing_metadata("in".to_owned(), &def);
+        assert_eq!(meta.name, "in");
+
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("in", &headers, &state, &delivery);
+        assert_eq!(def.call(&5, &mut ctx).await.unwrap(), 5);
+    }
+}

@@ -188,4 +188,27 @@ mod tests {
         assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::retry());
         assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
     }
+
+    #[tokio::test]
+    async fn typed_handler_is_debug_and_stub_acks() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = State::default();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        // Drive one delivery to pin the message type, then check the Debug rendering.
+        let msg = StubMsg(b"5".to_vec(), Headers::new());
+        handler.handle(&msg, &mut ctx).await;
+        assert!(format!("{handler:?}").contains("Typed"));
+
+        // Exercise the StubMsg fixture's own IncomingMessage surface.
+        let other = StubMsg(b"x".to_vec(), Headers::new());
+        assert!(other.headers().is_empty());
+        other.ack().await.unwrap();
+        StubMsg(Vec::new(), Headers::new())
+            .nack(true)
+            .await
+            .unwrap();
+    }
 }
