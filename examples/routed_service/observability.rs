@@ -59,7 +59,7 @@ impl<M: Send + Sync, H: Handler<M>> Handler<M> for Observed<H> {
 pub(crate) struct StampSource;
 
 impl PublishLayer for StampSource {
-    fn apply(&self, out: &mut Outgoing) {
+    fn apply(&self, out: &mut Outgoing<'_>) {
         out.headers_mut()
             .insert("x-source-service", b"orders-service".to_vec());
     }

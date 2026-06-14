@@ -251,7 +251,11 @@ impl std::fmt::Debug for MetricsPublish {
 }
 
 impl PublishMiddleware for MetricsPublish {
-    fn on_publish<'a>(&'a self, out: &'a mut Outgoing, next: PublishNext<'a>) -> PublishFut<'a> {
+    fn on_publish<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: PublishNext<'a>,
+    ) -> PublishFut<'a> {
         let name = out.name().to_owned();
         Box::pin(async move {
             let result = next.run(out).await;

@@ -66,6 +66,7 @@ let app = RustStream::new(info)
 ```
 
 ```rust
+use ruststream::codec::{Codec, JsonCodec};
 use ruststream::runtime::{HandlerResult, Outgoing};
 
 --8<-- "examples/publishing.rs:forward"
@@ -87,7 +88,7 @@ Two kinds of transform run before a message leaves the process, and they compose
   concerns (publish metrics, a dead-letter wrapper) applied to every published message. They run
   outside the static layers, then the message is sent.
 
-A static `PublishLayer` implements `apply(&mut Outgoing)`:
+A static `PublishLayer` implements `apply(&mut Outgoing<'_>)`:
 
 ```rust
 --8<-- "examples/publishing.rs:static_layer"

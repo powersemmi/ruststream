@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     AppInfo, HandlerResult, Outgoing, PublishLayer, PublishMiddleware, PublishNext, RustStream,
@@ -55,7 +56,8 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 #[subscriber("ingress")]
 async fn forward(event: &Event, ctx: &mut Context<'_>) -> HandlerResult {
     if let Some(publisher) = ctx.publisher("egress") {
-        let out = Outgoing::new("egress", serde_json::to_vec(event).expect("serializable"));
+        let payload = JsonCodec.encode(event).expect("serializable");
+        let out = Outgoing::new("egress", payload);
         if publisher.publish(out).await.is_err() {
             return HandlerResult::retry();
         }
@@ -69,7 +71,7 @@ async fn forward(event: &Event, ctx: &mut Context<'_>) -> HandlerResult {
 struct EnvelopeLayer;
 
 impl PublishLayer for EnvelopeLayer {
-    fn apply(&self, out: &mut Outgoing) {
+    fn apply(&self, out: &mut Outgoing<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
@@ -82,7 +84,7 @@ struct AuditPublish;
 impl PublishMiddleware for AuditPublish {
     fn on_publish<'a>(
         &'a self,
-        out: &'a mut Outgoing,
+        out: &'a mut Outgoing<'a>,
         next: PublishNext<'a>,
     ) -> Pin<
         Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,

@@ -312,7 +312,7 @@ async fn scope_default_codec_drops_per_call_codec() {
 struct StaticEnvelope;
 
 impl PublishLayer for StaticEnvelope {
-    fn apply(&self, out: &mut Outgoing) {
+    fn apply(&self, out: &mut Outgoing<'_>) {
         out.headers_mut().insert("x-static", b"1".to_vec());
     }
 }
@@ -400,7 +400,7 @@ struct Tagger;
 impl PublishMiddleware for Tagger {
     fn on_publish<'a>(
         &'a self,
-        out: &'a mut Outgoing,
+        out: &'a mut Outgoing<'a>,
         next: PublishNext<'a>,
     ) -> Pin<
         Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
