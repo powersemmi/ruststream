@@ -50,6 +50,8 @@ What the context exposes:
 | `headers_mut()` | `&mut Headers` | the same copy, for middleware to enrich |
 | `get::<T>()` | `Option<&T>` | shared application state |
 | `publisher(name)` | `Option<ScopedPublisher>` | a [named publisher](publishing.md#publishing-from-inside-a-handler) |
+| `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
+| `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 
 Closure handlers (the manual `typed(codec, |msg, ctx| ...)` form) always take the context as their
 second argument.
@@ -94,6 +96,37 @@ in the pipeline:
 A closure handler cannot return a future that borrows the context across `.await`; publish from a
 `#[subscriber]` handler or a struct handler with `async fn handle`, both of which own the borrow.
 See [Publishing](publishing.md#publishing-from-inside-a-handler).
+
+## Post-settle hooks
+
+Sometimes a handler needs a side effect to fire *after* the message has been settled - a
+non-critical notification, slow follow-up work - without it gating the ack decision or affecting
+redelivery. Register one on the context:
+
+```rust
+--8<-- "examples/context.rs:handler"
+```
+
+The handler above ends with `ctx.after_ack(..)`: the continuation runs only once the broker has
+acked the message, off the delivery path, so it never delays the ack or the next delivery.
+
+Three forms, all additive:
+
+- `ctx.after(outcome).then(fut)` - runs only if the message settles by `outcome`, matched **by
+  variant**: `Ack`, `Nack`, or `NackAfter`. Both `HandlerResult::drop()` and
+  `HandlerResult::retry()` are `Nack`, so a gate on either fires on the other; `retry_after` gates
+  on `NackAfter` regardless of the delay.
+- `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerResult::Ack).then(fut)`.
+- `ctx.after_settle(fut)` - runs after the message settles, whatever the outcome.
+
+Multiple registrations accumulate and every matching one runs. The semantics are **at-most-once**:
+the message is already settled before any hook runs, so a hook that panics, or that is lost when the
+process crashes, never causes a redelivery. A graceful shutdown drains in-flight hooks (bounded by
+`shutdown_timeout`); an aborted shutdown may drop them.
+
+On the batch path a `Context` is one per *batch*, so a hook runs after the whole batch has settled.
+Because a batch has per-element outcomes, the outcome gate is ill-defined there: only
+`after_settle` hooks fire (the gated `after(..)` / `after_ack` forms are ignored on a batch).
 
 ## Context in middleware
 
