@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-macros"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",
