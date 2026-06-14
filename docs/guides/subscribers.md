@@ -34,19 +34,47 @@ access, named publishers - is covered in [Context and state](context.md).
 
 ### Acking
 
-The return type is anything that converts into a [`HandlerResult`]:
+The return type is anything that converts into a [`Settle`] (the settlement unit: an outcome plus
+an optional post-settle continuation):
 
 | Return value | Result |
 |---|---|
-| `HandlerResult::Ack` | acknowledge; the broker removes the message |
+| `HandlerResult::ack()` (or `HandlerResult::Ack`) | acknowledge; the broker removes the message |
 | `HandlerResult::retry()` | nack with requeue (redeliver later) |
 | `HandlerResult::retry_after(delay)` | nack asking for redelivery no sooner than `delay` |
 | `HandlerResult::drop()` | nack without requeue (discard or dead-letter) |
 | `()` | always `Ack` |
 | `Result<(), E>` | `Ack` on `Ok`, `drop` on `Err` |
-| `Result<HandlerResult, E>` | the inner result on `Ok`, `drop` on `Err` |
+| `Result<HandlerResult, E>` | the inner outcome on `Ok`, `drop` on `Err` |
+| `Settle` (any of the above `.and_after(..)`) | settle by the outcome, then run the continuation |
 
 On the message itself, ack consumes `self`, so the type system prevents acking twice.
+
+### Post-settle continuations
+
+`HandlerResult::ack().and_after(fut)` attaches a continuation that runs *after* the message is
+settled, without gating the ack decision or affecting redelivery - a non-critical notification,
+slow follow-up work, a cache warm-up. Any outcome works (`drop().and_after(..)` is valid; the
+neutral reading is "after settle"):
+
+```rust
+--8<-- "examples/post_settle.rs:single"
+```
+
+The continuation runs on a tracked task set that a graceful shutdown drains (bounded by
+`shutdown_timeout` when set). It is at-most-once: the message is already settled, so a continuation
+that panics or is lost on a crash never redelivers it. Do not put work whose loss must redeliver the
+message in here; settle by outcome and let the broker retry instead.
+
+In a batch each element settles individually, so the continuation rides per element - a capability
+the per-message context hook cannot offer:
+
+```rust
+--8<-- "examples/post_settle.rs:batch"
+```
+
+Batch *publishing* (`batch(..) + publish(..)`) settles all-or-nothing under one transaction, so
+per-element `and_after` does not compose there; it applies to plain batch and single forms only.
 
 ### Delayed redelivery
 

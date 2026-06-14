@@ -15,7 +15,7 @@ use tracing::warn;
 
 use super::context::Context;
 use super::failure::FailurePolicy;
-use super::handler::{Handler, HandlerResult};
+use super::handler::{Handler, HandlerResult, Settle};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
 /// `inner`.
@@ -71,7 +71,7 @@ where
     C: Codec,
     H: Handler<T>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
         match self.codec.decode::<T>(msg.payload()) {
             Ok(value) => self.inner.handle(&value, ctx).await,
             Err(err) => {
@@ -89,6 +89,7 @@ where
                     }
                     other => other.settlement().unwrap_or_else(HandlerResult::drop),
                 }
+                .into()
             }
         }
     }
@@ -152,7 +153,10 @@ mod tests {
         let mut ctx = Context::new("typed", &headers, &state, &delivery);
 
         let msg = StubMsg(b"7".to_vec(), Headers::new());
-        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::Ack);
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
         assert_eq!(seen.load(Ordering::SeqCst), 7);
     }
 
@@ -166,7 +170,10 @@ mod tests {
         let mut ctx = Context::new("typed", &headers, &state, &delivery);
 
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
-        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::drop());
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::drop()
+        );
         assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
     }
 
@@ -181,7 +188,10 @@ mod tests {
         let mut ctx = Context::new("typed", &headers, &state, &delivery);
 
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
-        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::retry());
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::retry()
+        );
         assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
     }
 
@@ -195,7 +205,7 @@ mod tests {
         let mut ctx = Context::new("typed", &headers, &state, &delivery);
         // Drive one delivery to pin the message type, then check the Debug rendering.
         let msg = StubMsg(b"5".to_vec(), Headers::new());
-        handler.handle(&msg, &mut ctx).await;
+        let _ = handler.handle(&msg, &mut ctx).await;
         assert!(format!("{handler:?}").contains("Typed"));
 
         // Exercise the StubMsg fixture's own IncomingMessage surface.
@@ -258,7 +268,10 @@ mod tests {
         let headers = Headers::new();
         let mut ctx = Context::new("orders.inbound", &headers, &state, &delivery);
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
-        assert_eq!(handler.handle(&msg, &mut ctx).await, HandlerResult::drop());
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::drop()
+        );
         drop(guard);
 
         let decode_event = {

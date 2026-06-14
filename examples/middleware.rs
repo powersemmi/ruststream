@@ -12,7 +12,7 @@ use std::sync::Arc;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
     AppInfo, Context, DynMiddleware, DynStack, Handler, HandlerResult, Identity, Layer, Next,
-    RustStream, Stack,
+    RustStream, Settle, Stack,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -48,11 +48,11 @@ impl<H> Layer<H> for LogLayer {
 }
 
 impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
         println!("-> {}", ctx.name());
-        let result = self.0.handle(msg, ctx).await;
+        let settle = self.0.handle(msg, ctx).await;
         println!("<- {}", ctx.name());
-        result
+        settle
     }
 }
 // --8<-- [end:layer_impl]
@@ -68,7 +68,7 @@ impl<I: Send + Sync> DynMiddleware<I> for Audit {
         input: &'a I,
         ctx: &'a mut Context<'_>,
         next: Next<'a, I>,
-    ) -> Pin<Box<dyn Future<Output = HandlerResult> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Settle> + Send + 'a>> {
         Box::pin(async move {
             println!("[{}] handling {}", self.service, ctx.name());
             next.run(input, ctx).await

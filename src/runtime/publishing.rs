@@ -16,7 +16,7 @@ use crate::{IncomingMessage, Publisher};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::{Handler, HandlerResult};
+use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 
@@ -136,7 +136,9 @@ where
     PC: Codec,
     PL: PublishLayer,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+        // The publishing path settles by a bare outcome (no per-element continuation): decode,
+        // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
             Ok(value) => value,
             Err(err) => {
@@ -150,15 +152,18 @@ where
                 return match self.decode {
                     FailurePolicy::FailFast => {
                         ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerResult::drop()
+                        HandlerResult::drop().into()
                     }
-                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
+                    other => other
+                        .settlement()
+                        .unwrap_or_else(HandlerResult::drop)
+                        .into(),
                 };
             }
         };
         let reply = match self.def.call(&input, ctx).await {
             Ok(reply) => reply,
-            Err(result) => return result,
+            Err(result) => return result.into(),
         };
         let name = self.def.reply_name();
         if let Err(err) = self.publisher.publish(name, &reply, &self.pipeline).await {
@@ -170,9 +175,9 @@ where
                 error = %err,
                 "reply publish failed",
             );
-            return HandlerResult::retry();
+            return HandlerResult::retry().into();
         }
-        HandlerResult::Ack
+        HandlerResult::Ack.into()
     }
 }
 

@@ -26,7 +26,7 @@ pub use context::{After, Context, State};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use failure::{FailurePolicies, FailurePolicy};
-pub use handler::{Handler, HandlerResult, IntoHandlerResult};
+pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{

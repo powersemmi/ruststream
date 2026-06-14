@@ -12,7 +12,7 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerResult, Layer, Outgoing,
-    PublishMiddleware, PublishNext, Router, RustStream, State,
+    PublishMiddleware, PublishNext, Router, RustStream, Settle, State,
 };
 use ruststream::{Name, OutgoingMessage, Publisher};
 use serde::{Deserialize, Serialize};
@@ -55,7 +55,7 @@ where
     M: Sync,
     H: Handler<M>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.inner.handle(msg, ctx).await
     }
@@ -126,6 +126,108 @@ async fn app_dispatches_typed_messages() {
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn graceful_shutdown_drains_post_settle_continuations() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    // The continuation signals `parked` once it is running, then blocks on `release` until the
+    // test lets it proceed, and finally marks `drained`. The drain on shutdown must wait for it.
+    let parked = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let drained = Arc::new(AtomicU32::new(0));
+
+    let on_parked = Arc::clone(&parked);
+    let gate = Arc::clone(&release);
+    let flag = Arc::clone(&drained);
+    let handler = move |_msg: &_, _ctx: &mut Context| {
+        let on_parked = Arc::clone(&on_parked);
+        let gate = Arc::clone(&gate);
+        let flag = Arc::clone(&flag);
+        async move {
+            HandlerResult::ack().and_after(async move {
+                // Signal once the continuation is in flight, then block: the drain must await it.
+                on_parked.notify_one();
+                gate.notified().await;
+                flag.store(1, Ordering::SeqCst);
+            })
+        }
+    };
+
+    let app = RustStream::new(AppInfo::new("drain", "0.1.0")).with_broker(broker, |b| {
+        let subscriber = b.broker().subscribe("work");
+        b.handle(subscriber, handler, HandlerMetadata::raw("work"));
+    });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    publisher
+        .publish(OutgoingMessage::new("work", b"go"))
+        .await
+        .unwrap();
+
+    // Wait until the continuation is spawned and blocked (the message is already acked).
+    parked.notified().await;
+
+    // Begin shutdown while the continuation is still in flight, then release it: the drain holds
+    // run() open until the continuation completes.
+    shutdown.notify_one();
+    release.notify_one();
+    run.await.unwrap().unwrap();
+
+    // run() returned only after the in-flight continuation finished.
+    assert_eq!(drained.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_timeout_abandons_stuck_continuations() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    // A continuation that never completes: it parks forever. With a shutdown timeout, the drain
+    // bounds its wait and returns, leaving the continuation abandoned (at-most-once).
+    let parked = Arc::new(Notify::new());
+    let finished = Arc::new(AtomicU32::new(0));
+
+    let on_parked = Arc::clone(&parked);
+    let flag = Arc::clone(&finished);
+    let handler = move |_msg: &_, _ctx: &mut Context| {
+        let on_parked = Arc::clone(&on_parked);
+        let flag = Arc::clone(&flag);
+        async move {
+            HandlerResult::ack().and_after(async move {
+                on_parked.notify_one();
+                std::future::pending::<()>().await;
+                flag.store(1, Ordering::SeqCst);
+            })
+        }
+    };
+
+    let app = RustStream::new(AppInfo::new("drain", "0.1.0"))
+        .shutdown_timeout(Duration::from_millis(50))
+        .with_broker(broker, |b| {
+            let subscriber = b.broker().subscribe("work");
+            b.handle(subscriber, handler, HandlerMetadata::raw("work"));
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    publisher
+        .publish(OutgoingMessage::new("work", b"go"))
+        .await
+        .unwrap();
+    parked.notified().await;
+
+    shutdown.notify_one();
+    // The drain times out and run() returns without the continuation ever completing.
+    run.await.unwrap().unwrap();
+    assert_eq!(finished.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -551,13 +653,13 @@ impl PublishMiddleware for Tagger {
 struct Bridge;
 
 impl<M: Send + Sync> Handler<M> for Bridge {
-    async fn handle(&self, _msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, _msg: &M, ctx: &mut Context<'_>) -> Settle {
         if let Some(out) = ctx.publisher("egress") {
             let _ = out
                 .publish(Outgoing::new("responses", b"reply".as_slice()))
                 .await;
         }
-        HandlerResult::Ack
+        HandlerResult::Ack.into()
     }
 }
 
