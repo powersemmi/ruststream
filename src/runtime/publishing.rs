@@ -15,7 +15,7 @@ use crate::{IncomingMessage, Publisher};
 
 use super::context::Context;
 use super::dispatch::Workers;
-use super::handler::{Handler, HandlerResult};
+use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 
@@ -127,7 +127,9 @@ where
     PC: Codec,
     PL: PublishLayer,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+        // The publishing path settles by a bare outcome (no per-element continuation): decode,
+        // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
             Ok(value) => value,
             Err(err) => {
@@ -138,12 +140,12 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                return HandlerResult::drop();
+                return HandlerResult::drop().into();
             }
         };
         let reply = match self.def.call(&input, ctx).await {
             Ok(reply) => reply,
-            Err(result) => return result,
+            Err(result) => return result.into(),
         };
         let name = self.def.reply_name();
         if let Err(err) = self.publisher.publish(name, &reply, &self.pipeline).await {
@@ -155,9 +157,9 @@ where
                 error = %err,
                 "reply publish failed",
             );
-            return HandlerResult::retry();
+            return HandlerResult::retry().into();
         }
-        HandlerResult::Ack
+        HandlerResult::Ack.into()
     }
 }
 

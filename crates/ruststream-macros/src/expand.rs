@@ -418,8 +418,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
                     &self,
                     #pat: &#input_ty,
                     #ctx_param: &mut ::ruststream::runtime::Context<'_>,
-                ) -> ::ruststream::runtime::HandlerResult {
-                    ::ruststream::runtime::IntoHandlerResult::into_handler_result(
+                ) -> ::ruststream::runtime::Settle {
+                    ::ruststream::runtime::IntoSettle::into_settle(
                         (async move #block).await,
                     )
                 }

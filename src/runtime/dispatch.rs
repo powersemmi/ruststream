@@ -10,13 +10,14 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tokio_util::task::TaskTracker;
+use tracing::{debug, error};
 
 use crate::{BatchSubscriber, Headers, IncomingMessage, Subscriber};
 
 use super::batch::BatchHandler;
 use super::context::{Context, State};
-use super::handler::{Handler, HandlerResult};
+use super::handler::Handler;
 use super::publish::PublishMiddleware;
 use super::publisher_registry::ErasedPublisher;
 
@@ -83,20 +84,32 @@ impl Default for Workers {
 }
 
 /// Per-scope publish context threaded into every delivery's [`Context`]: the named-publisher
-/// registry and the scope's publish middleware pipeline. A handler resolves a publisher with
-/// [`Context::publisher`] and its sends run through `pipeline`, the same chain as a macro reply.
+/// registry, the scope's publish middleware pipeline, and the app-wide tracker for post-settle
+/// continuations. A handler resolves a publisher with [`Context::publisher`] and its sends run
+/// through `pipeline`, the same chain as a macro reply; an `and_after` continuation is spawned onto
+/// `tasks` so a graceful shutdown drains it.
 pub(crate) struct Delivery {
     pub(crate) publishers: Publishers,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) tasks: TaskTracker,
 }
 
 impl Delivery {
-    /// An empty delivery context: no publishers, no pipeline. For tests.
+    /// An empty delivery context: no publishers, no pipeline, a fresh continuation tracker. For
+    /// tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
+        Self::with_tasks(TaskTracker::new())
+    }
+
+    /// An empty delivery context carrying a caller-owned continuation tracker, so a test can
+    /// observe the post-settle continuations spawned through it.
+    #[cfg(test)]
+    pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
         Self {
             publishers: HashMap::new(),
             pipeline: Arc::from([]),
+            tasks,
         }
     }
 }
@@ -106,6 +119,7 @@ impl std::fmt::Debug for Delivery {
         f.debug_struct("Delivery")
             .field("publishers", &self.publishers.len())
             .field("layers", &self.pipeline.len())
+            .field("pending_continuations", &self.tasks.len())
             .finish_non_exhaustive()
     }
 }
@@ -432,18 +446,73 @@ where
     M: IncomingMessage,
 {
     let mut ctx = Context::new(name, msg.headers(), state, delivery);
-    let outcome = handler.handle(&msg, &mut ctx).await;
-    let ack_result = match outcome {
-        HandlerResult::Ack => msg.ack().await,
-        HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-        HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
-    };
-    if let Err(err) = ack_result {
-        warn!(
-            target: "ruststream::dispatch",
-            subscription = %name,
-            error = %err,
-            "ack / nack failed",
-        );
+    let mut settle = handler.handle(&msg, &mut ctx).await;
+    let after = settle.take_after();
+    super::batch::settle(msg, settle.outcome(), name).await;
+    // Run the post-settle continuation on the tracked set so a graceful shutdown drains it.
+    // At-most-once: the message is already settled, so a lost or panicking continuation never
+    // redelivers it.
+    if let Some(after) = after {
+        delivery.tasks.spawn(after);
+    }
+}
+
+#[cfg(all(test, feature = "memory", feature = "json"))]
+mod tests {
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+    use tokio::sync::Notify;
+
+    use super::super::handler::{HandlerResult, Settle};
+    use super::*;
+    use crate::memory::MemoryBroker;
+    use crate::{OutgoingMessage, Publisher, Subscriber};
+
+    async fn publish_one(broker: &MemoryBroker, name: &str) {
+        broker
+            .publisher()
+            .publish(OutgoingMessage::new(
+                name,
+                &serde_json::to_vec(&1u32).unwrap(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    // After ANY settle the continuation runs: an ack with `and_after`, and a drop with `and_after`,
+    // both fire on the tracked set once the message is settled.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn single_continuation_runs_after_ack_and_after_drop() {
+        for outcome in [HandlerResult::ack(), HandlerResult::drop()] {
+            let broker = MemoryBroker::new();
+            let mut sub = broker.subscribe("after-single");
+            publish_one(&broker, "after-single").await;
+
+            let ran = Arc::new(Notify::new());
+            let signal = Arc::clone(&ran);
+            let handler = move |_msg: &crate::memory::MemoryMessage, _ctx: &mut Context| {
+                let signal = Arc::clone(&signal);
+                async move {
+                    let settle: Settle = outcome.and_after(async move { signal.notify_one() });
+                    settle
+                }
+            };
+
+            let tasks = TaskTracker::new();
+            let state = State::default();
+            let delivery = Delivery::with_tasks(tasks.clone());
+            let mut stream = std::pin::pin!(sub.stream());
+            let msg = stream.next().await.unwrap().unwrap();
+            dispatch(&handler, msg, "after-single", &state, &delivery).await;
+
+            // The continuation ran after settling, regardless of ack or drop.
+            ran.notified().await;
+            tasks.close();
+            tasks.wait().await;
+
+            // The message was settled (acked or dropped), so nothing is redelivered.
+            assert!(futures::poll!(stream.next()).is_pending());
+        }
     }
 }

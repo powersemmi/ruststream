@@ -11,6 +11,8 @@ use std::{
 use crate::codec::Codec;
 use crate::{Broker, Publisher, ServerSpec};
 
+use tokio_util::task::TaskTracker;
+
 use crate::runtime::context::State;
 use crate::runtime::dispatch::{Delivery, Publishers};
 use crate::runtime::lifecycle::{BoxError, BrokerLifecycle};
@@ -75,6 +77,10 @@ pub struct RustStream<L = Identity> {
     pub(super) on_shutdown: Vec<LifecycleHook>,
     pub(super) after_shutdown: Vec<LifecycleHook>,
     pub(super) shutdown_timeout: Option<Duration>,
+    /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
+    /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
+    /// [`Delivery`].
+    pub(super) continuations: TaskTracker,
     pub(super) global: L,
 }
 
@@ -106,6 +112,7 @@ impl RustStream<Identity> {
             on_shutdown: Vec::new(),
             after_shutdown: Vec::new(),
             shutdown_timeout: None,
+            continuations: TaskTracker::new(),
             global: Identity,
         }
     }
@@ -131,6 +138,7 @@ impl<L> RustStream<L> {
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
+            continuations: self.continuations,
             global: Stack::new(layer, self.global),
         }
     }
@@ -217,8 +225,10 @@ impl<L> RustStream<L> {
     }
 
     /// Sets how long [`run`](Self::run) waits for in-flight handlers to finish after shutdown is
-    /// triggered. After the timeout, the remaining handler tasks are aborted. Defaults to waiting
-    /// indefinitely.
+    /// triggered. After the timeout, the remaining handler tasks are aborted. The same bound then
+    /// applies to draining post-settle `and_after` continuations; on timeout they are abandoned
+    /// (they are at-most-once side effects, so this loses follow-up work, never a settlement).
+    /// Defaults to waiting indefinitely.
     #[must_use]
     pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = Some(timeout);
@@ -341,6 +351,7 @@ impl<L> RustStream<L> {
         let delivery = Arc::new(Delivery {
             publishers: self.publishers.clone(),
             pipeline: scope.pipeline.clone(),
+            tasks: self.continuations.clone(),
         });
         let (starters, handlers) = scope.sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {

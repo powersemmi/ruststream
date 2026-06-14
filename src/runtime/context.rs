@@ -117,6 +117,12 @@ impl<'a> Context<'a> {
     pub fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
         self.state.get::<T>()
     }
+
+    /// The app-wide tracker for post-settle continuations. The batch dispatcher spawns each
+    /// element's `and_after` future onto it after settling, so a graceful shutdown drains them.
+    pub(crate) fn tasks(&self) -> &tokio_util::task::TaskTracker {
+        &self.delivery.tasks
+    }
 }
 
 #[cfg(test)]

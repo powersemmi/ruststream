@@ -13,10 +13,10 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use super::context::Context;
-use super::handler::{Handler, HandlerResult};
+use super::handler::{Handler, Settle};
 use super::middleware::Layer;
 
-type BoxFut<'a> = Pin<Box<dyn Future<Output = HandlerResult> + Send + 'a>>;
+type BoxFut<'a> = Pin<Box<dyn Future<Output = Settle> + Send + 'a>>;
 
 /// The wrapped handler at the end of the chain, erased so [`Next`] need not carry its type.
 trait ErasedHandler<I>: Send + Sync {
@@ -144,7 +144,7 @@ where
 {
     // The returned future captures &self, so the chain and the wrapped handler are borrowed:
     // no Arc refcount traffic per message.
-    async fn handle(&self, input: &I, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, input: &I, ctx: &mut Context<'_>) -> Settle {
         let tail: &dyn ErasedHandler<I> = &self.inner;
         Next {
             rest: &self.chain,
@@ -203,7 +203,10 @@ mod tests {
         let delivery = crate::runtime::dispatch::Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("test", &headers, &state, &delivery);
-        assert_eq!(handler.handle(&Input, &mut ctx).await, HandlerResult::Ack);
+        assert_eq!(
+            handler.handle(&Input, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
         assert_eq!(*log.lock().expect("poisoned"), vec!["a", "b", "inner"]);
     }
 }
