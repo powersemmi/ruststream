@@ -4,9 +4,8 @@
 
 [graph]
 all-features = true
-# Gate the published surface, not the dev tooling: the ruststream-nats
-# dev-dependency (testing + the nats_* examples) pulls the async-nats tree,
-# whose TLS advisories belong to that crate's own CI - nothing here ships them.
+# Gate the published surface, not the dev tooling: dev-dependencies and their
+# transitive trees are the test harness's concern, not the shipped crate's.
 exclude-dev = true
 
 [advisories]

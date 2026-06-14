@@ -9,12 +9,6 @@ license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream"
 authors = ["RustStream contributors"]
 
-# The `nats_*` examples depend on `ruststream-nats`, which depends on `ruststream` from crates.io.
-# Point that back at this in-tree copy so the example and the broker share one `ruststream` instead
-# of pulling a second, incompatible one. cargo strips `[patch]` on publish, so this is dev-only.
-[patch.crates-io]
-ruststream = { path = "." }
-
 [[bin]]
 name = "ruststream"
 path = "src/bin/ruststream/main.rs"
@@ -94,18 +88,6 @@ required-features = ["macros", "memory", "json", "logging"]
 name = "logging_middleware"
 required-features = ["macros", "memory", "json", "logging"]
 
-[[example]]
-name = "nats_core"
-required-features = ["macros", "json"]
-
-[[example]]
-name = "nats_jetstream"
-required-features = ["macros", "json"]
-
-[[example]]
-name = "nats_request_reply"
-required-features = ["macros"]
-
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
@@ -129,10 +111,6 @@ required-features = ["macros", "memory", "json"]
 [[test]]
 name = "conformance_self"
 required-features = ["conformance", "memory"]
-
-[[test]]
-name = "doc_conformance_nats"
-required-features = ["conformance"]
 
 [[test]]
 name = "doc_testing_memory"
@@ -165,10 +143,6 @@ required-features = ["macros", "memory", "json"]
 [[test]]
 name = "workers"
 required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "doc_testing_nats"
-required-features = ["macros", "json"]
 
 [[test]]
 name = "ui"
@@ -227,7 +201,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 tempfile = "3"
 axum = "0.8"
-ruststream-nats = { version = "0.3", features = ["testing"] }
 trybuild = "1"
 
 [lints.rust]

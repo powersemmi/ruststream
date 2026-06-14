@@ -54,11 +54,22 @@ not part of the contract and are verified in your own end-to-end suite against a
 subscription receives and acks, and finally `shutdown`. It takes three factories that keep it
 broker-agnostic:
 
+<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
 use ruststream::conformance::harness;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
 
---8<-- "tests/doc_conformance_nats.rs:lifecycle"
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
+async fn passes_lifecycle() {
+    let url = std::env::var("NATS_TEST_URL").unwrap();
+    harness::lifecycle(
+        || NatsBroker::new(url.clone()), // sync construction (no I/O)
+        |subject| SubscribeOptions::new(subject), // the broker's SubscriptionSource
+        |broker| broker.publisher(),     // a publisher from the connected broker
+    )
+    .await;
+}
 ```
 
 - **`make_broker`** is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
@@ -84,11 +95,23 @@ without the capability simply do not call it. Each suite takes the same factory 
 | `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
 | `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it |
 
+<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
 use ruststream::conformance::capabilities;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
 
---8<-- "tests/doc_conformance_nats.rs:request_reply"
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
+async fn passes_request_reply() {
+    let url = std::env::var("NATS_TEST_URL").unwrap();
+    capabilities::request_reply(
+        || NatsBroker::new(url.clone()),
+        |subject| SubscribeOptions::new(subject),
+        |broker| broker.publisher(), // the RequestReply publisher under test
+        |broker| broker.publisher(), // the plain publisher the responder replies through
+    )
+    .await;
+}
 ```
 
 The in-memory broker implements every capability natively and passes all three suites in-process

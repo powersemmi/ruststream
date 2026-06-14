@@ -205,24 +205,13 @@ jobs:
       # lockstep `ruststream-macros` dependency, and between a version bump and the release that
       # version does not exist on crates.io, so packaging ruststream alone cannot resolve it. The
       # multi-package form resolves in-workspace dependencies through a local overlay instead.
-      # Still not `--workspace`: the dev-only `[patch.crates-io]` self-patch used by the `nats_*`
-      # examples trips its checksum.
-      #
-      # `--no-verify`: once a version is published, this job runs against the SAME, unchanged
-      # version on every later PR. Verify strips `[patch]` and rebuilds the extracted tarball, so
-      # the bundled `nats_*` examples pull `ruststream-nats` -> `ruststream <ver>` from the registry,
-      # whose checksum no longer matches the locally-modified `ruststream <ver>` being verified
-      # ("checksum changed between lock files"). Verifying is impossible between releases by design;
-      # packaging (manifest metadata, file list, the `[patch]` strip) is still checked here, and the
-      # full build is covered by the rust matrix. The release workflow runs with verify because it
-      # publishes a freshly bumped version that is not yet on crates.io, so the clash cannot occur.
       #
       # CARGO_HTTP_MULTIPLEXING=false works around recurring "[16] Error in the HTTP2 framing
       # layer" curl failures on the runners when this job re-downloads registry deps.
       - name: cargo publish dry-run (no upload)
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
-        run: cargo publish --dry-run --no-verify -p ruststream-macros -p ruststream --all-features
+        run: cargo publish --dry-run -p ruststream-macros -p ruststream --all-features
 
   security:
     name: Security scans
