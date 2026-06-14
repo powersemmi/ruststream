@@ -10,6 +10,7 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
 use crate::{BatchSubscriber, Headers, IncomingMessage, Subscriber};
@@ -126,12 +127,15 @@ where
     H: Handler<S::Message> + 'static,
 {
     tokio::spawn(async move {
+        let hooks = TaskTracker::new();
         let mut stream = std::pin::pin!(subscriber.stream());
         loop {
             tokio::select! {
                 () = shutdown.cancelled() => break,
                 next = stream.next() => match next {
-                    Some(Ok(msg)) => dispatch(&*handler, msg, &name, &state, &delivery).await,
+                    Some(Ok(msg)) => {
+                        dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
+                    }
                     Some(Err(err)) => {
                         error!(
                             target: "ruststream::dispatch",
@@ -150,7 +154,16 @@ where
                 }
             }
         }
+        drain_hooks(hooks).await;
     })
+}
+
+/// Closes a hook tracker to new spawns and waits for the in-flight post-settle continuations to
+/// finish. Called once the dispatch loop exits; bounded from the outside by the app's
+/// `shutdown_timeout`, which aborts the whole dispatch task (and these hooks with it) on timeout.
+async fn drain_hooks(hooks: TaskTracker) {
+    hooks.close();
+    hooks.wait().await;
 }
 
 /// Spawns a task that drives `subscriber` through `handler` with a bounded worker pool: up to
@@ -203,6 +216,7 @@ where
     H: Handler<S::Message> + 'static,
 {
     tokio::spawn(async move {
+        let hooks = TaskTracker::new();
         let mut stream = std::pin::pin!(subscriber.stream());
         let mut tasks = JoinSet::new();
         loop {
@@ -218,8 +232,9 @@ where
                         let name = Arc::clone(&name);
                         let state = Arc::clone(&state);
                         let delivery = Arc::clone(&delivery);
+                        let hooks = hooks.clone();
                         tasks.spawn(async move {
-                            dispatch(&*handler, msg, &name, &state, &delivery).await;
+                            dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
                         });
                     }
                     Some(Err(err)) => {
@@ -243,6 +258,7 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
+        drain_hooks(hooks).await;
     })
 }
 
@@ -264,6 +280,7 @@ where
         // One sequential worker per lane, fed by a capacity-1 channel: a keyed delivery always
         // lands in the lane its key hashes to, so per-key order is preserved. In-flight cap is
         // one processing plus one queued delivery per lane.
+        let hooks = TaskTracker::new();
         let mut lanes = Vec::with_capacity(workers.count);
         let mut tasks = JoinSet::new();
         for _ in 0..workers.count {
@@ -272,9 +289,10 @@ where
             let name = Arc::clone(&name);
             let state = Arc::clone(&state);
             let delivery = Arc::clone(&delivery);
+            let hooks = hooks.clone();
             tasks.spawn(async move {
                 while let Some(msg) = rx.recv().await {
-                    dispatch(&*handler, msg, &name, &state, &delivery).await;
+                    dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
                 }
             });
             lanes.push(tx);
@@ -330,6 +348,7 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
+        drain_hooks(hooks).await;
     })
 }
 
@@ -371,6 +390,7 @@ where
     H: BatchHandler<S::Message> + 'static,
 {
     tokio::spawn(async move {
+        let hooks = TaskTracker::new();
         let mut stream = std::pin::pin!(subscriber.batches());
         let mut tasks = JoinSet::new();
         loop {
@@ -390,15 +410,24 @@ where
                             let empty = Headers::new();
                             let mut ctx = Context::new(&name, &empty, &state, &delivery);
                             handler.handle_batch(batch, &mut ctx).await;
+                            // Per-element outcomes make an outcome gate ill-defined on a batch, so
+                            // only ungated `after_settle` hooks run, once the batch has settled.
+                            for fut in ctx.take_settle_hooks() {
+                                hooks.spawn(fut);
+                            }
                         } else {
                             let handler = Arc::clone(&handler);
                             let name = Arc::clone(&name);
                             let state = Arc::clone(&state);
                             let delivery = Arc::clone(&delivery);
+                            let hooks = hooks.clone();
                             tasks.spawn(async move {
                                 let empty = Headers::new();
                                 let mut ctx = Context::new(&name, &empty, &state, &delivery);
                                 handler.handle_batch(batch, &mut ctx).await;
+                                for fut in ctx.take_settle_hooks() {
+                                    hooks.spawn(fut);
+                                }
                             });
                         }
                     }
@@ -423,16 +452,26 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
+        drain_hooks(hooks).await;
     })
 }
 
-async fn dispatch<H, M>(handler: &H, msg: M, name: &str, state: &State, delivery: &Delivery)
-where
+async fn dispatch<H, M>(
+    handler: &H,
+    msg: M,
+    name: &str,
+    state: &State,
+    delivery: &Delivery,
+    hooks: &TaskTracker,
+) where
     H: Handler<M>,
     M: IncomingMessage,
 {
     let mut ctx = Context::new(name, msg.headers(), state, delivery);
     let outcome = handler.handle(&msg, &mut ctx).await;
+    // Drain the matching hooks before settling: `ctx` borrows `msg`'s headers, and settling
+    // consumes `msg`. The futures own their captures, so they outlive the borrow.
+    let continuations = ctx.take_hooks_for(outcome);
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
@@ -445,5 +484,10 @@ where
             error = %err,
             "ack / nack failed",
         );
+    }
+    // Hooks run after the message is settled: at-most-once, off the delivery path. Tracked so a
+    // graceful shutdown drains them rather than dropping them mid-flight.
+    for fut in continuations {
+        hooks.spawn(fut);
     }
 }

@@ -46,6 +46,15 @@ async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
     if config.reject_zero_ids && order.id == 0 {
         return HandlerResult::drop();
     }
+
+    // 4. A post-settle hook: fires after the broker has acked this message, off the delivery
+    //    path, so slow follow-up work never gates the ack or the next delivery. At-most-once:
+    //    a lost hook does not redeliver.
+    let id = order.id;
+    ctx.after_ack(async move {
+        println!("order {id} acked; sending the confirmation");
+    });
+
     HandlerResult::Ack
 }
 // --8<-- [end:handler]
