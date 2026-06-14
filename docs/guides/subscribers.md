@@ -94,13 +94,16 @@ The macro reads the descriptor type out of the constructor call, so the compiler
 descriptor against the broker it is mounted on. A descriptor is any type that implements
 `SubscriptionSource<B>`; see [Broker authors](../broker-authors/index.md#subscription-sources).
 
-The source may also be a builder chain on that constructor, so fluent options stay inline. A NATS
-JetStream consumer, for example:
+The source may also be a builder chain on that constructor, so fluent options stay inline. For
+example, a broker that ships an options builder lets a handler name a specific stream and consumer
+right in the decorator:
 
+<!-- inline-rust: illustrative builder-chain source; the concrete options type lives in a broker crate, so there is no in-repo compiled home -->
 ```rust
-use ruststream_nats::SubscribeOptions;
-
---8<-- "examples/nats_jetstream.rs:decorator"
+#[subscriber(StreamOptions::new("orders").durable("audit"))]
+async fn handle(order: &Order) -> HandlerResult {
+    HandlerResult::Ack
+}
 ```
 
 The macro follows the chain down to the base `Type::new(..)` to name the source type, so each method
