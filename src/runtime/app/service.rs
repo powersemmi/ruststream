@@ -346,8 +346,8 @@ impl<L> RustStream<L> {
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let broker = broker.clone();
             let delivery = delivery.clone();
-            self.starters.push(Box::new(move |state, token| {
-                bound(broker, state, delivery, token)
+            self.starters.push(Box::new(move |state, shutdown, token| {
+                bound(broker, state, delivery, shutdown, token)
             }));
             self.handlers.push(meta);
         }

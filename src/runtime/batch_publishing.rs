@@ -18,10 +18,10 @@ use crate::codec::Codec;
 use super::batch::{BatchHandler, decode_batch, settle};
 use super::context::Context;
 use super::dispatch::Workers;
+use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishMiddleware, ReplyPublisher};
-use super::typed::DecodeFailure;
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -52,6 +52,13 @@ pub trait BatchPublishingDef: Send + Sync {
     /// sequential dispatch.
     fn workers(&self) -> Workers {
         Workers::sequential()
+    }
+
+    /// The failure policy for a batch-handler panic and a per-element decode failure. The macro
+    /// fills this in from the `on_failure(panic = .., decode = ..)` argument; the default fails
+    /// fast on a panic and drops on a decode failure.
+    fn failure_policies(&self) -> FailurePolicies {
+        FailurePolicies::default()
     }
 
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
@@ -116,6 +123,7 @@ pub struct BatchPublishingHandler<D, C, R> {
     pub(crate) codec: C,
     pub(crate) publisher: R,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) decode: FailurePolicy,
 }
 
 impl<D, C, R> std::fmt::Debug for BatchPublishingHandler<D, C, R> {
@@ -136,13 +144,8 @@ where
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
         let subscription = ctx.name().to_owned();
-        let (values, accepted) = decode_batch::<M, D::Input, C>(
-            batch,
-            &self.codec,
-            DecodeFailure::default(),
-            &subscription,
-        )
-        .await;
+        let (values, accepted) =
+            decode_batch::<M, D::Input, C>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }
@@ -247,6 +250,7 @@ mod tests {
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
             pipeline: Arc::from([]),
+            decode: FailurePolicy::Drop,
         };
 
         publish_numbers(&broker, "orders", &[1, 2]).await;
@@ -284,6 +288,7 @@ mod tests {
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
             pipeline: Arc::from([]),
+            decode: FailurePolicy::Drop,
         };
 
         publish_numbers(&broker, "orders", &[1, 2]).await;

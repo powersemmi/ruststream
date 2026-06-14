@@ -12,6 +12,7 @@ use crate::runtime::context::State;
 use crate::runtime::dispatch::{
     Delivery, Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers,
 };
+use crate::runtime::failure::{DispatchFailure, ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::Handler;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::HandlerMetadata;
@@ -26,6 +27,7 @@ pub(crate) type BoundStarter<B> = Box<
             Arc<B>,
             Arc<State>,
             Arc<Delivery>,
+            ErrorShutdown,
             CancellationToken,
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
@@ -58,21 +60,28 @@ impl<B: Broker + 'static> RouterSink<B> {
     }
 
     /// Erases an already-created subscriber and its handler into a starter.
-    pub(crate) fn push_handle<S, H>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
-    where
+    pub(crate) fn push_handle<S, H>(
+        &mut self,
+        subscriber: S,
+        handler: H,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+    ) where
         S: Subscriber + Send + 'static,
         H: Handler<S::Message> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters
-            .push(Box::new(move |_broker, state, delivery, token| {
+        self.starters.push(Box::new(
+            move |_broker, state, delivery, shutdown, token| {
                 Box::pin(async move {
+                    let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch(
-                        subscriber, handler, token, name, state, delivery,
+                        subscriber, handler, token, name, state, delivery, failure,
                     ))
                 })
-            }));
+            },
+        ));
         self.handlers.push(meta);
     }
 
@@ -83,6 +92,7 @@ impl<B: Broker + 'static> RouterSink<B> {
         source: S,
         handler: H,
         meta: HandlerMetadata,
+        policies: FailurePolicies,
         workers: Workers,
     ) where
         S: SubscriptionSource<B> + Send + 'static,
@@ -92,18 +102,20 @@ impl<B: Broker + 'static> RouterSink<B> {
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters
-            .push(Box::new(move |broker: Arc<B>, state, delivery, token| {
+        self.starters.push(Box::new(
+            move |broker: Arc<B>, state, delivery, shutdown, token| {
                 Box::pin(async move {
                     let subscriber = source
                         .subscribe(broker.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
+                    let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_batch_dispatch(
-                        subscriber, handler, token, name, state, delivery, workers,
+                        subscriber, handler, token, name, state, delivery, failure, workers,
                     ))
                 })
-            }));
+            },
+        ));
         self.handlers.push(meta);
     }
 
@@ -114,6 +126,7 @@ impl<B: Broker + 'static> RouterSink<B> {
         source: S,
         handler: H,
         meta: HandlerMetadata,
+        policies: FailurePolicies,
         workers: Workers,
     ) where
         S: SubscriptionSource<B> + Send + 'static,
@@ -123,42 +136,51 @@ impl<B: Broker + 'static> RouterSink<B> {
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters
-            .push(Box::new(move |broker: Arc<B>, state, delivery, token| {
+        self.starters.push(Box::new(
+            move |broker: Arc<B>, state, delivery, shutdown, token| {
                 Box::pin(async move {
                     let subscriber = source
                         .subscribe(broker.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
+                    let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch_workers(
-                        subscriber, handler, token, name, state, delivery, workers,
+                        subscriber, handler, token, name, state, delivery, failure, workers,
                     ))
                 })
-            }));
+            },
+        ));
         self.handlers.push(meta);
     }
 
     /// Erases a source and its handler into a starter; the subscription opens after connect.
-    pub(crate) fn push_subscribe<S, H>(&mut self, source: S, handler: H, meta: HandlerMetadata)
-    where
+    pub(crate) fn push_subscribe<S, H>(
+        &mut self,
+        source: S,
+        handler: H,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+    ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         H: Handler<SourceMessage<B, S>> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters
-            .push(Box::new(move |broker: Arc<B>, state, delivery, token| {
+        self.starters.push(Box::new(
+            move |broker: Arc<B>, state, delivery, shutdown, token| {
                 Box::pin(async move {
                     let subscriber = source
                         .subscribe(broker.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
+                    let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch(
-                        subscriber, handler, token, name, state, delivery,
+                        subscriber, handler, token, name, state, delivery, failure,
                     ))
                 })
-            }));
+            },
+        ));
         self.handlers.push(meta);
     }
 

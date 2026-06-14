@@ -4,9 +4,10 @@
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -17,6 +18,7 @@ use crate::{BatchSubscriber, Headers, IncomingMessage, Subscriber};
 
 use super::batch::BatchHandler;
 use super::context::{Context, State};
+use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publish::PublishMiddleware;
 use super::publisher_registry::ErasedPublisher;
@@ -121,6 +123,7 @@ pub(crate) fn spawn_dispatch<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
 ) -> JoinHandle<()>
 where
     S: Subscriber + Send + 'static,
@@ -134,7 +137,7 @@ where
                 () = shutdown.cancelled() => break,
                 next = stream.next() => match next {
                     Some(Ok(msg)) => {
-                        dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
+                        dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure).await;
                     }
                     Some(Err(err)) => {
                         error!(
@@ -173,6 +176,10 @@ async fn drain_hooks(hooks: TaskTracker) {
 /// Sequential policies delegate to [`spawn_dispatch`]. On shutdown the stream stops being
 /// polled and in-flight workers drain; if the app's `shutdown_timeout` aborts this task, the
 /// owned worker tasks abort with it.
+// The dispatch loop is wired from many independent runtime parts (subscriber, handler, shutdown,
+// identity, state, publish context, failure policy, worker policy); bundling them only to satisfy
+// the arg-count lint would hide what each spawn site passes.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_dispatch_workers<S, H>(
     subscriber: S,
     handler: Arc<H>,
@@ -180,6 +187,7 @@ pub(crate) fn spawn_dispatch_workers<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -188,19 +196,22 @@ where
     H: Handler<S::Message> + 'static,
 {
     if workers.is_sequential() {
-        return spawn_dispatch(subscriber, handler, shutdown, name, state, delivery);
+        return spawn_dispatch(
+            subscriber, handler, shutdown, name, state, delivery, failure,
+        );
     }
     if workers.by_key {
         spawn_dispatch_lanes(
-            subscriber, handler, shutdown, name, state, delivery, workers,
+            subscriber, handler, shutdown, name, state, delivery, failure, workers,
         )
     } else {
         spawn_dispatch_pool(
-            subscriber, handler, shutdown, name, state, delivery, workers,
+            subscriber, handler, shutdown, name, state, delivery, failure, workers,
         )
     }
 }
 
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 fn spawn_dispatch_pool<S, H>(
     mut subscriber: S,
     handler: Arc<H>,
@@ -208,6 +219,7 @@ fn spawn_dispatch_pool<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -233,8 +245,10 @@ where
                         let state = Arc::clone(&state);
                         let delivery = Arc::clone(&delivery);
                         let hooks = hooks.clone();
+                        let failure = failure.clone();
                         tasks.spawn(async move {
-                            dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
+                            dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure)
+                                .await;
                         });
                     }
                     Some(Err(err)) => {
@@ -262,6 +276,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 fn spawn_dispatch_lanes<S, H>(
     mut subscriber: S,
     handler: Arc<H>,
@@ -269,6 +284,7 @@ fn spawn_dispatch_lanes<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -290,9 +306,10 @@ where
             let state = Arc::clone(&state);
             let delivery = Arc::clone(&delivery);
             let hooks = hooks.clone();
+            let failure = failure.clone();
             tasks.spawn(async move {
                 while let Some(msg) = rx.recv().await {
-                    dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
+                    dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure).await;
                 }
             });
             lanes.push(tx);
@@ -375,6 +392,7 @@ fn log_worker_exit(joined: Result<(), tokio::task::JoinError>) {
 /// With a non-sequential `workers` policy, up to `workers.count` batches are in flight at once,
 /// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 pub(crate) fn spawn_batch_dispatch<S, H>(
     mut subscriber: S,
     handler: Arc<H>,
@@ -382,6 +400,7 @@ pub(crate) fn spawn_batch_dispatch<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -404,30 +423,20 @@ where
                     Some(Ok(batch)) => {
                         let batch: Vec<S::Message> = batch.into_iter().collect();
                         if workers.is_sequential() {
-                            // A batch has no single working copy of headers, so the context
-                            // starts with an empty set; per-message headers stay on the broker
-                            // deliveries.
-                            let empty = Headers::new();
-                            let mut ctx = Context::new(&name, &empty, &state, &delivery);
-                            handler.handle_batch(batch, &mut ctx).await;
-                            // Per-element outcomes make an outcome gate ill-defined on a batch, so
-                            // only ungated `after_settle` hooks run, once the batch has settled.
-                            for fut in ctx.take_settle_hooks() {
-                                hooks.spawn(fut);
-                            }
+                            run_batch(&*handler, batch, &name, &state, &delivery, &hooks, &failure)
+                                .await;
                         } else {
                             let handler = Arc::clone(&handler);
                             let name = Arc::clone(&name);
                             let state = Arc::clone(&state);
                             let delivery = Arc::clone(&delivery);
                             let hooks = hooks.clone();
+                            let failure = failure.clone();
                             tasks.spawn(async move {
-                                let empty = Headers::new();
-                                let mut ctx = Context::new(&name, &empty, &state, &delivery);
-                                handler.handle_batch(batch, &mut ctx).await;
-                                for fut in ctx.take_settle_hooks() {
-                                    hooks.spawn(fut);
-                                }
+                                run_batch(
+                                    &*handler, batch, &name, &state, &delivery, &hooks, &failure,
+                                )
+                                .await;
                             });
                         }
                     }
@@ -456,6 +465,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 async fn dispatch<H, M>(
     handler: &H,
     msg: M,
@@ -463,15 +473,113 @@ async fn dispatch<H, M>(
     state: &State,
     delivery: &Delivery,
     hooks: &TaskTracker,
+    failure: &DispatchFailure,
 ) where
     H: Handler<M>,
     M: IncomingMessage,
 {
-    let mut ctx = Context::new(name, msg.headers(), state, delivery);
-    let outcome = handler.handle(&msg, &mut ctx).await;
-    // Drain the matching hooks before settling: `ctx` borrows `msg`'s headers, and settling
-    // consumes `msg`. The futures own their captures, so they outlive the borrow.
-    let continuations = ctx.take_hooks_for(outcome);
+    let mut ctx =
+        Context::new(name, msg.headers(), state, delivery).with_failfast(&failure.shutdown);
+    // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
+    // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
+    // the future borrows `&mut ctx`; that state is discarded with the failed delivery.
+    let result = AssertUnwindSafe(handler.handle(&msg, &mut ctx))
+        .catch_unwind()
+        .await;
+    // Resolve the settlement: `Some(outcome)` settles the message; `None` means a fail-fast panic
+    // tore the service down and left the message unsettled (a broker with redelivery hands it back
+    // after the restart).
+    let outcome = match result {
+        Ok(outcome) => Some(outcome),
+        Err(payload) => {
+            let reason = panic_reason(payload.as_ref());
+            error!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                panic = %reason,
+                "handler panicked",
+            );
+            match failure.policies.panic {
+                FailurePolicy::FailFast => {
+                    failure
+                        .shutdown
+                        .signal(name, &format!("handler panicked: {reason}"));
+                    None
+                }
+                // Any other policy settles the offending message and keeps the loop consuming.
+                other => Some(other.settlement().unwrap_or_else(HandlerResult::drop)),
+            }
+        }
+    };
+    // Drain the matching post-settle hooks before settling: `ctx` borrows `msg`'s headers, and
+    // settling consumes `msg`; the drained futures own their captures. A fail-fast (no outcome)
+    // runs no hooks.
+    let continuations = match outcome {
+        Some(outcome) => ctx.take_hooks_for(outcome),
+        None => Vec::new(),
+    };
+    drop(ctx);
+    if let Some(outcome) = outcome {
+        settle_outcome(msg, outcome, name).await;
+    }
+    // Hooks run after the message is settled: at-most-once, off the delivery path. Tracked so a
+    // graceful shutdown drains them rather than dropping them mid-flight.
+    for fut in continuations {
+        hooks.spawn(fut);
+    }
+}
+
+/// Runs one batch through its handler under panic protection. The handler owns and settles the
+/// batch's deliveries, so a panic there has already consumed them: the panic policy can only tear
+/// the service down (`fail_fast`) or be logged and skipped. Per-element settlement is out of scope
+/// (see the batch decode path for per-element decode handling). Ungated `after_settle` hooks run
+/// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
+async fn run_batch<H, M>(
+    handler: &H,
+    batch: Vec<M>,
+    name: &str,
+    state: &State,
+    delivery: &Delivery,
+    hooks: &TaskTracker,
+    failure: &DispatchFailure,
+) where
+    H: BatchHandler<M>,
+    M: IncomingMessage,
+{
+    // A batch has no single working copy of headers, so the context starts with an empty set;
+    // per-message headers stay on the broker deliveries.
+    let empty = Headers::new();
+    let mut ctx = Context::new(name, &empty, state, delivery).with_failfast(&failure.shutdown);
+    let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
+        .catch_unwind()
+        .await;
+    match result {
+        // The batch settled cleanly: run its ungated post-settle hooks.
+        Ok(()) => {
+            for fut in ctx.take_settle_hooks() {
+                hooks.spawn(fut);
+            }
+        }
+        Err(payload) => {
+            let reason = panic_reason(payload.as_ref());
+            error!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                panic = %reason,
+                "batch handler panicked",
+            );
+            if failure.policies.panic == FailurePolicy::FailFast {
+                failure
+                    .shutdown
+                    .signal(name, &format!("batch handler panicked: {reason}"));
+            }
+        }
+    }
+}
+
+/// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it.
+async fn settle_outcome<M: IncomingMessage>(msg: M, outcome: HandlerResult, name: &str) {
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
@@ -484,10 +592,5 @@ async fn dispatch<H, M>(
             error = %err,
             "ack / nack failed",
         );
-    }
-    // Hooks run after the message is settled: at-most-once, off the delivery path. Tracked so a
-    // graceful shutdown drains them rather than dropping them mid-flight.
-    for fut in continuations {
-        hooks.spawn(fut);
     }
 }

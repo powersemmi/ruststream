@@ -14,19 +14,8 @@ use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use super::context::Context;
+use super::failure::FailurePolicy;
 use super::handler::{Handler, HandlerResult};
-
-/// Behaviour when [`Codec`] fails to decode a payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum DecodeFailure {
-    /// Drop the message: nack with `requeue = false`.
-    #[default]
-    Drop,
-    /// Requeue the message: nack with `requeue = true`. Useful when the failure is transient
-    /// (e.g. schema not yet propagated to consumers).
-    Requeue,
-}
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
 /// `inner`.
@@ -43,25 +32,26 @@ where
     Typed {
         codec,
         inner,
-        on_decode_failure: DecodeFailure::default(),
+        decode: FailurePolicy::Drop,
         _phantom: PhantomData,
     }
 }
 
-/// Handler produced by [`typed`]. Override decode-failure behaviour with
+/// Handler produced by [`typed`]. Override the decode-failure policy with
 /// [`Typed::on_decode_failure`].
 pub struct Typed<M, T, C, H> {
     codec: C,
     inner: H,
-    on_decode_failure: DecodeFailure,
+    decode: FailurePolicy,
     _phantom: PhantomData<fn(M, T)>,
 }
 
 impl<M, T, C, H> Typed<M, T, C, H> {
-    /// Override the behaviour when the codec fails to decode an incoming payload.
+    /// Sets the [`FailurePolicy`] applied when the codec fails to decode an incoming payload. The
+    /// default is [`FailurePolicy::Drop`].
     #[must_use]
-    pub fn on_decode_failure(mut self, mode: DecodeFailure) -> Self {
-        self.on_decode_failure = mode;
+    pub fn on_decode_failure(mut self, decode: FailurePolicy) -> Self {
+        self.decode = decode;
         self
     }
 }
@@ -69,7 +59,7 @@ impl<M, T, C, H> Typed<M, T, C, H> {
 impl<M, T, C, H> fmt::Debug for Typed<M, T, C, H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Typed")
-            .field("on_decode_failure", &self.on_decode_failure)
+            .field("decode", &self.decode)
             .finish_non_exhaustive()
     }
 }
@@ -92,9 +82,12 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                match self.on_decode_failure {
-                    DecodeFailure::Drop => HandlerResult::drop(),
-                    DecodeFailure::Requeue => HandlerResult::retry(),
+                match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerResult::drop()
+                    }
+                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
                 }
             }
         }
@@ -108,10 +101,11 @@ mod tests {
         atomic::{AtomicU32, Ordering},
     };
 
-    use super::{DecodeFailure, typed};
+    use super::typed;
     use crate::codec::JsonCodec;
     use crate::runtime::context::{Context, State};
     use crate::runtime::dispatch::Delivery;
+    use crate::runtime::failure::FailurePolicy;
     use crate::runtime::handler::{Handler, HandlerResult};
     use crate::{AckError, Headers, IncomingMessage};
 
@@ -180,7 +174,7 @@ mod tests {
     async fn decode_failure_requeues_when_overridden() {
         let seen = Arc::new(AtomicU32::new(0));
         let handler =
-            typed(JsonCodec, counting_inner(&seen)).on_decode_failure(DecodeFailure::Requeue);
+            typed(JsonCodec, counting_inner(&seen)).on_decode_failure(FailurePolicy::Retry);
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();

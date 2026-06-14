@@ -4,6 +4,7 @@ use crate::{BatchSubscriber, Broker, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchHandler;
 use crate::runtime::dispatch::Workers;
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
@@ -19,6 +20,7 @@ pub struct SubscribeRoute<S, H> {
     pub(super) source: S,
     pub(super) handler: H,
     pub(super) meta: HandlerMetadata,
+    pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
 }
 
@@ -30,6 +32,7 @@ pub struct HandleRoute<S, H> {
     pub(super) subscriber: S,
     pub(super) handler: H,
     pub(super) meta: HandlerMetadata,
+    pub(super) policies: FailurePolicies,
 }
 
 /// One batch-subscription registration: a source plus the batch handler consuming its batches.
@@ -40,6 +43,7 @@ pub struct BatchRoute<S, H> {
     pub(super) source: S,
     pub(super) handler: H,
     pub(super) meta: HandlerMetadata,
+    pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
 }
 
@@ -59,7 +63,7 @@ where
 {
     fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
         let handler = global.apply::<SourceMessage<B, S>, H>(self.handler);
-        sink.push_subscribe_workers(self.source, handler, self.meta, self.workers);
+        sink.push_subscribe_workers(self.source, handler, self.meta, self.policies, self.workers);
     }
 
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
@@ -78,7 +82,13 @@ where
     fn mount_one<G: BlanketLayer>(self, _global: &G, sink: &mut RouterSink<B>) {
         // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
         // nor the router's own layers apply to batch registrations.
-        sink.push_subscribe_batch(self.source, self.handler, self.meta, self.workers);
+        sink.push_subscribe_batch(
+            self.source,
+            self.handler,
+            self.meta,
+            self.policies,
+            self.workers,
+        );
     }
 
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
@@ -95,7 +105,7 @@ where
 {
     fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
         let handler = global.apply::<S::Message, H>(self.handler);
-        sink.push_handle(self.subscriber, handler, self.meta);
+        sink.push_handle(self.subscriber, handler, self.meta, self.policies);
     }
 
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
