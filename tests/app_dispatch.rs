@@ -534,7 +534,7 @@ struct Tagger;
 impl PublishMiddleware for Tagger {
     fn on_publish<'a>(
         &'a self,
-        out: &'a mut Outgoing,
+        out: &'a mut Outgoing<'a>,
         next: PublishNext<'a>,
     ) -> Pin<
         Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
@@ -554,7 +554,7 @@ impl<M: Send + Sync> Handler<M> for Bridge {
     async fn handle(&self, _msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
         if let Some(out) = ctx.publisher("egress") {
             let _ = out
-                .publish(Outgoing::new("responses", b"reply".to_vec()))
+                .publish(Outgoing::new("responses", b"reply".as_slice()))
                 .await;
         }
         HandlerResult::Ack

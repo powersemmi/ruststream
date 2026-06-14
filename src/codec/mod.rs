@@ -46,7 +46,7 @@ pub type DefaultCodec = MsgpackCodec;
 
 use std::error::Error as StdError;
 
-use bytes::Bytes;
+use bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
@@ -73,7 +73,8 @@ pub enum CodecError {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "json")] {
+/// # #[cfg(feature = "json")]
+/// # fn main() -> Result<(), ruststream::codec::CodecError> {
 /// use ruststream::codec::{Codec, JsonCodec};
 /// # use serde::{Serialize, Deserialize};
 ///
@@ -81,18 +82,25 @@ pub enum CodecError {
 /// struct Order { id: u32, total: f64 }
 ///
 /// let codec = JsonCodec;
-/// let bytes = codec.encode(&Order { id: 1, total: 9.99 }).unwrap();
-/// let back: Order = codec.decode(&bytes).unwrap();
+/// let bytes = codec.encode(&Order { id: 1, total: 9.99 })?;
+/// let back: Order = codec.decode(&bytes)?;
 /// assert_eq!(back, Order { id: 1, total: 9.99 });
+/// # Ok(())
 /// # }
+/// # #[cfg(not(feature = "json"))]
+/// # fn main() {}
 /// ```
 pub trait Codec: Send + Sync {
-    /// Encodes `value` into a byte buffer.
+    /// Encodes `value` into a mutable byte buffer.
+    ///
+    /// Returning [`BytesMut`] lets the encoded buffer move into the publish pipeline (an
+    /// [`Outgoing`](crate::runtime::Outgoing) payload) without a copy, while still allowing
+    /// publish middleware to mutate it in place.
     ///
     /// # Errors
     ///
     /// Returns [`CodecError::Encode`] when the underlying serializer fails.
-    fn encode<T: Serialize>(&self, value: &T) -> Result<Bytes, CodecError>;
+    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError>;
 
     /// Decodes `bytes` into a Rust value of type `T`.
     ///

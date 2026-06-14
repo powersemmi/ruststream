@@ -6,8 +6,9 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side [`DynStack`](super::DynStack).
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};
 
+use bytes::BytesMut;
 use serde::Serialize;
 use tracing::warn;
 
@@ -23,22 +24,29 @@ use crate::{Headers, Publisher, TransactionalPublisher};
 
 type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
 
-/// An owned, mutable outgoing message flowing through the publish pipeline.
+/// A mutable outgoing message flowing through the publish pipeline.
 ///
-/// Middleware may change the [`name`](Self::name), transform the
-/// [`payload`](Self::payload_mut), and enrich the [`headers`](Self::headers_mut) before the
-/// message is sent.
+/// The [`name`](Self::name) is a [`Cow`]: the macro reply path borrows a string literal
+/// (`reply_name(&self) -> &str`), so the common case carries the destination without an
+/// allocation; a computed name moves in owned. The [`payload`](Self::payload_mut) is a
+/// [`BytesMut`]: codec output moves in directly (no copy), and middleware can still mutate it in
+/// place (for example wrapping it in an envelope). Middleware may change the name, transform the
+/// payload, and enrich the [`headers`](Self::headers_mut) before the message is sent.
 #[derive(Debug, Clone)]
-pub struct Outgoing {
-    name: String,
-    payload: Vec<u8>,
+pub struct Outgoing<'a> {
+    name: Cow<'a, str>,
+    payload: BytesMut,
     headers: Headers,
 }
 
-impl Outgoing {
+impl<'a> Outgoing<'a> {
     /// Creates an outgoing message with no headers.
+    ///
+    /// Pass a `&str` (a borrowed destination, the no-allocation case) or a `String` (a computed
+    /// owned one) for `name`; pass a [`BytesMut`] (codec output moves in) or a `&[u8]` for the
+    /// payload.
     #[must_use]
-    pub fn new(name: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
+    pub fn new(name: impl Into<Cow<'a, str>>, payload: impl Into<BytesMut>) -> Self {
         Self {
             name: name.into(),
             payload: payload.into(),
@@ -53,7 +61,7 @@ impl Outgoing {
     }
 
     /// Sets the destination name.
-    pub fn set_name(&mut self, name: impl Into<String>) {
+    pub fn set_name(&mut self, name: impl Into<Cow<'a, str>>) {
         self.name = name.into();
     }
 
@@ -64,12 +72,12 @@ impl Outgoing {
     }
 
     /// The payload bytes, mutably (for envelope wrapping).
-    pub fn payload_mut(&mut self) -> &mut Vec<u8> {
+    pub fn payload_mut(&mut self) -> &mut BytesMut {
         &mut self.payload
     }
 
     /// Replaces the payload.
-    pub fn set_payload(&mut self, payload: impl Into<Vec<u8>>) {
+    pub fn set_payload(&mut self, payload: impl Into<BytesMut>) {
         self.payload = payload.into();
     }
 
@@ -91,7 +99,8 @@ impl Outgoing {
 /// ends in the actual broker publish.
 pub trait PublishMiddleware: Send + Sync {
     /// Handle the outgoing message, calling `next` to continue the pipeline.
-    fn on_publish<'a>(&'a self, out: &'a mut Outgoing, next: PublishNext<'a>) -> PublishFut<'a>;
+    fn on_publish<'a>(&'a self, out: &'a mut Outgoing<'a>, next: PublishNext<'a>)
+    -> PublishFut<'a>;
 }
 
 /// A cursor over the remaining publish middleware, ending in the broker publisher.
@@ -103,7 +112,7 @@ pub struct PublishNext<'a> {
 impl<'a> PublishNext<'a> {
     /// Runs the next middleware, or sends the message if the pipeline is exhausted.
     #[must_use]
-    pub fn run(self, out: &'a mut Outgoing) -> PublishFut<'a> {
+    pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
         match self.rest.split_first() {
             Some((middleware, rest)) => middleware.on_publish(
                 out,
@@ -131,7 +140,7 @@ impl std::fmt::Debug for PublishNext<'_> {
 pub(crate) fn run_publish<'a>(
     pipeline: &'a [Arc<dyn PublishMiddleware>],
     publisher: &'a dyn ErasedPublisher,
-    out: &'a mut Outgoing,
+    out: &'a mut Outgoing<'a>,
 ) -> PublishFut<'a> {
     PublishNext {
         rest: pipeline,
@@ -167,7 +176,7 @@ impl<'a> ScopedPublisher<'a> {
     /// # Errors
     ///
     /// Returns the boxed error from a middleware or the broker publish if either fails.
-    pub async fn publish(&self, mut out: Outgoing) -> Result<(), BoxError> {
+    pub async fn publish(&self, mut out: Outgoing<'_>) -> Result<(), BoxError> {
         run_publish(self.pipeline, self.publisher, &mut out).await
     }
 }
@@ -191,7 +200,7 @@ impl std::fmt::Debug for ScopedPublisher<'_> {
 /// run first (closest to the value), then the dynamic pipeline, then the send.
 pub trait PublishLayer: Send + Sync {
     /// Transforms `out` in place before it is sent.
-    fn apply(&self, out: &mut Outgoing);
+    fn apply(&self, out: &mut Outgoing<'_>);
 }
 
 /// The no-op [`PublishLayer`]: the default for a [`TypedPublisher`] with no static transforms.
@@ -199,7 +208,7 @@ pub trait PublishLayer: Send + Sync {
 pub struct PublishIdentity;
 
 impl PublishLayer for PublishIdentity {
-    fn apply(&self, _out: &mut Outgoing) {}
+    fn apply(&self, _out: &mut Outgoing<'_>) {}
 }
 
 /// Composes two [`PublishLayer`]s: `inner` runs first, then `outer`. Built by
@@ -211,7 +220,7 @@ pub struct PublishStack<Inner, Outer> {
 }
 
 impl<Inner: PublishLayer, Outer: PublishLayer> PublishLayer for PublishStack<Inner, Outer> {
-    fn apply(&self, out: &mut Outgoing) {
+    fn apply(&self, out: &mut Outgoing<'_>) {
         self.inner.apply(out);
         self.outer.apply(out);
     }
@@ -317,11 +326,11 @@ impl<P: Publisher, C: Codec, PL: PublishLayer> TypedPublisher<P, C, PL> {
         value: &T,
         pipeline: &[Arc<dyn PublishMiddleware>],
     ) -> Result<(), BoxError> {
-        let bytes = self
+        let payload = self
             .codec
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
-        let mut out = Outgoing::new(name.to_owned(), bytes.to_vec());
+        let mut out = Outgoing::new(name, payload);
         self.layers.apply(&mut out);
         run_publish(pipeline, &self.publisher, &mut out).await
     }
@@ -461,5 +470,47 @@ where
 async fn abort_quietly<P: TransactionalPublisher>(publisher: &P) {
     if let Err(err) = publisher.abort().await {
         warn!(target: "ruststream::dispatch", error = %err, "transaction abort failed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn borrowed_name_is_not_owned() {
+        // The macro-reply hot path passes a string literal: it must stay borrowed (no alloc),
+        // which is the whole point of the Cow.
+        let out = Outgoing::new("orders.created", b"payload".as_slice());
+        assert!(matches!(out.name, Cow::Borrowed(_)));
+        assert_eq!(out.name(), "orders.created");
+        assert_eq!(out.payload(), b"payload");
+    }
+
+    #[test]
+    fn owned_name_moves_in() {
+        let computed = format!("orders.{}", 42);
+        let out = Outgoing::new(computed, BytesMut::from(&b"x"[..]));
+        assert!(matches!(out.name, Cow::Owned(_)));
+        assert_eq!(out.name(), "orders.42");
+    }
+
+    #[test]
+    fn payload_mutates_in_place() {
+        let mut out = Outgoing::new("t", BytesMut::from(&b"body"[..]));
+        out.payload_mut().extend_from_slice(b"!");
+        assert_eq!(out.payload(), b"body!");
+
+        out.set_payload(b"fresh".as_slice());
+        assert_eq!(out.payload(), b"fresh");
+    }
+
+    #[test]
+    fn set_name_and_headers() {
+        let mut out = Outgoing::new("a", b"".as_slice());
+        out.set_name("b");
+        out.headers_mut().insert("k", "v");
+        assert_eq!(out.name(), "b");
+        assert_eq!(out.headers().get_str("k"), Some("v"));
     }
 }
