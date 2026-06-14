@@ -46,6 +46,9 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "failure_policy"
+
+[[example]]
+name = "post_settle"
 required-features = ["macros", "memory", "json"]
 
 [[example]]

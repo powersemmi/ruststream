@@ -93,13 +93,13 @@ mod tests {
     use crate::Name;
     use crate::runtime::context::{Context, State};
     use crate::runtime::dispatch::{Delivery, Workers};
-    use crate::runtime::handler::{Handler, HandlerResult};
+    use crate::runtime::handler::{Handler, HandlerResult, Settle};
 
     struct Noop;
 
     impl Handler<u32> for Noop {
-        async fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> HandlerResult {
-            HandlerResult::Ack
+        async fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> Settle {
+            HandlerResult::Ack.into()
         }
     }
 
@@ -141,6 +141,9 @@ mod tests {
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("manual", &headers, &state, &delivery);
-        assert_eq!(handler.handle(&7u32, &mut ctx).await, HandlerResult::Ack);
+        assert_eq!(
+            handler.handle(&7u32, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
     }
 }

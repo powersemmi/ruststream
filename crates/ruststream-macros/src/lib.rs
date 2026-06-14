@@ -38,18 +38,21 @@ use parse::{SubscriberArgs, doc_description};
 /// async fn bill(orders: &[Order]) -> HandlerResult { /* settles the whole batch */ }
 /// ```
 ///
-/// Without `publish(..)` the handler returns any `IntoHandlerResult` (a `HandlerResult`, `()`, or
-/// `Result<_, E>`). With `publish(..)` it returns the reply value to publish, or
-/// `Result<Reply, HandlerResult>` to control acknowledgement: `Err(result)` publishes nothing and
-/// returns `result` to the dispatcher. The `Result` form is detected syntactically, so spell it
-/// out in the signature (a type alias is treated as a plain reply type).
+/// Without `publish(..)` the handler returns any `Into<Settle>` (a `Settle`, a `HandlerResult`,
+/// `()`, or `Result<_, E>`). Attach a post-settle continuation with `HandlerResult::ack().and_after`
+/// (any outcome works), which runs after the message is settled. With `publish(..)` it returns the
+/// reply value to publish, or `Result<Reply, HandlerResult>` to control acknowledgement:
+/// `Err(result)` publishes nothing and returns `result` to the dispatcher. The `Result` form is
+/// detected syntactically, so spell it out in the signature (a type alias is treated as a plain
+/// reply type).
 ///
 /// Wrapping the source in `batch(..)` switches the definition to a `BatchDef`: the handler takes
 /// `&[T]` and runs once per batch pulled from the broker's `BatchSubscriber` (use the `Buffered`
 /// adapter for brokers without native batching). It returns any `IntoBatchResult` - one outcome
-/// for the whole batch (`HandlerResult`, `()`, `Result<_, E>`), or `Vec<HandlerResult>` to settle
-/// element `i` of the slice with outcome `i`. The source type is recovered from the constructor
-/// path, so a generic source spells its parameters:
+/// for the whole batch (`HandlerResult`, `()`, `Result<_, E>`), or a per-element vector
+/// (`Vec<Settle>`, or `Vec<HandlerResult>`) to settle element `i` of the slice with outcome `i`,
+/// each element carrying its own optional `and_after` continuation. The source type is recovered
+/// from the constructor path, so a generic source spells its parameters:
 /// `batch(Buffered::<Name>::new(Name::new("orders")))`.
 ///
 /// Combining `batch(..)` with `publish(..)` produces a `BatchPublishingDef` (mounted with

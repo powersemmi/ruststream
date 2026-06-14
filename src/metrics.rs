@@ -34,6 +34,7 @@ use prometheus::{
 
 use crate::runtime::{
     BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishMiddleware, PublishNext,
+    Settle,
 };
 
 /// Default histogram buckets (seconds) for handler duration.
@@ -220,20 +221,22 @@ where
     M: Sync,
     H: Handler<M>,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
+    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = Settle> + Send {
         let name = ctx.name().to_owned();
         async move {
             let started = std::time::Instant::now();
-            let result = self.inner.handle(msg, ctx).await;
+            // Classify by the outcome inside the settlement; the continuation (if any) passes
+            // through untouched to the dispatcher.
+            let settle = self.inner.handle(msg, ctx).await;
             self.metrics
                 .consume_duration
                 .with_label_values(&[name.as_str()])
                 .observe(started.elapsed().as_secs_f64());
             self.metrics
                 .consumed
-                .with_label_values(&[name.as_str(), consume_status(result)])
+                .with_label_values(&[name.as_str(), consume_status(settle.outcome())])
                 .inc();
-            result
+            settle
         }
     }
 }

@@ -119,8 +119,10 @@ impl Default for Workers {
 }
 
 /// Per-scope publish context threaded into every delivery's [`Context`]: the named-publisher
-/// registry and the scope's publish middleware pipeline. A handler resolves a publisher with
-/// [`Context::publisher`] and its sends run through `pipeline`, the same chain as a macro reply.
+/// registry, the scope's publish middleware pipeline, and the app-wide tracker for post-settle
+/// continuations. A handler resolves a publisher with [`Context::publisher`] and its sends run
+/// through `pipeline`, the same chain as a macro reply; an `and_after` continuation is spawned onto
+/// `tasks` so a graceful shutdown drains it.
 pub(crate) struct Delivery {
     pub(crate) publishers: Publishers,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
@@ -128,16 +130,29 @@ pub(crate) struct Delivery {
     /// own source subject after the delay. `None` when the scope did not opt in, in which case a
     /// `NackAfter` on a non-native broker degrades to an immediate requeue (with a warning).
     pub(crate) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
+    /// Per-scope task tracker for post-settle [`HandlerResult::and_after`] continuations. The
+    /// dispatcher spawns each element's continuation onto it after settling, so a graceful
+    /// shutdown drains them.
+    pub(crate) tasks: TaskTracker,
 }
 
 impl Delivery {
-    /// An empty delivery context: no publishers, no pipeline, no retry publisher. For tests.
+    /// An empty delivery context: no publishers, no pipeline, no retry publisher, a fresh
+    /// continuation tracker. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
+        Self::with_tasks(TaskTracker::new())
+    }
+
+    /// An empty delivery context carrying a caller-owned continuation tracker, so a test can
+    /// observe the post-settle continuations spawned through it.
+    #[cfg(test)]
+    pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
         Self {
             publishers: HashMap::new(),
             pipeline: Arc::from([]),
             retry_publisher: None,
+            tasks,
         }
     }
 }
@@ -148,6 +163,7 @@ impl std::fmt::Debug for Delivery {
             .field("publishers", &self.publishers.len())
             .field("layers", &self.pipeline.len())
             .field("retry_publisher", &self.retry_publisher.is_some())
+            .field("pending_continuations", &self.tasks.len())
             .finish_non_exhaustive()
     }
 }
@@ -527,11 +543,11 @@ async fn dispatch<H, M>(
     let result = AssertUnwindSafe(handler.handle(&msg, &mut ctx))
         .catch_unwind()
         .await;
-    // Resolve the settlement: `Some(outcome)` settles the message; `None` means a fail-fast panic
-    // tore the service down and left the message unsettled (a broker with redelivery hands it back
-    // after the restart).
-    let outcome = match result {
-        Ok(outcome) => Some(outcome),
+    // Resolve into a `Settle` regardless of whether the handler panicked. `None` means a fail-fast
+    // panic tore the service down and left the message unsettled (a broker with redelivery hands it
+    // back after the restart).
+    let settle = match result {
+        Ok(s) => Some(s),
         Err(payload) => {
             let reason = panic_reason(payload.as_ref());
             error!(
@@ -547,21 +563,33 @@ async fn dispatch<H, M>(
                         .signal(name, &format!("handler panicked: {reason}"));
                     None
                 }
-                // Any other policy settles the offending message and keeps the loop consuming.
-                other => Some(other.settlement().unwrap_or_else(HandlerResult::drop)),
+                other => Some(
+                    other
+                        .settlement()
+                        .unwrap_or_else(HandlerResult::drop)
+                        .into(),
+                ),
             }
         }
     };
-    // Drain the matching post-settle hooks before settling: `ctx` borrows `msg`'s headers, and
-    // settling consumes `msg`; the drained futures own their captures. A fail-fast (no outcome)
+    // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
+    // settling consumes `msg`. The drained futures own their captures. A fail-fast (no settlement)
     // runs no hooks.
-    let continuations = outcome.map_or_else(Vec::new, |outcome| ctx.take_hooks_for(outcome));
+    let continuations = settle
+        .as_ref()
+        .map_or_else(Vec::new, |s| ctx.take_hooks_for(s.outcome()));
     drop(ctx);
-    if let Some(outcome) = outcome {
-        settle_outcome(msg, outcome, name, delivery).await;
+    if let Some(mut s) = settle {
+        settle_outcome(msg, s.outcome(), name, delivery).await;
+        // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
+        // drains it. At-most-once: the message is already settled, so a lost or panicking
+        // continuation never redelivers it.
+        if let Some(after) = s.take_after() {
+            delivery.tasks.spawn(after);
+        }
     }
-    // Hooks run after the message is settled: at-most-once, off the delivery path. Tracked so a
-    // graceful shutdown drains them rather than dropping them mid-flight.
+    // Context-registered hooks run after the message is settled: at-most-once, off the delivery
+    // path. Tracked so a graceful shutdown drains them.
     for fut in continuations {
         hooks.spawn(fut);
     }
@@ -585,15 +613,12 @@ async fn run_batch<H, M>(
     H: BatchHandler<M>,
     M: IncomingMessage,
 {
-    // A batch has no single working copy of headers, so the context starts with an empty set;
-    // per-message headers stay on the broker deliveries.
     let empty = Headers::new();
     let mut ctx = Context::new(name, &empty, state, delivery).with_failfast(&failure.shutdown);
     let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
         .catch_unwind()
         .await;
     match result {
-        // The batch settled cleanly: run its ungated post-settle hooks.
         Ok(()) => {
             for fut in ctx.take_settle_hooks() {
                 hooks.spawn(fut);
@@ -616,9 +641,7 @@ async fn run_batch<H, M>(
     }
 }
 
-/// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it. A
-/// `NackAfter` outcome is routed through [`settle_nack_after`], which chooses native delayed
-/// redelivery or the broker-agnostic deferred-republish fallback (hence the `delivery` argument).
+/// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it.
 async fn settle_outcome<M: IncomingMessage>(
     msg: M,
     outcome: HandlerResult,
@@ -770,6 +793,7 @@ mod tests {
             publishers: HashMap::new(),
             pipeline: Arc::from([]),
             retry_publisher: Some(Arc::new(broker.publisher())),
+            tasks: TaskTracker::new(),
         };
 
         let settled = Arc::new(AtomicU8::new(0));
@@ -805,6 +829,7 @@ mod tests {
             publishers: HashMap::new(),
             pipeline: Arc::from([]),
             retry_publisher: Some(Arc::new(broker.publisher())),
+            tasks: TaskTracker::new(),
         };
 
         let settled = Arc::new(AtomicU8::new(0));
@@ -851,6 +876,7 @@ mod tests {
             publishers: HashMap::new(),
             pipeline: Arc::from([]),
             retry_publisher: Some(Arc::new(other.publisher())),
+            tasks: TaskTracker::new(),
         };
 
         let msg = {

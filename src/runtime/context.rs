@@ -413,6 +413,14 @@ impl<'a> Context<'a> {
         self.after = kept;
         runnable
     }
+
+    /// Returns the app-wide task tracker for post-settle [`HandlerResult::and_after`]
+    /// continuations. The dispatcher spawns each element's continuation onto it after settling,
+    /// and the single-message path uses it the same way, so a graceful shutdown drains in-flight
+    /// continuations.
+    pub(crate) fn tasks(&self) -> &tokio_util::task::TaskTracker {
+        &self.delivery.tasks
+    }
 }
 
 /// A builder for an outcome-gated post-settle hook, returned by [`Context::after`].

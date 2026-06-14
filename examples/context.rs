@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerResult, Identity, Layer, RustStream, Stack,
+    AppInfo, Context, Handler, HandlerResult, Identity, Layer, RustStream, Settle, Stack,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -85,7 +85,7 @@ impl<H> Layer<H> for RequestId {
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 
 impl<M: Send + Sync, H: Handler<M>> Handler<M> for WithRequestId<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
         if ctx.headers().get("x-request-id").is_none() {
             let id = format!("req-{}", NEXT_REQUEST.fetch_add(1, Ordering::Relaxed));
             ctx.headers_mut().insert("x-request-id", id.into_bytes());

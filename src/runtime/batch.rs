@@ -19,31 +19,34 @@ use crate::codec::Codec;
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::HandlerResult;
+use super::handler::{HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
 
 /// The settlement of one dispatched batch.
 ///
 /// Returned by batch handlers (usually through [`IntoBatchResult`]) and applied by the
 /// dispatcher to each message's own `ack` / `nack`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Per-element [`Settle`]s carry an optional `and_after` continuation each; the uniform form is a
+/// bare outcome, since one continuation cannot fan out to every message of the batch.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum BatchResult {
     /// One outcome settles every message of the batch.
     Uniform(HandlerResult),
-    /// Outcome `i` settles slice element `i`. A length mismatch with the dispatched batch is a
-    /// bug in the handler: the unmatched remainder is retried (an extra redelivery beats a
-    /// silently lost message) and the mismatch is logged.
-    PerElement(Vec<HandlerResult>),
+    /// Settlement `i` settles slice element `i`, each with its own optional post-settle
+    /// continuation. A length mismatch with the dispatched batch is a bug in the handler: the
+    /// unmatched remainder is retried (an extra redelivery beats a silently lost message) and the
+    /// mismatch is logged.
+    PerElement(Vec<Settle>),
 }
 
 /// Conversion into a [`BatchResult`], so `#[subscriber(batch(..))]` handlers can return a plain
 /// value.
 ///
 /// Implemented for [`BatchResult`] (identity), [`HandlerResult`] / `()` / `Result<(), E>` /
-/// `Result<HandlerResult, E>` (one outcome for the whole batch, with the same conventions as
-/// [`IntoHandlerResult`](super::IntoHandlerResult)), and `Vec<HandlerResult>` (element `i`
-/// settles slice element `i`).
+/// `Result<HandlerResult, E>` (one outcome for the whole batch), and a per-element vector
+/// (`Vec<Settle>`, or `Vec<HandlerResult>`) where element `i` settles slice element `i`.
 pub trait IntoBatchResult {
     /// Converts `self` into the settlement the dispatcher applies.
     fn into_batch_result(self) -> BatchResult;
@@ -82,9 +85,15 @@ impl<E> IntoBatchResult for Result<HandlerResult, E> {
     }
 }
 
-impl IntoBatchResult for Vec<HandlerResult> {
+impl IntoBatchResult for Vec<Settle> {
     fn into_batch_result(self) -> BatchResult {
         BatchResult::PerElement(self)
+    }
+}
+
+impl IntoBatchResult for Vec<HandlerResult> {
+    fn into_batch_result(self) -> BatchResult {
+        BatchResult::PerElement(self.into_iter().map(Settle::from).collect())
     }
 }
 
@@ -290,6 +299,7 @@ where
         if accepted.is_empty() {
             return;
         }
+        let tasks = ctx.tasks().clone();
         match self.inner.handle_slice(&values, ctx).await {
             BatchResult::Uniform(result) => {
                 for msg in accepted {
@@ -310,8 +320,17 @@ where
                 let mut results = results.into_iter();
                 for msg in accepted {
                     // An unmatched message gets retried: an extra redelivery beats losing it.
-                    let result = results.next().unwrap_or_else(HandlerResult::retry);
-                    settle(msg, result, &subscription).await;
+                    let mut result = results
+                        .next()
+                        .unwrap_or_else(|| HandlerResult::retry().into());
+                    let after = result.take_after();
+                    settle(msg, result.outcome(), &subscription).await;
+                    // The continuation runs after this element is settled, on the tracked set so a
+                    // graceful shutdown drains it. At-most-once: a lost or panicking continuation
+                    // never redelivers the already-settled message.
+                    if let Some(after) = after {
+                        tasks.spawn(after);
+                    }
                 }
             }
         }
@@ -448,6 +467,57 @@ mod tests {
         }
         let mut stream = std::pin::pin!(sub.stream());
         assert!(futures::poll!(stream.next()).is_pending());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn per_element_continuations_run_after_settle() {
+        use std::sync::Arc;
+        use tokio::sync::Notify;
+        use tokio_util::task::TaskTracker;
+
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("after-batch");
+        publish_numbers(&broker, "after-batch", &[0, 1]).await;
+
+        // Element 0 acks with a continuation; element 1 retries with no continuation.
+        let ran = Arc::new(Notify::new());
+        let signal = Arc::clone(&ran);
+        let handler = typed_batch(JsonCodec, move |batch: &[u32], _ctx: &mut Context| {
+            let signal = Arc::clone(&signal);
+            let outcomes: Vec<Settle> = batch
+                .iter()
+                .map(|n| {
+                    if *n == 0 {
+                        let signal = Arc::clone(&signal);
+                        HandlerResult::ack().and_after(async move { signal.notify_one() })
+                    } else {
+                        HandlerResult::retry().into()
+                    }
+                })
+                .collect();
+            async move { outcomes }
+        });
+
+        let tasks = TaskTracker::new();
+        let state = State::default();
+        let delivery = Delivery::with_tasks(tasks.clone());
+        let headers = Headers::new();
+        let mut ctx = Context::new("after-batch", &headers, &state, &delivery);
+        let batch = pull_batch(&mut sub).await;
+        handler.handle_batch(batch, &mut ctx).await;
+
+        // The continuation for element 0 runs on the tracked set after settling.
+        ran.notified().await;
+        tasks.close();
+        tasks.wait().await;
+
+        // Element 1 (no continuation) retried and comes back; element 0 is gone.
+        let redelivered = pull_batch(&mut sub).await;
+        let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
+        assert_eq!(payloads, [b"1"]);
+        for msg in redelivered {
+            msg.ack().await.unwrap();
+        }
     }
 
     #[tokio::test]
