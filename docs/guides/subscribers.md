@@ -85,14 +85,25 @@ rate-limited), where an immediate redelivery would just spin:
 --8<-- "examples/retry.rs:retry_after"
 ```
 
-Under the hood the dispatcher settles the message with `IncomingMessage::nack_after(delay)`. A
-broker overrides that method when the transport has native delayed redelivery (JetStream `NAK`
-with delay; the in-memory broker re-delivers on a timer); the trait's default degrades to a
-plain `nack(requeue = true)`. The delay is therefore a hint, not a guarantee - on a broker
-without the capability the message comes back immediately.
+Under the hood, the runtime honours the delay:
 
-It composes with [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>`
-carries per-element delays, so pending entries back off without holding up the rest of the page:
+- A broker with native delayed redelivery (the memory broker re-delivers on a timer; a
+  NATS JetStream broker could `NAK` with delay) hands off to the transport directly.
+- On a broker without native support, the runtime schedules a **deferred re-publish** of the
+  message to its own source subject after `delay`, then drops the original. The re-published
+  copy carries the framework retry-count header
+  ([`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html))
+  incremented; a handler can read it to cap redeliveries.
+
+  Opt in per scope with
+  [`BrokerScope::retry_via(publisher)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via)
+  (the publisher must target the same broker). Without a publisher the delay is dropped and the
+  message is requeued immediately. The deferred re-publish is **at-most-once** over the delay
+  window: if the process exits before the timer fires the copy is lost.
+
+The `batch_retry_after` form composes with
+[selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` carries
+per-element delays, so pending entries back off without holding up the rest of the page:
 
 ```rust
 --8<-- "examples/retry.rs:batch_retry_after"

@@ -1,4 +1,4 @@
-error: expected `publish("reply-topic")` or `workers(n[, by_key])`
+error: expected `publish("reply-topic")`, `workers(n[, by_key])`, or `on_failure(panic = .., decode = ..)`
  --> tests/ui/subscriber_unknown_clause.rs:4:24
   |
 4 | #[subscriber("orders", frobnicate)]

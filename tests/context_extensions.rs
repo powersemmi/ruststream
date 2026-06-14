@@ -11,6 +11,7 @@ use futures::{Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
 use ruststream::runtime::{
     AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerResult, Layer, RustStream,
+    Settle,
 };
 use ruststream::{AckError, Extensions, Headers, IncomingMessage, OutgoingMessage, Publisher};
 use tokio::sync::Notify;
@@ -171,7 +172,7 @@ where
     M: Sync,
     H: Handler<M>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
         // No value should survive from a previous delivery: the dispatch loop builds a fresh
         // context each time.
         assert!(
