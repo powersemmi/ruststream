@@ -11,7 +11,7 @@ subscribe -> publish -> ack -> `shutdown` works on the real transport.
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.3", features = ["conformance"] }
+ruststream = { version = "0.4", features = ["conformance"] }
 ```
 
 Enable your crate's own `testing` feature alongside it, since `run_suite` drives the `TestClient` you
