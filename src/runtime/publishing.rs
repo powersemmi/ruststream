@@ -161,7 +161,10 @@ where
             Err(result) => return result,
         };
         let name = self.def.reply_name();
-        if let Err(err) = self.publisher.publish(name, &reply, &self.pipeline).await {
+        let publish = self
+            .publisher
+            .publish(name, &reply, &self.pipeline, ctx.extensions());
+        if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",
                 subscription = %ctx.name(),

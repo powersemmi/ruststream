@@ -22,8 +22,10 @@ Read them from any handler or middleware through the `Context`:
 --8<-- "examples/lifespan.rs:handler"
 ```
 
-`ctx.get::<T>()` returns `Option<&T>`; it is `None` only if no value of that type was inserted.
-Inserting the same type again replaces the previous value.
+`ctx.state().get::<T>()` returns `Option<&T>`; it is `None` only if no value of that type was
+inserted. Inserting the same type again replaces the previous value. (`ctx.get::<T>()` without
+`state()` reads the per-delivery [extensions](context.md#per-delivery-extensions), a separate
+type-map scoped to one message.)
 
 A `#[subscriber]` handler opts into the context by taking a second parameter, `ctx: &mut Context`,
 after the payload. Omit it when the handler does not need state. Everything else the context

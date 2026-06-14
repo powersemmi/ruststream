@@ -51,6 +51,7 @@ impl Database {
 #[subscriber("orders")]
 async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
     let db = ctx
+        .state()
         .get::<Database>()
         .expect("database inserted in on_startup");
     if db.insert_order(order.id).await.is_err() {

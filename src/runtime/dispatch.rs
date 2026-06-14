@@ -517,8 +517,10 @@ async fn dispatch<H, M>(
     H: Handler<M>,
     M: IncomingMessage,
 {
-    let mut ctx =
-        Context::new(name, msg.headers(), state, delivery).with_failfast(&failure.shutdown);
+    // Seed the per-delivery extensions from the broker's message, then attach the fail-fast handle.
+    let extensions = msg.extensions();
+    let mut ctx = Context::with_extensions(name, msg.headers(), state, extensions, delivery)
+        .with_failfast(&failure.shutdown);
     // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
     // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
     // the future borrows `&mut ctx`; that state is discarded with the failed delivery.

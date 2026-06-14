@@ -26,6 +26,7 @@ pub(crate) async fn confirm(
     ctx: &mut Context<'_>,
 ) -> Result<Confirmation, HandlerResult> {
     let repo = ctx
+        .state()
         .get::<Repository>()
         .expect("repository set in on_startup");
     tracing::debug!(
@@ -57,6 +58,7 @@ pub(crate) async fn confirm(
 #[subscriber("cancellations")]
 pub(crate) async fn on_cancel(cancel: &Cancellation, ctx: &mut Context<'_>) -> HandlerResult {
     let repo = ctx
+        .state()
         .get::<Repository>()
         .expect("repository set in on_startup");
     match repo.cancel(cancel.order_id).await {

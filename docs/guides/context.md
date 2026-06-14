@@ -6,7 +6,7 @@ lifetimes:
 | Level | Type | Lives for | Holds |
 |---|---|---|---|
 | Application | `State` | the whole service | shared resources: pools, clients, configuration |
-| Delivery | `Context` | one message | the channel name, a headers working copy, access to `State` and named publishers |
+| Delivery | `Context` | one message | the channel name, a headers working copy, a per-delivery `Extensions` type-map, access to `State` and named publishers |
 
 `State` is filled once, at startup. A `Context` is built fresh for every delivery and threaded as
 `&mut` through the middleware chain into the handler, so middleware and the handler observe (and
@@ -22,7 +22,7 @@ can enrich) the same per-message view.
   create (a database pool). See [Lifespan](lifespan.md) for the hook contract.
 
 Inserting a second value of the same type replaces the first. Handlers read it through the context
-with `ctx.get::<T>()`, which returns `Option<&T>` - `None` only if nothing of that type was
+with `ctx.state().get::<T>()`, which returns `Option<&T>` - `None` only if nothing of that type was
 inserted. The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
 references, not copies; interior mutability (an `AtomicU64`, a mutex-guarded map) is the tool when
 a shared value must change at runtime.
@@ -48,13 +48,33 @@ What the context exposes:
 | `name()` | `&str` | the channel / subject the message arrived on |
 | `headers()` | `&Headers` | the working copy of the message headers |
 | `headers_mut()` | `&mut Headers` | the same copy, for middleware to enrich |
-| `get::<T>()` | `Option<&T>` | shared application state |
+| `state()` | `&State` | shared application state (then `.get::<T>()`) |
+| `get::<T>()` | `Option<&T>` | a per-delivery [extension](#per-delivery-extensions) |
+| `insert::<T>(v)` | `()` | write a per-delivery [extension](#per-delivery-extensions) |
 | `publisher(name)` | `Option<ScopedPublisher>` | a [named publisher](publishing.md#publishing-from-inside-a-handler) |
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 
 Closure handlers (the manual `typed(codec, |msg, ctx| ...)` form) always take the context as their
 second argument.
+
+## Per-delivery extensions
+
+Beside the shared `State`, the context carries an `Extensions` type-map scoped to one delivery:
+`ctx.insert::<T>(value)` writes it, `ctx.get::<T>()` reads it back, and it is dropped when the
+handler returns, so one delivery's values never leak into the next. Use it for data that belongs to
+a single message rather than the whole service - a correlation id, an authenticated user a layer
+resolved, a tracing span.
+
+```rust
+--8<-- "examples/context.rs:extensions"
+```
+
+A broker can also seed the map: implementing `IncomingMessage::extensions` lets it hand the handler
+typed per-delivery values (native delivery metadata, a commit token, a reply-to handle) without
+serializing them into the byte-only headers. The runtime moves the broker's map into the context
+before the handler runs, and those values stay reachable through the publish pipeline, so a
+transactional publisher can read a broker-supplied commit token at commit time.
 
 ## The headers working copy
 
