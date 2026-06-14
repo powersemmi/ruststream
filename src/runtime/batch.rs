@@ -326,6 +326,8 @@ where
 /// Takes `&mut Context` (rather than `&Context`) so the future stays `Send`: `Context` carries
 /// post-settle hooks (boxed `Send` futures that are not `Sync`), so holding a shared `&Context`
 /// across an `.await` would wrongly require `Context: Sync`.
+// The `&mut` is for Send-ness, not mutation (only `&self` methods are called), so the lint fires.
+#[allow(clippy::needless_pass_by_ref_mut)]
 pub(crate) async fn decode_batch<M, T, C>(
     batch: Vec<M>,
     codec: &C,

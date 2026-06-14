@@ -181,23 +181,73 @@ pub trait IncomingMessage: Send + Sync {
     /// [`ack`]: Self::ack
     fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> + Send;
 
+    /// Reports whether this transport can honor [`nack_after`](Self::nack_after) natively.
+    ///
+    /// Defaulted to `false`: a transport without native delayed redelivery cannot hold a
+    /// message back for `delay` on its own. The runtime reads this BEFORE settling a
+    /// [`NackAfter`](crate::runtime::HandlerResult::NackAfter) outcome: when it returns `true`
+    /// the runtime calls [`nack_after`](Self::nack_after) and trusts the broker timer; when it
+    /// returns `false` the runtime applies its broker-agnostic deferred-republish fallback
+    /// instead, so the delay is never silently dropped. Brokers with native delayed redelivery
+    /// (`JetStream` `NAK` with delay, a durable delayed queue) override this to `true` and
+    /// override `nack_after`.
+    ///
+    /// Adding this provided method is additive: implementations that do not override it keep
+    /// compiling and opt into the fallback path automatically.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{AckError, Headers, IncomingMessage};
+    ///
+    /// struct CoreMessage {
+    ///     payload: Vec<u8>,
+    ///     headers: Headers,
+    /// }
+    ///
+    /// impl IncomingMessage for CoreMessage {
+    ///     fn payload(&self) -> &[u8] {
+    ///         &self.payload
+    ///     }
+    ///     fn headers(&self) -> &Headers {
+    ///         &self.headers
+    ///     }
+    ///     async fn ack(self) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    ///     // No native delayed redelivery: keep the default, opting into the runtime fallback.
+    /// }
+    ///
+    /// let msg = CoreMessage { payload: Vec::new(), headers: Headers::new() };
+    /// assert!(!msg.supports_nack_after());
+    /// ```
+    fn supports_nack_after(&self) -> bool {
+        false
+    }
+
     /// Negatively acknowledges the message, asking the broker to redeliver it no sooner than
     /// `delay` from now.
     ///
-    /// Defaulted to a plain `nack(true)` (immediate requeue), so existing implementations keep
-    /// compiling and the delay degrades to a hint. Brokers with native delayed redelivery
-    /// (`JetStream` `NAK` with delay) override it; the in-memory broker re-delivers after the
-    /// delay via a timer.
+    /// The default returns [`AckError::Unsupported`]: a transport without native delayed
+    /// redelivery cannot honor the delay, and the default reports that honestly rather than
+    /// silently degrading to an immediate `nack(true)`. The runtime never relies on this default
+    /// to honor a delay; it checks [`supports_nack_after`](Self::supports_nack_after) first and
+    /// only calls `nack_after` when that is `true`, otherwise running its own deferred-republish
+    /// fallback. Brokers with native delayed redelivery override both methods.
     ///
     /// # Errors
     ///
-    /// Returns [`AckError`] under the same conditions as [`nack`](Self::nack).
+    /// Returns [`AckError::Unsupported`] by default. Overrides return [`AckError`] under the same
+    /// conditions as [`nack`](Self::nack).
     fn nack_after(self, delay: Duration) -> impl Future<Output = Result<(), AckError>> + Send
     where
         Self: Sized,
     {
         let _ = delay;
-        self.nack(true)
+        std::future::ready(Err(AckError::Unsupported))
     }
 }
 
@@ -276,7 +326,12 @@ mod tests {
         assert_eq!(stub.payload(), b"body");
         // The default partition_key is None (no key).
         assert!(stub.partition_key().is_none());
-        // The default nack_after degrades to an immediate nack(true).
-        stub.nack_after(Duration::from_secs(1)).await.unwrap();
+        // The default reports no native delayed redelivery, so the runtime uses its fallback.
+        assert!(!stub.supports_nack_after());
+        // The default nack_after signals "not honored" rather than silently degrading.
+        assert!(matches!(
+            stub.nack_after(Duration::from_secs(1)).await,
+            Err(AckError::Unsupported)
+        ));
     }
 }
