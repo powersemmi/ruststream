@@ -327,6 +327,7 @@ impl<L> RustStream<L> {
             sink: RouterSink::new(),
             publishers: self.publishers.clone(),
             pipeline: self.publish_layers.iter().cloned().collect(),
+            retry_publisher: None,
             global: self.global.clone(),
             codec,
         }
@@ -341,6 +342,7 @@ impl<L> RustStream<L> {
         let delivery = Arc::new(Delivery {
             publishers: self.publishers.clone(),
             pipeline: scope.pipeline.clone(),
+            retry_publisher: scope.retry_publisher.clone(),
         });
         let (starters, handlers) = scope.sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {

@@ -22,7 +22,7 @@ pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
 pub use batch_publishing::{BatchPublishingDef, BatchPublishingHandler};
 pub use context::{Context, State};
-pub use dispatch::Workers;
+pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use handler::{Handler, HandlerResult, IntoHandlerResult};
 pub use metadata::HandlerMetadata;

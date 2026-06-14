@@ -5,14 +5,16 @@
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
+use std::time::Duration;
 
+use bytes::Bytes;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use crate::{BatchSubscriber, Headers, IncomingMessage, Subscriber};
+use crate::{AckError, BatchSubscriber, Headers, IncomingMessage, Subscriber};
 
 use super::batch::BatchHandler;
 use super::context::{Context, State};
@@ -22,6 +24,37 @@ use super::publisher_registry::ErasedPublisher;
 
 /// Named publishers registered on the application, resolvable from a [`Context`] by name.
 pub(crate) type Publishers = HashMap<String, Arc<dyn ErasedPublisher>>;
+
+/// Header carrying the framework's deferred-republish retry count.
+///
+/// The broker-agnostic `retry_after` fallback increments this on each deferred re-publish, so a
+/// handler can read it to cap its own retries (a poison-message guard). It counts only the
+/// framework's own deferred republishes, not a broker's native redeliveries.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::Headers;
+/// use ruststream::runtime::RETRY_COUNT_HEADER;
+///
+/// fn over_limit(headers: &Headers, limit: u64) -> bool {
+///     let count: u64 = headers.get_str(RETRY_COUNT_HEADER).and_then(|v| v.parse().ok()).unwrap_or(0);
+///     count >= limit
+/// }
+///
+/// let mut headers = Headers::new();
+/// headers.insert(RETRY_COUNT_HEADER, "3");
+/// assert!(over_limit(&headers, 3));
+/// ```
+pub const RETRY_COUNT_HEADER: &str = "x-ruststream-retry-count";
+
+/// Parses the current [`RETRY_COUNT_HEADER`] value, defaulting to zero when absent or malformed.
+fn current_retry_count(headers: &Headers) -> u64 {
+    headers
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
 
 /// Concurrency policy for one subscriber's dispatch loop, declared with the `workers(..)` macro
 /// argument (or [`Workers::sequential`] by default).
@@ -88,15 +121,20 @@ impl Default for Workers {
 pub(crate) struct Delivery {
     pub(crate) publishers: Publishers,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    /// Publisher used by the broker-agnostic `retry_after` fallback to re-publish a message to its
+    /// own source subject after the delay. `None` when the scope did not opt in, in which case a
+    /// `NackAfter` on a non-native broker degrades to an immediate requeue (with a warning).
+    pub(crate) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
 }
 
 impl Delivery {
-    /// An empty delivery context: no publishers, no pipeline. For tests.
+    /// An empty delivery context: no publishers, no pipeline, no retry publisher. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
             publishers: HashMap::new(),
             pipeline: Arc::from([]),
+            retry_publisher: None,
         }
     }
 }
@@ -106,6 +144,7 @@ impl std::fmt::Debug for Delivery {
         f.debug_struct("Delivery")
             .field("publishers", &self.publishers.len())
             .field("layers", &self.pipeline.len())
+            .field("retry_publisher", &self.retry_publisher.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -436,7 +475,7 @@ where
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-        HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
+        HandlerResult::NackAfter { delay } => settle_nack_after(msg, name, delay, delivery).await,
     };
     if let Err(err) = ack_result {
         warn!(
@@ -445,5 +484,238 @@ where
             error = %err,
             "ack / nack failed",
         );
+    }
+}
+
+/// Settles a [`NackAfter`](HandlerResult::NackAfter) outcome, choosing native delayed redelivery
+/// or the broker-agnostic fallback.
+///
+/// When the broker reports native support (`supports_nack_after`), this defers to
+/// [`IncomingMessage::nack_after`]. Otherwise it captures the message, drops the original, and
+/// schedules a deferred re-publish of the captured copy to its source subject with the
+/// [`RETRY_COUNT_HEADER`] incremented. With no `retry_publisher` configured on the scope, it falls
+/// back to an immediate requeue (the legacy behavior) and warns.
+///
+/// # Cancel safety
+///
+/// The deferred re-publish runs on a detached task that sleeps for `delay`. It is at-most-once over
+/// that window: if the process exits (or the runtime is dropped) before the timer fires, the
+/// deferred message is lost, since the original has already been dropped. Brokers that need
+/// at-least-once delayed redelivery across a crash must provide native support.
+async fn settle_nack_after<M>(
+    msg: M,
+    name: &str,
+    delay: Duration,
+    delivery: &Delivery,
+) -> Result<(), AckError>
+where
+    M: IncomingMessage,
+{
+    if msg.supports_nack_after() {
+        return msg.nack_after(delay).await;
+    }
+
+    let Some(publisher) = delivery.retry_publisher.clone() else {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            "retry_after on a broker without native delayed redelivery and no retry publisher \
+             configured; requeuing immediately (the delay is dropped)",
+        );
+        return msg.nack(true).await;
+    };
+
+    // nack_after consumes self, so capture everything needed for the re-publish first.
+    let payload = Bytes::copy_from_slice(msg.payload());
+    let mut headers = msg.headers().clone();
+    let next_count = current_retry_count(&headers) + 1;
+    headers.insert(RETRY_COUNT_HEADER, next_count.to_string());
+    let subject = name.to_owned();
+
+    // Drop the original so the broker does not also redeliver it; the deferred copy carries the
+    // retry forward.
+    msg.nack(false).await?;
+
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        if let Err(err) = publisher
+            .publish_message(&subject, &payload, &headers)
+            .await
+        {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %subject,
+                error = %err,
+                "deferred retry_after re-publish failed; message lost",
+            );
+        }
+    });
+    Ok(())
+}
+
+#[cfg(all(test, feature = "memory"))]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    };
+
+    use futures::StreamExt;
+
+    use super::*;
+    use crate::memory::MemoryBroker;
+    use crate::{AckError, Headers, IncomingMessage, OutgoingMessage, Publisher};
+
+    /// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
+    /// default (`false`), and the default `nack_after` would error. It records how it was settled
+    /// so a test can assert the fallback dropped it rather than calling `nack(true)`.
+    struct PlainMessage {
+        payload: Bytes,
+        headers: Headers,
+        // 0 = unset, 1 = nack(false) (dropped), 2 = nack(true) (requeued).
+        settled: Arc<AtomicU8>,
+    }
+
+    impl IncomingMessage for PlainMessage {
+        fn payload(&self) -> &[u8] {
+            &self.payload
+        }
+
+        fn headers(&self) -> &Headers {
+            &self.headers
+        }
+
+        async fn ack(self) -> Result<(), AckError> {
+            Ok(())
+        }
+
+        async fn nack(self, requeue: bool) -> Result<(), AckError> {
+            self.settled
+                .store(if requeue { 2 } else { 1 }, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn plain(name_headers: &[(&str, &str)], settled: &Arc<AtomicU8>) -> PlainMessage {
+        let mut headers = Headers::new();
+        for (k, v) in name_headers {
+            headers.insert((*k).to_owned(), Bytes::copy_from_slice(v.as_bytes()));
+        }
+        PlainMessage {
+            payload: Bytes::from_static(b"body"),
+            headers,
+            settled: Arc::clone(settled),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fallback_defers_republish_to_source_with_incremented_retry_count() {
+        let broker = MemoryBroker::new();
+        // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery {
+            publishers: HashMap::new(),
+            pipeline: Arc::from([]),
+            retry_publisher: Some(Arc::new(broker.publisher())),
+        };
+
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = plain(&[], &settled);
+        settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+            .await
+            .unwrap();
+
+        // The original is dropped (nack(false)), not requeued, so the broker will not redeliver it.
+        assert_eq!(settled.load(Ordering::SeqCst), 1);
+
+        // Nothing is republished before the delay elapses.
+        let mut stream = std::pin::pin!(sub.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
+
+        tokio::time::advance(Duration::from_secs(30)).await;
+        tokio::task::yield_now().await;
+
+        let redelivered = stream.next().await.unwrap().unwrap();
+        assert_eq!(redelivered.payload(), b"body");
+        assert_eq!(
+            redelivered.headers().get_str(RETRY_COUNT_HEADER),
+            Some("1"),
+            "the first deferred republish must carry retry-count 1",
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fallback_increments_an_existing_retry_count() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery {
+            publishers: HashMap::new(),
+            pipeline: Arc::from([]),
+            retry_publisher: Some(Arc::new(broker.publisher())),
+        };
+
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
+        settle_nack_after(msg, "orders", Duration::from_secs(1), &delivery)
+            .await
+            .unwrap();
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+
+        let mut stream = std::pin::pin!(sub.stream());
+        let redelivered = stream.next().await.unwrap().unwrap();
+        assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), Some("5"));
+    }
+
+    #[tokio::test]
+    async fn without_a_retry_publisher_the_fallback_requeues_immediately() {
+        let delivery = Delivery::empty();
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = plain(&[], &settled);
+        settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+            .await
+            .unwrap();
+        // No retry publisher: degrade to an immediate requeue rather than dropping silently.
+        assert_eq!(settled.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_support_defers_to_the_broker_nack_after() {
+        // A native delivery: redelivered by its own timer, never through the retry publisher.
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let publisher = broker.publisher();
+        publisher
+            .publish(OutgoingMessage::new("orders", b"native".as_slice()))
+            .await
+            .unwrap();
+
+        // A separate broker backs the retry publisher; if the fallback fired, the republish would
+        // land here and never on `sub`.
+        let other = MemoryBroker::new();
+        let delivery = Delivery {
+            publishers: HashMap::new(),
+            pipeline: Arc::from([]),
+            retry_publisher: Some(Arc::new(other.publisher())),
+        };
+
+        let msg = {
+            let mut stream = std::pin::pin!(sub.stream());
+            stream.next().await.unwrap().unwrap()
+        };
+        assert!(msg.supports_nack_after());
+        settle_nack_after(msg, "orders", Duration::from_secs(5), &delivery)
+            .await
+            .unwrap();
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+
+        let mut stream = std::pin::pin!(sub.stream());
+        let redelivered = stream.next().await.unwrap().unwrap();
+        // Native redelivery keeps the original payload and adds no retry-count header.
+        assert_eq!(redelivered.payload(), b"native");
+        assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), None);
     }
 }

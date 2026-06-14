@@ -35,6 +35,7 @@ pub struct BrokerScope<B, L = Identity, C = ()> {
     pub(super) sink: RouterSink<B>,
     pub(super) publishers: Publishers,
     pub(super) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(super) global: L,
     pub(super) codec: C,
 }
@@ -52,6 +53,47 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
     #[must_use]
     pub fn publisher(&self, name: &str) -> Option<Arc<dyn ErasedPublisher>> {
         self.publishers.get(name).cloned()
+    }
+
+    /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.
+    ///
+    /// When a handler returns [`HandlerResult::retry_after`](crate::runtime::HandlerResult::retry_after)
+    /// (or a delivery is `nack_after`-ed) on a broker that does not natively support delayed
+    /// redelivery, the runtime re-publishes the message to its own source subject after the delay,
+    /// through `publisher`, with the
+    /// [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) incremented. Pass a publisher
+    /// bound to the same broker (`b.broker().publisher()`); a publish to the source subject then
+    /// reaches this scope's own subscriptions.
+    ///
+    /// Brokers with native delayed redelivery do not need this: the runtime uses their
+    /// [`nack_after`](crate::IncomingMessage::nack_after) instead. Without it, a `retry_after` on a
+    /// non-native broker degrades to an immediate requeue (with a warning).
+    ///
+    /// # Cancel safety
+    ///
+    /// The fallback's deferred re-publish is at-most-once over the delay window: see
+    /// [`HandlerResult::retry_after`](crate::runtime::HandlerResult::retry_after).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::BrokerScope;
+    /// use ruststream::{Broker, Publisher};
+    ///
+    /// // Wire a deferred-retry publisher bound to the same broker as the scope.
+    /// fn configure<B, P>(scope: &mut BrokerScope<B>, retry_publisher: P)
+    /// where
+    ///     B: Broker + 'static,
+    ///     P: Publisher + 'static,
+    /// {
+    ///     scope.retry_via(retry_publisher);
+    /// }
+    /// ```
+    pub fn retry_via<P>(&mut self, publisher: P)
+    where
+        P: Publisher + 'static,
+    {
+        self.retry_publisher = Some(Arc::new(publisher));
     }
 
     /// Attaches `handler` (wrapped with the global stack) to an already-created `subscriber`.
