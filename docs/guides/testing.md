@@ -86,7 +86,7 @@ dev-dependencies:
 
 ```toml title="Cargo.toml"
 [dev-dependencies]
-ruststream-nats = { version = "0.3", features = ["testing"] }
+ruststream-nats = { version = "0.4", features = ["testing"] }
 ```
 
 The same pattern as above, with a wildcard subscriber that audits every order event:

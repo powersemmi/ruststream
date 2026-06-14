@@ -64,11 +64,11 @@ which re-exports what it needs from `ruststream`:
 
 ```toml
 [dependencies]
-ruststream-nats = "0.3"
+ruststream-nats = "0.4"
 
 [dev-dependencies]
 # the broker's in-memory test client, for handler tests
-ruststream-nats = { version = "0.3", features = ["testing"] }
+ruststream-nats = { version = "0.4", features = ["testing"] }
 ```
 
 Each broker crate documents its own `Config` and capabilities; the available brokers are listed
