@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerResult, Identity, Layer, RustStream, Stack,
+    AppInfo, Context, Handler, HandlerResult, Identity, Layer, RustStream, Settle, Stack,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -39,8 +39,9 @@ async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
         println!("request {}", String::from_utf8_lossy(id));
     }
 
-    // 3. App-level shared state.
+    // 3. App-level shared state, reached through state().
     let config = ctx
+        .state()
         .get::<AppConfig>()
         .expect("config inserted at build time");
     if config.reject_zero_ids && order.id == 0 {
@@ -55,6 +56,14 @@ async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
         println!("order {id} acked; sending the confirmation");
     });
 
+    // --8<-- [start:extensions]
+    // 5. Per-delivery extensions: a value scoped to this one delivery (set by middleware or a
+    // broker, then read by the handler). Distinct from the shared app state above.
+    ctx.insert(order.id);
+    if let Some(seen) = ctx.get::<u64>() {
+        println!("processing order {seen}");
+    }
+    // --8<-- [end:extensions]
     HandlerResult::Ack
 }
 // --8<-- [end:handler]
@@ -76,7 +85,7 @@ impl<H> Layer<H> for RequestId {
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 
 impl<M: Send + Sync, H: Handler<M>> Handler<M> for WithRequestId<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
         if ctx.headers().get("x-request-id").is_none() {
             let id = format!("req-{}", NEXT_REQUEST.fetch_add(1, Ordering::Relaxed));
             ctx.headers_mut().insert("x-request-id", id.into_bytes());

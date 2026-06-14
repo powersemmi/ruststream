@@ -1,6 +1,6 @@
 //! CBOR codec backed by [`ciborium`].
 
-use bytes::Bytes;
+use bytes::{BufMut, BytesMut};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::codec::{Codec, CodecError};
@@ -10,10 +10,12 @@ use crate::codec::{Codec, CodecError};
 pub struct CborCodec;
 
 impl Codec for CborCodec {
-    fn encode<T: Serialize>(&self, value: &T) -> Result<Bytes, CodecError> {
-        let mut buf: Vec<u8> = Vec::new();
-        ciborium::into_writer(value, &mut buf).map_err(|err| CodecError::Encode(Box::new(err)))?;
-        Ok(Bytes::from(buf))
+    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+        // Serialize straight into the BytesMut writer: one buffer, no Vec-to-Bytes hop.
+        let mut buf = BytesMut::new();
+        ciborium::into_writer(value, (&mut buf).writer())
+            .map_err(|err| CodecError::Encode(Box::new(err)))?;
+        Ok(buf)
     }
 
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {

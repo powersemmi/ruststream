@@ -8,7 +8,7 @@
 use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, DecodeFailure, HandlerMetadata, HandlerResult, Router, RustStream, typed,
+    AppInfo, Context, FailurePolicy, HandlerMetadata, HandlerResult, Router, RustStream, typed,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -49,7 +49,7 @@ fn app() -> RustStream {
             let strict = typed(JsonCodec, |_order: &Order, _ctx: &mut Context| async {
                 HandlerResult::Ack
             })
-            .on_decode_failure(DecodeFailure::Requeue);
+            .on_decode_failure(FailurePolicy::Retry);
             b.handle(
                 b.broker().subscribe("orders"),
                 strict,

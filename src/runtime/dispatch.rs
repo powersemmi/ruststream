@@ -4,25 +4,60 @@
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::time::Duration;
 
-use futures::StreamExt;
+use bytes::Bytes;
+use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
-use crate::{BatchSubscriber, Headers, IncomingMessage, Subscriber};
+use crate::{AckError, BatchSubscriber, Headers, IncomingMessage, Subscriber};
 
 use super::batch::BatchHandler;
 use super::context::{Context, State};
+use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publish::PublishMiddleware;
 use super::publisher_registry::ErasedPublisher;
 
 /// Named publishers registered on the application, resolvable from a [`Context`] by name.
 pub(crate) type Publishers = HashMap<String, Arc<dyn ErasedPublisher>>;
+
+/// Header carrying the framework's deferred-republish retry count.
+///
+/// The broker-agnostic `retry_after` fallback increments this on each deferred re-publish, so a
+/// handler can read it to cap its own retries (a poison-message guard). It counts only the
+/// framework's own deferred republishes, not a broker's native redeliveries.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::Headers;
+/// use ruststream::runtime::RETRY_COUNT_HEADER;
+///
+/// fn over_limit(headers: &Headers, limit: u64) -> bool {
+///     let count: u64 = headers.get_str(RETRY_COUNT_HEADER).and_then(|v| v.parse().ok()).unwrap_or(0);
+///     count >= limit
+/// }
+///
+/// let mut headers = Headers::new();
+/// headers.insert(RETRY_COUNT_HEADER, "3");
+/// assert!(over_limit(&headers, 3));
+/// ```
+pub const RETRY_COUNT_HEADER: &str = "x-ruststream-retry-count";
+
+/// Parses the current [`RETRY_COUNT_HEADER`] value, defaulting to zero when absent or malformed.
+fn current_retry_count(headers: &Headers) -> u64 {
+    headers
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
 
 /// Concurrency policy for one subscriber's dispatch loop, declared with the `workers(..)` macro
 /// argument (or [`Workers::sequential`] by default).
@@ -84,20 +119,40 @@ impl Default for Workers {
 }
 
 /// Per-scope publish context threaded into every delivery's [`Context`]: the named-publisher
-/// registry and the scope's publish middleware pipeline. A handler resolves a publisher with
-/// [`Context::publisher`] and its sends run through `pipeline`, the same chain as a macro reply.
+/// registry, the scope's publish middleware pipeline, and the app-wide tracker for post-settle
+/// continuations. A handler resolves a publisher with [`Context::publisher`] and its sends run
+/// through `pipeline`, the same chain as a macro reply; an `and_after` continuation is spawned onto
+/// `tasks` so a graceful shutdown drains it.
 pub(crate) struct Delivery {
     pub(crate) publishers: Publishers,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    /// Publisher used by the broker-agnostic `retry_after` fallback to re-publish a message to its
+    /// own source subject after the delay. `None` when the scope did not opt in, in which case a
+    /// `NackAfter` on a non-native broker degrades to an immediate requeue (with a warning).
+    pub(crate) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
+    /// Per-scope task tracker for post-settle [`HandlerResult::and_after`] continuations. The
+    /// dispatcher spawns each element's continuation onto it after settling, so a graceful
+    /// shutdown drains them.
+    pub(crate) tasks: TaskTracker,
 }
 
 impl Delivery {
-    /// An empty delivery context: no publishers, no pipeline. For tests.
+    /// An empty delivery context: no publishers, no pipeline, no retry publisher, a fresh
+    /// continuation tracker. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
+        Self::with_tasks(TaskTracker::new())
+    }
+
+    /// An empty delivery context carrying a caller-owned continuation tracker, so a test can
+    /// observe the post-settle continuations spawned through it.
+    #[cfg(test)]
+    pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
         Self {
             publishers: HashMap::new(),
             pipeline: Arc::from([]),
+            retry_publisher: None,
+            tasks,
         }
     }
 }
@@ -107,6 +162,8 @@ impl std::fmt::Debug for Delivery {
         f.debug_struct("Delivery")
             .field("publishers", &self.publishers.len())
             .field("layers", &self.pipeline.len())
+            .field("retry_publisher", &self.retry_publisher.is_some())
+            .field("pending_continuations", &self.tasks.len())
             .finish_non_exhaustive()
     }
 }
@@ -121,6 +178,7 @@ pub(crate) fn spawn_dispatch<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
 ) -> JoinHandle<()>
 where
     S: Subscriber + Send + 'static,
@@ -134,7 +192,7 @@ where
                 () = shutdown.cancelled() => break,
                 next = stream.next() => match next {
                     Some(Ok(msg)) => {
-                        dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
+                        dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure).await;
                     }
                     Some(Err(err)) => {
                         error!(
@@ -173,6 +231,10 @@ async fn drain_hooks(hooks: TaskTracker) {
 /// Sequential policies delegate to [`spawn_dispatch`]. On shutdown the stream stops being
 /// polled and in-flight workers drain; if the app's `shutdown_timeout` aborts this task, the
 /// owned worker tasks abort with it.
+// The dispatch loop is wired from many independent runtime parts (subscriber, handler, shutdown,
+// identity, state, publish context, failure policy, worker policy); bundling them only to satisfy
+// the arg-count lint would hide what each spawn site passes.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_dispatch_workers<S, H>(
     subscriber: S,
     handler: Arc<H>,
@@ -180,6 +242,7 @@ pub(crate) fn spawn_dispatch_workers<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -188,19 +251,22 @@ where
     H: Handler<S::Message> + 'static,
 {
     if workers.is_sequential() {
-        return spawn_dispatch(subscriber, handler, shutdown, name, state, delivery);
+        return spawn_dispatch(
+            subscriber, handler, shutdown, name, state, delivery, failure,
+        );
     }
     if workers.by_key {
         spawn_dispatch_lanes(
-            subscriber, handler, shutdown, name, state, delivery, workers,
+            subscriber, handler, shutdown, name, state, delivery, failure, workers,
         )
     } else {
         spawn_dispatch_pool(
-            subscriber, handler, shutdown, name, state, delivery, workers,
+            subscriber, handler, shutdown, name, state, delivery, failure, workers,
         )
     }
 }
 
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 fn spawn_dispatch_pool<S, H>(
     mut subscriber: S,
     handler: Arc<H>,
@@ -208,6 +274,7 @@ fn spawn_dispatch_pool<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -233,8 +300,10 @@ where
                         let state = Arc::clone(&state);
                         let delivery = Arc::clone(&delivery);
                         let hooks = hooks.clone();
+                        let failure = failure.clone();
                         tasks.spawn(async move {
-                            dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
+                            dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure)
+                                .await;
                         });
                     }
                     Some(Err(err)) => {
@@ -262,6 +331,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 fn spawn_dispatch_lanes<S, H>(
     mut subscriber: S,
     handler: Arc<H>,
@@ -269,6 +339,7 @@ fn spawn_dispatch_lanes<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -290,9 +361,10 @@ where
             let state = Arc::clone(&state);
             let delivery = Arc::clone(&delivery);
             let hooks = hooks.clone();
+            let failure = failure.clone();
             tasks.spawn(async move {
                 while let Some(msg) = rx.recv().await {
-                    dispatch(&*handler, msg, &name, &state, &delivery, &hooks).await;
+                    dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure).await;
                 }
             });
             lanes.push(tx);
@@ -375,6 +447,7 @@ fn log_worker_exit(joined: Result<(), tokio::task::JoinError>) {
 /// With a non-sequential `workers` policy, up to `workers.count` batches are in flight at once,
 /// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 pub(crate) fn spawn_batch_dispatch<S, H>(
     mut subscriber: S,
     handler: Arc<H>,
@@ -382,6 +455,7 @@ pub(crate) fn spawn_batch_dispatch<S, H>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery>,
+    failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
 where
@@ -404,30 +478,20 @@ where
                     Some(Ok(batch)) => {
                         let batch: Vec<S::Message> = batch.into_iter().collect();
                         if workers.is_sequential() {
-                            // A batch has no single working copy of headers, so the context
-                            // starts with an empty set; per-message headers stay on the broker
-                            // deliveries.
-                            let empty = Headers::new();
-                            let mut ctx = Context::new(&name, &empty, &state, &delivery);
-                            handler.handle_batch(batch, &mut ctx).await;
-                            // Per-element outcomes make an outcome gate ill-defined on a batch, so
-                            // only ungated `after_settle` hooks run, once the batch has settled.
-                            for fut in ctx.take_settle_hooks() {
-                                hooks.spawn(fut);
-                            }
+                            run_batch(&*handler, batch, &name, &state, &delivery, &hooks, &failure)
+                                .await;
                         } else {
                             let handler = Arc::clone(&handler);
                             let name = Arc::clone(&name);
                             let state = Arc::clone(&state);
                             let delivery = Arc::clone(&delivery);
                             let hooks = hooks.clone();
+                            let failure = failure.clone();
                             tasks.spawn(async move {
-                                let empty = Headers::new();
-                                let mut ctx = Context::new(&name, &empty, &state, &delivery);
-                                handler.handle_batch(batch, &mut ctx).await;
-                                for fut in ctx.take_settle_hooks() {
-                                    hooks.spawn(fut);
-                                }
+                                run_batch(
+                                    &*handler, batch, &name, &state, &delivery, &hooks, &failure,
+                                )
+                                .await;
                             });
                         }
                     }
@@ -456,6 +520,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 async fn dispatch<H, M>(
     handler: &H,
     msg: M,
@@ -463,19 +528,130 @@ async fn dispatch<H, M>(
     state: &State,
     delivery: &Delivery,
     hooks: &TaskTracker,
+    failure: &DispatchFailure,
 ) where
     H: Handler<M>,
     M: IncomingMessage,
 {
-    let mut ctx = Context::new(name, msg.headers(), state, delivery);
-    let outcome = handler.handle(&msg, &mut ctx).await;
-    // Drain the matching hooks before settling: `ctx` borrows `msg`'s headers, and settling
-    // consumes `msg`. The futures own their captures, so they outlive the borrow.
-    let continuations = ctx.take_hooks_for(outcome);
+    // Seed the per-delivery extensions from the broker's message, then attach the fail-fast handle.
+    let extensions = msg.extensions();
+    let mut ctx = Context::with_extensions(name, msg.headers(), state, extensions, delivery)
+        .with_failfast(&failure.shutdown);
+    // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
+    // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
+    // the future borrows `&mut ctx`; that state is discarded with the failed delivery.
+    let result = AssertUnwindSafe(handler.handle(&msg, &mut ctx))
+        .catch_unwind()
+        .await;
+    // Resolve into a `Settle` regardless of whether the handler panicked. `None` means a fail-fast
+    // panic tore the service down and left the message unsettled (a broker with redelivery hands it
+    // back after the restart).
+    let settle = match result {
+        Ok(s) => Some(s),
+        Err(payload) => {
+            let reason = panic_reason(payload.as_ref());
+            error!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                panic = %reason,
+                "handler panicked",
+            );
+            match failure.policies.panic {
+                FailurePolicy::FailFast => {
+                    failure
+                        .shutdown
+                        .signal(name, &format!("handler panicked: {reason}"));
+                    None
+                }
+                other => Some(
+                    other
+                        .settlement()
+                        .unwrap_or_else(HandlerResult::drop)
+                        .into(),
+                ),
+            }
+        }
+    };
+    // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
+    // settling consumes `msg`. The drained futures own their captures. A fail-fast (no settlement)
+    // runs no hooks.
+    let continuations = settle
+        .as_ref()
+        .map_or_else(Vec::new, |s| ctx.take_hooks_for(s.outcome()));
+    drop(ctx);
+    if let Some(mut s) = settle {
+        settle_outcome(msg, s.outcome(), name, delivery).await;
+        // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
+        // drains it. At-most-once: the message is already settled, so a lost or panicking
+        // continuation never redelivers it.
+        if let Some(after) = s.take_after() {
+            delivery.tasks.spawn(after);
+        }
+    }
+    // Context-registered hooks run after the message is settled: at-most-once, off the delivery
+    // path. Tracked so a graceful shutdown drains them.
+    for fut in continuations {
+        hooks.spawn(fut);
+    }
+}
+
+/// Runs one batch through its handler under panic protection. The handler owns and settles the
+/// batch's deliveries, so a panic there has already consumed them: the panic policy can only tear
+/// the service down (`fail_fast`) or be logged and skipped. Per-element settlement is out of scope
+/// (see the batch decode path for per-element decode handling). Ungated `after_settle` hooks run
+/// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
+async fn run_batch<H, M>(
+    handler: &H,
+    batch: Vec<M>,
+    name: &str,
+    state: &State,
+    delivery: &Delivery,
+    hooks: &TaskTracker,
+    failure: &DispatchFailure,
+) where
+    H: BatchHandler<M>,
+    M: IncomingMessage,
+{
+    let empty = Headers::new();
+    let mut ctx = Context::new(name, &empty, state, delivery).with_failfast(&failure.shutdown);
+    let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
+        .catch_unwind()
+        .await;
+    match result {
+        Ok(()) => {
+            for fut in ctx.take_settle_hooks() {
+                hooks.spawn(fut);
+            }
+        }
+        Err(payload) => {
+            let reason = panic_reason(payload.as_ref());
+            error!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                panic = %reason,
+                "batch handler panicked",
+            );
+            if failure.policies.panic == FailurePolicy::FailFast {
+                failure
+                    .shutdown
+                    .signal(name, &format!("batch handler panicked: {reason}"));
+            }
+        }
+    }
+}
+
+/// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it.
+async fn settle_outcome<M: IncomingMessage>(
+    msg: M,
+    outcome: HandlerResult,
+    name: &str,
+    delivery: &Delivery,
+) {
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-        HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
+        HandlerResult::NackAfter { delay } => settle_nack_after(msg, name, delay, delivery).await,
     };
     if let Err(err) = ack_result {
         warn!(
@@ -485,9 +661,240 @@ async fn dispatch<H, M>(
             "ack / nack failed",
         );
     }
-    // Hooks run after the message is settled: at-most-once, off the delivery path. Tracked so a
-    // graceful shutdown drains them rather than dropping them mid-flight.
-    for fut in continuations {
-        hooks.spawn(fut);
+}
+
+/// Settles a [`NackAfter`](HandlerResult::NackAfter) outcome, choosing native delayed redelivery
+/// or the broker-agnostic fallback.
+///
+/// When the broker reports native support (`supports_nack_after`), this defers to
+/// [`IncomingMessage::nack_after`]. Otherwise it captures the message, drops the original, and
+/// schedules a deferred re-publish of the captured copy to its source subject with the
+/// [`RETRY_COUNT_HEADER`] incremented. With no `retry_publisher` configured on the scope, it falls
+/// back to an immediate requeue (the legacy behavior) and warns.
+///
+/// # Cancel safety
+///
+/// The deferred re-publish runs on a detached task that sleeps for `delay`. It is at-most-once over
+/// that window: if the process exits (or the runtime is dropped) before the timer fires, the
+/// deferred message is lost, since the original has already been dropped. Brokers that need
+/// at-least-once delayed redelivery across a crash must provide native support.
+async fn settle_nack_after<M>(
+    msg: M,
+    name: &str,
+    delay: Duration,
+    delivery: &Delivery,
+) -> Result<(), AckError>
+where
+    M: IncomingMessage,
+{
+    if msg.supports_nack_after() {
+        return msg.nack_after(delay).await;
+    }
+
+    let Some(publisher) = delivery.retry_publisher.clone() else {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            "retry_after on a broker without native delayed redelivery and no retry publisher \
+             configured; requeuing immediately (the delay is dropped)",
+        );
+        return msg.nack(true).await;
+    };
+
+    // nack_after consumes self, so capture everything needed for the re-publish first.
+    let payload = Bytes::copy_from_slice(msg.payload());
+    let mut headers = msg.headers().clone();
+    let next_count = current_retry_count(&headers) + 1;
+    headers.insert(RETRY_COUNT_HEADER, next_count.to_string());
+    let subject = name.to_owned();
+
+    // Drop the original so the broker does not also redeliver it; the deferred copy carries the
+    // retry forward.
+    msg.nack(false).await?;
+
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        if let Err(err) = publisher
+            .publish_message(&subject, &payload, &headers)
+            .await
+        {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %subject,
+                error = %err,
+                "deferred retry_after re-publish failed; message lost",
+            );
+        }
+    });
+    Ok(())
+}
+
+#[cfg(all(test, feature = "memory"))]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    };
+
+    use futures::StreamExt;
+
+    use super::*;
+    use crate::memory::MemoryBroker;
+    use crate::{AckError, Headers, IncomingMessage, OutgoingMessage, Publisher};
+
+    /// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
+    /// default (`false`), and the default `nack_after` would error. It records how it was settled
+    /// so a test can assert the fallback dropped it rather than calling `nack(true)`.
+    struct PlainMessage {
+        payload: Bytes,
+        headers: Headers,
+        // 0 = unset, 1 = nack(false) (dropped), 2 = nack(true) (requeued).
+        settled: Arc<AtomicU8>,
+    }
+
+    impl IncomingMessage for PlainMessage {
+        fn payload(&self) -> &[u8] {
+            &self.payload
+        }
+
+        fn headers(&self) -> &Headers {
+            &self.headers
+        }
+
+        async fn ack(self) -> Result<(), AckError> {
+            Ok(())
+        }
+
+        async fn nack(self, requeue: bool) -> Result<(), AckError> {
+            self.settled
+                .store(if requeue { 2 } else { 1 }, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn plain(name_headers: &[(&str, &str)], settled: &Arc<AtomicU8>) -> PlainMessage {
+        let mut headers = Headers::new();
+        for (k, v) in name_headers {
+            headers.insert((*k).to_owned(), Bytes::copy_from_slice(v.as_bytes()));
+        }
+        PlainMessage {
+            payload: Bytes::from_static(b"body"),
+            headers,
+            settled: Arc::clone(settled),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fallback_defers_republish_to_source_with_incremented_retry_count() {
+        let broker = MemoryBroker::new();
+        // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery {
+            publishers: HashMap::new(),
+            pipeline: Arc::from([]),
+            retry_publisher: Some(Arc::new(broker.publisher())),
+            tasks: TaskTracker::new(),
+        };
+
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = plain(&[], &settled);
+        settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+            .await
+            .unwrap();
+
+        // The original is dropped (nack(false)), not requeued, so the broker will not redeliver it.
+        assert_eq!(settled.load(Ordering::SeqCst), 1);
+
+        // Nothing is republished before the delay elapses.
+        let mut stream = std::pin::pin!(sub.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
+
+        tokio::time::advance(Duration::from_secs(30)).await;
+        tokio::task::yield_now().await;
+
+        let redelivered = stream.next().await.unwrap().unwrap();
+        assert_eq!(redelivered.payload(), b"body");
+        assert_eq!(
+            redelivered.headers().get_str(RETRY_COUNT_HEADER),
+            Some("1"),
+            "the first deferred republish must carry retry-count 1",
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fallback_increments_an_existing_retry_count() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery {
+            publishers: HashMap::new(),
+            pipeline: Arc::from([]),
+            retry_publisher: Some(Arc::new(broker.publisher())),
+            tasks: TaskTracker::new(),
+        };
+
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
+        settle_nack_after(msg, "orders", Duration::from_secs(1), &delivery)
+            .await
+            .unwrap();
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+
+        let mut stream = std::pin::pin!(sub.stream());
+        let redelivered = stream.next().await.unwrap().unwrap();
+        assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), Some("5"));
+    }
+
+    #[tokio::test]
+    async fn without_a_retry_publisher_the_fallback_requeues_immediately() {
+        let delivery = Delivery::empty();
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = plain(&[], &settled);
+        settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+            .await
+            .unwrap();
+        // No retry publisher: degrade to an immediate requeue rather than dropping silently.
+        assert_eq!(settled.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_support_defers_to_the_broker_nack_after() {
+        // A native delivery: redelivered by its own timer, never through the retry publisher.
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let publisher = broker.publisher();
+        publisher
+            .publish(OutgoingMessage::new("orders", b"native".as_slice()))
+            .await
+            .unwrap();
+
+        // A separate broker backs the retry publisher; if the fallback fired, the republish would
+        // land here and never on `sub`.
+        let other = MemoryBroker::new();
+        let delivery = Delivery {
+            publishers: HashMap::new(),
+            pipeline: Arc::from([]),
+            retry_publisher: Some(Arc::new(other.publisher())),
+            tasks: TaskTracker::new(),
+        };
+
+        let msg = {
+            let mut stream = std::pin::pin!(sub.stream());
+            stream.next().await.unwrap().unwrap()
+        };
+        assert!(msg.supports_nack_after());
+        settle_nack_after(msg, "orders", Duration::from_secs(5), &delivery)
+            .await
+            .unwrap();
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+
+        let mut stream = std::pin::pin!(sub.stream());
+        let redelivered = stream.next().await.unwrap().unwrap();
+        // Native redelivery keeps the original payload and adds no retry-count header.
+        assert_eq!(redelivered.payload(), b"native");
+        assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), None);
     }
 }

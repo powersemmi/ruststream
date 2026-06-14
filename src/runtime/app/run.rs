@@ -7,7 +7,10 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
+
+use crate::runtime::failure::ErrorShutdown;
 
 use super::{RustStream, RustStreamError};
 
@@ -47,6 +50,7 @@ impl<L> RustStream<L> {
             on_shutdown,
             after_shutdown,
             shutdown_timeout,
+            continuations,
             ..
         } = self;
 
@@ -73,9 +77,12 @@ impl<L> RustStream<L> {
         }
 
         let token = CancellationToken::new();
+        // Shared with every dispatch task: a fail-fast failure records its reason here and cancels
+        // the token, which both stops the loops and wakes the shutdown wait below.
+        let error_shutdown = ErrorShutdown::new(token.clone());
         let mut handles = Vec::with_capacity(starters.len());
         for (starter, meta) in starters.into_iter().zip(handlers) {
-            let handle = starter(state.clone(), token.clone())
+            let handle = starter(state.clone(), error_shutdown.clone(), token.clone())
                 .await
                 .map_err(RustStreamError::Subscribe)?;
             info!(
@@ -98,8 +105,14 @@ impl<L> RustStream<L> {
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
 
-        shutdown.await;
-        info!(target: "ruststream::lifecycle", "shutdown signal received");
+        // Wake on either the caller's shutdown signal or a fail-fast cancellation from a dispatch
+        // task, then tear the service down the same way for both.
+        tokio::select! {
+            () = shutdown => info!(target: "ruststream::lifecycle", "shutdown signal received"),
+            () = token.cancelled() => {
+                info!(target: "ruststream::lifecycle", "fail-fast shutdown triggered");
+            }
+        }
 
         for hook in on_shutdown {
             if let Err(err) = hook(Arc::clone(&state)).await {
@@ -110,6 +123,11 @@ impl<L> RustStream<L> {
         token.cancel();
         debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
         drain_handles(handles, shutdown_timeout).await?;
+
+        // Handlers have stopped, so no new post-settle continuations can be spawned: close the
+        // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
+        // at-most-once, so timing one out only abandons follow-up work, never a settlement.
+        drain_continuations(continuations, shutdown_timeout).await;
 
         for broker in brokers.iter().rev() {
             broker.shutdown().await.map_err(RustStreamError::Shutdown)?;
@@ -122,6 +140,12 @@ impl<L> RustStream<L> {
             }
         }
         info!(target: "ruststream::lifecycle", "service stopped");
+
+        // A fail-fast failure tore the service down: surface it so an orchestrator restarts the
+        // service and the operator sees a non-zero exit, not a silent stop.
+        if let Some(reason) = error_shutdown.taken_failure() {
+            return Err(RustStreamError::Dispatch(reason));
+        }
         Ok(())
     }
 }
@@ -153,6 +177,32 @@ async fn drain_handles(
         }
     }
     Ok(())
+}
+
+/// Closes the post-settle continuation tracker and waits for the in-flight continuations to finish,
+/// bounded by `timeout` when set. On timeout the remaining continuations keep running detached (the
+/// tracker does not own abort handles); they are at-most-once side effects, so abandoning them is
+/// safe.
+async fn drain_continuations(continuations: TaskTracker, timeout: Option<Duration>) {
+    continuations.close();
+    if continuations.is_empty() {
+        return;
+    }
+    debug!(target: "ruststream::lifecycle", "draining post-settle continuations");
+    match timeout {
+        Some(timeout) => {
+            if tokio::time::timeout(timeout, continuations.wait())
+                .await
+                .is_err()
+            {
+                warn!(
+                    target: "ruststream::lifecycle",
+                    "graceful shutdown timed out; abandoning in-flight continuations",
+                );
+            }
+        }
+        None => continuations.wait().await,
+    }
 }
 
 async fn wait_for_signal() {

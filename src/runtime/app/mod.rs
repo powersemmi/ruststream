@@ -16,14 +16,16 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::runtime::context::State;
+use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 
-/// A registration deferred until [`RustStream::run`]: given the shutdown token, it opens the
-/// subscription (after the broker is connected) and spawns the dispatch task. The broker, source
-/// and handler are captured and type-erased.
+/// A registration deferred until [`RustStream::run`]: given the app's error-shutdown handle and the
+/// shutdown token, it opens the subscription (after the broker is connected) and spawns the dispatch
+/// task. The broker, source and handler are captured and type-erased.
 type Starter = Box<
     dyn FnOnce(
             Arc<State>,
+            ErrorShutdown,
             CancellationToken,
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
@@ -96,4 +98,9 @@ pub enum RustStreamError {
     /// A dispatch task panicked or was aborted.
     #[error("dispatch task failed: {0}")]
     Join(#[source] tokio::task::JoinError),
+    /// A subscriber hit a fail-fast failure (a handler panic, or a decode failure under
+    /// `on_failure(decode = fail_fast)`) and tore the service down. The string names the
+    /// subscription and the reason.
+    #[error("dispatch failed: {0}")]
+    Dispatch(String),
 }

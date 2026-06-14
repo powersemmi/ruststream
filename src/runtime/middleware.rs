@@ -19,7 +19,7 @@
 use std::future::Future;
 
 use super::context::Context;
-use super::handler::{Handler, HandlerResult};
+use super::handler::{Handler, Settle};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`].
 pub trait Layer<H> {
@@ -133,7 +133,8 @@ where
 pub mod layers {
     use tracing::{debug, info, instrument, warn};
 
-    use super::{BlanketLayer, Context, Future, Handler, HandlerResult, Layer};
+    use super::super::handler::HandlerResult;
+    use super::{BlanketLayer, Context, Future, Handler, Layer, Settle};
 
     /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
     /// outcome and `DEBUG` for arrival.
@@ -186,11 +187,12 @@ pub mod layers {
         H: Handler<M>,
     {
         #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]
-        fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = HandlerResult> + Send {
+        fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = Settle> + Send {
             async move {
                 debug!(target: "ruststream::dispatch", "delivery received");
-                let result = self.inner.handle(msg, ctx).await;
-                match result {
+                // Log the outcome inside the settlement; the continuation (if any) flows through.
+                let settle = self.inner.handle(msg, ctx).await;
+                match settle.outcome() {
                     HandlerResult::Ack => {
                         info!(target: "ruststream::dispatch", "handler ack");
                     }
@@ -201,7 +203,7 @@ pub mod layers {
                         warn!(target: "ruststream::dispatch", ?delay, "handler delayed nack");
                     }
                 }
-                result
+                settle
             }
         }
     }

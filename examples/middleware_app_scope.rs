@@ -9,7 +9,7 @@
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     AppInfo, BlanketLayer, Context, Handler, HandlerResult, Identity, Layer, Router, RustStream,
-    Stack,
+    Settle, Stack,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -50,7 +50,7 @@ impl<H> Layer<H> for LogLayer {
 }
 
 impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
         println!("app layer -> {}", ctx.name());
         self.0.handle(msg, ctx).await
     }

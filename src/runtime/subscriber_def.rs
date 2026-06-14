@@ -2,6 +2,7 @@
 //! [`BrokerScope::include`](super::BrokerScope::include).
 
 use super::dispatch::Workers;
+use super::failure::FailurePolicies;
 use super::handler::Handler;
 use super::metadata::HandlerMetadata;
 
@@ -56,6 +57,13 @@ pub trait SubscriberDef: Sized {
         Workers::sequential()
     }
 
+    /// The failure policy for a handler panic and a decode failure. The macro fills this in from
+    /// the `on_failure(panic = .., decode = ..)` argument; the default fails fast on a panic and
+    /// drops on a decode failure.
+    fn failure_policies(&self) -> FailurePolicies {
+        FailurePolicies::default()
+    }
+
     /// Consumes the definition, returning the handler.
     fn into_handler(self) -> Self::Handler;
 }
@@ -85,13 +93,13 @@ mod tests {
     use crate::Name;
     use crate::runtime::context::{Context, State};
     use crate::runtime::dispatch::{Delivery, Workers};
-    use crate::runtime::handler::{Handler, HandlerResult};
+    use crate::runtime::handler::{Handler, HandlerResult, Settle};
 
     struct Noop;
 
     impl Handler<u32> for Noop {
-        async fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> HandlerResult {
-            HandlerResult::Ack
+        async fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> Settle {
+            HandlerResult::Ack.into()
         }
     }
 
@@ -133,6 +141,9 @@ mod tests {
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("manual", &headers, &state, &delivery);
-        assert_eq!(handler.handle(&7u32, &mut ctx).await, HandlerResult::Ack);
+        assert_eq!(
+            handler.handle(&7u32, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
     }
 }

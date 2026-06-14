@@ -384,6 +384,10 @@ impl IncomingMessage for MemoryMessage {
         Ok(())
     }
 
+    fn supports_nack_after(&self) -> bool {
+        true
+    }
+
     /// Native delayed redelivery: the message returns to the same subscriber's queue once
     /// `delay` has elapsed, not immediately.
     async fn nack_after(mut self, delay: Duration) -> Result<(), AckError> {

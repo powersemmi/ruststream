@@ -13,6 +13,7 @@ use crate::runtime::batch_publishing::{
     BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
 };
 use crate::runtime::dispatch::Publishers;
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
@@ -35,6 +36,7 @@ pub struct BrokerScope<B, L = Identity, C = ()> {
     pub(super) sink: RouterSink<B>,
     pub(super) publishers: Publishers,
     pub(super) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(super) global: L,
     pub(super) codec: C,
 }
@@ -54,6 +56,47 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
         self.publishers.get(name).cloned()
     }
 
+    /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.
+    ///
+    /// When a handler returns [`HandlerResult::retry_after`](crate::runtime::HandlerResult::retry_after)
+    /// (or a delivery is `nack_after`-ed) on a broker that does not natively support delayed
+    /// redelivery, the runtime re-publishes the message to its own source subject after the delay,
+    /// through `publisher`, with the
+    /// [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) incremented. Pass a publisher
+    /// bound to the same broker (`b.broker().publisher()`); a publish to the source subject then
+    /// reaches this scope's own subscriptions.
+    ///
+    /// Brokers with native delayed redelivery do not need this: the runtime uses their
+    /// [`nack_after`](crate::IncomingMessage::nack_after) instead. Without it, a `retry_after` on a
+    /// non-native broker degrades to an immediate requeue (with a warning).
+    ///
+    /// # Cancel safety
+    ///
+    /// The fallback's deferred re-publish is at-most-once over the delay window: see
+    /// [`HandlerResult::retry_after`](crate::runtime::HandlerResult::retry_after).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::BrokerScope;
+    /// use ruststream::{Broker, Publisher};
+    ///
+    /// // Wire a deferred-retry publisher bound to the same broker as the scope.
+    /// fn configure<B, P>(scope: &mut BrokerScope<B>, retry_publisher: P)
+    /// where
+    ///     B: Broker + 'static,
+    ///     P: Publisher + 'static,
+    /// {
+    ///     scope.retry_via(retry_publisher);
+    /// }
+    /// ```
+    pub fn retry_via<P>(&mut self, publisher: P)
+    where
+        P: Publisher + 'static,
+    {
+        self.retry_publisher = Some(Arc::new(publisher));
+    }
+
     /// Attaches `handler` (wrapped with the global stack) to an already-created `subscriber`.
     ///
     /// See [`Router::handle`](crate::runtime::Router::handle).
@@ -65,7 +108,8 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
         L::Handler: Handler<S::Message> + 'static,
     {
         let handler = self.global.layer(handler);
-        self.sink.push_handle(subscriber, handler, meta);
+        self.sink
+            .push_handle(subscriber, handler, meta, FailurePolicies::default());
     }
 
     /// Attaches `handler` (wrapped with the global stack) to a subscription described by `source`.
@@ -80,7 +124,8 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let handler = self.global.layer(handler);
-        self.sink.push_subscribe(source, handler, meta);
+        self.sink
+            .push_subscribe(source, handler, meta, FailurePolicies::default());
     }
 
     /// Mounts every registration from `router` onto this broker, wrapping each handler with the
@@ -115,10 +160,13 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = self.global.layer(typed(codec, def.into_handler()));
+        let handler = self
+            .global
+            .layer(typed(codec, def.into_handler()).on_decode_failure(policies.decode));
         self.sink
-            .push_subscribe_workers(source, handler, meta, workers);
+            .push_subscribe_workers(source, handler, meta, policies, workers);
     }
 
     /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
@@ -134,10 +182,11 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         C: Codec + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed_batch(codec, def.into_handler());
+        let handler = typed_batch(codec, def.into_handler()).with_decode(policies.decode);
         self.sink
-            .push_subscribe_batch(source, handler, meta, workers);
+            .push_subscribe_batch(source, handler, meta, policies, workers);
     }
 
     /// Mounts a batch publishing definition on `source`, decoding each element with `codec` and
@@ -159,15 +208,17 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         RP: ReplyPublisher + 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
         let handler = BatchPublishingHandler {
             def,
             codec,
             publisher,
             pipeline: self.pipeline.clone(),
+            decode: policies.decode,
         };
         self.sink
-            .push_subscribe_batch(source, handler, meta, workers);
+            .push_subscribe_batch(source, handler, meta, policies, workers);
     }
 
     /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
@@ -193,15 +244,17 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
         let handler = self.global.layer(PublishingHandler {
             def,
             codec,
             publisher,
             pipeline: self.pipeline.clone(),
+            decode: policies.decode,
         });
         self.sink
-            .push_subscribe_workers(source, handler, meta, workers);
+            .push_subscribe_workers(source, handler, meta, policies, workers);
     }
 }
 

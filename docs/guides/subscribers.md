@@ -34,19 +34,47 @@ access, named publishers - is covered in [Context and state](context.md).
 
 ### Acking
 
-The return type is anything that converts into a [`HandlerResult`]:
+The return type is anything that converts into a [`Settle`] (the settlement unit: an outcome plus
+an optional post-settle continuation):
 
 | Return value | Result |
 |---|---|
-| `HandlerResult::Ack` | acknowledge; the broker removes the message |
+| `HandlerResult::ack()` (or `HandlerResult::Ack`) | acknowledge; the broker removes the message |
 | `HandlerResult::retry()` | nack with requeue (redeliver later) |
 | `HandlerResult::retry_after(delay)` | nack asking for redelivery no sooner than `delay` |
 | `HandlerResult::drop()` | nack without requeue (discard or dead-letter) |
 | `()` | always `Ack` |
 | `Result<(), E>` | `Ack` on `Ok`, `drop` on `Err` |
-| `Result<HandlerResult, E>` | the inner result on `Ok`, `drop` on `Err` |
+| `Result<HandlerResult, E>` | the inner outcome on `Ok`, `drop` on `Err` |
+| `Settle` (any of the above `.and_after(..)`) | settle by the outcome, then run the continuation |
 
 On the message itself, ack consumes `self`, so the type system prevents acking twice.
+
+### Post-settle continuations
+
+`HandlerResult::ack().and_after(fut)` attaches a continuation that runs *after* the message is
+settled, without gating the ack decision or affecting redelivery - a non-critical notification,
+slow follow-up work, a cache warm-up. Any outcome works (`drop().and_after(..)` is valid; the
+neutral reading is "after settle"):
+
+```rust
+--8<-- "examples/post_settle.rs:single"
+```
+
+The continuation runs on a tracked task set that a graceful shutdown drains (bounded by
+`shutdown_timeout` when set). It is at-most-once: the message is already settled, so a continuation
+that panics or is lost on a crash never redelivers it. Do not put work whose loss must redeliver the
+message in here; settle by outcome and let the broker retry instead.
+
+In a batch each element settles individually, so the continuation rides per element - a capability
+the per-message context hook cannot offer:
+
+```rust
+--8<-- "examples/post_settle.rs:batch"
+```
+
+Batch *publishing* (`batch(..) + publish(..)`) settles all-or-nothing under one transaction, so
+per-element `and_after` does not compose there; it applies to plain batch and single forms only.
 
 ### Delayed redelivery
 
@@ -57,14 +85,25 @@ rate-limited), where an immediate redelivery would just spin:
 --8<-- "examples/retry.rs:retry_after"
 ```
 
-Under the hood the dispatcher settles the message with `IncomingMessage::nack_after(delay)`. A
-broker overrides that method when the transport has native delayed redelivery (JetStream `NAK`
-with delay; the in-memory broker re-delivers on a timer); the trait's default degrades to a
-plain `nack(requeue = true)`. The delay is therefore a hint, not a guarantee - on a broker
-without the capability the message comes back immediately.
+Under the hood, the runtime honours the delay:
 
-It composes with [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>`
-carries per-element delays, so pending entries back off without holding up the rest of the page:
+- A broker with native delayed redelivery (the memory broker re-delivers on a timer; a
+  NATS JetStream broker could `NAK` with delay) hands off to the transport directly.
+- On a broker without native support, the runtime schedules a **deferred re-publish** of the
+  message to its own source subject after `delay`, then drops the original. The re-published
+  copy carries the framework retry-count header
+  ([`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html))
+  incremented; a handler can read it to cap redeliveries.
+
+  Opt in per scope with
+  [`BrokerScope::retry_via(publisher)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via)
+  (the publisher must target the same broker). Without a publisher the delay is dropped and the
+  message is requeued immediately. The deferred re-publish is **at-most-once** over the delay
+  window: if the process exits before the timer fires the copy is lost.
+
+The `batch_retry_after` form composes with
+[selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` carries
+per-element delays, so pending entries back off without holding up the rest of the page:
 
 ```rust
 --8<-- "examples/retry.rs:batch_retry_after"

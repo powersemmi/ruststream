@@ -15,7 +15,8 @@ use crate::{IncomingMessage, Publisher};
 
 use super::context::Context;
 use super::dispatch::Workers;
-use super::handler::{Handler, HandlerResult};
+use super::failure::{FailurePolicies, FailurePolicy};
+use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
 
@@ -45,6 +46,13 @@ pub trait PublishingDef: Send + Sync {
     /// the `workers(..)` argument; the default is sequential dispatch.
     fn workers(&self) -> Workers {
         Workers::sequential()
+    }
+
+    /// The failure policy for a handler panic and a decode failure. The macro fills this in from
+    /// the `on_failure(panic = .., decode = ..)` argument; the default fails fast on a panic and
+    /// drops on a decode failure.
+    fn failure_policies(&self) -> FailurePolicies {
+        FailurePolicies::default()
     }
 
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
@@ -106,6 +114,7 @@ pub struct PublishingHandler<D, C, P, PC, PL> {
     pub(crate) codec: C,
     pub(crate) publisher: TypedPublisher<P, PC, PL>,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) decode: FailurePolicy,
 }
 
 impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
@@ -127,7 +136,9 @@ where
     PC: Codec,
     PL: PublishLayer,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+        // The publishing path settles by a bare outcome (no per-element continuation): decode,
+        // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
             Ok(value) => value,
             Err(err) => {
@@ -138,15 +149,27 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                return HandlerResult::drop();
+                return match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerResult::drop().into()
+                    }
+                    other => other
+                        .settlement()
+                        .unwrap_or_else(HandlerResult::drop)
+                        .into(),
+                };
             }
         };
         let reply = match self.def.call(&input, ctx).await {
             Ok(reply) => reply,
-            Err(result) => return result,
+            Err(result) => return result.into(),
         };
         let name = self.def.reply_name();
-        if let Err(err) = self.publisher.publish(name, &reply, &self.pipeline).await {
+        let publish = self
+            .publisher
+            .publish(name, &reply, &self.pipeline, ctx.extensions());
+        if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",
                 subscription = %ctx.name(),
@@ -155,9 +178,9 @@ where
                 error = %err,
                 "reply publish failed",
             );
-            return HandlerResult::retry();
+            return HandlerResult::retry().into();
         }
-        HandlerResult::Ack
+        HandlerResult::Ack.into()
     }
 }
 

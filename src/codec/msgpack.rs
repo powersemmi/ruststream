@@ -1,6 +1,6 @@
 //! `MessagePack` codec backed by [`rmp_serde`].
 
-use bytes::Bytes;
+use bytes::{BufMut, BytesMut};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::codec::{Codec, CodecError};
@@ -10,10 +10,12 @@ use crate::codec::{Codec, CodecError};
 pub struct MsgpackCodec;
 
 impl Codec for MsgpackCodec {
-    fn encode<T: Serialize>(&self, value: &T) -> Result<Bytes, CodecError> {
-        rmp_serde::to_vec(value)
-            .map(Bytes::from)
-            .map_err(|err| CodecError::Encode(Box::new(err)))
+    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+        // Serialize straight into the BytesMut writer: one buffer, no Vec-to-Bytes hop.
+        let mut buf = BytesMut::new();
+        rmp_serde::encode::write(&mut (&mut buf).writer(), value)
+            .map_err(|err| CodecError::Encode(Box::new(err)))?;
+        Ok(buf)
     }
 
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {

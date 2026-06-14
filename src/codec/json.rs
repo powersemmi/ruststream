@@ -1,6 +1,6 @@
 //! JSON codec backed by [`serde_json`].
 
-use bytes::Bytes;
+use bytes::{BufMut, BytesMut};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::codec::{Codec, CodecError};
@@ -10,10 +10,12 @@ use crate::codec::{Codec, CodecError};
 pub struct JsonCodec;
 
 impl Codec for JsonCodec {
-    fn encode<T: Serialize>(&self, value: &T) -> Result<Bytes, CodecError> {
-        serde_json::to_vec(value)
-            .map(Bytes::from)
-            .map_err(|err| CodecError::Encode(Box::new(err)))
+    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+        // Serialize straight into the BytesMut writer: one buffer, no Vec-to-Bytes hop.
+        let mut buf = BytesMut::new();
+        serde_json::to_writer((&mut buf).writer(), value)
+            .map_err(|err| CodecError::Encode(Box::new(err)))?;
+        Ok(buf)
     }
 
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {

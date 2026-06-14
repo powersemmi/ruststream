@@ -51,7 +51,11 @@ struct Counters {
 /// are distinct mechanics.
 #[subscriber("orders")]
 async fn handle_order(order: &Order, ctx: &mut Context) -> HandlerResult {
-    let c = ctx.get::<Counters>().expect("counters in state").clone();
+    let c = ctx
+        .state()
+        .get::<Counters>()
+        .expect("counters in state")
+        .clone();
     let outcome = if order.id % 2 == 1 {
         HandlerResult::Ack
     } else {

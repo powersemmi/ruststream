@@ -8,7 +8,8 @@ use quote::quote;
 use syn::{FnArg, Ident, ItemFn, LitStr, PatType, ReturnType, Type};
 
 use crate::parse::{
-    SubscriberArgs, WorkersArg, doc_description, publish_result_reply, source_tokens, vec_element,
+    FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, publish_result_reply,
+    source_tokens, vec_element,
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
@@ -36,6 +37,44 @@ struct HandlerParts<'a> {
     message_meta: TokenStream2,
     ctx_param: TokenStream2,
     workers_method: TokenStream2,
+    failure_method: TokenStream2,
+}
+
+/// Renders the `on_failure(..)` clause as an override of the def's defaulted `failure_policies`
+/// method, or nothing when the clause is absent. Only the keys named in the clause are set; the
+/// rest keep the runtime defaults.
+fn failure_method(args: &SubscriberArgs) -> TokenStream2 {
+    let Some(failure) = &args.on_failure else {
+        return quote!();
+    };
+    let panic = failure
+        .panic
+        .as_ref()
+        .map(failure_policy_tokens)
+        .map(|policy| quote!(.with_panic(#policy)));
+    let decode = failure
+        .decode
+        .as_ref()
+        .map(failure_policy_tokens)
+        .map(|policy| quote!(.with_decode(#policy)));
+    quote! {
+        fn failure_policies(&self) -> ::ruststream::runtime::FailurePolicies {
+            ::ruststream::runtime::FailurePolicies::default() #panic #decode
+        }
+    }
+}
+
+/// Renders one [`FailurePolicyArg`] as the matching `FailurePolicy` value.
+fn failure_policy_tokens(policy: &FailurePolicyArg) -> TokenStream2 {
+    match policy {
+        FailurePolicyArg::FailFast => quote!(::ruststream::runtime::FailurePolicy::FailFast),
+        FailurePolicyArg::Drop => quote!(::ruststream::runtime::FailurePolicy::Drop),
+        FailurePolicyArg::Retry => quote!(::ruststream::runtime::FailurePolicy::Retry),
+        FailurePolicyArg::RetryAfter(expr) => {
+            quote!(::ruststream::runtime::FailurePolicy::RetryAfter(#expr))
+        }
+        FailurePolicyArg::Skip => quote!(::ruststream::runtime::FailurePolicy::Skip),
+    }
 }
 
 /// Renders the `workers(..)` clause as an override of the def's defaulted `workers` method, or
@@ -150,6 +189,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     };
 
     let workers_method = workers_method(args)?;
+    let failure_method = failure_method(args);
 
     Ok(HandlerParts {
         vis: &func.vis,
@@ -164,6 +204,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         message_meta,
         ctx_param,
         workers_method,
+        failure_method,
     })
 }
 
@@ -185,6 +226,7 @@ fn expand_batch_publishing(
         message_meta,
         ctx_param,
         workers_method,
+        failure_method,
     } = parts;
 
     let declared_ty = match &func.sig.output {
@@ -236,6 +278,8 @@ fn expand_batch_publishing(
 
             #workers_method
 
+            #failure_method
+
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
             }
@@ -272,6 +316,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         message_meta,
         ctx_param,
         workers_method,
+        failure_method,
     } = parts;
 
     // Pin the body's type to the declared return type before the `IntoBatchResult` conversion:
@@ -307,6 +352,8 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
 
                 #workers_method
 
+            #failure_method
+
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description
                 }
@@ -338,6 +385,7 @@ fn expand_publishing(
         message_meta,
         ctx_param,
         workers_method,
+        failure_method,
     } = parts;
 
     let declared_ty = match &func.sig.output {
@@ -373,6 +421,8 @@ fn expand_publishing(
 
             #workers_method
 
+            #failure_method
+
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
             }
@@ -406,6 +456,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         message_meta,
         ctx_param,
         workers_method,
+        failure_method,
     } = parts;
 
     quote! {
@@ -418,8 +469,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
                     &self,
                     #pat: &#input_ty,
                     #ctx_param: &mut ::ruststream::runtime::Context<'_>,
-                ) -> ::ruststream::runtime::HandlerResult {
-                    ::ruststream::runtime::IntoHandlerResult::into_handler_result(
+                ) -> ::ruststream::runtime::Settle {
+                    ::ruststream::runtime::IntoSettle::into_settle(
                         (async move #block).await,
                     )
                 }
@@ -433,6 +484,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
                 fn source(&self) -> Self::Source { #source_expr }
 
                 #workers_method
+
+            #failure_method
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description
