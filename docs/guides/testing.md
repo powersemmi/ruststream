@@ -81,13 +81,9 @@ Three details carry the pattern:
 
 For a NATS service, test against the NATS-flavoured test broker instead, so subject semantics are
 the real ones: `orders.*` matches one token, `orders.>` matches the tail, queue-group names are
-accepted, and request-reply works. Enable the broker crate's `testing` feature in
-dev-dependencies:
-
-```toml title="Cargo.toml"
-[dev-dependencies]
-ruststream-nats = { version = "0.3", features = ["testing"] }
-```
+accepted, and request-reply works. Enable the broker crate's `testing` feature in your
+dev-dependencies (see the [`ruststream-nats` documentation](https://powersemmi.github.io/ruststream-nats/)
+for the dependency line and current version).
 
 The same pattern as above, with a wildcard subscriber that audits every order event:
 

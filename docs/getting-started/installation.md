@@ -60,17 +60,10 @@ See the [CLI guide](../guides/cli.md), or jump straight to the [quick start](qui
 ## Concrete brokers
 
 The `memory` broker is for local development and tests. For production, depend on a broker crate,
-which re-exports what it needs from `ruststream`:
+which re-exports what it needs from `ruststream`. Each broker is versioned and released
+independently, so its own documentation carries the exact dependency line (including the current
+version and the `testing` feature for handler tests) alongside its `Config` and capabilities.
 
-```toml
-[dependencies]
-ruststream-nats = "0.3"
-
-[dev-dependencies]
-# the broker's in-memory test client, for handler tests
-ruststream-nats = { version = "0.3", features = ["testing"] }
-```
-
-Each broker crate documents its own `Config` and capabilities; the available brokers are listed
-under [Brokers](../brokers/index.md). To write one yourself, see
+The available brokers are listed under [Brokers](../brokers/index.md); follow the link there to each
+broker's documentation for installation. To write one yourself, see
 [Broker authors](../broker-authors/index.md).
