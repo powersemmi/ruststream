@@ -572,7 +572,7 @@ static CTX_REPLY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("ctx-in", publish("ctx-out"))]
 async fn ctx_reply(req: &Request, ctx: &mut Context) -> Response {
-    let bump = ctx.get::<Bump>().map_or(0, |b| b.0);
+    let bump = ctx.state().get::<Bump>().map_or(0, |b| b.0);
     Response {
         doubled: req.n + bump,
     }

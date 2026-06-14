@@ -15,6 +15,7 @@ use crate::domain::{Clearing, Payment, Repository, Settlement};
 #[subscriber("payments", workers(8, by_key))]
 pub(crate) async fn process_payment(payment: &Payment, ctx: &mut Context<'_>) -> HandlerResult {
     let repo = ctx
+        .state()
         .get::<Repository>()
         .expect("repository set in on_startup");
     tracing::debug!(order = payment.order_id, customer = %payment.customer, "charging payment");

@@ -154,7 +154,7 @@ where
                 let name = self.def.reply_name();
                 match self
                     .publisher
-                    .publish_batch(name, &replies, &self.pipeline)
+                    .publish_batch(name, &replies, &self.pipeline, ctx.extensions())
                     .await
                 {
                     Ok(()) => HandlerResult::Ack,

@@ -369,7 +369,7 @@ async fn handler_reads_context_topic_and_state() {
                 subscriber,
                 move |_msg: &_, ctx: &mut Context| {
                     let name = ctx.name().to_owned();
-                    let greeting = ctx.get::<Config>().map(|c| c.greeting.clone());
+                    let greeting = ctx.state().get::<Config>().map(|c| c.greeting.clone());
                     // Middleware/handlers may enrich the working headers.
                     ctx.headers_mut().insert("x-seen", b"1".to_vec());
                     let seen = Arc::clone(&seen_clone);

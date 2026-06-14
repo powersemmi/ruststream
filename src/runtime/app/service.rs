@@ -136,7 +136,10 @@ impl<L> RustStream<L> {
     }
 
     /// Inserts a shared application state value, readable from handlers and middleware via
-    /// [`Context::get`](crate::runtime::Context::get).
+    /// [`Context::state`](crate::runtime::Context::state) then
+    /// [`State::get`](crate::runtime::State::get). For data scoped to a single delivery, use the
+    /// per-delivery extensions ([`Context::insert`](crate::runtime::Context::insert) /
+    /// [`Context::get`](crate::runtime::Context::get)) instead.
     ///
     /// One value per type; inserting the same type again replaces it.
     #[must_use]

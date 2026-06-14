@@ -34,6 +34,7 @@ mod broker;
 mod buffered;
 mod capability;
 mod error;
+mod extensions;
 mod headers;
 mod message;
 mod publisher;
@@ -49,6 +50,7 @@ pub use capability::{
     TransactionalPublisher,
 };
 pub use error::AckError;
+pub use extensions::Extensions;
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;
