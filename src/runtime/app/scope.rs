@@ -13,6 +13,7 @@ use crate::runtime::batch_publishing::{
     BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
 };
 use crate::runtime::dispatch::Publishers;
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
@@ -65,7 +66,8 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
         L::Handler: Handler<S::Message> + 'static,
     {
         let handler = self.global.layer(handler);
-        self.sink.push_handle(subscriber, handler, meta);
+        self.sink
+            .push_handle(subscriber, handler, meta, FailurePolicies::default());
     }
 
     /// Attaches `handler` (wrapped with the global stack) to a subscription described by `source`.
@@ -80,7 +82,8 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let handler = self.global.layer(handler);
-        self.sink.push_subscribe(source, handler, meta);
+        self.sink
+            .push_subscribe(source, handler, meta, FailurePolicies::default());
     }
 
     /// Mounts every registration from `router` onto this broker, wrapping each handler with the
@@ -115,10 +118,13 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = self.global.layer(typed(codec, def.into_handler()));
+        let handler = self
+            .global
+            .layer(typed(codec, def.into_handler()).on_decode_failure(policies.decode));
         self.sink
-            .push_subscribe_workers(source, handler, meta, workers);
+            .push_subscribe_workers(source, handler, meta, policies, workers);
     }
 
     /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
@@ -134,10 +140,11 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         C: Codec + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed_batch(codec, def.into_handler());
+        let handler = typed_batch(codec, def.into_handler()).with_decode(policies.decode);
         self.sink
-            .push_subscribe_batch(source, handler, meta, workers);
+            .push_subscribe_batch(source, handler, meta, policies, workers);
     }
 
     /// Mounts a batch publishing definition on `source`, decoding each element with `codec` and
@@ -159,15 +166,17 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         RP: ReplyPublisher + 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
         let handler = BatchPublishingHandler {
             def,
             codec,
             publisher,
             pipeline: self.pipeline.clone(),
+            decode: policies.decode,
         };
         self.sink
-            .push_subscribe_batch(source, handler, meta, workers);
+            .push_subscribe_batch(source, handler, meta, policies, workers);
     }
 
     /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
@@ -193,15 +202,17 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
         let handler = self.global.layer(PublishingHandler {
             def,
             codec,
             publisher,
             pipeline: self.pipeline.clone(),
+            decode: policies.decode,
         });
         self.sink
-            .push_subscribe_workers(source, handler, meta, workers);
+            .push_subscribe_workers(source, handler, meta, policies, workers);
     }
 }
 

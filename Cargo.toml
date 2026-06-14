@@ -51,6 +51,10 @@ name = "retry"
 required-features = ["macros", "memory", "json"]
 
 [[example]]
+name = "failure_policy"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
 name = "routing"
 required-features = ["macros", "memory", "json"]
 
@@ -137,6 +141,10 @@ required-features = ["conformance"]
 [[test]]
 name = "doc_testing_memory"
 required-features = ["memory", "macros", "json"]
+
+[[test]]
+name = "failure_policy"
+required-features = ["macros", "memory", "json"]
 
 [[test]]
 name = "macro_subscriber"

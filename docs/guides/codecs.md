@@ -74,16 +74,18 @@ property of the mounting, not of the type.
 
 When decoding fails, the message is dropped by default (a nack without requeue). The policy is
 configurable on the typed adapter when you build handlers by hand: `typed(codec, handler)` returns
-a `Typed` wrapper whose `on_decode_failure` accepts a `DecodeFailure` mode (`Drop` or `Requeue`).
+a `Typed` wrapper whose `on_decode_failure` accepts a `FailurePolicy` (`Drop`, `Retry`,
+`RetryAfter(..)`, `Skip`, or `FailFast`). On a macro handler the same policy is set with the
+`on_failure(decode = ..)` clause (see the failure-policy guide).
 
 ```rust
-use ruststream::runtime::{DecodeFailure, typed};
+use ruststream::runtime::{FailurePolicy, typed};
 
 // inside with_broker(...):
 --8<-- "examples/codecs.rs:decode_failure"
 ```
 
-Requeue with care: a payload that can never decode will redeliver forever unless the broker has a
+Retry with care: a payload that can never decode will redeliver forever unless the broker has a
 dead-letter or max-deliveries policy. The codec examples above are
 [`examples/codecs.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/codecs.rs).
 

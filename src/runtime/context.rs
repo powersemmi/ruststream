@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use crate::Headers;
 
 use super::dispatch::Delivery;
+use super::failure::ErrorShutdown;
 use super::publish::ScopedPublisher;
 
 /// App-level shared state: a type-map holding one value per type.
@@ -60,6 +61,7 @@ pub struct Context<'a> {
     modified: Option<Headers>,
     state: &'a State,
     delivery: &'a Delivery,
+    failfast: Option<&'a ErrorShutdown>,
 }
 
 impl<'a> Context<'a> {
@@ -76,6 +78,25 @@ impl<'a> Context<'a> {
             modified: None,
             state,
             delivery,
+            failfast: None,
+        }
+    }
+
+    /// Attaches the runtime's error-shutdown handle, so a fail-fast decode policy can tear the
+    /// service down from inside the handler. The dispatch loop sets this; contexts built in tests
+    /// leave it unset (a fail-fast there logs but cannot reach the run loop).
+    #[must_use]
+    pub(crate) fn with_failfast(mut self, failfast: &'a ErrorShutdown) -> Self {
+        self.failfast = Some(failfast);
+        self
+    }
+
+    /// Triggers a fail-fast shutdown for `reason` if a handle is attached, naming this delivery's
+    /// subscription. Used by the decode path when its policy is
+    /// [`FailFast`](super::FailurePolicy::FailFast).
+    pub(crate) fn fail_fast(&self, reason: &str) {
+        if let Some(failfast) = self.failfast {
+            failfast.signal(self.name, reason);
         }
     }
 

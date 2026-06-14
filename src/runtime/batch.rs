@@ -18,9 +18,9 @@ use crate::codec::Codec;
 
 use super::context::Context;
 use super::dispatch::Workers;
+use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
-use super::typed::DecodeFailure;
 
 /// The settlement of one dispatched batch.
 ///
@@ -179,6 +179,13 @@ pub trait BatchDef: Sized {
         Workers::sequential()
     }
 
+    /// The failure policy for a batch-handler panic and a per-element decode failure. The macro
+    /// fills this in from the `on_failure(panic = .., decode = ..)` argument; the default fails
+    /// fast on a panic and drops on a decode failure.
+    fn failure_policies(&self) -> FailurePolicies {
+        FailurePolicies::default()
+    }
+
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
     fn description(&self) -> Option<&str> {
         None
@@ -235,30 +242,29 @@ where
     TypedBatch {
         codec,
         inner,
-        on_decode_failure: DecodeFailure::default(),
+        decode: FailurePolicy::Drop,
         _phantom: PhantomData,
     }
 }
 
 /// The decode adapter for batches, the [`Typed`](super::Typed) counterpart.
 ///
-/// Each element decodes independently: failures are settled individually per the
-/// [`DecodeFailure`] policy and never reach the handler; the rest are passed on as one slice.
-/// The [`BatchResult`] the handler returns settles the deliveries behind that slice - uniformly,
-/// or element by element.
+/// Each element decodes independently: failures are settled individually per the `decode`
+/// [`FailurePolicy`] and never reach the handler; the rest are passed on as one slice. The
+/// [`BatchResult`] the handler returns settles the deliveries behind that slice - uniformly, or
+/// element by element.
 pub struct TypedBatch<M, T, C, H> {
     codec: C,
     inner: H,
-    on_decode_failure: DecodeFailure,
+    decode: FailurePolicy,
     _phantom: PhantomData<fn(M, T)>,
 }
 
 impl<M, T, C, H> TypedBatch<M, T, C, H> {
-    /// Override the behaviour when the codec fails to decode an element.
+    /// Sets the policy applied when the codec fails to decode an element.
     #[must_use]
-    #[allow(dead_code)] // The mount paths use the default; kept for parity with `Typed`.
-    pub(crate) fn on_decode_failure(mut self, mode: DecodeFailure) -> Self {
-        self.on_decode_failure = mode;
+    pub(crate) fn with_decode(mut self, decode: FailurePolicy) -> Self {
+        self.decode = decode;
         self
     }
 }
@@ -266,7 +272,7 @@ impl<M, T, C, H> TypedBatch<M, T, C, H> {
 impl<M, T, C, H> std::fmt::Debug for TypedBatch<M, T, C, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TypedBatch")
-            .field("on_decode_failure", &self.on_decode_failure)
+            .field("decode", &self.decode)
             .finish_non_exhaustive()
     }
 }
@@ -280,8 +286,7 @@ where
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
         let subscription = ctx.name().to_owned();
-        let (values, accepted) =
-            decode_batch(batch, &self.codec, self.on_decode_failure, &subscription).await;
+        let (values, accepted) = decode_batch(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }
@@ -313,20 +318,22 @@ where
     }
 }
 
-/// Decodes each element of one raw batch independently: failures are nacked per
-/// `on_decode_failure` and never reach the handler; the rest pass through, each decoded value
-/// paired with its delivery (`values[i]` decodes `accepted[i]`).
+/// Decodes each element of one raw batch independently: failures are settled per the `decode`
+/// [`FailurePolicy`] and never reach the handler; the rest pass through, each decoded value paired
+/// with its delivery (`values[i]` decodes `accepted[i]`). A `fail_fast` decode policy tears the
+/// service down via `ctx` and drops the offending element so it is not requeued into the failure.
 pub(crate) async fn decode_batch<M, T, C>(
     batch: Vec<M>,
     codec: &C,
-    on_decode_failure: DecodeFailure,
-    subscription: &str,
+    decode: FailurePolicy,
+    ctx: &Context<'_>,
 ) -> (Vec<T>, Vec<M>)
 where
     M: IncomingMessage,
     T: DeserializeOwned,
     C: Codec,
 {
+    let subscription = ctx.name();
     let mut values = Vec::with_capacity(batch.len());
     let mut accepted = Vec::with_capacity(batch.len());
     for msg in batch {
@@ -343,15 +350,14 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                let requeue = matches!(on_decode_failure, DecodeFailure::Requeue);
-                if let Err(err) = msg.nack(requeue).await {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        subscription = %subscription,
-                        error = %err,
-                        "nack failed",
-                    );
-                }
+                let outcome = match decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("batch decode failed: {err}"));
+                        HandlerResult::drop()
+                    }
+                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
+                };
+                settle(msg, outcome, subscription).await;
             }
         }
     }

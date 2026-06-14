@@ -19,11 +19,95 @@ pub(crate) struct SubscriberArgs {
     pub(crate) batch: bool,
     pub(crate) publish: Option<LitStr>,
     pub(crate) workers: Option<WorkersArg>,
+    pub(crate) on_failure: Option<FailureArg>,
 }
 
 pub(crate) struct WorkersArg {
     pub(crate) count: syn::LitInt,
     pub(crate) by_key: Option<Ident>,
+}
+
+/// The `on_failure(panic = .., decode = ..)` clause. Each key is optional; an omitted key keeps the
+/// runtime default (a panic fails fast, a decode failure drops).
+pub(crate) struct FailureArg {
+    pub(crate) panic: Option<FailurePolicyArg>,
+    pub(crate) decode: Option<FailurePolicyArg>,
+}
+
+/// One failure policy value: `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, or `skip`.
+pub(crate) enum FailurePolicyArg {
+    FailFast,
+    Drop,
+    Retry,
+    RetryAfter(Expr),
+    Skip,
+}
+
+impl Parse for FailurePolicyArg {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        match ident.to_string().as_str() {
+            "fail_fast" => Ok(Self::FailFast),
+            "drop" => Ok(Self::Drop),
+            "retry" => Ok(Self::Retry),
+            "skip" => Ok(Self::Skip),
+            "retry_after" => {
+                let content;
+                parenthesized!(content in input);
+                Ok(Self::RetryAfter(content.parse()?))
+            }
+            _ => Err(syn::Error::new(
+                ident.span(),
+                "expected `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, or `skip`",
+            )),
+        }
+    }
+}
+
+impl Parse for FailureArg {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut panic = None;
+        let mut decode = None;
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            let value: FailurePolicyArg = input.parse()?;
+            if key == "panic" {
+                if panic.is_some() {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "duplicate `panic` in on_failure(..)",
+                    ));
+                }
+                panic = Some(value);
+            } else if key == "decode" {
+                if decode.is_some() {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "duplicate `decode` in on_failure(..)",
+                    ));
+                }
+                decode = Some(value);
+            } else {
+                return Err(syn::Error::new(
+                    key.span(),
+                    "expected `panic = ..` or `decode = ..`",
+                ));
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            } else {
+                break;
+            }
+        }
+        if panic.is_none() && decode.is_none() {
+            return Err(syn::Error::new(
+                input.span(),
+                "on_failure(..) needs at least one of `panic = ..` or `decode = ..`",
+            ));
+        }
+        Ok(Self { panic, decode })
+    }
 }
 
 impl Parse for SubscriberArgs {
@@ -52,10 +136,18 @@ impl Parse for SubscriberArgs {
         }
         let mut publish = None;
         let mut workers = None;
+        let mut on_failure = None;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let keyword: Ident = input.parse()?;
-            if keyword == "publish" {
+            if keyword == "on_failure" {
+                if on_failure.is_some() {
+                    return Err(syn::Error::new(keyword.span(), "duplicate on_failure(..)"));
+                }
+                let content;
+                parenthesized!(content in input);
+                on_failure = Some(content.parse()?);
+            } else if keyword == "publish" {
                 if publish.is_some() {
                     return Err(syn::Error::new(keyword.span(), "duplicate publish(..)"));
                 }
@@ -85,7 +177,8 @@ impl Parse for SubscriberArgs {
             } else {
                 return Err(syn::Error::new(
                     keyword.span(),
-                    "expected `publish(\"reply-topic\")` or `workers(n[, by_key])`",
+                    "expected `publish(\"reply-topic\")`, `workers(n[, by_key])`, or \
+                     `on_failure(panic = .., decode = ..)`",
                 ));
             }
         }
@@ -94,6 +187,7 @@ impl Parse for SubscriberArgs {
             batch,
             publish,
             workers,
+            on_failure,
         })
     }
 }

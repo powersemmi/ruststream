@@ -9,6 +9,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::runtime::failure::ErrorShutdown;
+
 use super::{RustStream, RustStreamError};
 
 impl<L> RustStream<L> {
@@ -73,9 +75,12 @@ impl<L> RustStream<L> {
         }
 
         let token = CancellationToken::new();
+        // Shared with every dispatch task: a fail-fast failure records its reason here and cancels
+        // the token, which both stops the loops and wakes the shutdown wait below.
+        let error_shutdown = ErrorShutdown::new(token.clone());
         let mut handles = Vec::with_capacity(starters.len());
         for (starter, meta) in starters.into_iter().zip(handlers) {
-            let handle = starter(state.clone(), token.clone())
+            let handle = starter(state.clone(), error_shutdown.clone(), token.clone())
                 .await
                 .map_err(RustStreamError::Subscribe)?;
             info!(
@@ -98,8 +103,14 @@ impl<L> RustStream<L> {
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
 
-        shutdown.await;
-        info!(target: "ruststream::lifecycle", "shutdown signal received");
+        // Wake on either the caller's shutdown signal or a fail-fast cancellation from a dispatch
+        // task, then tear the service down the same way for both.
+        tokio::select! {
+            () = shutdown => info!(target: "ruststream::lifecycle", "shutdown signal received"),
+            () = token.cancelled() => {
+                info!(target: "ruststream::lifecycle", "fail-fast shutdown triggered");
+            }
+        }
 
         for hook in on_shutdown {
             if let Err(err) = hook(Arc::clone(&state)).await {
@@ -122,6 +133,12 @@ impl<L> RustStream<L> {
             }
         }
         info!(target: "ruststream::lifecycle", "service stopped");
+
+        // A fail-fast failure tore the service down: surface it so an orchestrator restarts the
+        // service and the operator sees a non-zero exit, not a silent stop.
+        if let Some(reason) = error_shutdown.taken_failure() {
+            return Err(RustStreamError::Dispatch(reason));
+        }
         Ok(())
     }
 }

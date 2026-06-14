@@ -15,6 +15,7 @@ use crate::{IncomingMessage, Publisher};
 
 use super::context::Context;
 use super::dispatch::Workers;
+use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult};
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
@@ -45,6 +46,13 @@ pub trait PublishingDef: Send + Sync {
     /// the `workers(..)` argument; the default is sequential dispatch.
     fn workers(&self) -> Workers {
         Workers::sequential()
+    }
+
+    /// The failure policy for a handler panic and a decode failure. The macro fills this in from
+    /// the `on_failure(panic = .., decode = ..)` argument; the default fails fast on a panic and
+    /// drops on a decode failure.
+    fn failure_policies(&self) -> FailurePolicies {
+        FailurePolicies::default()
     }
 
     /// An optional human description (from the handler's doc comment), for `AsyncAPI`.
@@ -106,6 +114,7 @@ pub struct PublishingHandler<D, C, P, PC, PL> {
     pub(crate) codec: C,
     pub(crate) publisher: TypedPublisher<P, PC, PL>,
     pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) decode: FailurePolicy,
 }
 
 impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
@@ -138,7 +147,13 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                return HandlerResult::drop();
+                return match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerResult::drop()
+                    }
+                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
+                };
             }
         };
         let reply = match self.def.call(&input, ctx).await {

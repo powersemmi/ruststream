@@ -14,6 +14,7 @@ use crate::runtime::batch_publishing::{
     BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
 };
 use crate::runtime::dispatch::Workers;
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
@@ -171,6 +172,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     subscriber,
                     handler,
                     meta,
+                    policies: FailurePolicies::default(),
                 },
                 self.routes,
             ),
@@ -201,6 +203,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     source,
                     handler,
                     meta,
+                    policies: FailurePolicies::default(),
                     workers: Workers::sequential(),
                 },
                 self.routes,
@@ -233,6 +236,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     source,
                     handler: typed_batch(codec, handler),
                     meta,
+                    policies: FailurePolicies::default(),
                     workers: Workers::sequential(),
                 },
                 self.routes,
@@ -260,14 +264,16 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         C: Codec + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed(codec, def.into_handler());
+        let handler = typed(codec, def.into_handler()).on_decode_failure(policies.decode);
         Router {
             routes: (
                 SubscribeRoute {
                     source,
                     handler,
                     meta,
+                    policies,
                     workers,
                 },
                 self.routes,
@@ -295,14 +301,16 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         C: Codec + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed_batch(codec, def.into_handler());
+        let handler = typed_batch(codec, def.into_handler()).with_decode(policies.decode);
         Router {
             routes: (
                 BatchRoute {
                     source,
                     handler,
                     meta,
+                    policies,
                     workers,
                 },
                 self.routes,
@@ -333,6 +341,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         RP: ReplyPublisher + 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
         let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
         let handler = BatchPublishingHandler {
@@ -340,6 +349,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
             codec,
             publisher,
             pipeline,
+            decode: policies.decode,
         };
         Router {
             routes: (
@@ -347,6 +357,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     source,
                     handler,
                     meta,
+                    policies,
                     workers,
                 },
                 self.routes,
@@ -378,6 +389,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         PL: PublishLayer + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
         let workers = def.workers();
         let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
         let handler = PublishingHandler {
@@ -385,6 +397,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
             codec,
             publisher,
             pipeline,
+            decode: policies.decode,
         };
         Router {
             routes: (
@@ -392,6 +405,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
                     source,
                     handler,
                     meta,
+                    policies,
                     workers,
                 },
                 self.routes,

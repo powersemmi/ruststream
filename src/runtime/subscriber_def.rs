@@ -2,6 +2,7 @@
 //! [`BrokerScope::include`](super::BrokerScope::include).
 
 use super::dispatch::Workers;
+use super::failure::FailurePolicies;
 use super::handler::Handler;
 use super::metadata::HandlerMetadata;
 
@@ -54,6 +55,13 @@ pub trait SubscriberDef: Sized {
     /// the `workers(..)` argument; the default is sequential dispatch.
     fn workers(&self) -> Workers {
         Workers::sequential()
+    }
+
+    /// The failure policy for a handler panic and a decode failure. The macro fills this in from
+    /// the `on_failure(panic = .., decode = ..)` argument; the default fails fast on a panic and
+    /// drops on a decode failure.
+    fn failure_policies(&self) -> FailurePolicies {
+        FailurePolicies::default()
     }
 
     /// Consumes the definition, returning the handler.
