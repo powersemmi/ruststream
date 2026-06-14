@@ -113,9 +113,9 @@ acked the message, off the delivery path, so it never delays the ack or the next
 Three forms, all additive:
 
 - `ctx.after(outcome).then(fut)` - runs only if the message settles by `outcome`, matched **by
-  variant**: `Ack`, `Nack`, or `NackAfter`. Both `HandlerResult::drop()` and
-  `HandlerResult::retry()` are `Nack`, so a gate on either fires on the other; `retry_after` gates
-  on `NackAfter` regardless of the delay.
+  kind**. The four kinds are distinct: `Ack`, `drop()` (nack, no requeue), `retry()` (nack,
+  requeue), and `retry_after()` (matched regardless of the delay). Drop and retry are separate
+  mechanics, so a hook gated on `drop()` does not fire on a `retry()` settlement, and vice versa.
 - `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerResult::Ack).then(fut)`.
 - `ctx.after_settle(fut)` - runs after the message settles, whatever the outcome.
 

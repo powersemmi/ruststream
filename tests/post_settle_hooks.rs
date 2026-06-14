@@ -40,12 +40,15 @@ async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
 #[derive(Clone, Default)]
 struct Counters {
     ack: Arc<AtomicU32>,
-    nack: Arc<AtomicU32>,
+    dropped: Arc<AtomicU32>,
+    retried: Arc<AtomicU32>,
     settle: Arc<AtomicU32>,
     handled: Arc<AtomicU32>,
 }
 
-/// Odd ids ack, even ids drop; each registers an ack-gated, a nack-gated and an ungated hook.
+/// Odd ids ack, even ids drop (never retry); each registers an ack-gated, a drop-gated, a
+/// retry-gated, and an ungated hook. The retry-gated one must never fire, proving drop and retry
+/// are distinct mechanics.
 #[subscriber("orders")]
 async fn handle_order(order: &Order, ctx: &mut Context) -> HandlerResult {
     let c = ctx.get::<Counters>().expect("counters in state").clone();
@@ -59,9 +62,13 @@ async fn handle_order(order: &Order, ctx: &mut Context) -> HandlerResult {
     ctx.after(HandlerResult::Ack).then(async move {
         ack.fetch_add(1, Ordering::SeqCst);
     });
-    let nack = Arc::clone(&c.nack);
+    let dropped = Arc::clone(&c.dropped);
     ctx.after(HandlerResult::drop()).then(async move {
-        nack.fetch_add(1, Ordering::SeqCst);
+        dropped.fetch_add(1, Ordering::SeqCst);
+    });
+    let retried = Arc::clone(&c.retried);
+    ctx.after(HandlerResult::retry()).then(async move {
+        retried.fetch_add(1, Ordering::SeqCst);
     });
     let settle = Arc::clone(&c.settle);
     ctx.after_settle(async move {
@@ -108,17 +115,24 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
     .await
     .expect("deliveries within deadline");
 
-    // One ack-gated, one nack-gated; both settle hooks ran. Use >= since the retry loop may
+    // One ack-gated, one drop-gated; both settle hooks ran. Use >= since the retry loop may
     // publish extra copies before the first pair is handled.
     wait_for(
         || {
             counters.ack.load(Ordering::SeqCst) >= 1
-                && counters.nack.load(Ordering::SeqCst) >= 1
+                && counters.dropped.load(Ordering::SeqCst) >= 1
                 && counters.settle.load(Ordering::SeqCst) >= 2
         },
         Duration::from_secs(5),
     )
     .await;
+
+    // Nothing ever retried, so the retry-gated hook never fired: drop does not trigger a retry hook.
+    assert_eq!(
+        counters.retried.load(Ordering::SeqCst),
+        0,
+        "a retry-gated hook must not fire when messages are dropped",
+    );
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();

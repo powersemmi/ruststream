@@ -21,23 +21,28 @@ use super::publish::ScopedPublisher;
 /// batch) has been settled.
 type Continuation = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
-/// The settlement variant a post-settle hook is gated on, matched by variant only (not by the
-/// `Nack { requeue }` flag or the `NackAfter { delay }` value): `drop()` and `retry()` both gate
-/// on [`OutcomeKind::Nack`], `retry_after` on [`OutcomeKind::NackAfter`].
+/// The settlement kind a post-settle hook is gated on. Drop and retry are distinct settlements
+/// (`nack` without vs with requeue), so they gate separately: [`HandlerResult::drop`] gates on
+/// [`Drop`](Self::Drop), [`HandlerResult::retry`] on [`Retry`](Self::Retry), and
+/// [`HandlerResult::retry_after`] on [`RetryAfter`](Self::RetryAfter) regardless of the delay
+/// value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutcomeKind {
     Ack,
-    Nack,
-    NackAfter,
+    Drop,
+    Retry,
+    RetryAfter,
 }
 
 impl OutcomeKind {
-    /// The variant of `outcome`, discarding the carried `requeue` / `delay` payload.
+    /// The settlement kind of `outcome`: the `requeue` flag splits a `Nack` into drop vs retry; the
+    /// `NackAfter` delay value is discarded.
     fn of(outcome: HandlerResult) -> Self {
         match outcome {
             HandlerResult::Ack => Self::Ack,
-            HandlerResult::Nack { .. } => Self::Nack,
-            HandlerResult::NackAfter { .. } => Self::NackAfter,
+            HandlerResult::Nack { requeue: false } => Self::Drop,
+            HandlerResult::Nack { requeue: true } => Self::Retry,
+            HandlerResult::NackAfter { .. } => Self::RetryAfter,
         }
     }
 }
@@ -167,10 +172,11 @@ impl<'a> Context<'a> {
     ///
     /// The returned builder's [`then`](After::then) registers a future that the dispatcher runs
     /// once the message has been settled, but only if the actual settlement matches `outcome` by
-    /// variant: `Ack`, `Nack`, or `NackAfter`. Both [`HandlerResult::drop`] and
-    /// [`HandlerResult::retry`] are `Nack`, so either gates on a `Nack` settlement regardless of
-    /// the `requeue` flag; [`HandlerResult::retry_after`] gates on `NackAfter` regardless of the
-    /// delay. Multiple hooks accumulate and every matching one runs.
+    /// kind. The four kinds are distinct: [`HandlerResult::Ack`], [`HandlerResult::drop`] (nack
+    /// without requeue), [`HandlerResult::retry`] (nack with requeue), and
+    /// [`HandlerResult::retry_after`] (which matches regardless of the delay). So a hook gated on
+    /// `drop()` does not fire on a `retry()` settlement, and vice versa. Multiple hooks accumulate
+    /// and every matching one runs.
     ///
     /// The hook is scoped to the whole delivery. On the batch path a `Context` is one per batch,
     /// so a hook registered here runs after the entire batch settles; because a batch has
@@ -238,8 +244,8 @@ impl<'a> Context<'a> {
 
     /// Registers a post-settle hook that runs after the message settles, whatever the outcome.
     ///
-    /// Unlike [`after`](Self::after) this has no outcome gate, so it fires on `Ack`, `Nack`, and
-    /// `NackAfter` alike. It is the only post-settle form honoured on the batch path, where the
+    /// Unlike [`after`](Self::after) this has no outcome gate, so it fires on `Ack`, `Drop`,
+    /// `Retry`, and `RetryAfter` alike. It is the only post-settle form honoured on the batch path, where the
     /// per-element outcomes make an outcome gate ill-defined; there it runs once after the whole
     /// batch has been settled.
     ///
@@ -331,7 +337,7 @@ impl After<'_, '_> {
     /// fn use_then<M: IncomingMessage + 'static>() {
     ///     let _handler = |_msg: &M, ctx: &mut Context| {
     ///         ctx.after(HandlerResult::drop())
-    ///             .then(async move { /* runs only if the message is dropped or retried */ });
+    ///             .then(async move { /* runs only if the message is dropped (nack, no requeue) */ });
     ///         async { HandlerResult::drop() }
     ///     };
     /// }
@@ -364,23 +370,28 @@ mod tests {
     }
 
     #[test]
-    fn outcome_kind_matches_by_variant_not_value() {
+    fn outcome_kind_distinguishes_drop_retry_and_retry_after() {
         use super::OutcomeKind;
         assert_eq!(OutcomeKind::of(HandlerResult::Ack), OutcomeKind::Ack);
-        // drop() and retry() are both Nack: a gate on either matches the other.
-        assert_eq!(
+        // drop (nack, no requeue) and retry (nack, requeue) are distinct kinds.
+        assert_eq!(OutcomeKind::of(HandlerResult::drop()), OutcomeKind::Drop);
+        assert_eq!(OutcomeKind::of(HandlerResult::retry()), OutcomeKind::Retry);
+        assert_ne!(
             OutcomeKind::of(HandlerResult::drop()),
             OutcomeKind::of(HandlerResult::retry()),
         );
-        assert_eq!(OutcomeKind::of(HandlerResult::drop()), OutcomeKind::Nack);
-        // NackAfter gates regardless of the delay value.
+        // retry_after is its own kind, distinct from retry, and matches regardless of the delay.
+        assert_eq!(
+            OutcomeKind::of(HandlerResult::retry_after(Duration::from_secs(1))),
+            OutcomeKind::RetryAfter,
+        );
+        assert_ne!(
+            OutcomeKind::of(HandlerResult::retry_after(Duration::ZERO)),
+            OutcomeKind::of(HandlerResult::retry()),
+        );
         assert_eq!(
             OutcomeKind::of(HandlerResult::retry_after(Duration::from_secs(1))),
             OutcomeKind::of(HandlerResult::retry_after(Duration::from_secs(9))),
-        );
-        assert_eq!(
-            OutcomeKind::of(HandlerResult::retry_after(Duration::ZERO)),
-            OutcomeKind::NackAfter,
         );
     }
 
@@ -392,7 +403,8 @@ mod tests {
         let mut ctx = Context::new("t", &headers, &state, &delivery);
 
         let acked = Arc::new(AtomicU32::new(0));
-        let nacked = Arc::new(AtomicU32::new(0));
+        let dropped = Arc::new(AtomicU32::new(0));
+        let retried = Arc::new(AtomicU32::new(0));
         let settled = Arc::new(AtomicU32::new(0));
 
         let bump = |c: &Arc<AtomicU32>| {
@@ -403,19 +415,27 @@ mod tests {
         };
 
         ctx.after(HandlerResult::Ack).then(bump(&acked));
-        ctx.after(HandlerResult::drop()).then(bump(&nacked));
+        ctx.after(HandlerResult::drop()).then(bump(&dropped));
+        ctx.after(HandlerResult::retry()).then(bump(&retried));
         ctx.after_ack(bump(&acked));
         ctx.after_settle(bump(&settled));
 
-        // Settling with Ack runs both ack-gated hooks and the ungated one, not the Nack one.
+        // Settling with Ack runs both ack-gated hooks and the ungated one, not drop or retry.
         run_all(ctx.take_hooks_for(HandlerResult::Ack));
         assert_eq!(acked.load(Ordering::SeqCst), 2);
         assert_eq!(settled.load(Ordering::SeqCst), 1);
-        assert_eq!(nacked.load(Ordering::SeqCst), 0);
+        assert_eq!(dropped.load(Ordering::SeqCst), 0);
+        assert_eq!(retried.load(Ordering::SeqCst), 0);
 
-        // The Nack-gated hook is still registered: a later Nack settle runs it.
+        // A retry settle runs only the retry-gated hook: drop and retry are distinct mechanics.
         run_all(ctx.take_hooks_for(HandlerResult::retry()));
-        assert_eq!(nacked.load(Ordering::SeqCst), 1);
+        assert_eq!(retried.load(Ordering::SeqCst), 1);
+        assert_eq!(dropped.load(Ordering::SeqCst), 0);
+
+        // The drop-gated hook is still registered: a later drop settle runs it.
+        run_all(ctx.take_hooks_for(HandlerResult::drop()));
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        assert_eq!(retried.load(Ordering::SeqCst), 1);
     }
 
     #[test]
