@@ -10,6 +10,7 @@ one-line change at `with_broker`.
 |---|---|---|
 | [Memory](memory.md) | `ruststream` (feature `memory`) | in-process, for development and tests |
 | [NATS](nats.md) | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS and JetStream |
+| [Redis](redis.md) | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, cluster, sentinel) |
 
 To implement a broker for another transport, see [Broker authors](../broker-authors/index.md).
 
@@ -44,6 +45,22 @@ differs by one line inside `with_broker`.
     fn app() -> RustStream {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
+                b.include_router(routes::orders())
+            })
+    }
+    ```
+
+=== "Redis"
+
+    <!-- inline-rust: Redis half of the broker-switch comparison; depends on the external ruststream-fred crate, no in-repo compiled home -->
+    ```rust
+    use ruststream::runtime::{AppInfo, RustStream};
+    use ruststream_fred::RedisBroker;
+
+    #[ruststream::app]
+    fn app() -> RustStream {
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(RedisBroker::standalone("redis://localhost:6379"), |b| {
                 b.include_router(routes::orders())
             })
     }

@@ -99,6 +99,7 @@ nav:
       - brokers/index.md
       - brokers/memory.md
       - brokers/nats.md
+      - brokers/redis.md
   - Broker authors:
       - broker-authors/index.md
       - broker-authors/example-nats.md
