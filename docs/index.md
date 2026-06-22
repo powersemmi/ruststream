@@ -39,7 +39,7 @@ Two architectural commitments shape the framework:
 - :material-rocket-launch: **[Quick start](getting-started/quickstart.md)** - scaffold a service with the CLI.
 - :material-school: **[Tutorial](getting-started/tutorial.md)** - build a service step by step.
 - :material-test-tube: **[Testing](guides/testing.md)** - test handlers in-process, no server needed.
-- :material-transit-connection-variant: **[Brokers](brokers/index.md)** - the in-memory broker and NATS.
+- :material-transit-connection-variant: **[Brokers](brokers/index.md)** - the in-memory broker, NATS, and Redis.
 - :material-server-network: **[Broker authors](broker-authors/index.md)** - implement the contract and pass conformance.
 
 </div>
