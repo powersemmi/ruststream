@@ -1,7 +1,7 @@
 # Publishing and replies
 
 There are two ways to publish: return a reply from a handler, or publish explicitly from inside a
-handler through a named publisher. Both run through the publish pipeline.
+handler through a publisher held in the typed application state.
 
 ## Replying from a handler
 
@@ -55,28 +55,19 @@ Make publishing handlers idempotent under redelivery.
 ## Publishing from inside a handler
 
 To publish to a destination other than a single reply (fan-out, side effects, routing to a different
-broker), register a named publisher on the application under a compile-time `PublisherKey` and
-resolve it from the context by the same key. Declare the key once with `publisher_key!` and import
-it at both sites; a misspelled key is a compile error, not a runtime `None`.
-
-<!-- inline-rust: minimal named-publisher registration fragment; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
-```rust
-use ruststream::publisher_key;
-
-publisher_key!(Egress);
-
-// register at build time, bound to the key
-let app = RustStream::new(info)
-    .publisher(Egress, egress_publisher)
-    .with_broker(broker, |b| b.include(forward));
-```
+broker), put the publisher in the [typed application state](lifespan.md) and reach it from the
+handler with `ctx.state()`. A publisher is a value like any other shared resource; in the state it
+stays typed, so the handler uses its own API directly, with no registry and no runtime lookup.
 
 ```rust
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::runtime::{HandlerResult, Outgoing};
+use ruststream::{OutgoingMessage, Publisher};
 
 --8<-- "examples/publishing.rs:forward"
 ```
+
+The publisher is produced in `on_startup` and stored in the state struct, the same as a database
+pool or HTTP client (see [Lifespan](lifespan.md)).
 
 !!! note "Handlers that publish must own their context"
     A closure handler cannot return a future that borrows `&mut Context`. Use a `#[subscriber]`
@@ -113,8 +104,9 @@ Both levels compose on the application:
 --8<-- "examples/publishing.rs:pipeline"
 ```
 
-Manual publishes through `ctx.publisher(..)` run through the dynamic pipeline (the static layer is a
-property of a specific `TypedPublisher`). The full program is
+The pipeline runs on the reply path (the `publish(..)` form). A publisher held in the state is used
+directly, so compose any per-publisher transforms onto it with `TypedPublisher::layer` when you
+build it. The full program is
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 
 ## Batch replies and transactions

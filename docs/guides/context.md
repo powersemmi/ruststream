@@ -6,7 +6,7 @@ lifetimes:
 | Level | Type | Lives for | Holds |
 |---|---|---|---|
 | Application | the state type `S` | the whole service | shared resources: pools, clients, configuration |
-| Delivery | `Context<'_, C, S>` | one message | the channel name, a headers working copy, the broker's typed per-delivery context `C` (read by key), the typed shared state `S` and named publishers |
+| Delivery | `Context<'_, C, S>` | one message | the channel name, a headers working copy, the broker's typed per-delivery context `C` (read by key), and the typed shared state `S` |
 
 The state is produced once, at startup, and is a single typed value of your own choosing. A
 `Context` is built fresh for every delivery and threaded as `&mut` through the middleware chain into
@@ -55,7 +55,6 @@ What the context exposes:
 | `state()` | `&S` | the typed shared application state, borrowed directly |
 | `context(KEY)` | `KEY::Value` | a [broker field](#per-delivery-context) read by compile-time key |
 | `set(KEY, v)` | `()` | write a per-delivery [scratch value](#per-delivery-context) (middleware) |
-| `publisher(KEY)` | `Option<ScopedPublisher>` | a [named publisher](publishing.md#publishing-from-inside-a-handler) resolved by compile-time key |
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 
@@ -109,12 +108,11 @@ Two boundaries to keep in mind:
   headers; attach outgoing metadata in the [publish pipeline](publishing.md#the-publish-pipeline)
   (a `PublishLayer` or `PublishMiddleware`) instead.
 
-## Publishing through the context
+## Publishing from a handler
 
-`ctx.publisher("name")` resolves a publisher registered with `RustStream::publisher(name, p)` and
-returns `None` when nothing is registered under that name. Sends through it run the application's
-dynamic publish middleware - the same chain as a macro reply - so a manual publish is not a hole
-in the pipeline:
+To publish from inside a handler (beyond the `publish(..)` reply form), put the publisher in the
+typed application state and reach it with `ctx.state()` - it stays typed, so the handler uses its
+own API directly:
 
 ```rust
 --8<-- "examples/publishing.rs:forward"

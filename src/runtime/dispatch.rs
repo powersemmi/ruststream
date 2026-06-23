@@ -2,7 +2,6 @@
 //! until shutdown is signalled or the stream ends. Lifted out of the former `Router` so
 //! [`RustStream`](super::RustStream) can own task spawning directly.
 
-use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -22,12 +21,7 @@ use super::batch::BatchHandler;
 use super::context::Context;
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
-use super::publish::PublishMiddleware;
 use super::publisher_registry::ErasedPublisher;
-
-/// Named publishers registered on the application, resolvable from a [`Context`] by a compile-time
-/// [`PublisherKey`](super::PublisherKey) (keyed by the key type's `TypeId`, not a hashed string).
-pub(crate) type Publishers = HashMap<std::any::TypeId, Arc<dyn ErasedPublisher>>;
 
 /// Header carrying the framework's deferred-republish retry count.
 ///
@@ -119,14 +113,10 @@ impl Default for Workers {
     }
 }
 
-/// Per-scope publish context threaded into every delivery's [`Context`]: the named-publisher
-/// registry, the scope's publish middleware pipeline, and the app-wide tracker for post-settle
-/// continuations. A handler resolves a publisher with [`Context::publisher`] and its sends run
-/// through `pipeline`, the same chain as a macro reply; an `and_after` continuation is spawned onto
-/// `tasks` so a graceful shutdown drains it.
+/// Per-scope publish context threaded into every delivery's [`Context`]: the broker-agnostic
+/// `retry_after` fallback publisher and the app-wide tracker for post-settle continuations. An
+/// `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
 pub(crate) struct Delivery {
-    pub(crate) publishers: Publishers,
-    pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
     /// Publisher used by the broker-agnostic `retry_after` fallback to re-publish a message to its
     /// own source subject after the delay. `None` when the scope did not opt in, in which case a
     /// `NackAfter` on a non-native broker degrades to an immediate requeue (with a warning).
@@ -138,8 +128,7 @@ pub(crate) struct Delivery {
 }
 
 impl Delivery {
-    /// An empty delivery context: no publishers, no pipeline, no retry publisher, a fresh
-    /// continuation tracker. For tests.
+    /// An empty delivery context: no retry publisher, a fresh continuation tracker. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::with_tasks(TaskTracker::new())
@@ -150,8 +139,6 @@ impl Delivery {
     #[cfg(test)]
     pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
         Self {
-            publishers: HashMap::new(),
-            pipeline: Arc::from([]),
             retry_publisher: None,
             tasks,
         }
@@ -161,8 +148,6 @@ impl Delivery {
 impl std::fmt::Debug for Delivery {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Delivery")
-            .field("publishers", &self.publishers.len())
-            .field("layers", &self.pipeline.len())
             .field("retry_publisher", &self.retry_publisher.is_some())
             .field("pending_continuations", &self.tasks.len())
             .finish_non_exhaustive()
@@ -808,8 +793,6 @@ mod tests {
         // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
         let mut sub = broker.subscribe("orders");
         let delivery = Delivery {
-            publishers: HashMap::new(),
-            pipeline: Arc::from([]),
             retry_publisher: Some(Arc::new(broker.publisher())),
             tasks: TaskTracker::new(),
         };
@@ -844,8 +827,6 @@ mod tests {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
         let delivery = Delivery {
-            publishers: HashMap::new(),
-            pipeline: Arc::from([]),
             retry_publisher: Some(Arc::new(broker.publisher())),
             tasks: TaskTracker::new(),
         };
@@ -891,8 +872,6 @@ mod tests {
         // land here and never on `sub`.
         let other = MemoryBroker::new();
         let delivery = Delivery {
-            publishers: HashMap::new(),
-            pipeline: Arc::from([]),
             retry_publisher: Some(Arc::new(other.publisher())),
             tasks: TaskTracker::new(),
         };

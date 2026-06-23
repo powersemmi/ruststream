@@ -29,7 +29,7 @@ A `#[subscriber]` handler that reads state names it as the third `Context` gener
 type matches, checked at compile time. A plain handler that names no state type is generic over it
 and mounts on any app; a `publish(..)` handler instead pins its state to `()` when none is named, so
 name the app's state explicitly to mount one on a stateful app. Everything else the context carries
-(the headers working copy, named publishers) is covered in [Context and state](context.md).
+(the headers working copy, broker per-delivery fields) is covered in [Context and state](context.md).
 
 ## Lifecycle hooks
 

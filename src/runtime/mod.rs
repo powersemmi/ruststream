@@ -31,9 +31,9 @@ pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     Outgoing, PublishIdentity, PublishLayer, PublishMiddleware, PublishNext, PublishStack,
-    ReplyPublisher, ScopedPublisher, Transactional, TypedPublisher,
+    ReplyPublisher, Transactional, TypedPublisher,
 };
-pub use publisher_registry::{ErasedPublisher, PublisherKey};
+pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingDef, PublishingHandler};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;

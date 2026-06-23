@@ -1,19 +1,15 @@
 //! The [`RustStream`] builder: construction, configuration and handler registration.
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    error::Error as StdError,
-    future::Future,
-    sync::Arc,
-    time::Duration,
+    collections::BTreeMap, error::Error as StdError, future::Future, sync::Arc, time::Duration,
 };
 
 use crate::codec::Codec;
-use crate::{Broker, Publisher, ServerSpec};
+use crate::{Broker, ServerSpec};
 
 use tokio_util::task::TaskTracker;
 
-use crate::runtime::dispatch::{Delivery, Publishers};
+use crate::runtime::dispatch::Delivery;
 use crate::runtime::lifecycle::{BoxError, BrokerLifecycle};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
@@ -68,7 +64,6 @@ pub struct RustStream<L = Identity, St = ()> {
     pub(super) starters: Vec<Starter<St>>,
     pub(super) handlers: Vec<HandlerMetadata>,
     pub(super) servers: BTreeMap<String, ServerSpec>,
-    pub(super) publishers: Publishers,
     pub(super) publish_layers: Vec<Arc<dyn PublishMiddleware>>,
     pub(super) state_init: StateInit<St>,
     pub(super) after_startup: Vec<LifecycleHook<St>>,
@@ -103,7 +98,6 @@ impl RustStream<Identity, ()> {
             starters: Vec::new(),
             handlers: Vec::new(),
             servers: BTreeMap::new(),
-            publishers: HashMap::new(),
             publish_layers: Vec::new(),
             state_init: Box::new(|| Box::pin(async { Ok(()) })),
             after_startup: Vec::new(),
@@ -128,7 +122,6 @@ impl<L, St> RustStream<L, St> {
             starters: self.starters,
             handlers: self.handlers,
             servers: self.servers,
-            publishers: self.publishers,
             publish_layers: self.publish_layers,
             state_init: self.state_init,
             after_startup: self.after_startup,
@@ -167,7 +160,6 @@ impl<L, St> RustStream<L, St> {
             starters: Vec::new(),
             handlers: self.handlers,
             servers: self.servers,
-            publishers: self.publishers,
             publish_layers: self.publish_layers,
             state_init: Box::new(move || {
                 Box::pin(async move {
@@ -248,25 +240,6 @@ impl<L, St> RustStream<L, St> {
     #[must_use]
     pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = Some(timeout);
-        self
-    }
-
-    /// Registers a named publisher under a compile-time
-    /// [`PublisherKey`](crate::runtime::PublisherKey), so handlers can publish to it by key
-    /// (including from a different broker's scope).
-    ///
-    /// Declare the key with [`publisher_key!`](crate::publisher_key) and import it at both the
-    /// registration and the handler. The publisher is held type-erased; resolve it with
-    /// [`BrokerScope::publisher`](BrokerScope::publisher) or
-    /// [`Context::publisher`](crate::runtime::Context::publisher).
-    #[must_use]
-    pub fn publisher<K, P>(mut self, _key: K, publisher: P) -> Self
-    where
-        K: crate::runtime::PublisherKey,
-        P: Publisher + 'static,
-    {
-        self.publishers
-            .insert(std::any::TypeId::of::<K>(), Arc::new(publisher));
         self
     }
 
@@ -359,7 +332,6 @@ impl<L, St> RustStream<L, St> {
         BrokerScope {
             broker: broker.clone(),
             sink: RouterSink::new(),
-            publishers: self.publishers.clone(),
             pipeline: self.publish_layers.iter().cloned().collect(),
             retry_publisher: None,
             global: self.global.clone(),
@@ -375,8 +347,6 @@ impl<L, St> RustStream<L, St> {
     {
         let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
         let delivery = Arc::new(Delivery {
-            publishers: self.publishers.clone(),
-            pipeline: scope.pipeline.clone(),
             retry_publisher: scope.retry_publisher.clone(),
             tasks: self.continuations.clone(),
         });
