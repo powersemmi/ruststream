@@ -38,10 +38,10 @@ struct Event {
 }
 
 // --8<-- [start:reply]
-// The app declares a typed state (`AppState`), so a `publish(..)` handler names it as the third
-// `Context` generic even when it does not read it.
+// A `publish(..)` handler that does not read the app state omits the `Context` parameter entirely;
+// it stays generic over the state and mounts on an app with any state type.
 #[subscriber("requests", publish("responses"))]
-async fn respond(req: &Request, _ctx: &mut Context<'_, (), AppState>) -> Response {
+async fn respond(req: &Request) -> Response {
     println!("responding to request {}", req.id);
     Response { ok: true }
 }
@@ -51,10 +51,7 @@ async fn respond(req: &Request, _ctx: &mut Context<'_, (), AppState>) -> Respons
 // `Ok` publishes the reply and acks; `Err` publishes nothing and the dispatcher acts on the
 // returned HandlerResult (here: drop the malformed request instead of replying).
 #[subscriber("validated-requests", publish("responses"))]
-async fn validate(
-    req: &Request,
-    _ctx: &mut Context<'_, (), AppState>,
-) -> Result<Response, HandlerResult> {
+async fn validate(req: &Request) -> Result<Response, HandlerResult> {
     if req.id == 0 {
         return Err(HandlerResult::drop());
     }
@@ -110,10 +107,7 @@ impl PublishMiddleware for AuditPublish {
 // --8<-- [start:batch_publishing]
 /// Confirms a whole page of orders; the replies become visible atomically on commit.
 #[subscriber(batch("orders"), publish("confirmations"))]
-async fn confirm(
-    orders: &[Event],
-    _ctx: &mut Context<'_, (), AppState>,
-) -> Result<Vec<Event>, HandlerResult> {
+async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
     if orders.is_empty() {
         return Err(HandlerResult::drop()); // nothing published, whole batch settled
     }

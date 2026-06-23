@@ -24,10 +24,9 @@ fixing the app's state type:
 
 The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
 the third `Context` generic (`Context<'_, C, S>`), and the runtime only lets that handler mount on
-an app whose state type matches. A plain handler that names no state type is generic over it, so it
-mounts on any app. (A `publish(..)` handler is the exception: it pins its state to `()` when none is
-named, so to mount one on a stateful app name the app's state explicitly as
-`ctx: &mut Context<'_, (), S>`.) The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
+an app whose state type matches. A handler that names no state type is generic over it, so it mounts
+on any app - this holds for `publish(..)` handlers too: one that ignores the state omits the
+`Context` parameter entirely and still mounts on a stateful app. The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
 references, not copies; interior mutability (an `AtomicU64`, a mutex-guarded map) is the tool when a
 shared value must change at runtime. See [Lifespan](lifespan.md) for the startup-hook contract.
 

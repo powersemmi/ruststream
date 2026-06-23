@@ -10,7 +10,7 @@ use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{
-    BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
+    BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
 };
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
@@ -18,7 +18,7 @@ use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
 use crate::runtime::publish::{PublishLayer, PublishMiddleware, ReplyPublisher, TypedPublisher};
 use crate::runtime::publisher_registry::ErasedPublisher;
-use crate::runtime::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
+use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
 use crate::runtime::router::{RouterDef, RouterSink};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::{Typed, typed};
@@ -199,7 +199,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
     ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef<State = St> + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
@@ -232,7 +232,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,

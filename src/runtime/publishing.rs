@@ -32,11 +32,6 @@ pub trait PublishingDef: Send + Sync {
     /// The reply type the handler produces, encoded and published.
     type Reply;
 
-    /// The app's typed shared state the handler reads through
-    /// [`Context::state`](super::Context::state) (`()` when it names none). A publishing subscriber
-    /// mounts only on an app whose state type matches.
-    type State: Send + Sync;
-
     /// The subscription source this handler binds to (see
     /// [`SubscriberDef::Source`](super::SubscriberDef::Source)).
     type Source;
@@ -82,16 +77,24 @@ pub trait PublishingDef: Send + Sync {
     fn message_description(&self) -> Option<&'static str> {
         None
     }
+}
 
+/// Runs a [`PublishingDef`]'s handler body over an app state of type `S`.
+///
+/// Split from [`PublishingDef`] so a handler that ignores the app state is generic over `S` (mounts
+/// on any app), while one that reads it via [`Context::state`](super::Context::state) implements
+/// this only for its declared `S` - the same shape as [`Handler<M, C, S>`](super::Handler), so the
+/// state match is checked at compile time without pinning a single `State` on the def.
+pub trait PublishingCall<S>: PublishingDef {
     /// Runs the handler body.
     ///
-    /// `Ok(reply)` is encoded and published to [`reply_name`](Self::reply_name), then the incoming
-    /// message is acked. `Err(result)` skips publishing and the dispatcher acts on the returned
-    /// [`HandlerResult`] (for example [`HandlerResult::retry`] to ask for redelivery).
+    /// `Ok(reply)` is encoded and published to [`reply_name`](PublishingDef::reply_name), then the
+    /// incoming message is acked. `Err(result)` skips publishing and the dispatcher acts on the
+    /// returned [`HandlerResult`] (for example [`HandlerResult::retry`] to ask for redelivery).
     fn call(
         &self,
         input: &Self::Input,
-        ctx: &mut Context<'_, (), Self::State>,
+        ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
 }
 
@@ -130,18 +133,19 @@ impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
     }
 }
 
-impl<M, D, C, P, PC, PL> Handler<M, (), D::State> for PublishingHandler<D, C, P, PC, PL>
+impl<M, D, C, P, PC, PL, S> Handler<M, (), S> for PublishingHandler<D, C, P, PC, PL>
 where
     M: IncomingMessage,
-    D: PublishingDef,
+    D: PublishingCall<S>,
     D::Input: DeserializeOwned + Send + Sync,
     D::Reply: Serialize + Send + Sync,
     C: Codec,
     P: Publisher,
     PC: Codec,
     PL: PublishLayer,
+    S: Send + Sync,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, (), D::State>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, (), S>) -> Settle {
         // The publishing path settles by a bare outcome (no per-element continuation): decode,
         // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
@@ -189,7 +193,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{PublishingDef, publishing_metadata};
+    use super::{PublishingCall, PublishingDef, publishing_metadata};
     use crate::Headers;
     use crate::Name;
     use crate::runtime::context::Context;
@@ -203,7 +207,6 @@ mod tests {
     impl PublishingDef for ManualPub {
         type Input = u32;
         type Reply = u32;
-        type State = ();
         type Source = Name;
 
         fn source(&self) -> Name {
@@ -216,8 +219,15 @@ mod tests {
         fn reply_name(&self) -> &str {
             "out"
         }
+    }
 
-        async fn call(&self, input: &u32, _ctx: &mut Context<'_>) -> Result<u32, HandlerResult> {
+    // Ignores the app state, so it is generic over it (mounts on any app).
+    impl<S: Send + Sync> PublishingCall<S> for ManualPub {
+        async fn call(
+            &self,
+            input: &u32,
+            _ctx: &mut Context<'_, (), S>,
+        ) -> Result<u32, HandlerResult> {
             Ok(*input)
         }
     }

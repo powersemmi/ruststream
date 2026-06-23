@@ -8,11 +8,11 @@ use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchDef;
-use crate::runtime::batch_publishing::BatchPublishingDef;
+use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::middleware::Layer;
 use crate::runtime::publish::{PublishLayer, ReplyPublisher, TypedPublisher};
-use crate::runtime::publishing::{PublishingDef, PublishingHandler};
+use crate::runtime::publishing::{PublishingCall, PublishingHandler};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -144,7 +144,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
     /// every reply, commits, then acks the batch; any failure aborts and the batch is retried.
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
-        D: BatchPublishingDef<State = St> + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -164,7 +164,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef<State = St> + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
@@ -182,7 +182,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
     /// default with [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec).
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
@@ -215,7 +215,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         P: Publisher + 'static,
@@ -322,7 +322,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
     /// through `publisher`.
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
-        D: BatchPublishingDef<State = St> + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -341,7 +341,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef<State = St> + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
@@ -355,7 +355,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
     /// input with the scope's default codec and sending the reply through `publisher`.
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
@@ -388,7 +388,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         P: Publisher + 'static,
