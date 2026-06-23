@@ -25,8 +25,9 @@ use super::handler::{Handler, HandlerResult};
 use super::publish::PublishMiddleware;
 use super::publisher_registry::ErasedPublisher;
 
-/// Named publishers registered on the application, resolvable from a [`Context`] by name.
-pub(crate) type Publishers = HashMap<String, Arc<dyn ErasedPublisher>>;
+/// Named publishers registered on the application, resolvable from a [`Context`] by a compile-time
+/// [`PublisherKey`](super::PublisherKey) (keyed by the key type's `TypeId`, not a hashed string).
+pub(crate) type Publishers = HashMap<std::any::TypeId, Arc<dyn ErasedPublisher>>;
 
 /// Header carrying the framework's deferred-republish retry count.
 ///

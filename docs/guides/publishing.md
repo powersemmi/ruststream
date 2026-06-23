@@ -55,13 +55,19 @@ Make publishing handlers idempotent under redelivery.
 ## Publishing from inside a handler
 
 To publish to a destination other than a single reply (fan-out, side effects, routing to a different
-broker), register a named publisher on the application and resolve it from the context.
+broker), register a named publisher on the application under a compile-time `PublisherKey` and
+resolve it from the context by the same key. Declare the key once with `publisher_key!` and import
+it at both sites; a misspelled key is a compile error, not a runtime `None`.
 
 <!-- inline-rust: minimal named-publisher registration fragment; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
 ```rust
-// register at build time
+use ruststream::publisher_key;
+
+publisher_key!(Egress);
+
+// register at build time, bound to the key
 let app = RustStream::new(info)
-    .publisher("egress", egress_publisher)
+    .publisher(Egress, egress_publisher)
     .with_broker(broker, |b| b.include(forward));
 ```
 

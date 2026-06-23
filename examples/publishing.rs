@@ -14,8 +14,11 @@ use ruststream::runtime::{
     AppInfo, HandlerResult, Outgoing, PublishLayer, PublishMiddleware, PublishNext, RustStream,
     TypedPublisher,
 };
-use ruststream::subscriber;
+use ruststream::{publisher_key, subscriber};
 use serde::{Deserialize, Serialize};
+
+// A compile-time publisher key: declared once, imported at both the registration and the handler.
+publisher_key!(Egress);
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -55,7 +58,7 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // --8<-- [start:forward]
 #[subscriber("ingress")]
 async fn forward(event: &Event, ctx: &mut Context<'_>) -> HandlerResult {
-    if let Some(publisher) = ctx.publisher("egress") {
+    if let Some(publisher) = ctx.publisher(Egress) {
         let payload = JsonCodec.encode(event).expect("serializable");
         let out = Outgoing::new("egress", payload);
         if publisher.publish(out).await.is_err() {
@@ -116,8 +119,8 @@ fn app() -> RustStream {
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
         // dynamic, app-wide: wraps every published message
         .publish_layer(AuditPublish)
-        // a named publisher, resolvable from any handler's context
-        .publisher("egress", egress)
+        // a named publisher under a compile-time key, resolvable from any handler's context
+        .publisher(Egress, egress)
         .with_broker(broker, |b| {
             // static, per-publisher: composed onto this TypedPublisher at compile time
             let replies = TypedPublisher::new(b.broker().publisher()).layer(EnvelopeLayer);

@@ -251,17 +251,22 @@ impl<L, St> RustStream<L, St> {
         self
     }
 
-    /// Registers a named publisher, so handlers can publish to it by name (including from a
-    /// different broker's scope).
+    /// Registers a named publisher under a compile-time
+    /// [`PublisherKey`](crate::runtime::PublisherKey), so handlers can publish to it by key
+    /// (including from a different broker's scope).
     ///
-    /// The publisher is held type-erased; resolve it with
-    /// [`BrokerScope::publisher`](BrokerScope::publisher).
+    /// Declare the key with [`publisher_key!`](crate::publisher_key) and import it at both the
+    /// registration and the handler. The publisher is held type-erased; resolve it with
+    /// [`BrokerScope::publisher`](BrokerScope::publisher) or
+    /// [`Context::publisher`](crate::runtime::Context::publisher).
     #[must_use]
-    pub fn publisher<P>(mut self, name: impl Into<String>, publisher: P) -> Self
+    pub fn publisher<K, P>(mut self, _key: K, publisher: P) -> Self
     where
+        K: crate::runtime::PublisherKey,
         P: Publisher + 'static,
     {
-        self.publishers.insert(name.into(), Arc::new(publisher));
+        self.publishers
+            .insert(std::any::TypeId::of::<K>(), Arc::new(publisher));
         self
     }
 
