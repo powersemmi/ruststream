@@ -150,7 +150,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = StubMsg(b"7".to_vec(), Headers::new());
         assert_eq!(
@@ -167,7 +167,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
         assert_eq!(
@@ -185,7 +185,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
         assert_eq!(
@@ -202,7 +202,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
         // Drive one delivery to pin the message type, then check the Debug rendering.
         let msg = StubMsg(b"5".to_vec(), Headers::new());
         let _ = handler.handle(&msg, &mut ctx).await;
@@ -266,7 +266,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("orders.inbound", &headers, &state, &delivery);
+        let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
         assert_eq!(
             handler.handle(&msg, &mut ctx).await.outcome(),

@@ -202,7 +202,7 @@ mod tests {
         let state = State::default();
         let delivery = crate::runtime::dispatch::Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("test", &headers, &state, &delivery);
+        let mut ctx = Context::new("test", &headers, &state, (), &delivery);
         assert_eq!(
             handler.handle(&Input, &mut ctx).await.outcome(),
             HandlerResult::Ack

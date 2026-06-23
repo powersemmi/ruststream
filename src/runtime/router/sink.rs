@@ -60,7 +60,7 @@ impl<B: Broker + 'static> RouterSink<B> {
     }
 
     /// Erases an already-created subscriber and its handler into a starter.
-    pub(crate) fn push_handle<S, H>(
+    pub(crate) fn push_handle<S, H, Cx>(
         &mut self,
         subscriber: S,
         handler: H,
@@ -68,7 +68,8 @@ impl<B: Broker + 'static> RouterSink<B> {
         policies: FailurePolicies,
     ) where
         S: Subscriber + Send + 'static,
-        H: Handler<S::Message> + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        H: Handler<S::Message, Cx> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());

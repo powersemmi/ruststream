@@ -100,12 +100,13 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
     /// Attaches `handler` (wrapped with the global stack) to an already-created `subscriber`.
     ///
     /// See [`Router::handle`](crate::runtime::Router::handle).
-    pub fn handle<S, H>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
+    pub fn handle<S, H, Cx>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
     where
         S: Subscriber + Send + 'static,
-        H: Handler<S::Message> + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        H: Handler<S::Message, Cx> + 'static,
         L: Layer<H>,
-        L::Handler: Handler<S::Message> + 'static,
+        L::Handler: Handler<S::Message, Cx> + 'static,
     {
         let handler = self.global.layer(handler);
         self.sink

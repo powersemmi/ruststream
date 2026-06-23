@@ -166,9 +166,7 @@ where
             Err(result) => return result.into(),
         };
         let name = self.def.reply_name();
-        let publish = self
-            .publisher
-            .publish(name, &reply, &self.pipeline, ctx.extensions());
+        let publish = self.publisher.publish(name, &reply, &self.pipeline);
         if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",
@@ -235,7 +233,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("in", &headers, &state, &delivery);
+        let mut ctx = Context::new("in", &headers, &state, (), &delivery);
         assert_eq!(def.call(&5, &mut ctx).await.unwrap(), 5);
     }
 }

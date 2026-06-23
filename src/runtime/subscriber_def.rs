@@ -140,7 +140,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("manual", &headers, &state, &delivery);
+        let mut ctx = Context::new("manual", &headers, &state, (), &delivery);
         assert_eq!(
             handler.handle(&7u32, &mut ctx).await.outcome(),
             HandlerResult::Ack

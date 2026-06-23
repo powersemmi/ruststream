@@ -19,7 +19,6 @@ mod router;
 mod subscriber_def;
 mod typed;
 
-pub use crate::Extensions;
 pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
 pub use batch_publishing::{BatchPublishingDef, BatchPublishingHandler};

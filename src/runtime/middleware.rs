@@ -50,7 +50,7 @@ pub trait BlanketLayer: Send + Sync {
 }
 
 /// Convenience extension trait for fluent layer stacking on any [`Handler`].
-pub trait HandlerExt<M>: Handler<M> + Sized {
+pub trait HandlerExt<M, C = ()>: Handler<M, C> + Sized {
     /// Wrap this handler with the given layer.
     fn with<L>(self, layer: L) -> L::Handler
     where
@@ -60,7 +60,7 @@ pub trait HandlerExt<M>: Handler<M> + Sized {
     }
 }
 
-impl<M, H> HandlerExt<M> for H where H: Handler<M> {}
+impl<M, C, H> HandlerExt<M, C> for H where H: Handler<M, C> {}
 
 /// The identity [`Layer`]: returns the handler unchanged. The default global stack on
 /// [`RustStream`](super::RustStream).
