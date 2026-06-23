@@ -98,9 +98,9 @@ enum Command {
 /// # }
 /// ```
 #[must_use]
-pub fn run_main<L, F>(build: F) -> ExitCode
+pub fn run_main<L, St, F>(build: F) -> ExitCode
 where
-    F: FnOnce() -> RustStream<L>,
+    F: FnOnce() -> RustStream<L, St>,
 {
     match execute(build) {
         Ok(()) => ExitCode::SUCCESS,
@@ -111,9 +111,9 @@ where
     }
 }
 
-fn execute<L, F>(build: F) -> Result<(), CliError>
+fn execute<L, St, F>(build: F) -> Result<(), CliError>
 where
-    F: FnOnce() -> RustStream<L>,
+    F: FnOnce() -> RustStream<L, St>,
 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse(&args)? {
@@ -162,7 +162,11 @@ fn parse_asyncapi(args: &[String]) -> Result<Command, CliError> {
 }
 
 #[cfg(feature = "asyncapi")]
-fn generate_spec<L>(app: &RustStream<L>, out: Option<&str>, yaml: bool) -> Result<(), CliError> {
+fn generate_spec<L, St>(
+    app: &RustStream<L, St>,
+    out: Option<&str>,
+    yaml: bool,
+) -> Result<(), CliError> {
     let spec = crate::asyncapi::build_spec(app);
     let text = if yaml {
         spec.to_yaml().map_err(CliError::SerializeYaml)?
@@ -181,7 +185,11 @@ fn generate_spec<L>(app: &RustStream<L>, out: Option<&str>, yaml: bool) -> Resul
 }
 
 #[cfg(not(feature = "asyncapi"))]
-fn generate_spec<L>(_app: &RustStream<L>, _out: Option<&str>, _yaml: bool) -> Result<(), CliError> {
+fn generate_spec<L, St>(
+    _app: &RustStream<L, St>,
+    _out: Option<&str>,
+    _yaml: bool,
+) -> Result<(), CliError> {
     Err(CliError::AsyncApiDisabled)
 }
 

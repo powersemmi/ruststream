@@ -42,16 +42,18 @@ pub trait Layer<H> {
 /// [`TracingLayer`](layers::TracingLayer). Implement it for a custom layer to let the app's global
 /// stack reach router handlers; a layer that only wraps specific handler types cannot be blanket.
 pub trait BlanketLayer: Send + Sync {
-    /// Wraps `handler`, returning the layered handler.
-    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
+    /// Wraps `handler`, returning the layered handler. `S` is the app's shared-state type, threaded
+    /// so a blanket layer wraps a router handler without fixing its state type.
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
         C: Send + 'static,
-        H: Handler<M, C> + 'static;
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static;
 }
 
 /// Convenience extension trait for fluent layer stacking on any [`Handler`].
-pub trait HandlerExt<M, C = ()>: Handler<M, C> + Sized {
+pub trait HandlerExt<M, C = (), S = ()>: Handler<M, C, S> + Sized {
     /// Wrap this handler with the given layer.
     fn with<L>(self, layer: L) -> L::Handler
     where
@@ -61,7 +63,7 @@ pub trait HandlerExt<M, C = ()>: Handler<M, C> + Sized {
     }
 }
 
-impl<M, C, H> HandlerExt<M, C> for H where H: Handler<M, C> {}
+impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 
 /// The identity [`Layer`]: returns the handler unchanged. The default global stack on
 /// [`RustStream`](super::RustStream).
@@ -77,11 +79,12 @@ impl<H> Layer<H> for Identity {
 }
 
 impl BlanketLayer for Identity {
-    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
         C: Send + 'static,
-        H: Handler<M, C> + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         handler
     }
@@ -121,15 +124,16 @@ where
     Inner: BlanketLayer,
     Outer: BlanketLayer,
 {
-    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
         C: Send + 'static,
-        H: Handler<M, C> + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         // Same order as the static `Layer` impl: inner wraps first (innermost), outer outside.
         self.outer
-            .apply::<M, C, _>(self.inner.apply::<M, C, _>(handler))
+            .apply::<M, C, S, _>(self.inner.apply::<M, C, S, _>(handler))
     }
 }
 
@@ -169,11 +173,12 @@ pub mod layers {
     }
 
     impl BlanketLayer for TracingLayer {
-        fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
+        fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
         where
             M: Send + Sync + 'static,
             C: Send + 'static,
-            H: Handler<M, C> + 'static,
+            S: Send + Sync + 'static,
+            H: Handler<M, C, S> + 'static,
         {
             self.layer(handler)
         }
@@ -186,14 +191,19 @@ pub mod layers {
         target: Option<&'static str>,
     }
 
-    impl<M, C, H> Handler<M, C> for TracingHandler<H>
+    impl<M, C, S, H> Handler<M, C, S> for TracingHandler<H>
     where
         M: Sync,
         C: Send,
-        H: Handler<M, C>,
+        S: Send + Sync,
+        H: Handler<M, C, S>,
     {
         #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]
-        fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> impl Future<Output = Settle> + Send {
+        fn handle(
+            &self,
+            msg: &M,
+            ctx: &mut Context<'_, C, S>,
+        ) -> impl Future<Output = Settle> + Send {
             async move {
                 debug!(target: "ruststream::dispatch", "delivery received");
                 // Log the outcome inside the settlement; the continuation (if any) flows through.

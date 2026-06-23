@@ -12,6 +12,7 @@ use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{Router, RouterDef, TypedPublisher};
 
+use crate::domain::Repository;
 use crate::observability::StampSource;
 use crate::{orders, payments};
 
@@ -32,7 +33,7 @@ use crate::{orders, payments};
 pub(crate) fn orders(
     broker: &MemoryBroker,
     metrics: &Metrics,
-) -> impl RouterDef<MemoryBroker> + use<> {
+) -> impl RouterDef<MemoryBroker, Repository> + use<> {
     let confirmations = TypedPublisher::new(broker.publisher()).layer(StampSource);
 
     Router::new()
@@ -50,7 +51,7 @@ pub(crate) fn orders(
 pub(crate) fn payments(
     broker: &MemoryBroker,
     metrics: &Metrics,
-) -> impl RouterDef<MemoryBroker> + use<> {
+) -> impl RouterDef<MemoryBroker, Repository> + use<> {
     let settlements = TypedPublisher::new(broker.publisher()).transactional();
 
     Router::new()

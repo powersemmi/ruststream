@@ -32,6 +32,11 @@ pub trait PublishingDef: Send + Sync {
     /// The reply type the handler produces, encoded and published.
     type Reply;
 
+    /// The app's typed shared state the handler reads through
+    /// [`Context::state`](super::Context::state) (`()` when it names none). A publishing subscriber
+    /// mounts only on an app whose state type matches.
+    type State: Send + Sync;
+
     /// The subscription source this handler binds to (see
     /// [`SubscriberDef::Source`](super::SubscriberDef::Source)).
     type Source;
@@ -86,7 +91,7 @@ pub trait PublishingDef: Send + Sync {
     fn call(
         &self,
         input: &Self::Input,
-        ctx: &mut Context<'_>,
+        ctx: &mut Context<'_, (), Self::State>,
     ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
 }
 
@@ -125,7 +130,7 @@ impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
     }
 }
 
-impl<M, D, C, P, PC, PL> Handler<M> for PublishingHandler<D, C, P, PC, PL>
+impl<M, D, C, P, PC, PL> Handler<M, (), D::State> for PublishingHandler<D, C, P, PC, PL>
 where
     M: IncomingMessage,
     D: PublishingDef,
@@ -136,7 +141,7 @@ where
     PC: Codec,
     PL: PublishLayer,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, (), D::State>) -> Settle {
         // The publishing path settles by a bare outcome (no per-element continuation): decode,
         // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
@@ -187,7 +192,7 @@ mod tests {
     use super::{PublishingDef, publishing_metadata};
     use crate::Headers;
     use crate::Name;
-    use crate::runtime::context::{Context, State};
+    use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
     use crate::runtime::handler::HandlerResult;
 
@@ -198,6 +203,7 @@ mod tests {
     impl PublishingDef for ManualPub {
         type Input = u32;
         type Reply = u32;
+        type State = ();
         type Source = Name;
 
         fn source(&self) -> Name {
@@ -230,7 +236,7 @@ mod tests {
         let meta = publishing_metadata("in".to_owned(), &def);
         assert_eq!(meta.name, "in");
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("in", &headers, &state, (), &delivery);

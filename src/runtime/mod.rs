@@ -22,7 +22,7 @@ mod typed;
 pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
 pub use batch_publishing::{BatchPublishingDef, BatchPublishingHandler};
-pub use context::{After, Context, State};
+pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use failure::{FailurePolicies, FailurePolicy};
@@ -35,6 +35,6 @@ pub use publish::{
 };
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingDef, PublishingHandler};
-pub use router::{Router, RouterDef, RouterSink};
+pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

@@ -1,14 +1,14 @@
-//! Per-delivery [`Context`] and the app-level [`State`] type-map.
+//! Per-delivery [`Context`], generic over the broker's typed per-delivery context `C` and the
+//! application's typed shared state `S`.
 //!
 //! A `Context` is built for each delivery and threaded (as `&mut`) through the middleware chain
 //! into the handler. It carries the channel the message arrived on, a working copy of the
-//! headers (middleware may enrich them), shared application state ([`Context::state`]), and the
-//! broker's typed per-delivery context read by key ([`Context::context`] / [`Context::set`]). The
-//! copy is lazy: the message headers are borrowed until the first [`headers_mut`](Context::headers_mut),
-//! so a delivery whose middleware never touches them pays no clone.
+//! headers (middleware may enrich them), the typed shared application state ([`Context::state`]),
+//! and the broker's typed per-delivery context read by key ([`Context::context`] /
+//! [`Context::set`]). The copy is lazy: the message headers are borrowed until the first
+//! [`headers_mut`](Context::headers_mut), so a delivery whose middleware never touches them pays no
+//! clone.
 
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -56,39 +56,6 @@ struct AfterHook {
     fut: Continuation,
 }
 
-/// App-level shared state: a type-map holding one value per type.
-///
-/// Put shared resources (database pools, HTTP clients, configuration) in here with
-/// [`RustStream::insert_state`](super::RustStream::insert_state); handlers and middleware read them
-/// from the [`Context`] with [`Context::state`] then [`State::get`]. For data scoped to a single
-/// delivery (broker fields, or middleware scratch), use the typed per-delivery context instead,
-/// reached with [`Context::context`] / [`Context::set`].
-#[derive(Default)]
-pub struct State {
-    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-}
-
-impl State {
-    /// Inserts `value`, replacing any previous value of the same type.
-    pub fn insert<T: Any + Send + Sync>(&mut self, value: T) {
-        self.map.insert(TypeId::of::<T>(), Box::new(value));
-    }
-
-    /// Returns the stored value of type `T`, if any.
-    #[must_use]
-    pub fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
-        self.map.get(&TypeId::of::<T>())?.downcast_ref::<T>()
-    }
-}
-
-impl std::fmt::Debug for State {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("State")
-            .field("entries", &self.map.len())
-            .finish_non_exhaustive()
-    }
-}
-
 /// Per-delivery context, threaded through middleware and into the handler.
 ///
 /// Carries the channel ([`name`](Self::name)), a working copy of the message
@@ -98,18 +65,18 @@ impl std::fmt::Debug for State {
 /// [`publisher`](Self::publisher)s for publishing from inside a handler. The headers copy is made
 /// lazily on the first [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit
 /// it: replies and manual publishes start from fresh headers, shaped by the publish pipeline.
-pub struct Context<'a, C = ()> {
+pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
     original: &'a Headers,
     modified: Option<Headers>,
-    state: &'a State,
+    state: &'a S,
     cx: C,
     delivery: &'a Delivery,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
 }
 
-impl<C> std::fmt::Debug for Context<'_, C> {
+impl<C, S> std::fmt::Debug for Context<'_, C, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context")
             .field("name", &self.name)
@@ -118,14 +85,14 @@ impl<C> std::fmt::Debug for Context<'_, C> {
     }
 }
 
-impl<'a, C> Context<'a, C> {
+impl<'a, C, S> Context<'a, C, S> {
     /// Creates a context for one delivery, borrowing the message headers until first mutation and
     /// carrying the typed per-delivery context `cx` (built by
     /// [`BuildContext`](crate::BuildContext) from the broker message).
     pub(crate) fn new(
         name: &'a str,
         headers: &'a Headers,
-        state: &'a State,
+        state: &'a S,
         cx: C,
         delivery: &'a Delivery,
     ) -> Self {
@@ -192,9 +159,8 @@ impl<'a, C> Context<'a, C> {
         self.modified.get_or_insert_with(|| self.original.clone())
     }
 
-    /// Returns the shared application [`State`], the type-map set once at build with
-    /// [`RustStream::insert_state`](super::RustStream::insert_state). Read a value from it with
-    /// [`State::get`].
+    /// Returns the shared application state: the typed `S` the app's `on_startup` produced (or
+    /// `()` when the app declares none), borrowed for the delivery. Read its fields directly.
     ///
     /// # Examples
     ///
@@ -202,15 +168,20 @@ impl<'a, C> Context<'a, C> {
     /// use ruststream::IncomingMessage;
     /// use ruststream::runtime::{Context, HandlerResult};
     ///
-    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
-    ///     if let Some(prefix) = ctx.state().get::<String>() {
-    ///         let _ = prefix;
-    ///     }
+    /// struct AppState {
+    ///     prefix: String,
+    /// }
+    ///
+    /// async fn handle<M: IncomingMessage>(
+    ///     _msg: &M,
+    ///     ctx: &mut Context<'_, (), AppState>,
+    /// ) -> HandlerResult {
+    ///     let _prefix = &ctx.state().prefix;
     ///     HandlerResult::Ack
     /// }
     /// ```
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &S {
         self.state
     }
 
@@ -327,7 +298,7 @@ impl<'a, C> Context<'a, C> {
     ///     };
     /// }
     /// ```
-    pub fn after(&mut self, outcome: HandlerResult) -> After<'_, 'a, C> {
+    pub fn after(&mut self, outcome: HandlerResult) -> After<'_, 'a, C, S> {
         After {
             ctx: self,
             gate: Some(OutcomeKind::of(outcome)),
@@ -443,18 +414,18 @@ impl<'a, C> Context<'a, C> {
 /// Call [`then`](Self::then) to register the continuation. Holding it without calling `then`
 /// registers nothing.
 #[must_use = "call `.then(fut)` to register the post-settle hook"]
-pub struct After<'ctx, 'a, C = ()> {
-    ctx: &'ctx mut Context<'a, C>,
+pub struct After<'ctx, 'a, C = (), S = ()> {
+    ctx: &'ctx mut Context<'a, C, S>,
     gate: Option<OutcomeKind>,
 }
 
-impl<C> std::fmt::Debug for After<'_, '_, C> {
+impl<C, S> std::fmt::Debug for After<'_, '_, C, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("After").field("gate", &self.gate).finish()
     }
 }
 
-impl<C> After<'_, '_, C> {
+impl<C, S> After<'_, '_, C, S> {
     /// Registers `fut` to run after the message settles, if the settlement matches the gate this
     /// builder was created with (see [`Context::after`]).
     ///
@@ -488,7 +459,7 @@ mod tests {
 
     use futures::future::join_all;
 
-    use super::{Context, State};
+    use super::Context;
     use crate::Headers;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::handler::HandlerResult;
@@ -527,7 +498,7 @@ mod tests {
 
     #[test]
     fn take_hooks_runs_only_the_matching_gate() {
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("t", &headers, &state, (), &delivery);
@@ -570,7 +541,7 @@ mod tests {
 
     #[test]
     fn take_settle_hooks_drops_outcome_gated_ones() {
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("t", &headers, &state, (), &delivery);
@@ -609,8 +580,7 @@ mod tests {
             }
         }
 
-        let mut state = State::default();
-        state.insert(String::from("app"));
+        let state = String::from("app");
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let ctx = Context::new("test", &headers, &state, Meta { offset: 42 }, &delivery);
@@ -618,7 +588,7 @@ mod tests {
         // The typed broker field is read by key, straight off the context.
         assert_eq!(ctx.context(Offset), 42);
         // App state is reached only through state(), independent of the per-delivery context.
-        assert_eq!(ctx.state().get::<String>().map(String::as_str), Some("app"));
+        assert_eq!(ctx.state().as_str(), "app");
     }
 
     #[test]
@@ -644,7 +614,7 @@ mod tests {
             }
         }
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("test", &headers, &state, Scratch::default(), &delivery);
@@ -658,7 +628,7 @@ mod tests {
     fn headers_clone_only_on_first_mutation() {
         let mut original = Headers::new();
         original.insert("k", "v");
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let mut ctx = Context::new("test", &original, &state, (), &delivery);
 

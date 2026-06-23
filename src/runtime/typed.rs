@@ -63,15 +63,16 @@ impl<M, T, C, H> fmt::Debug for Typed<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H, Cx> Handler<M, Cx> for Typed<M, T, C, H>
+impl<M, T, C, H, Cx, St> Handler<M, Cx, St> for Typed<M, T, C, H>
 where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync,
     C: Codec,
     Cx: Send,
-    H: Handler<T, Cx>,
+    St: Send + Sync,
+    H: Handler<T, Cx, St>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> Settle {
         match self.codec.decode::<T>(msg.payload()) {
             Ok(value) => self.inner.handle(&value, ctx).await,
             Err(err) => {
@@ -104,7 +105,7 @@ mod tests {
 
     use super::typed;
     use crate::codec::JsonCodec;
-    use crate::runtime::context::{Context, State};
+    use crate::runtime::context::Context;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::failure::FailurePolicy;
     use crate::runtime::handler::{Handler, HandlerResult};
@@ -147,7 +148,7 @@ mod tests {
     async fn decoded_value_reaches_inner() {
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
@@ -164,7 +165,7 @@ mod tests {
     async fn decode_failure_drops_by_default() {
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
@@ -182,7 +183,7 @@ mod tests {
         let seen = Arc::new(AtomicU32::new(0));
         let handler =
             typed(JsonCodec, counting_inner(&seen)).on_decode_failure(FailurePolicy::Retry);
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
@@ -199,7 +200,7 @@ mod tests {
     async fn typed_handler_is_debug_and_stub_acks() {
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
@@ -263,7 +264,7 @@ mod tests {
 
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);

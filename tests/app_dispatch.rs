@@ -12,7 +12,7 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerResult, Layer, Outgoing,
-    PublishMiddleware, PublishNext, Router, RustStream, Settle, State,
+    PublishMiddleware, PublishNext, Router, RustStream, Settle,
 };
 use ruststream::{Name, OutgoingMessage, Publisher};
 use serde::{Deserialize, Serialize};
@@ -50,13 +50,14 @@ impl<H> Layer<H> for CountLayer {
     }
 }
 
-impl<M, C, H> Handler<M, C> for CountHandler<H>
+impl<M, C, S, H> Handler<M, C, S> for CountHandler<H>
 where
     M: Sync,
     C: Send,
-    H: Handler<M, C>,
+    S: Send + Sync,
+    H: Handler<M, C, S>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.inner.handle(msg, ctx).await
     }
@@ -64,11 +65,12 @@ where
 
 // Lets CountLayer be an app-global layer that reaches router handlers via include_router.
 impl BlanketLayer for CountLayer {
-    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
         C: Send + 'static,
-        H: Handler<M, C> + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         CountHandler {
             inner: handler,
@@ -464,16 +466,18 @@ async fn handler_reads_context_topic_and_state() {
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .insert_state(Config {
-            greeting: "hello".to_owned(),
+        .on_startup(|()| async {
+            Ok::<_, std::convert::Infallible>(Config {
+                greeting: "hello".to_owned(),
+            })
         })
         .with_broker(broker, |b| {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &_, ctx: &mut Context| {
+                move |_msg: &_, ctx: &mut Context<'_, (), Config>| {
                     let name = ctx.name().to_owned();
-                    let greeting = ctx.state().get::<Config>().map(|c| c.greeting.clone());
+                    let greeting = Some(ctx.state().greeting.clone());
                     // Middleware/handlers may enrich the working headers.
                     ctx.headers_mut().insert("x-seen", b"1".to_vec());
                     let seen = Arc::clone(&seen_clone);
@@ -522,35 +526,34 @@ async fn lifespan_hooks_run_in_order() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
-        .on_startup(move |mut state: State| {
+        .on_startup(move |()| {
             let o1 = Arc::clone(&o1);
             async move {
-                state.insert(Config {
-                    greeting: "lazy".to_owned(),
-                });
                 o1.lock().expect("poisoned").push("startup");
-                Ok::<State, std::convert::Infallible>(state)
+                Ok::<Config, std::convert::Infallible>(Config {
+                    greeting: "lazy".to_owned(),
+                })
             }
         })
-        .after_startup(move |_state| {
+        .after_startup(move |_state: Arc<Config>| {
             let o2 = Arc::clone(&o2);
             async move {
                 o2.lock().expect("poisoned").push("after_startup");
                 Ok::<(), std::convert::Infallible>(())
             }
         })
-        .on_shutdown(move |_state| {
+        .on_shutdown(move |_state: Arc<Config>| {
             let o3 = Arc::clone(&o3);
             async move {
                 o3.lock().expect("poisoned").push("on_shutdown");
                 Ok::<(), std::convert::Infallible>(())
             }
         })
-        .after_shutdown(move |state| {
+        .after_shutdown(move |state: Arc<Config>| {
             let o4 = Arc::clone(&o4);
-            let greeting = state.get::<Config>().map(|c| c.greeting.clone());
+            let greeting = state.greeting.clone();
             async move {
-                assert_eq!(greeting.as_deref(), Some("lazy"));
+                assert_eq!(greeting.as_str(), "lazy");
                 o4.lock().expect("poisoned").push("after_shutdown");
                 Ok::<(), std::convert::Infallible>(())
             }

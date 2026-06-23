@@ -49,8 +49,8 @@ impl<H> Layer<H> for LogLayer {
     }
 }
 
-impl<M: Send + Sync, C: Send, H: Handler<M, C>> Handler<M, C> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> Settle {
+impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S> for Logged<H> {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
         println!("app layer -> {}", ctx.name());
         self.0.handle(msg, ctx).await
     }
@@ -59,11 +59,12 @@ impl<M: Send + Sync, C: Send, H: Handler<M, C>> Handler<M, C> for Logged<H> {
 // Reaching router handlers requires the layer to be a BlanketLayer: the router hides its
 // handlers' concrete types, so the wrap happens through this generic method at mount time.
 impl BlanketLayer for LogLayer {
-    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
         C: Send + 'static,
-        H: Handler<M, C> + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         Logged(handler)
     }

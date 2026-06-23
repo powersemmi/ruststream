@@ -50,12 +50,8 @@ struct Counters {
 /// retry-gated, and an ungated hook. The retry-gated one must never fire, proving drop and retry
 /// are distinct mechanics.
 #[subscriber("orders")]
-async fn handle_order(order: &Order, ctx: &mut Context) -> HandlerResult {
-    let c = ctx
-        .state()
-        .get::<Counters>()
-        .expect("counters in state")
-        .clone();
+async fn handle_order(order: &Order, ctx: &mut Context<'_, (), Counters>) -> HandlerResult {
+    let c = ctx.state().clone();
     let outcome = if order.id % 2 == 1 {
         HandlerResult::Ack
     } else {
@@ -88,9 +84,10 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let counters = Counters::default();
+    let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .insert_state(counters.clone())
+        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
         .with_broker(broker, |b| b.include(handle_order));
 
     let shutdown = Arc::new(Notify::new());

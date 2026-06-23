@@ -23,12 +23,9 @@ use crate::domain::{Cancellation, Confirmation, Order, Repository};
 #[subscriber(MemorySource::new("orders"), publish("confirmations"))]
 pub(crate) async fn confirm(
     order: &Order,
-    ctx: &mut Context<'_>,
+    ctx: &mut Context<'_, (), Repository>,
 ) -> Result<Confirmation, HandlerResult> {
-    let repo = ctx
-        .state()
-        .get::<Repository>()
-        .expect("repository set in on_startup");
+    let repo = ctx.state();
     tracing::debug!(
         order = order.id,
         customer = %order.customer,
@@ -56,11 +53,11 @@ pub(crate) async fn confirm(
 /// a transient store error, ack everything else (an unknown order is nothing to undo).
 // --8<-- [start:retry]
 #[subscriber("cancellations")]
-pub(crate) async fn on_cancel(cancel: &Cancellation, ctx: &mut Context<'_>) -> HandlerResult {
-    let repo = ctx
-        .state()
-        .get::<Repository>()
-        .expect("repository set in on_startup");
+pub(crate) async fn on_cancel(
+    cancel: &Cancellation,
+    ctx: &mut Context<'_, (), Repository>,
+) -> HandlerResult {
+    let repo = ctx.state();
     match repo.cancel(cancel.order_id).await {
         // A transient blip is worth a redelivery; an unknown order (or success) is nothing to undo.
         Err(e) if e.is_transient() => HandlerResult::retry(),
