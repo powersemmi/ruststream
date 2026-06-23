@@ -35,8 +35,13 @@ pub(crate) async fn process_payment(
 /// atomically on commit. The batch contract guarantees a non-empty page, so the handler maps it
 /// straight to replies; returning the bare `Vec` publishes them all and acks the batch.
 // --8<-- [start:batch]
+// This handler ignores the app state, but a `publish(..)` def pins its state type, so it names the
+// router's `Repository` state to mount alongside the stateful `process_payment` handler.
 #[subscriber(batch("clearings"), publish("settlements"))]
-pub(crate) async fn settle(clearings: &[Clearing]) -> Vec<Settlement> {
+pub(crate) async fn settle(
+    clearings: &[Clearing],
+    _ctx: &mut Context<'_, (), Repository>,
+) -> Vec<Settlement> {
     clearings
         .iter()
         .map(|c| Settlement {

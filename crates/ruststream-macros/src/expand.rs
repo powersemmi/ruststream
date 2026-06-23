@@ -282,10 +282,14 @@ fn expand_batch_publishing(
         message_meta,
         ctx_param,
         ctx_ty: _,
-        state_ty: _,
+        state_ty,
         workers_method,
         failure_method,
     } = parts;
+
+    // Like the single-message publishing form, a batch publishing handler pins its `State` to the
+    // type it names as the third `Context` generic (defaulting to `()`).
+    let state_ty = state_ty.clone().unwrap_or_else(|| quote!(()));
 
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
@@ -329,6 +333,7 @@ fn expand_batch_publishing(
         impl ::ruststream::runtime::BatchPublishingDef for #name {
             type Input = #input_ty;
             type Reply = #reply_elem;
+            type State = #state_ty;
             type Source = #source_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
@@ -349,7 +354,7 @@ fn expand_batch_publishing(
             async fn call(
                 &self,
                 #pat: &[#input_ty],
-                #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_ty>,
             ) -> ::core::result::Result<
                 ::std::vec::Vec<#reply_elem>,
                 ::ruststream::runtime::HandlerResult,
@@ -374,7 +379,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         message_meta,
         ctx_param,
         ctx_ty: _,
-        state_ty: _,
+        state_ty,
         workers_method,
         failure_method,
     } = parts;
@@ -387,16 +392,28 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ReturnType::Default => quote!(()),
     };
 
+    // As for `expand_subscribing`: a batch handler that names a state type is bound to it, one that
+    // names none is generic over the state, so it mounts on an app with any state type.
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
+
     quote! {
             #[derive(Clone, Copy)]
             #[allow(non_camel_case_types)]
             #vis struct #name;
 
-            impl ::ruststream::runtime::SliceHandler<#input_ty> for #name {
+            impl #impl_generics
+                ::ruststream::runtime::SliceHandler<#input_ty, #state_in_ctx> for #name
+            {
                 async fn handle_slice(
                     &self,
                     #pat: &[#input_ty],
-                    #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+                    #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
                 ) -> ::ruststream::runtime::BatchResult {
                     let outcome: #outcome_ty = (async move #block).await;
                     ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)

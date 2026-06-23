@@ -188,7 +188,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
         C: Codec + 'static,
         St: Send + Sync + 'static,
     {
@@ -212,7 +212,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
     ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingDef<State = St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,

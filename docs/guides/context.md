@@ -24,8 +24,10 @@ fixing the app's state type:
 
 The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
 the third `Context` generic (`Context<'_, C, S>`), and the runtime only lets that handler mount on
-an app whose state type matches. A handler that names no state type is generic over it, so it mounts
-on any app. The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
+an app whose state type matches. A plain handler that names no state type is generic over it, so it
+mounts on any app. (A `publish(..)` handler is the exception: it pins its state to `()` when none is
+named, so to mount one on a stateful app name the app's state explicitly as
+`ctx: &mut Context<'_, (), S>`.) The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
 references, not copies; interior mutability (an `AtomicU64`, a mutex-guarded map) is the tool when a
 shared value must change at runtime. See [Lifespan](lifespan.md) for the startup-hook contract.
 
@@ -53,7 +55,7 @@ What the context exposes:
 | `state()` | `&S` | the typed shared application state, borrowed directly |
 | `context(KEY)` | `KEY::Value` | a [broker field](#per-delivery-context) read by compile-time key |
 | `set(KEY, v)` | `()` | write a per-delivery [scratch value](#per-delivery-context) (middleware) |
-| `publisher(name)` | `Option<ScopedPublisher>` | a [named publisher](publishing.md#publishing-from-inside-a-handler) |
+| `publisher(KEY)` | `Option<ScopedPublisher>` | a [named publisher](publishing.md#publishing-from-inside-a-handler) resolved by compile-time key |
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 

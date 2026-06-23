@@ -37,6 +37,11 @@ pub trait BatchPublishingDef: Send + Sync {
     /// The reply element type; each entry of the returned `Vec` is encoded and published.
     type Reply;
 
+    /// The app's typed shared state the handler reads through
+    /// [`Context::state`](super::Context::state) (`()` when it names none). A batch publishing
+    /// subscriber mounts only on an app whose state type matches.
+    type State: Send + Sync;
+
     /// The subscription source this handler binds to (see
     /// [`SubscriberDef::Source`](super::SubscriberDef::Source)).
     type Source;
@@ -91,7 +96,7 @@ pub trait BatchPublishingDef: Send + Sync {
     fn call(
         &self,
         batch: &[Self::Input],
-        ctx: &mut Context<'_>,
+        ctx: &mut Context<'_, (), Self::State>,
     ) -> impl Future<Output = Result<Vec<Self::Reply>, HandlerResult>> + Send;
 }
 
@@ -133,7 +138,7 @@ impl<D, C, R> std::fmt::Debug for BatchPublishingHandler<D, C, R> {
     }
 }
 
-impl<M, D, C, R> BatchHandler<M> for BatchPublishingHandler<D, C, R>
+impl<M, D, C, R> BatchHandler<M, D::State> for BatchPublishingHandler<D, C, R>
 where
     M: IncomingMessage,
     D: BatchPublishingDef,
@@ -142,10 +147,10 @@ where
     C: Codec,
     R: ReplyPublisher,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), D::State>) {
         let subscription = ctx.name().to_owned();
         let (values, accepted) =
-            decode_batch::<M, D::Input, C>(batch, &self.codec, self.decode, ctx).await;
+            decode_batch::<M, D::Input, C, D::State>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }
@@ -198,6 +203,7 @@ mod tests {
     impl BatchPublishingDef for Confirm {
         type Input = u32;
         type Reply = u32;
+        type State = ();
         type Source = crate::Name;
 
         fn source(&self) -> Self::Source {

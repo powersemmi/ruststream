@@ -111,7 +111,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
         St: Send + Sync + 'static,
     {
         let source = def.source();
@@ -128,7 +128,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
         St: Send + Sync + 'static,
     {
         self.mount_batch(source, def, crate::codec::DefaultCodec::default());
@@ -144,7 +144,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
     /// every reply, commits, then acks the batch; any failure aborts and the batch is retried.
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingDef<State = St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -164,7 +164,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingDef<State = St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
@@ -294,7 +294,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
         St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
@@ -310,7 +310,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
         St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
@@ -322,7 +322,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
     /// through `publisher`.
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingDef<State = St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -341,7 +341,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingDef<State = St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,

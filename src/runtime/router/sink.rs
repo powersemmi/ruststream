@@ -101,7 +101,7 @@ impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         SourceMessage<B, S>: Send + 'static,
-        H: BatchHandler<SourceMessage<B, S>> + 'static,
+        H: BatchHandler<SourceMessage<B, S>, St> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());

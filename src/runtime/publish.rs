@@ -381,8 +381,7 @@ pub trait ReplyPublisher: Sealed + Send + Sync {
     #[doc(hidden)]
     fn reply_codec(&self) -> &Self::Codec;
 
-    /// Publishes one batch's replies to `name` through `pipeline`, carrying the originating
-    /// delivery's `extensions` for a transactional publisher to read at commit time.
+    /// Publishes one batch's replies to `name` through `pipeline`.
     #[doc(hidden)]
     fn publish_batch<'a, T>(
         &'a self,
@@ -437,9 +436,7 @@ where
     }
 
     /// All replies publish inside one transaction: begin, publish each, commit. Any failure
-    /// aborts the transaction, so none of the batch's replies become visible. The originating
-    /// delivery's `extensions` (for example a broker-supplied commit token) are carried through the
-    /// publish pipeline so a transactional middleware can read them at commit time.
+    /// aborts the transaction, so none of the batch's replies become visible.
     async fn publish_batch<'a, T>(
         &'a self,
         name: &'a str,

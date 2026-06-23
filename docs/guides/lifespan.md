@@ -26,9 +26,10 @@ scoped to one message rather than the whole service, use the typed
 
 A `#[subscriber]` handler that reads state names it as the third `Context` generic
 (`ctx: &mut Context<'_, (), S>`); the runtime only lets that handler mount on an app whose state
-type matches, checked at compile time. A handler that names no state type is generic over it and
-mounts on any app. Everything else the context carries (the headers working copy, named publishers)
-is covered in [Context and state](context.md).
+type matches, checked at compile time. A plain handler that names no state type is generic over it
+and mounts on any app; a `publish(..)` handler instead pins its state to `()` when none is named, so
+name the app's state explicitly to mount one on a stateful app. Everything else the context carries
+(the headers working copy, named publishers) is covered in [Context and state](context.md).
 
 ## Lifecycle hooks
 

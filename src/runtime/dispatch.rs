@@ -462,9 +462,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, St>(
     handler: Arc<H>,
     shutdown: CancellationToken,
     name: Arc<str>,
-    // Batch handlers do not read the typed app state (a separate follow-up); the state is still
-    // received for starter-signature uniformity.
-    _state: Arc<St>,
+    state: Arc<St>,
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
     workers: Workers,
@@ -472,7 +470,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, St>(
 where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
-    H: BatchHandler<S::Message> + 'static,
+    H: BatchHandler<S::Message, St> + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -490,15 +488,20 @@ where
                     Some(Ok(batch)) => {
                         let batch: Vec<S::Message> = batch.into_iter().collect();
                         if workers.is_sequential() {
-                            run_batch(&*handler, batch, &name, &delivery, &hooks, &failure).await;
+                            run_batch(&*handler, batch, &name, &state, &delivery, &hooks, &failure)
+                                .await;
                         } else {
                             let handler = Arc::clone(&handler);
                             let name = Arc::clone(&name);
+                            let state = Arc::clone(&state);
                             let delivery = Arc::clone(&delivery);
                             let hooks = hooks.clone();
                             let failure = failure.clone();
                             tasks.spawn(async move {
-                                run_batch(&*handler, batch, &name, &delivery, &hooks, &failure).await;
+                                run_batch(
+                                    &*handler, batch, &name, &state, &delivery, &hooks, &failure,
+                                )
+                                .await;
                             });
                         }
                     }
@@ -613,21 +616,23 @@ async fn dispatch<H, M, C, St>(
 /// (see the batch decode path for per-element decode handling). Ungated `after_settle` hooks run
 /// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-async fn run_batch<H, M>(
+async fn run_batch<H, M, St>(
     handler: &H,
     batch: Vec<M>,
     name: &str,
+    state: &St,
     delivery: &Delivery,
     hooks: &TaskTracker,
     failure: &DispatchFailure,
 ) where
-    H: BatchHandler<M>,
+    H: BatchHandler<M, St>,
     M: IncomingMessage,
+    St: Send + Sync,
 {
     let empty = Headers::new();
-    // A batch has no single broker message, and batch handlers do not read the typed app state
-    // (state access in a batch handler is a separate follow-up), so its context is fully unit.
-    let mut ctx = Context::new(name, &empty, &(), (), delivery).with_failfast(&failure.shutdown);
+    // A batch has no single broker message, so its per-delivery context is unit (`C = ()`); the
+    // shared app state is threaded the same way as on the single-message path.
+    let mut ctx = Context::new(name, &empty, state, (), delivery).with_failfast(&failure.shutdown);
     let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
         .catch_unwind()
         .await;

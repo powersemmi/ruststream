@@ -391,3 +391,68 @@ fn batch_def_records_metadata() {
         Some("Settles a whole page of orders at once."),
     );
 }
+
+/// Typed application state read from a batch handler: the multiplier is produced at startup and
+/// reaches the whole-batch handler through `ctx.state()`, the same as a single-message handler.
+#[derive(Clone, Copy)]
+struct Tally {
+    multiplier: u32,
+}
+
+static SCALED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static SCALE_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber(batch("scale"))]
+async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> HandlerResult {
+    let multiplier = ctx.state().multiplier;
+    SCALED
+        .lock()
+        .unwrap()
+        .extend(orders.iter().map(|o| o.id * multiplier));
+    SCALE_NOTIFY.notify_one();
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_handler_reads_typed_state() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .on_startup(|()| async { Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }) })
+        .with_broker(broker, |b| b.include_batch(scale));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            for id in 1..4u32 {
+                let _ = publisher
+                    .publish(OutgoingMessage::new("scale", &order_bytes(id)))
+                    .await;
+            }
+            handler_signal(&SCALE_NOTIFY).await;
+            if SCALED.lock().unwrap().len() >= 3 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "no scaled batch arrived within the deadline"
+    );
+
+    // Each id was multiplied by the state's multiplier (10), proving the handler read typed state.
+    let scaled = SCALED.lock().unwrap();
+    assert!(
+        scaled.iter().all(|n| n % 10 == 0),
+        "every value must be a multiple of the state multiplier; got {scaled:?}",
+    );
+    assert!(scaled.contains(&10) && scaled.contains(&20) && scaled.contains(&30));
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}

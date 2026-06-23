@@ -100,7 +100,7 @@ where
     S::Subscriber: BatchSubscriber + Send + 'static,
     SourceMessage<B, S>: Send + 'static,
     St: Send + Sync + 'static,
-    H: BatchHandler<SourceMessage<B, S>> + 'static,
+    H: BatchHandler<SourceMessage<B, S>, St> + 'static,
 {
     fn mount_one<G: BlanketLayer>(self, _global: &G, sink: &mut RouterSink<B, St>) {
         // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
