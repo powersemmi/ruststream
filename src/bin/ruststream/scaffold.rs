@@ -98,6 +98,8 @@ fn validate_name(name: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{BrokerKind, create_in, render, validate_name};
 
     #[test]
@@ -178,5 +180,51 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_in(tmp.path(), "svc", BrokerKind::Memory).unwrap();
         assert!(create_in(tmp.path(), "svc", BrokerKind::Memory).is_err());
+    }
+
+    /// Renders the `memory` scaffold and compiles it against this workspace, so template rot - an
+    /// API drift or an invalid feature in `Cargo.toml.in` - fails CI here instead of in a user's
+    /// first `cargo build`. The string-substitution tests above never compile the output; this one
+    /// does, the `memory` template being the only broker the core owns.
+    ///
+    /// Heavy (a nested `cargo build`), so it is opt-in like the trybuild UI test: the stable CI job
+    /// sets `RUN_SCAFFOLD_BUILD=1`; the 1.85 job, coverage, and a local `cargo test` leave it unset
+    /// and skip. The template pins the published `ruststream = "0.x"`, which is not on crates.io
+    /// during a pre-release cycle, so the generated manifest is patched to this workspace before the
+    /// build - exercising the template's real feature list and code, sourced locally.
+    #[test]
+    fn memory_scaffold_compiles() {
+        if std::env::var("RUN_SCAFFOLD_BUILD").as_deref() != Ok("1") {
+            eprintln!(
+                "skipping scaffold build; set RUN_SCAFFOLD_BUILD=1 (stable toolchain) to run"
+            );
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = create_in(tmp.path(), "scaffold_check", BrokerKind::Memory).unwrap();
+
+        let workspace = env!("CARGO_MANIFEST_DIR");
+        let manifest = dir.join("Cargo.toml");
+        let mut cargo = std::fs::read_to_string(&manifest).unwrap();
+        write!(
+            cargo,
+            "\n[patch.crates-io]\nruststream = {{ path = {workspace:?} }}\n"
+        )
+        .unwrap();
+        std::fs::write(&manifest, cargo).unwrap();
+
+        let cargo_bin = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+        let status = std::process::Command::new(cargo_bin)
+            .current_dir(&dir)
+            .args(["build"])
+            // A separate target dir keeps the nested build off the outer test run's lock.
+            .env("CARGO_TARGET_DIR", tmp.path().join("target"))
+            .status()
+            .expect("spawn cargo build for the scaffolded project");
+        assert!(
+            status.success(),
+            "the scaffolded memory project failed to compile"
+        );
     }
 }

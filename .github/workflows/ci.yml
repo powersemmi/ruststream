@@ -120,11 +120,14 @@ jobs:
       # The trybuild UI snapshots in tests/ui are rustc-version-sensitive, so they
       # run on stable only: RUN_UI_TESTS=1 opts the `ui` test in here, every other
       # run (the 1.85 job, the coverage job, a local `cargo test`) leaves it unset
-      # and the test skips itself.
+      # and the test skips itself. RUN_SCAFFOLD_BUILD=1 opts in the heavy `ruststream
+      # new` compile-check the same way (a nested `cargo build` of the rendered
+      # memory template), so template rot fails CI instead of a user's first build.
       - name: cargo test
         if: matrix.toolchain == 'stable' || matrix.toolchain == '1.85'
         env:
           RUN_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
+          RUN_SCAFFOLD_BUILD: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
         run: cargo test --workspace --all-features
 
   coverage:
