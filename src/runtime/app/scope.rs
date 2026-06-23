@@ -48,12 +48,15 @@ impl<B: Broker + 'static, L, C, St> BrokerScope<B, L, C, St> {
         &self.broker
     }
 
-    /// Resolves a named publisher registered with
-    /// [`RustStream::publisher`](crate::runtime::RustStream::publisher), to capture in a handler
-    /// and publish to.
+    /// Resolves a named publisher by its compile-time [`PublisherKey`](crate::runtime::PublisherKey),
+    /// registered with [`RustStream::publisher`](crate::runtime::RustStream::publisher), to capture
+    /// in a handler and publish to.
     #[must_use]
-    pub fn publisher(&self, name: &str) -> Option<Arc<dyn ErasedPublisher>> {
-        self.publishers.get(name).cloned()
+    pub fn publisher<K: crate::runtime::PublisherKey>(
+        &self,
+        _key: K,
+    ) -> Option<Arc<dyn ErasedPublisher>> {
+        self.publishers.get(&std::any::TypeId::of::<K>()).cloned()
     }
 
     /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.

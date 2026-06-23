@@ -14,11 +14,14 @@ use ruststream::runtime::{
     AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerResult, Layer, Outgoing,
     PublishMiddleware, PublishNext, Router, RustStream, Settle,
 };
-use ruststream::{Name, OutgoingMessage, Publisher};
+use ruststream::{Name, OutgoingMessage, Publisher, publisher_key};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::Notify;
+
+// Compile-time key for the cross-broker named publisher used by the bridge tests.
+publisher_key!(Egress);
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Order {
@@ -397,9 +400,9 @@ async fn cross_broker_publish_via_named_publisher() {
     let received_clone = Arc::clone(&received);
 
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
-        .publisher("egress", egress.publisher())
+        .publisher(Egress, egress.publisher())
         .with_broker(ingress, |b| {
-            let out = b.publisher("egress").expect("egress registered");
+            let out = b.publisher(Egress).expect("egress registered");
             b.subscribe(
                 Name::new("orders"),
                 move |_msg: &_, _ctx: &mut Context| {
@@ -659,7 +662,7 @@ struct Bridge;
 
 impl<M: Send + Sync> Handler<M> for Bridge {
     async fn handle(&self, _msg: &M, ctx: &mut Context<'_>) -> Settle {
-        if let Some(out) = ctx.publisher("egress") {
+        if let Some(out) = ctx.publisher(Egress) {
             let _ = out
                 .publish(Outgoing::new("responses", b"reply".as_slice()))
                 .await;
@@ -678,7 +681,7 @@ async fn ctx_publisher_runs_through_pipeline() {
     let tagged_clone = Arc::clone(&tagged);
 
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
-        .publisher("egress", egress.publisher())
+        .publisher(Egress, egress.publisher())
         .publish_layer(Tagger)
         .with_broker(ingress, |b| {
             b.subscribe(Name::new("orders"), Bridge, HandlerMetadata::raw("orders"));
