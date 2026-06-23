@@ -23,7 +23,9 @@ use crate::runtime::publishing::{PublishingDef, PublishingHandler, publishing_me
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::typed;
 
-use super::routes::{BatchRoute, HandleRoute, MountRoute, RouterDef, SubscribeRoute};
+use super::routes::{
+    BatchRoute, HandleRoute, MountRoute, RouteMeta, RouterDef, RouterHandlers, SubscribeRoute,
+};
 use super::sink::RouterSink;
 use super::{
     BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, MergedRouter, PublishingRouter,
@@ -141,7 +143,6 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         other: Router<B, R2, C2, L2>,
     ) -> MergedRouter<B, R2, C2, L2, RC, RL, R>
     where
-        R2: RouterDef<B>,
         L2: BlanketLayer,
     {
         Router {
@@ -465,7 +466,7 @@ impl<B, S, H, R, RC, RL> Router<B, (BatchRoute<S, H>, R), RC, RL> {
     }
 }
 
-impl<B: Broker + 'static, R: RouterDef<B>, C, L> Router<B, R, C, L> {
+impl<B: Broker + 'static, R: RouterHandlers, C, L> Router<B, R, C, L> {
     /// Returns metadata for every registered handler, in registration order.
     #[must_use]
     pub fn handlers(&self) -> Vec<HandlerMetadata> {
@@ -483,47 +484,59 @@ struct ComposedBlanket<'a, Outer, Inner> {
 }
 
 impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<'_, Outer, Inner> {
-    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
         C: Send + 'static,
-        H: Handler<M, C> + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         self.outer
-            .apply::<M, C, _>(self.inner.apply::<M, C, _>(handler))
+            .apply::<M, C, S, _>(self.inner.apply::<M, C, S, _>(handler))
     }
 }
 
-impl<B, R, C, L> RouterDef<B> for Router<B, R, C, L>
+impl<B, R, C, L, St> RouterDef<B, St> for Router<B, R, C, L>
 where
     B: Broker + 'static,
-    R: RouterDef<B>,
+    R: RouterDef<B, St>,
     L: BlanketLayer,
 {
-    fn mount<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
+    fn mount<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B, St>) {
         let composed = ComposedBlanket {
             outer: global,
             inner: &self.layers,
         };
         self.routes.mount(&composed, sink);
     }
+}
 
+impl<B, R, C, L> RouterHandlers for Router<B, R, C, L>
+where
+    R: RouterHandlers,
+{
     fn collect_handlers(&self, out: &mut Vec<HandlerMetadata>) {
         self.routes.collect_handlers(out);
     }
 }
 
 // Lets a whole router be a single registration inside another router's list (`Router::merge`).
-impl<B, R, C, L> MountRoute<B> for Router<B, R, C, L>
+impl<B, R, C, L, St> MountRoute<B, St> for Router<B, R, C, L>
 where
     B: Broker + 'static,
-    R: RouterDef<B>,
+    R: RouterDef<B, St>,
     L: BlanketLayer,
 {
-    fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
+    fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B, St>) {
         RouterDef::mount(self, global, sink);
     }
+}
 
+// Lets a merged router contribute its registrations' metadata to the outer router's `handlers()`.
+impl<B, R, C, L> RouteMeta for Router<B, R, C, L>
+where
+    R: RouterHandlers,
+{
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.routes.collect_handlers(out);
     }

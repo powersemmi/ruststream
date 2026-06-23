@@ -571,8 +571,8 @@ static CTX_REPLY: AtomicU32 = AtomicU32::new(0);
 static CTX_REPLY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("ctx-in", publish("ctx-out"))]
-async fn ctx_reply(req: &Request, ctx: &mut Context) -> Response {
-    let bump = ctx.state().get::<Bump>().map_or(0, |b| b.0);
+async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
+    let bump = ctx.state().0;
     Response {
         doubled: req.n + bump,
     }
@@ -592,7 +592,7 @@ async fn publishing_handler_reads_context_state() {
     let replies = TypedPublisher::new(broker.publisher());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .insert_state(Bump(100))
+        .on_startup(|()| async { Ok::<_, std::convert::Infallible>(Bump(100)) })
         .with_broker(broker, |b| {
             b.include_publishing(ctx_reply, replies);
             b.include(ctx_sink);

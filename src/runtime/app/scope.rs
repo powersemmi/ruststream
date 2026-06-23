@@ -31,9 +31,9 @@ use crate::runtime::typed::{Typed, typed};
 /// stack `L`; registrations are collected and started later, in
 /// [`RustStream::run`](crate::runtime::RustStream::run). Each handler registered here is wrapped
 /// with `L` before it is stored.
-pub struct BrokerScope<B, L = Identity, C = ()> {
+pub struct BrokerScope<B, L = Identity, C = (), St = ()> {
     pub(super) broker: Arc<B>,
-    pub(super) sink: RouterSink<B>,
+    pub(super) sink: RouterSink<B, St>,
     pub(super) publishers: Publishers,
     pub(super) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
@@ -41,7 +41,7 @@ pub struct BrokerScope<B, L = Identity, C = ()> {
     pub(super) codec: C,
 }
 
-impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
+impl<B: Broker + 'static, L, C, St> BrokerScope<B, L, C, St> {
     /// Returns the broker, for creating subscribers or publishers with its own API.
     #[must_use]
     pub fn broker(&self) -> &B {
@@ -103,10 +103,11 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
     pub fn handle<S, H, Cx>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
     where
         S: Subscriber + Send + 'static,
+        St: Send + Sync + 'static,
         Cx: crate::BuildContext<S::Message> + Send + 'static,
-        H: Handler<S::Message, Cx> + 'static,
+        H: Handler<S::Message, Cx, St> + 'static,
         L: Layer<H>,
-        L::Handler: Handler<S::Message, Cx> + 'static,
+        L::Handler: Handler<S::Message, Cx, St> + 'static,
     {
         let handler = self.global.layer(handler);
         self.sink
@@ -120,10 +121,11 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
+        St: Send + Sync + 'static,
         Cx: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
-        H: Handler<<S::Subscriber as Subscriber>::Message, Cx> + 'static,
+        H: Handler<<S::Subscriber as Subscriber>::Message, Cx, St> + 'static,
         L: Layer<H>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, Cx> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, Cx, St> + 'static,
     {
         let handler = self.global.layer(handler);
         self.sink
@@ -139,14 +141,15 @@ impl<B: Broker + 'static, L, C> BrokerScope<B, L, C> {
     /// bundled layer and any [`Stack`](crate::runtime::Stack) of them satisfies.
     pub fn include_router<R>(&mut self, router: R)
     where
-        R: RouterDef<B>,
+        R: RouterDef<B, St>,
+        St: Send + Sync + 'static,
         L: BlanketLayer,
     {
         router.mount(&self.global, &mut self.sink);
     }
 }
 
-impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
+impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
     /// `include` / `include_on` forms.
     pub(super) fn mount_subscriber<S, D, C>(&mut self, source: S, def: D, codec: C)
@@ -159,8 +162,9 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
         D::Handler: 'static,
         C: Codec + 'static,
+        St: Send + Sync + 'static,
         L: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
@@ -183,6 +187,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
         C: Codec + 'static,
+        St: Send + Sync + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
@@ -209,6 +214,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
         RP: ReplyPublisher + 'static,
+        St: Send + Sync + 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
@@ -243,8 +249,9 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         P: Publisher + 'static,
         PC: Codec + 'static,
         PL: PublishLayer + 'static,
+        St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, C, P, PC, PL>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, (), St> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
@@ -261,7 +268,7 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
     }
 }
 
-impl<B, L, C> std::fmt::Debug for BrokerScope<B, L, C> {
+impl<B, L, C, St> std::fmt::Debug for BrokerScope<B, L, C, St> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrokerScope")
             .field("sink", &self.sink)

@@ -19,7 +19,7 @@ use tracing::{debug, error, warn};
 use crate::{AckError, BatchSubscriber, Headers, IncomingMessage, Subscriber};
 
 use super::batch::BatchHandler;
-use super::context::{Context, State};
+use super::context::Context;
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publish::PublishMiddleware;
@@ -171,19 +171,20 @@ impl std::fmt::Debug for Delivery {
 /// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
 /// stream terminates. Each delivery is given a [`Context`] built from `name`, the message headers,
 /// shared `state`, and the `delivery` publish context.
-pub(crate) fn spawn_dispatch<S, H, C>(
+pub(crate) fn spawn_dispatch<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
     name: Arc<str>,
-    state: Arc<State>,
+    state: Arc<St>,
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
 ) -> JoinHandle<()>
 where
     S: Subscriber + Send + 'static,
-    H: Handler<S::Message, C> + 'static,
+    H: Handler<S::Message, C, St> + 'static,
     C: crate::BuildContext<S::Message> + Send + 'static,
+    St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
         let hooks = TaskTracker::new();
@@ -236,12 +237,12 @@ async fn drain_hooks(hooks: TaskTracker) {
 // identity, state, publish context, failure policy, worker policy); bundling them only to satisfy
 // the arg-count lint would hide what each spawn site passes.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_dispatch_workers<S, H, C>(
+pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
     name: Arc<str>,
-    state: Arc<State>,
+    state: Arc<St>,
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
     workers: Workers,
@@ -249,8 +250,9 @@ pub(crate) fn spawn_dispatch_workers<S, H, C>(
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
-    H: Handler<S::Message, C> + 'static,
+    H: Handler<S::Message, C, St> + 'static,
     C: crate::BuildContext<S::Message> + Send + 'static,
+    St: Send + Sync + 'static,
 {
     if workers.is_sequential() {
         return spawn_dispatch(
@@ -269,12 +271,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_dispatch_pool<S, H, C>(
+fn spawn_dispatch_pool<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
     name: Arc<str>,
-    state: Arc<State>,
+    state: Arc<St>,
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
     workers: Workers,
@@ -282,8 +284,9 @@ fn spawn_dispatch_pool<S, H, C>(
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
-    H: Handler<S::Message, C> + 'static,
+    H: Handler<S::Message, C, St> + 'static,
     C: crate::BuildContext<S::Message> + Send + 'static,
+    St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
         let hooks = TaskTracker::new();
@@ -335,12 +338,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_dispatch_lanes<S, H, C>(
+fn spawn_dispatch_lanes<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
     name: Arc<str>,
-    state: Arc<State>,
+    state: Arc<St>,
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
     workers: Workers,
@@ -348,8 +351,9 @@ fn spawn_dispatch_lanes<S, H, C>(
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
-    H: Handler<S::Message, C> + 'static,
+    H: Handler<S::Message, C, St> + 'static,
     C: crate::BuildContext<S::Message> + Send + 'static,
+    St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
         // One sequential worker per lane, fed by a capacity-1 channel: a keyed delivery always
@@ -452,12 +456,14 @@ fn log_worker_exit(joined: Result<(), tokio::task::JoinError>) {
 /// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-pub(crate) fn spawn_batch_dispatch<S, H>(
+pub(crate) fn spawn_batch_dispatch<S, H, St>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
     name: Arc<str>,
-    state: Arc<State>,
+    // Batch handlers do not read the typed app state (a separate follow-up); the state is still
+    // received for starter-signature uniformity.
+    _state: Arc<St>,
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
     workers: Workers,
@@ -466,6 +472,7 @@ where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
     H: BatchHandler<S::Message> + 'static,
+    St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
         let hooks = TaskTracker::new();
@@ -482,20 +489,15 @@ where
                     Some(Ok(batch)) => {
                         let batch: Vec<S::Message> = batch.into_iter().collect();
                         if workers.is_sequential() {
-                            run_batch(&*handler, batch, &name, &state, &delivery, &hooks, &failure)
-                                .await;
+                            run_batch(&*handler, batch, &name, &delivery, &hooks, &failure).await;
                         } else {
                             let handler = Arc::clone(&handler);
                             let name = Arc::clone(&name);
-                            let state = Arc::clone(&state);
                             let delivery = Arc::clone(&delivery);
                             let hooks = hooks.clone();
                             let failure = failure.clone();
                             tasks.spawn(async move {
-                                run_batch(
-                                    &*handler, batch, &name, &state, &delivery, &hooks, &failure,
-                                )
-                                .await;
+                                run_batch(&*handler, batch, &name, &delivery, &hooks, &failure).await;
                             });
                         }
                     }
@@ -525,16 +527,16 @@ where
 }
 
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-async fn dispatch<H, M, C>(
+async fn dispatch<H, M, C, St>(
     handler: &H,
     msg: M,
     name: &str,
-    state: &State,
+    state: &St,
     delivery: &Delivery,
     hooks: &TaskTracker,
     failure: &DispatchFailure,
 ) where
-    H: Handler<M, C>,
+    H: Handler<M, C, St>,
     C: crate::BuildContext<M>,
     M: IncomingMessage,
 {
@@ -611,7 +613,6 @@ async fn run_batch<H, M>(
     handler: &H,
     batch: Vec<M>,
     name: &str,
-    state: &State,
     delivery: &Delivery,
     hooks: &TaskTracker,
     failure: &DispatchFailure,
@@ -620,8 +621,9 @@ async fn run_batch<H, M>(
     M: IncomingMessage,
 {
     let empty = Headers::new();
-    // A batch has no single broker message, so its context is the unit (no per-delivery fields).
-    let mut ctx = Context::new(name, &empty, state, (), delivery).with_failfast(&failure.shutdown);
+    // A batch has no single broker message, and batch handlers do not read the typed app state
+    // (state access in a batch handler is a separate follow-up), so its context is fully unit.
+    let mut ctx = Context::new(name, &empty, &(), (), delivery).with_failfast(&failure.shutdown);
     let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
         .catch_unwind()
         .await;

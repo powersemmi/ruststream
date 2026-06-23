@@ -295,14 +295,14 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .insert_state(AppPrefix("svc".to_owned()))
+        .on_startup(|()| async { Ok::<_, std::convert::Infallible>(AppPrefix("svc".to_owned())) })
         .with_broker(broker, |b| {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &MemoryMessage, ctx: &mut Context<'_>| {
-                    // App state through state(), independent of the per-delivery context.
-                    let prefix = ctx.state().get::<AppPrefix>().map(|p| p.0.clone());
+                move |_msg: &MemoryMessage, ctx: &mut Context<'_, (), AppPrefix>| {
+                    // The typed app state through state(), independent of the per-delivery context.
+                    let prefix = Some(ctx.state().0.clone());
                     let seen = Arc::clone(&seen_clone);
                     async move {
                         *seen.lock().expect("poisoned") = prefix;

@@ -260,20 +260,20 @@ impl<E> IntoSettle for Result<Settle, E> {
 ///     assert_handler::<M, _>(|_msg: &M, _ctx: &mut Context| async { HandlerResult::Ack });
 /// }
 /// ```
-pub trait Handler<M, C = ()>: Send + Sync {
+pub trait Handler<M, C = (), S = ()>: Send + Sync {
     /// Handle one input, with the per-delivery [`Context`] (carrying the broker's typed context
-    /// `C`). The returned [`Settle`] carries the outcome the dispatcher settles by and any
-    /// post-settle continuation.
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> impl Future<Output = Settle> + Send;
+    /// `C` and the shared application state `S`). The returned [`Settle`] carries the outcome the
+    /// dispatcher settles by and any post-settle continuation.
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send;
 }
 
-impl<M, C, F, Fut> Handler<M, C> for F
+impl<M, C, S, F, Fut> Handler<M, C, S> for F
 where
-    F: Fn(&M, &mut Context<'_, C>) -> Fut + Send + Sync,
+    F: Fn(&M, &mut Context<'_, C, S>) -> Fut + Send + Sync,
     Fut: Future + Send,
     Fut::Output: IntoSettle,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> impl Future<Output = Settle> + Send {
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send {
         // Build the inner future before the async block so it owns the closure's output and the
         // returned future is `Settle`-valued for any `Into<Settle>` return shape.
         let fut = (self)(msg, ctx);
@@ -281,11 +281,11 @@ where
     }
 }
 
-impl<M, C, H> Handler<M, C> for Arc<H>
+impl<M, C, S, H> Handler<M, C, S> for Arc<H>
 where
-    H: Handler<M, C>,
+    H: Handler<M, C, S>,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> impl Future<Output = Settle> + Send {
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send {
         (**self).handle(msg, ctx)
     }
 }

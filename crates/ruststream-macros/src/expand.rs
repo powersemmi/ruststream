@@ -37,6 +37,7 @@ struct HandlerParts<'a> {
     message_meta: TokenStream2,
     ctx_param: TokenStream2,
     ctx_ty: TokenStream2,
+    state_ty: Option<TokenStream2>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
 }
@@ -61,6 +62,34 @@ fn context_type(func: &ItemFn) -> TokenStream2 {
         }
     }
     quote!(())
+}
+
+/// The application-state type the handler named as the third generic of its
+/// `ctx: &mut Context<'_, C, St>` parameter, or `None` when it named none (only `Context` or
+/// `Context<'_, C>`). When present, the handler is bound to that state type; when absent, the
+/// generated [`Handler`] impl is generic over the state, so the handler mounts on an app with any
+/// state.
+fn state_type(func: &ItemFn) -> Option<TokenStream2> {
+    let FnArg::Typed(PatType { ty, .. }) = func.sig.inputs.get(1)? else {
+        return None;
+    };
+    // Collect the type arguments of `&mut Context<'_, C, St>` (skipping the lifetime); the second is
+    // the state type.
+    if let Type::Reference(reference) = &**ty
+        && let Type::Path(path) = &*reference.elem
+        && let Some(segment) = path.path.segments.last()
+        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+    {
+        let mut types = args.args.iter().filter_map(|arg| match arg {
+            syn::GenericArgument::Type(ty) => Some(ty),
+            _ => None,
+        });
+        let _context_ty = types.next();
+        if let Some(state_ty) = types.next() {
+            return Some(quote!(#state_ty));
+        }
+    }
+    None
 }
 
 /// Renders the `on_failure(..)` clause as an override of the def's defaulted `failure_policies`
@@ -211,6 +240,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         quote!(_ctx)
     };
     let ctx_ty = context_type(func);
+    let state_ty = state_type(func);
 
     let workers_method = workers_method(args)?;
     let failure_method = failure_method(args);
@@ -228,6 +258,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         message_meta,
         ctx_param,
         ctx_ty,
+        state_ty,
         workers_method,
         failure_method,
     })
@@ -251,6 +282,7 @@ fn expand_batch_publishing(
         message_meta,
         ctx_param,
         ctx_ty: _,
+        state_ty: _,
         workers_method,
         failure_method,
     } = parts;
@@ -342,6 +374,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         message_meta,
         ctx_param,
         ctx_ty: _,
+        state_ty: _,
         workers_method,
         failure_method,
     } = parts;
@@ -412,9 +445,14 @@ fn expand_publishing(
         message_meta,
         ctx_param,
         ctx_ty: _,
+        state_ty,
         workers_method,
         failure_method,
     } = parts;
+
+    // A publishing handler reads the app state by naming it as the third `Context` generic; the def
+    // pins `State` to it (defaulting to `()`), so the subscriber mounts only on a matching app.
+    let state_ty = state_ty.clone().unwrap_or_else(|| quote!(()));
 
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
@@ -442,6 +480,7 @@ fn expand_publishing(
         impl ::ruststream::runtime::PublishingDef for #name {
             type Input = #input_ty;
             type Reply = #reply_ty;
+            type State = #state_ty;
             type Source = #source_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
@@ -462,7 +501,7 @@ fn expand_publishing(
             async fn call(
                 &self,
                 #pat: &#input_ty,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_ty>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
                 #call_body
             }
@@ -484,26 +523,43 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         message_meta,
         ctx_param,
         ctx_ty,
+        state_ty,
         workers_method,
         failure_method,
     } = parts;
+
+    // A handler that names a state type is bound to it; one that does not is generic over the
+    // state, so it mounts on an app with any state type. Either shape satisfies the mount-site
+    // `Handler<Input, Context, St>` bound, the former only for its `St`, the latter for every `St`.
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
+    let handler_impl = quote! {
+        impl #impl_generics
+            ::ruststream::runtime::Handler<#input_ty, #ctx_ty, #state_in_ctx> for #name
+        {
+            async fn handle(
+                &self,
+                #pat: &#input_ty,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
+            ) -> ::ruststream::runtime::Settle {
+                ::ruststream::runtime::IntoSettle::into_settle(
+                    (async move #block).await,
+                )
+            }
+        }
+    };
 
     quote! {
             #[derive(Clone, Copy)]
             #[allow(non_camel_case_types)]
             #vis struct #name;
 
-            impl ::ruststream::runtime::Handler<#input_ty, #ctx_ty> for #name {
-                async fn handle(
-                    &self,
-                    #pat: &#input_ty,
-                    #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty>,
-                ) -> ::ruststream::runtime::Settle {
-                    ::ruststream::runtime::IntoSettle::into_settle(
-                        (async move #block).await,
-                    )
-                }
-            }
+            #handler_impl
 
             impl ::ruststream::runtime::SubscriberDef for #name {
                 type Input = #input_ty;

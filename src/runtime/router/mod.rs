@@ -19,7 +19,7 @@ mod routes;
 mod sink;
 
 pub use builder::Router;
-pub use routes::RouterDef;
+pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
 use crate::{Subscriber, SubscriptionSource};

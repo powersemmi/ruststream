@@ -183,7 +183,6 @@ where
 mod tests {
     use futures::StreamExt;
 
-    use super::super::context::State;
     use super::super::dispatch::Delivery;
     use super::super::publish::TypedPublisher;
     use super::*;
@@ -254,7 +253,7 @@ mod tests {
         };
 
         publish_numbers(&broker, "orders", &[1, 2]).await;
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
@@ -292,7 +291,7 @@ mod tests {
         };
 
         publish_numbers(&broker, "orders", &[1, 2]).await;
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);

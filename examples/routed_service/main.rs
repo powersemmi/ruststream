@@ -35,13 +35,16 @@ use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{AppInfo, Identity, RustStream, Stack};
 
+use std::sync::Arc;
+
 use crate::domain::{Repository, ServiceError};
 use crate::observability::Observe;
 
-/// Builds the service. The layer stack is named in the return type: `Observe` wraps every handler,
-/// including the router-mounted ones (it is a `BlanketLayer`), with `Identity` as the base.
+/// Builds the service. The layer stack and the typed application state are both named in the return
+/// type: `Observe` wraps every handler, including the router-mounted ones (it is a `BlanketLayer`),
+/// with `Identity` as the base; `Repository` is the shared state `on_startup` produces.
 #[ruststream::app]
-fn app() -> RustStream<Stack<Observe, Identity>> {
+fn app() -> RustStream<Stack<Observe, Identity>, Repository> {
     let metrics = Metrics::new().expect("create metrics registry");
     // A second handle for the shutdown dump; `Metrics` is cheap to clone (shared registry).
     let metrics_dump = metrics.clone();
@@ -56,17 +59,12 @@ fn app() -> RustStream<Stack<Observe, Identity>> {
         .layer(Observe)
         // Publish-side metric: counts every reply that leaves the process.
         .publish_layer(metrics.publish_layer())
-        // Open the shared repository before brokers connect, hand it to handlers via state.
-        .on_startup(|mut state| async move {
-            let repo = Repository::open().await?;
-            state.insert(repo);
-            Ok::<_, ServiceError>(state)
-        })
+        // Open the shared repository before brokers connect; the produced value becomes the typed
+        // app state, shared with every handler.
+        .on_startup(|()| async move { Repository::open().await })
         // Close the repository after brokers stop, then dump the final metrics.
-        .after_shutdown(move |state| async move {
-            if let Some(repo) = state.get::<Repository>() {
-                repo.close().await;
-            }
+        .after_shutdown(move |repo: Arc<Repository>| async move {
+            repo.close().await;
             match metrics_dump.export() {
                 Ok(text) => tracing::info!("final metrics:\n{text}"),
                 Err(e) => tracing::warn!(error = %e, "could not export metrics"),

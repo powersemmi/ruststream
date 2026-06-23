@@ -14,7 +14,7 @@ use crate::runtime::failure::ErrorShutdown;
 
 use super::{RustStream, RustStreamError};
 
-impl<L> RustStream<L> {
+impl<L, St> RustStream<L, St> {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///
@@ -44,8 +44,7 @@ impl<L> RustStream<L> {
             brokers,
             starters,
             handlers,
-            mut state,
-            on_startup,
+            state_init,
             after_startup,
             on_shutdown,
             after_shutdown,
@@ -63,12 +62,8 @@ impl<L> RustStream<L> {
             "starting service",
         );
 
-        if !on_startup.is_empty() {
-            debug!(target: "ruststream::lifecycle", count = on_startup.len(), "running on_startup hooks");
-        }
-        for hook in on_startup {
-            state = hook(state).await.map_err(RustStreamError::Startup)?;
-        }
+        debug!(target: "ruststream::lifecycle", "producing application state");
+        let state = state_init().await.map_err(RustStreamError::Startup)?;
         let state = Arc::new(state);
 
         for broker in &brokers {

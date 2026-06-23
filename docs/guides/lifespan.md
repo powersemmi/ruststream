@@ -1,36 +1,34 @@
 # Lifespan and shared state
 
 Most services need resources that are created once at startup and shared by every handler: a
-database pool, an HTTP client, parsed configuration. RustStream gives you a shared `State` type-map
-plus lifecycle hooks that run at fixed points around the run loop.
+database pool, an HTTP client, parsed configuration. RustStream gives you one typed shared-state
+value plus lifecycle hooks that run at fixed points around the run loop.
 
 ## Shared state
 
-`State` is a type-map: one value per type. Put ready-made values in at build time with
-`insert_state` (or from a [startup hook](#lifecycle-hooks), as the `Database` below is):
+The application state is a single typed value of your own choosing (a struct, or `()` when the
+service needs none). It is produced by the `on_startup` hook - the value the hook returns becomes
+the state and fixes the app's state type:
 
-<!-- inline-rust: minimal insert_state fragment with placeholder Config; the startup-hook form is compiled in lifespan.rs:hooks, pulled in below -->
 ```rust
-RustStream::new(info)
-    .insert_state(Config::from_env())
-    .with_broker(broker, |b| b.include(handle));
+--8<-- "examples/lifespan.rs:hooks"
 ```
 
-Read them from any handler or middleware through the `Context`:
+Read it from any handler or middleware through the `Context`, which borrows it directly:
 
 ```rust
 --8<-- "examples/lifespan.rs:handler"
 ```
 
-`ctx.state().get::<T>()` returns `Option<&T>`; it is `None` only if no value of that type was
-inserted. Inserting the same type again replaces the previous value. (For data scoped to one
-message rather than the whole service, use the typed
+`ctx.state()` returns `&S`, the typed state itself - no lookup, no `Option`, no downcast. (For data
+scoped to one message rather than the whole service, use the typed
 [per-delivery context](context.md#per-delivery-context) instead.)
 
-A `#[subscriber]` handler opts into the context by taking a second parameter, `ctx: &mut Context`,
-after the payload. Omit it when the handler does not need state. Everything else the context
-carries (the headers working copy, named publishers) is covered in
-[Context and state](context.md).
+A `#[subscriber]` handler that reads state names it as the third `Context` generic
+(`ctx: &mut Context<'_, (), S>`); the runtime only lets that handler mount on an app whose state
+type matches, checked at compile time. A handler that names no state type is generic over it and
+mounts on any app. Everything else the context carries (the headers working copy, named publishers)
+is covered in [Context and state](context.md).
 
 ## Lifecycle hooks
 
@@ -38,19 +36,20 @@ Anything that needs `async` work (connecting that pool, closing it cleanly) goes
 hooks bracket the run loop:
 
 ```text
-on_startup(State) -> State       # before brokers connect; build async resources
+on_startup(prev) -> S            # before brokers connect; build async resources, produce the state
   -> brokers connect, subscriptions open
-after_startup(Arc<State>)        # handlers are live; publish a first message, signal readiness
+after_startup(Arc<S>)            # handlers are live; publish a first message, signal readiness
   ... running ...
   -> shutdown triggered (signal, or the run_until future resolves)
-on_shutdown(Arc<State>)          # brokers still connected
+on_shutdown(Arc<S>)              # brokers still connected
   -> brokers shut down, in-flight handlers drained
-after_shutdown(Arc<State>)       # final teardown
+after_shutdown(Arc<S>)           # final teardown
 ```
 
-- **`on_startup`** receives the `State` **by value** and returns it, so its future can own the state
-  across awaits - connect a resource, insert it, hand the state back. A failing `on_startup` aborts
-  startup. The later hooks receive the state as a shared `Arc<State>`.
+- **`on_startup`** receives the previous state **by value** (`()` on the first call) and returns the
+  new state, so its future can own resources across awaits - connect a pool, build the state struct,
+  return it. The returned type becomes the app's state type. A failing `on_startup` aborts startup.
+  The later hooks receive the state as a shared `Arc<S>`.
 - **`after_startup`** runs once subscriptions are open and handlers are live. Use it to publish an
   initial message or signal readiness (the [testing guide](testing.md) uses it as the "handlers are
   live" gate). A failure here also aborts startup.
@@ -70,9 +69,9 @@ slots in the same way, only its `connect` / `close` calls differ:
 --8<-- "examples/lifespan.rs:hooks"
 ```
 
-The hook's error type is inferred from the `Ok::<_, E>(..)` annotation; it only needs to implement
-`std::error::Error + Send + Sync`. The resource is `Clone` and `Send + Sync`, so every concurrent
-handler borrows the one instance from `State` - no per-message connection setup. The runnable
+The hook's error type is inferred from the returned `Result`; it only needs to implement
+`std::error::Error + Send + Sync`. The resource is `Send + Sync`, so every concurrent handler borrows
+the one shared instance through `ctx.state()` - no per-message connection setup. The runnable
 program is
 [`examples/lifespan.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/lifespan.rs).
 

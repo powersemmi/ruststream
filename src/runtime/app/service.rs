@@ -13,7 +13,6 @@ use crate::{Broker, Publisher, ServerSpec};
 
 use tokio_util::task::TaskTracker;
 
-use crate::runtime::context::State;
 use crate::runtime::dispatch::{Delivery, Publishers};
 use crate::runtime::lifecycle::{BoxError, BrokerLifecycle};
 use crate::runtime::metadata::HandlerMetadata;
@@ -22,7 +21,7 @@ use crate::runtime::publish::PublishMiddleware;
 use crate::runtime::router::RouterSink;
 
 use super::scope::BrokerScope;
-use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StartupHook};
+use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 
 /// The top-level application object.
 ///
@@ -63,19 +62,18 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StartupHook};
 /// app.run().await
 /// # }
 /// ```
-pub struct RustStream<L = Identity> {
+pub struct RustStream<L = Identity, St = ()> {
     pub(super) info: AppInfo,
     pub(super) brokers: Vec<Arc<dyn BrokerLifecycle>>,
-    pub(super) starters: Vec<Starter>,
+    pub(super) starters: Vec<Starter<St>>,
     pub(super) handlers: Vec<HandlerMetadata>,
     pub(super) servers: BTreeMap<String, ServerSpec>,
     pub(super) publishers: Publishers,
     pub(super) publish_layers: Vec<Arc<dyn PublishMiddleware>>,
-    pub(super) state: State,
-    pub(super) on_startup: Vec<StartupHook>,
-    pub(super) after_startup: Vec<LifecycleHook>,
-    pub(super) on_shutdown: Vec<LifecycleHook>,
-    pub(super) after_shutdown: Vec<LifecycleHook>,
+    pub(super) state_init: StateInit<St>,
+    pub(super) after_startup: Vec<LifecycleHook<St>>,
+    pub(super) on_shutdown: Vec<LifecycleHook<St>>,
+    pub(super) after_shutdown: Vec<LifecycleHook<St>>,
     pub(super) shutdown_timeout: Option<Duration>,
     /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
@@ -84,7 +82,7 @@ pub struct RustStream<L = Identity> {
     pub(super) global: L,
 }
 
-impl<L> std::fmt::Debug for RustStream<L> {
+impl<L, St> std::fmt::Debug for RustStream<L, St> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RustStream")
             .field("info", &self.info)
@@ -94,8 +92,9 @@ impl<L> std::fmt::Debug for RustStream<L> {
     }
 }
 
-impl RustStream<Identity> {
-    /// Creates an empty service with the given metadata and no global middleware.
+impl RustStream<Identity, ()> {
+    /// Creates an empty service with the given metadata, no global middleware, and the unit
+    /// application state `()`. Produce a typed state with [`on_startup`](Self::on_startup).
     #[must_use]
     pub fn new(info: AppInfo) -> Self {
         Self {
@@ -106,8 +105,7 @@ impl RustStream<Identity> {
             servers: BTreeMap::new(),
             publishers: HashMap::new(),
             publish_layers: Vec::new(),
-            state: State::default(),
-            on_startup: Vec::new(),
+            state_init: Box::new(|| Box::pin(async { Ok(()) })),
             after_startup: Vec::new(),
             on_shutdown: Vec::new(),
             after_shutdown: Vec::new(),
@@ -118,12 +116,12 @@ impl RustStream<Identity> {
     }
 }
 
-impl<L> RustStream<L> {
+impl<L, St> RustStream<L, St> {
     /// Adds a global middleware layer, applied to every handler registered after it.
     ///
     /// The first layer added runs outermost. Call before [`with_broker`](Self::with_broker).
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, L>> {
+    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, L>, St> {
         RustStream {
             info: self.info,
             brokers: self.brokers,
@@ -132,8 +130,7 @@ impl<L> RustStream<L> {
             servers: self.servers,
             publishers: self.publishers,
             publish_layers: self.publish_layers,
-            state: self.state,
-            on_startup: self.on_startup,
+            state_init: self.state_init,
             after_startup: self.after_startup,
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
@@ -143,36 +140,48 @@ impl<L> RustStream<L> {
         }
     }
 
-    /// Inserts a shared application state value, readable from handlers and middleware via
-    /// [`Context::state`](crate::runtime::Context::state) then
-    /// [`State::get`](crate::runtime::State::get). For data scoped to a single delivery, use the
-    /// typed per-delivery context ([`Context::set`](crate::runtime::Context::set) /
-    /// [`Context::context`](crate::runtime::Context::context)) instead.
+    /// Produces the typed application state at startup, transitioning the app's state type from the
+    /// previous `St` to `St2`.
     ///
-    /// One value per type; inserting the same type again replaces it.
+    /// The hook runs once before brokers connect; its future can `await` (open a database pool,
+    /// connect a client), and the produced `St2` is shared with every handler (read via
+    /// [`Context::state`](crate::runtime::Context::state)) and the read-only lifecycle hooks. A
+    /// failing hook aborts startup. The initial state is `()` (from [`new`](Self::new)), so the
+    /// first call's hook receives `()`.
+    ///
+    /// Call this BEFORE registering handlers or read-only hooks: it fixes the app's state type, and
+    /// registrations made earlier (which saw a different state type) are not carried across.
     #[must_use]
-    pub fn insert_state<T>(mut self, value: T) -> Self
+    pub fn on_startup<F, Fut, St2, E>(self, hook: F) -> RustStream<L, St2>
     where
-        T: std::any::Any + Send + Sync,
-    {
-        self.state.insert(value);
-        self
-    }
-
-    /// Adds a hook run before brokers connect. It receives the [`State`] by value for lazily
-    /// creating shared resources (a database pool, a client) and returns it populated. A failing
-    /// hook aborts startup.
-    #[must_use]
-    pub fn on_startup<F, Fut, E>(mut self, hook: F) -> Self
-    where
-        F: FnOnce(State) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<State, E>> + Send,
+        F: FnOnce(St) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<St2, E>> + Send,
+        St: Send + 'static,
+        St2: Send + Sync + 'static,
         E: StdError + Send + Sync + 'static,
     {
-        self.on_startup.push(Box::new(move |state| {
-            Box::pin(async move { hook(state).await.map_err(|e| Box::new(e) as BoxError) })
-        }));
-        self
+        let prev = self.state_init;
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            starters: Vec::new(),
+            handlers: self.handlers,
+            servers: self.servers,
+            publishers: self.publishers,
+            publish_layers: self.publish_layers,
+            state_init: Box::new(move || {
+                Box::pin(async move {
+                    let prev_state = prev().await?;
+                    hook(prev_state).await.map_err(|e| Box::new(e) as BoxError)
+                })
+            }),
+            after_startup: Vec::new(),
+            on_shutdown: Vec::new(),
+            after_shutdown: Vec::new(),
+            shutdown_timeout: self.shutdown_timeout,
+            continuations: self.continuations,
+            global: self.global,
+        }
     }
 
     /// Adds a hook run after brokers connect and handlers are spawned (for example, to publish an
@@ -180,7 +189,8 @@ impl<L> RustStream<L> {
     #[must_use]
     pub fn after_startup<F, Fut, E>(self, hook: F) -> Self
     where
-        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        St: Send + Sync + 'static,
+        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
@@ -191,7 +201,8 @@ impl<L> RustStream<L> {
     #[must_use]
     pub fn on_shutdown<F, Fut, E>(self, hook: F) -> Self
     where
-        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        St: Send + Sync + 'static,
+        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
@@ -203,7 +214,8 @@ impl<L> RustStream<L> {
     #[must_use]
     pub fn after_shutdown<F, Fut, E>(self, hook: F) -> Self
     where
-        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        St: Send + Sync + 'static,
+        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
@@ -212,11 +224,12 @@ impl<L> RustStream<L> {
 
     fn push_lifecycle_hook<F, Fut, E>(mut self, phase: LifecyclePhase, hook: F) -> Self
     where
-        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        St: Send + Sync + 'static,
+        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
-        let boxed: LifecycleHook = Box::new(move |state| {
+        let boxed: LifecycleHook<St> = Box::new(move |state| {
             Box::pin(async move { hook(state).await.map_err(|e| Box::new(e) as BoxError) })
         });
         match phase {
@@ -299,7 +312,8 @@ impl<L> RustStream<L> {
     where
         B: Broker + 'static,
         L: Clone,
-        F: FnOnce(&mut BrokerScope<B, L>),
+        St: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, L, (), St>),
     {
         let broker = Arc::new(broker);
         let mut scope = self.new_scope(&broker, ());
@@ -320,7 +334,8 @@ impl<L> RustStream<L> {
         B: Broker + 'static,
         C: Codec + Clone + 'static,
         L: Clone,
-        F: FnOnce(&mut BrokerScope<B, L, C>),
+        St: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, L, C, St>),
     {
         let broker = Arc::new(broker);
         let mut scope = self.new_scope(&broker, codec);
@@ -330,10 +345,11 @@ impl<L> RustStream<L> {
     }
 
     /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
-    fn new_scope<B, C>(&self, broker: &Arc<B>, codec: C) -> BrokerScope<B, L, C>
+    fn new_scope<B, C>(&self, broker: &Arc<B>, codec: C) -> BrokerScope<B, L, C, St>
     where
         B: Broker + 'static,
         L: Clone,
+        St: Send + Sync + 'static,
     {
         BrokerScope {
             broker: broker.clone(),
@@ -347,9 +363,10 @@ impl<L> RustStream<L> {
     }
 
     /// Drains a built scope's registrations into the app and holds the broker for lifecycle.
-    fn collect_scope<B, C>(&mut self, broker: &Arc<B>, scope: BrokerScope<B, L, C>)
+    fn collect_scope<B, C>(&mut self, broker: &Arc<B>, scope: BrokerScope<B, L, C, St>)
     where
         B: Broker + 'static,
+        St: Send + Sync + 'static,
     {
         let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
         let delivery = Arc::new(Delivery {

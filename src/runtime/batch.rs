@@ -410,7 +410,6 @@ pub(crate) async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult, su
 mod tests {
     use futures::StreamExt;
 
-    use super::super::context::State;
     use super::super::dispatch::Delivery;
     use super::*;
     use crate::codec::JsonCodec;
@@ -451,7 +450,7 @@ mod tests {
             async move { outcomes }
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("selective", &headers, &state, (), &delivery);
@@ -499,7 +498,7 @@ mod tests {
         });
 
         let tasks = TaskTracker::new();
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::with_tasks(tasks.clone());
         let headers = Headers::new();
         let mut ctx = Context::new("after-batch", &headers, &state, (), &delivery);
@@ -531,7 +530,7 @@ mod tests {
             vec![HandlerResult::Ack]
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("short", &headers, &state, (), &delivery);
@@ -566,7 +565,7 @@ mod tests {
             async move { outcomes }
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("delayed", &headers, &state, (), &delivery);
@@ -593,7 +592,7 @@ mod tests {
             HandlerResult::retry()
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("uniform", &headers, &state, (), &delivery);

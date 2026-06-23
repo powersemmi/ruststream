@@ -13,11 +13,11 @@ use crate::domain::{Clearing, Payment, Repository, Settlement};
 /// an immediate retry, so a flaky downstream is not hammered.
 // --8<-- [start:workers]
 #[subscriber("payments", workers(8, by_key))]
-pub(crate) async fn process_payment(payment: &Payment, ctx: &mut Context<'_>) -> HandlerResult {
-    let repo = ctx
-        .state()
-        .get::<Repository>()
-        .expect("repository set in on_startup");
+pub(crate) async fn process_payment(
+    payment: &Payment,
+    ctx: &mut Context<'_, (), Repository>,
+) -> HandlerResult {
+    let repo = ctx.state();
     tracing::debug!(order = payment.order_id, customer = %payment.customer, "charging payment");
     if repo
         .charge(payment.order_id, payment.amount_cents)
