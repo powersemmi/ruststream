@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::{Extensions, Headers};
+use crate::{Field, FieldMut, Headers};
 
 use super::dispatch::Delivery;
 use super::failure::ErrorShutdown;
@@ -98,18 +98,18 @@ impl std::fmt::Debug for State {
 /// [`publisher`](Self::publisher)s for publishing from inside a handler. The headers copy is made
 /// lazily on the first [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit
 /// it: replies and manual publishes start from fresh headers, shaped by the publish pipeline.
-pub struct Context<'a> {
+pub struct Context<'a, C = ()> {
     name: &'a str,
     original: &'a Headers,
     modified: Option<Headers>,
     state: &'a State,
-    extensions: Extensions,
+    cx: C,
     delivery: &'a Delivery,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
 }
 
-impl std::fmt::Debug for Context<'_> {
+impl<C> std::fmt::Debug for Context<'_, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context")
             .field("name", &self.name)
@@ -118,26 +118,15 @@ impl std::fmt::Debug for Context<'_> {
     }
 }
 
-impl<'a> Context<'a> {
-    /// Creates a context for one delivery, borrowing the message headers until first mutation,
-    /// with an empty per-delivery [`Extensions`] map.
+impl<'a, C> Context<'a, C> {
+    /// Creates a context for one delivery, borrowing the message headers until first mutation and
+    /// carrying the typed per-delivery context `cx` (built by
+    /// [`BuildContext`](crate::BuildContext) from the broker message).
     pub(crate) fn new(
         name: &'a str,
         headers: &'a Headers,
         state: &'a State,
-        delivery: &'a Delivery,
-    ) -> Self {
-        Self::with_extensions(name, headers, state, Extensions::new(), delivery)
-    }
-
-    /// Creates a context seeded with per-delivery `extensions`, used by the dispatch loop to carry
-    /// the broker's [`IncomingMessage::extensions`](crate::IncomingMessage::extensions) into the
-    /// handler.
-    pub(crate) fn with_extensions(
-        name: &'a str,
-        headers: &'a Headers,
-        state: &'a State,
-        extensions: Extensions,
+        cx: C,
         delivery: &'a Delivery,
     ) -> Self {
         Self {
@@ -145,7 +134,7 @@ impl<'a> Context<'a> {
             original: headers,
             modified: None,
             state,
-            extensions,
+            cx,
             delivery,
             after: Vec::new(),
             failfast: None,
@@ -188,7 +177,6 @@ impl<'a> Context<'a> {
         Some(ScopedPublisher::new(
             publisher.as_ref(),
             &self.delivery.pipeline,
-            &self.extensions,
         ))
     }
 
@@ -226,53 +214,80 @@ impl<'a> Context<'a> {
         self.state
     }
 
-    /// Returns the per-delivery [`Extensions`] value of type `T`, if any.
+    /// Reads a broker-supplied per-delivery field off the typed context by compile-time `key`.
     ///
-    /// This reads the per-delivery type-map (broker-contributed metadata, middleware-set values),
-    /// not the app [`state`](Self::state). For shared app state use `ctx.state().get::<T>()`.
+    /// The key is a zero-sized selector the broker exports; resolution is a direct field read off
+    /// the typed context (no hashing, boxing, or downcasting). The default `()` context carries no
+    /// fields, so keys exist only for brokers that expose a context type. For shared app state use
+    /// [`state`](Self::state) instead.
     ///
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
+    /// use ruststream::{Field, IncomingMessage};
     /// use ruststream::runtime::{Context, HandlerResult};
     ///
-    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
-    ///     if let Some(span_id) = ctx.get::<u64>() {
-    ///         let _ = span_id;
+    /// // A broker context with one field and the key that reads it.
+    /// struct Delivery {
+    ///     offset: u64,
+    /// }
+    /// #[derive(Clone, Copy)]
+    /// struct Offset;
+    /// impl Field<Delivery> for Offset {
+    ///     type Value<'a> = u64;
+    ///     fn get(self, d: &Delivery) -> u64 {
+    ///         d.offset
     ///     }
+    /// }
+    ///
+    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Delivery>) -> HandlerResult {
+    ///     let _offset = ctx.context(Offset);
     ///     HandlerResult::Ack
     /// }
     /// ```
-    #[must_use]
-    pub fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
-        self.extensions.get::<T>()
+    pub fn context<K: Field<C>>(&self, key: K) -> K::Value<'_> {
+        key.get(&self.cx)
     }
 
-    /// Inserts a per-delivery [`Extensions`] value, replacing any previous value of the same type.
+    /// Writes a per-delivery scratch value downstream handlers read by `key`.
     ///
     /// Middleware uses this to hand typed data to downstream handlers (an authenticated user, a
-    /// correlation id) without serializing it into the headers.
+    /// correlation id) without serializing it into the headers, when the context type exposes a
+    /// writable ([`FieldMut`](crate::FieldMut)) key.
     ///
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
+    /// use ruststream::{Field, FieldMut, IncomingMessage};
     /// use ruststream::runtime::{Context, HandlerResult};
     ///
-    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
-    ///     ctx.insert(123u64);
-    ///     assert_eq!(ctx.get::<u64>(), Some(&123));
+    /// #[derive(Default)]
+    /// struct Scratch {
+    ///     user: Option<u64>,
+    /// }
+    /// #[derive(Clone, Copy)]
+    /// struct User;
+    /// impl Field<Scratch> for User {
+    ///     type Value<'a> = Option<&'a u64>;
+    ///     fn get(self, s: &Scratch) -> Option<&u64> {
+    ///         s.user.as_ref()
+    ///     }
+    /// }
+    /// impl FieldMut<Scratch> for User {
+    ///     type Owned = u64;
+    ///     fn set(self, s: &mut Scratch, value: u64) {
+    ///         s.user = Some(value);
+    ///     }
+    /// }
+    ///
+    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Scratch>) -> HandlerResult {
+    ///     ctx.set(User, 7);
+    ///     assert_eq!(ctx.context(User), Some(&7));
     ///     HandlerResult::Ack
     /// }
     /// ```
-    pub fn insert<T: Any + Send + Sync>(&mut self, value: T) {
-        self.extensions.insert(value);
-    }
-
-    /// Returns the per-delivery [`Extensions`] map, for the publish path to read at send time.
-    pub(crate) fn extensions(&self) -> &Extensions {
-        &self.extensions
+    pub fn set<K: FieldMut<C>>(&mut self, key: K, value: K::Owned) {
+        key.set(&mut self.cx, value);
     }
 
     /// Begins registering a post-settle hook gated on `outcome`.
