@@ -43,10 +43,11 @@ pub trait Layer<H> {
 /// stack reach router handlers; a layer that only wraps specific handler types cannot be blanket.
 pub trait BlanketLayer: Send + Sync {
     /// Wraps `handler`, returning the layered handler.
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static;
+        C: Send + 'static,
+        H: Handler<M, C> + 'static;
 }
 
 /// Convenience extension trait for fluent layer stacking on any [`Handler`].
@@ -76,10 +77,11 @@ impl<H> Layer<H> for Identity {
 }
 
 impl BlanketLayer for Identity {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        H: Handler<M, C> + 'static,
     {
         handler
     }
@@ -119,13 +121,15 @@ where
     Inner: BlanketLayer,
     Outer: BlanketLayer,
 {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        H: Handler<M, C> + 'static,
     {
         // Same order as the static `Layer` impl: inner wraps first (innermost), outer outside.
-        self.outer.apply::<M, _>(self.inner.apply::<M, _>(handler))
+        self.outer
+            .apply::<M, C, _>(self.inner.apply::<M, C, _>(handler))
     }
 }
 
@@ -165,10 +169,11 @@ pub mod layers {
     }
 
     impl BlanketLayer for TracingLayer {
-        fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+        fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
         where
             M: Send + Sync + 'static,
-            H: Handler<M> + 'static,
+            C: Send + 'static,
+            H: Handler<M, C> + 'static,
         {
             self.layer(handler)
         }
@@ -181,13 +186,14 @@ pub mod layers {
         target: Option<&'static str>,
     }
 
-    impl<M, H> Handler<M> for TracingHandler<H>
+    impl<M, C, H> Handler<M, C> for TracingHandler<H>
     where
         M: Sync,
-        H: Handler<M>,
+        C: Send,
+        H: Handler<M, C>,
     {
         #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]
-        fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = Settle> + Send {
+        fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> impl Future<Output = Settle> + Send {
             async move {
                 debug!(target: "ruststream::dispatch", "delivery received");
                 // Log the outcome inside the settlement; the continuation (if any) flows through.

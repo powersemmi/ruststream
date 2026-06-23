@@ -483,12 +483,14 @@ struct ComposedBlanket<'a, Outer, Inner> {
 }
 
 impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<'_, Outer, Inner> {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        H: Handler<M, C> + 'static,
     {
-        self.outer.apply::<M, _>(self.inner.apply::<M, _>(handler))
+        self.outer
+            .apply::<M, C, _>(self.inner.apply::<M, C, _>(handler))
     }
 }
 

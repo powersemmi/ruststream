@@ -50,12 +50,13 @@ impl<H> Layer<H> for CountLayer {
     }
 }
 
-impl<M, H> Handler<M> for CountHandler<H>
+impl<M, C, H> Handler<M, C> for CountHandler<H>
 where
     M: Sync,
-    H: Handler<M>,
+    C: Send,
+    H: Handler<M, C>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> Settle {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.inner.handle(msg, ctx).await
     }
@@ -63,10 +64,11 @@ where
 
 // Lets CountLayer be an app-global layer that reaches router handlers via include_router.
 impl BlanketLayer for CountLayer {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        H: Handler<M, C> + 'static,
     {
         CountHandler {
             inner: handler,

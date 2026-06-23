@@ -155,7 +155,7 @@ impl<B: Broker + 'static> RouterSink<B> {
     }
 
     /// Erases a source and its handler into a starter; the subscription opens after connect.
-    pub(crate) fn push_subscribe<S, H>(
+    pub(crate) fn push_subscribe<S, H, Cx>(
         &mut self,
         source: S,
         handler: H,
@@ -164,7 +164,8 @@ impl<B: Broker + 'static> RouterSink<B> {
     ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
-        H: Handler<SourceMessage<B, S>> + 'static,
+        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
+        H: Handler<SourceMessage<B, S>, Cx> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
