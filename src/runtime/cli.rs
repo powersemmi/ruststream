@@ -100,6 +100,8 @@ enum Command {
 #[must_use]
 pub fn run_main<L, St, F>(build: F) -> ExitCode
 where
+    L: Send,
+    St: Send + Sync,
     F: FnOnce() -> RustStream<L, St>,
 {
     match execute(build) {
@@ -113,6 +115,8 @@ where
 
 fn execute<L, St, F>(build: F) -> Result<(), CliError>
 where
+    L: Send,
+    St: Send + Sync,
     F: FnOnce() -> RustStream<L, St>,
 {
     let args: Vec<String> = std::env::args().skip(1).collect();

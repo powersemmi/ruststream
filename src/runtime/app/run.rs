@@ -14,7 +14,10 @@ use crate::runtime::failure::ErrorShutdown;
 
 use super::{RustStream, RustStreamError};
 
-impl<L, St> RustStream<L, St> {
+// `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
+// `block_on`), so their futures must be `Send`: the shared state is held as `Arc<St>` across the
+// startup awaits (needs `St: Sync`) and the global stack `L` is carried in `self` (needs `L: Send`).
+impl<L: Send, St: Send + Sync> RustStream<L, St> {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///

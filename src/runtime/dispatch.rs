@@ -540,6 +540,9 @@ async fn dispatch<H, M, C, St>(
     H: Handler<M, C, St>,
     C: crate::BuildContext<M>,
     M: IncomingMessage,
+    // The dispatch future is awaited inside a spawned task, so it must be `Send`: the context
+    // borrows `&St` across the handler await, which requires `St: Sync`.
+    St: Send + Sync,
 {
     // Build the broker's typed per-delivery context from the message, then attach the fail-fast
     // handle.

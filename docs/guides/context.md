@@ -70,24 +70,7 @@ serializing it into the byte-only headers. A key implements `Field` only for the
 carry its field, so an inapplicable key is a compile error rather than a runtime miss.
 
 ```rust
-use ruststream::Field;
-
-// A broker crate ships its per-delivery context and the keys that read its fields; an application
-// reads a field by key from a handler taking `&mut Context<'_, Delivery>`.
-struct Delivery {
-    offset: u64,
-}
-
-#[derive(Clone, Copy)]
-struct Offset;
-
-impl Field<Delivery> for Offset {
-    type Value<'a> = u64;
-    fn get(self, d: &Delivery) -> u64 {
-        d.offset
-    }
-}
-// ... in the handler: `let offset = ctx.context(Offset);`
+--8<-- "examples/context_field.rs:field"
 ```
 
 The context type is built from the message by `BuildContext`, which the runtime calls once per

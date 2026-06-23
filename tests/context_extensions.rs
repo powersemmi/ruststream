@@ -295,7 +295,7 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(|()| async { Ok::<_, std::convert::Infallible>(AppPrefix("svc".to_owned())) })
+        .on_startup(|()| async { Ok::<_, Infallible>(AppPrefix("svc".to_owned())) })
         .with_broker(broker, |b| {
             let subscriber = b.broker().subscribe("orders");
             b.handle(

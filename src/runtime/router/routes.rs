@@ -146,9 +146,10 @@ pub trait RouterDef<B, St = ()> {
     fn mount<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B, St>);
 }
 
-/// Metadata collection over a router's registration list, independent of the app state type. Split
-/// from [`RouterDef`] so [`Router::handlers`](crate::runtime::Router::handlers) does not have to
-/// name the state type a stateful router's handlers read.
+/// Metadata collection over a router's registration list, independent of the app state type.
+///
+/// Split from [`RouterDef`] so [`Router::handlers`](crate::runtime::Router::handlers) does not have
+/// to name the state type a stateful router's handlers read.
 pub trait RouterHandlers {
     /// Appends each registration's metadata, in registration order.
     #[doc(hidden)]

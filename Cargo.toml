@@ -76,6 +76,9 @@ name = "context"
 required-features = ["macros", "memory", "json"]
 
 [[example]]
+name = "context_field"
+
+[[example]]
 name = "lifespan"
 required-features = ["macros", "memory", "json"]
 

@@ -32,9 +32,10 @@ pub(crate) type BoundStarter<B, St> = Box<
         + Send,
 >;
 
-/// The runtime collector a router mounts into: type-erased starters plus handler metadata. `St` is
-/// the app's shared state type, threaded so a handler is only mounted on a sink whose state type it
-/// matches.
+/// The runtime collector a router mounts into: type-erased starters plus handler metadata.
+///
+/// `St` is the app's shared state type, threaded so a handler is only mounted on a sink whose state
+/// type it matches.
 ///
 /// Created and drained inside the application; a [`RouterDef`](crate::runtime::RouterDef) pushes
 /// into it during [`include_router`](crate::runtime::BrokerScope::include_router). You do not

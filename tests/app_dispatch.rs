@@ -480,13 +480,12 @@ async fn handler_reads_context_topic_and_state() {
                 subscriber,
                 move |_msg: &_, ctx: &mut Context<'_, (), Config>| {
                     let name = ctx.name().to_owned();
-                    let greeting = Some(ctx.state().greeting.clone());
+                    let greeting = ctx.state().greeting.clone();
                     // Middleware/handlers may enrich the working headers.
                     ctx.headers_mut().insert("x-seen", b"1".to_vec());
                     let seen = Arc::clone(&seen_clone);
                     async move {
-                        *seen.lock().expect("poisoned") =
-                            Some((name, greeting.unwrap_or_default()));
+                        *seen.lock().expect("poisoned") = Some((name, greeting));
                         HandlerResult::Ack
                     }
                 },
