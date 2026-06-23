@@ -52,7 +52,7 @@ pub use capability::{
 };
 pub use error::AckError;
 pub use extensions::Extensions;
-pub use field::{Field, FieldMut};
+pub use field::{BuildContext, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;
