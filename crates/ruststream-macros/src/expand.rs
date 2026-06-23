@@ -287,10 +287,6 @@ fn expand_batch_publishing(
         failure_method,
     } = parts;
 
-    // Like the single-message publishing form, a batch publishing handler pins its `State` to the
-    // type it names as the third `Context` generic (defaulting to `()`).
-    let state_ty = state_ty.clone().unwrap_or_else(|| quote!(()));
-
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
         ReturnType::Default => {
@@ -326,6 +322,17 @@ fn expand_batch_publishing(
             quote!(::core::result::Result::Ok((async move #block).await)),
         )
     };
+
+    // Like the single-message publishing form: the handler implements `BatchPublishingCall` only
+    // for its named state (mounts on a matching app), or generically when it names none (mounts on
+    // any app). The metadata-only `BatchPublishingDef` is unconditional.
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
     Ok(quote! {
         #[allow(non_camel_case_types)]
         #vis struct #name;
@@ -333,7 +340,6 @@ fn expand_batch_publishing(
         impl ::ruststream::runtime::BatchPublishingDef for #name {
             type Input = #input_ty;
             type Reply = #reply_elem;
-            type State = #state_ty;
             type Source = #source_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
@@ -350,11 +356,15 @@ fn expand_batch_publishing(
             #input_schema
 
             #message_meta
+        }
 
+        impl #impl_generics
+            ::ruststream::runtime::BatchPublishingCall<#state_in_ctx> for #name
+        {
             async fn call(
                 &self,
                 #pat: &[#input_ty],
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_ty>,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
             ) -> ::core::result::Result<
                 ::std::vec::Vec<#reply_elem>,
                 ::ruststream::runtime::HandlerResult,
@@ -467,10 +477,6 @@ fn expand_publishing(
         failure_method,
     } = parts;
 
-    // A publishing handler reads the app state by naming it as the third `Context` generic; the def
-    // pins `State` to it (defaulting to `()`), so the subscriber mounts only on a matching app.
-    let state_ty = state_ty.clone().unwrap_or_else(|| quote!(()));
-
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
         ReturnType::Default => {
@@ -490,6 +496,17 @@ fn expand_publishing(
             quote!(::core::result::Result::Ok((async move #block).await)),
         ),
     };
+
+    // As for `expand_subscribing`: a publishing handler that names a state type implements
+    // `PublishingCall` only for that state (mounts on a matching app); one that names none is
+    // generic over the state (mounts on any app). The metadata-only `PublishingDef` is unconditional.
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
     Ok(quote! {
         #[allow(non_camel_case_types)]
         #vis struct #name;
@@ -497,7 +514,6 @@ fn expand_publishing(
         impl ::ruststream::runtime::PublishingDef for #name {
             type Input = #input_ty;
             type Reply = #reply_ty;
-            type State = #state_ty;
             type Source = #source_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
@@ -514,11 +530,15 @@ fn expand_publishing(
             #input_schema
 
             #message_meta
+        }
 
+        impl #impl_generics
+            ::ruststream::runtime::PublishingCall<#state_in_ctx> for #name
+        {
             async fn call(
                 &self,
                 #pat: &#input_ty,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_ty>,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
                 #call_body
             }

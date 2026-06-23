@@ -10,16 +10,15 @@ use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{
-    BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
+    BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
 };
-use crate::runtime::dispatch::Publishers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
 use crate::runtime::publish::{PublishLayer, PublishMiddleware, ReplyPublisher, TypedPublisher};
 use crate::runtime::publisher_registry::ErasedPublisher;
-use crate::runtime::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
+use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
 use crate::runtime::router::{RouterDef, RouterSink};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::{Typed, typed};
@@ -34,7 +33,6 @@ use crate::runtime::typed::{Typed, typed};
 pub struct BrokerScope<B, L = Identity, C = (), St = ()> {
     pub(super) broker: Arc<B>,
     pub(super) sink: RouterSink<B, St>,
-    pub(super) publishers: Publishers,
     pub(super) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(super) global: L,
@@ -46,17 +44,6 @@ impl<B: Broker + 'static, L, C, St> BrokerScope<B, L, C, St> {
     #[must_use]
     pub fn broker(&self) -> &B {
         &self.broker
-    }
-
-    /// Resolves a named publisher by its compile-time [`PublisherKey`](crate::runtime::PublisherKey),
-    /// registered with [`RustStream::publisher`](crate::runtime::RustStream::publisher), to capture
-    /// in a handler and publish to.
-    #[must_use]
-    pub fn publisher<K: crate::runtime::PublisherKey>(
-        &self,
-        _key: K,
-    ) -> Option<Arc<dyn ErasedPublisher>> {
-        self.publishers.get(&std::any::TypeId::of::<K>()).cloned()
     }
 
     /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.
@@ -212,7 +199,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
     ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef<State = St> + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
@@ -245,7 +232,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,

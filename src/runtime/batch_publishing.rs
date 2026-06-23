@@ -28,19 +28,14 @@ use super::publish::{PublishMiddleware, ReplyPublisher};
 /// The batch counterpart of [`PublishingDef`](super::PublishingDef): the handler consumes the
 /// whole decoded batch and returns the replies for it, all-or-nothing. Selective per-element
 /// outcomes are deliberately unsupported here - there is no coherent transaction commit for a
-/// half-nacked batch; handlers needing both publish manually via
-/// [`Context::publisher`](super::Context::publisher) from a plain batch handler.
+/// half-nacked batch; handlers needing both publish manually from a plain batch handler through a
+/// publisher held in the typed application state.
 pub trait BatchPublishingDef: Send + Sync {
     /// The decoded element type; the handler consumes `&[Input]`.
     type Input;
 
     /// The reply element type; each entry of the returned `Vec` is encoded and published.
     type Reply;
-
-    /// The app's typed shared state the handler reads through
-    /// [`Context::state`](super::Context::state) (`()` when it names none). A batch publishing
-    /// subscriber mounts only on an app whose state type matches.
-    type State: Send + Sync;
 
     /// The subscription source this handler binds to (see
     /// [`SubscriberDef::Source`](super::SubscriberDef::Source)).
@@ -88,15 +83,23 @@ pub trait BatchPublishingDef: Send + Sync {
     fn message_description(&self) -> Option<&'static str> {
         None
     }
+}
 
+/// Runs a [`BatchPublishingDef`]'s handler body over an app state of type `S`.
+///
+/// Split from [`BatchPublishingDef`] so a handler that ignores the app state is generic over `S`
+/// (mounts on any app), while one that reads it via [`Context::state`](super::Context::state)
+/// implements this only for its declared `S` - the state match is checked at compile time without
+/// pinning a single `State` on the def.
+pub trait BatchPublishingCall<S>: BatchPublishingDef {
     /// Runs the handler body on one decoded batch.
     ///
-    /// `Ok(replies)` publishes every reply to [`reply_name`](Self::reply_name) and acks the
-    /// batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
+    /// `Ok(replies)` publishes every reply to [`reply_name`](BatchPublishingDef::reply_name) and
+    /// acks the batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
     fn call(
         &self,
         batch: &[Self::Input],
-        ctx: &mut Context<'_, (), Self::State>,
+        ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = Result<Vec<Self::Reply>, HandlerResult>> + Send;
 }
 
@@ -138,19 +141,20 @@ impl<D, C, R> std::fmt::Debug for BatchPublishingHandler<D, C, R> {
     }
 }
 
-impl<M, D, C, R> BatchHandler<M, D::State> for BatchPublishingHandler<D, C, R>
+impl<M, D, C, R, S> BatchHandler<M, S> for BatchPublishingHandler<D, C, R>
 where
     M: IncomingMessage,
-    D: BatchPublishingDef,
+    D: BatchPublishingCall<S>,
     D::Input: DeserializeOwned + Send + Sync,
     D::Reply: Serialize + Send + Sync,
     C: Codec,
     R: ReplyPublisher,
+    S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), D::State>) {
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
         let subscription = ctx.name().to_owned();
         let (values, accepted) =
-            decode_batch::<M, D::Input, C, D::State>(batch, &self.codec, self.decode, ctx).await;
+            decode_batch::<M, D::Input, C, S>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }
@@ -203,7 +207,6 @@ mod tests {
     impl BatchPublishingDef for Confirm {
         type Input = u32;
         type Reply = u32;
-        type State = ();
         type Source = crate::Name;
 
         fn source(&self) -> Self::Source {
@@ -213,11 +216,14 @@ mod tests {
         fn reply_name(&self) -> &str {
             self.reply_to
         }
+    }
 
+    // Ignores the app state, so it is generic over it (mounts on any app).
+    impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
         async fn call(
             &self,
             batch: &[u32],
-            _ctx: &mut Context<'_>,
+            _ctx: &mut Context<'_, (), S>,
         ) -> Result<Vec<u32>, HandlerResult> {
             if let Some(result) = self.fail_with {
                 return Err(result);

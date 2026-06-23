@@ -30,7 +30,7 @@ shared state, or to publish from inside the handler:
 
 The macro resolves the context type itself, so the `Context` name needs no import when it appears
 only in `#[subscriber]` signatures. The full context surface - the headers working copy, state
-access, named publishers - is covered in [Context and state](context.md).
+access, broker per-delivery fields - is covered in [Context and state](context.md).
 
 ### Acking
 

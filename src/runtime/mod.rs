@@ -21,7 +21,7 @@ mod typed;
 
 pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
-pub use batch_publishing::{BatchPublishingDef, BatchPublishingHandler};
+pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
@@ -31,10 +31,10 @@ pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     Outgoing, PublishIdentity, PublishLayer, PublishMiddleware, PublishNext, PublishStack,
-    ReplyPublisher, ScopedPublisher, Transactional, TypedPublisher,
+    ReplyPublisher, Transactional, TypedPublisher,
 };
-pub use publisher_registry::{ErasedPublisher, PublisherKey};
-pub use publishing::{PublishingDef, PublishingHandler};
+pub use publisher_registry::ErasedPublisher;
+pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

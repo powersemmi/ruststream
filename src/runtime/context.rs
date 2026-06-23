@@ -17,7 +17,6 @@ use crate::{Field, FieldMut, Headers};
 use super::dispatch::Delivery;
 use super::failure::ErrorShutdown;
 use super::handler::HandlerResult;
-use super::publish::ScopedPublisher;
 
 /// A post-settle continuation: a boxed `Send` future the dispatcher runs after the message (or
 /// batch) has been settled.
@@ -60,11 +59,11 @@ struct AfterHook {
 ///
 /// Carries the channel ([`name`](Self::name)), a working copy of the message
 /// [`headers`](Self::headers) (middleware may enrich them for the handler; the broker message
-/// itself is untouched), shared application [state](Self::state), the broker's typed per-delivery
-/// context read by key ([`context`](Self::context) / [`set`](Self::set)), and access to named
-/// [`publisher`](Self::publisher)s for publishing from inside a handler. The headers copy is made
-/// lazily on the first [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit
-/// it: replies and manual publishes start from fresh headers, shaped by the publish pipeline.
+/// itself is untouched), the typed shared application [state](Self::state) (where a publisher to
+/// publish from a handler lives), and the broker's typed per-delivery context read by key
+/// ([`context`](Self::context) / [`set`](Self::set)). The headers copy is made lazily on the first
+/// [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit it: replies and manual
+/// publishes start from fresh headers, shaped by the publish pipeline.
 pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
     original: &'a Headers,
@@ -130,22 +129,6 @@ impl<'a, C, S> Context<'a, C, S> {
     #[must_use]
     pub fn name(&self) -> &str {
         self.name
-    }
-
-    /// Resolves a named publisher by its compile-time [`PublisherKey`](super::PublisherKey)
-    /// (registered with [`RustStream::publisher`](super::RustStream::publisher)) to publish from
-    /// this handler.
-    ///
-    /// Sends through it run the scope's publish middleware (envelope, metrics) - the same chain as a
-    /// macro reply - so a manual publish is not a hole in the pipeline. Returns `None` if no
-    /// publisher is registered under `key`.
-    #[must_use]
-    pub fn publisher<K: super::PublisherKey>(&self, _key: K) -> Option<ScopedPublisher<'_>> {
-        let publisher = self.delivery.publishers.get(&std::any::TypeId::of::<K>())?;
-        Some(ScopedPublisher::new(
-            publisher.as_ref(),
-            &self.delivery.pipeline,
-        ))
     }
 
     /// The working copy of the message headers.
