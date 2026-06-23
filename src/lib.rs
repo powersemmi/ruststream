@@ -34,7 +34,6 @@ mod broker;
 mod buffered;
 mod capability;
 mod error;
-mod extensions;
 mod field;
 mod headers;
 mod message;
@@ -51,7 +50,6 @@ pub use capability::{
     TransactionalPublisher,
 };
 pub use error::AckError;
-pub use extensions::Extensions;
 pub use field::{BuildContext, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};

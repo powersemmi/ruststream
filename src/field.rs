@@ -96,6 +96,10 @@ pub trait FieldMut<Src: ?Sized>: Field<Src> {
 /// own context type, reading the fields off its concrete message; the blanket `impl` for `()`
 /// gives the zero-field default, so a broker that exposes nothing needs no implementation.
 ///
+/// The built context is an owned value (it reads its fields out of the message rather than
+/// borrowing it), so it does not tie the handler's context type to the delivery lifetime; broker
+/// metadata is typically `Copy` (offsets, sequence numbers), so this is a stack copy.
+///
 /// # Examples
 ///
 /// ```
@@ -110,8 +114,8 @@ pub trait FieldMut<Src: ?Sized>: Field<Src> {
 ///     offset: u64,
 /// }
 ///
-/// impl<'a> BuildContext<'a, Msg> for OrdersContext {
-///     fn build(msg: &'a Msg) -> Self {
+/// impl BuildContext<Msg> for OrdersContext {
+///     fn build(msg: &Msg) -> Self {
 ///         Self { offset: msg.offset }
 ///     }
 /// }
@@ -120,11 +124,11 @@ pub trait FieldMut<Src: ?Sized>: Field<Src> {
 /// let cx = OrdersContext::build(&msg);
 /// assert_eq!(cx.offset, 9);
 /// ```
-pub trait BuildContext<'a, M: ?Sized + 'a> {
-    /// Builds the context value, borrowing from `msg` for `'a`.
-    fn build(msg: &'a M) -> Self;
+pub trait BuildContext<M: ?Sized> {
+    /// Builds the context value by reading fields out of `msg`.
+    fn build(msg: &M) -> Self;
 }
 
-impl<'a, M: ?Sized + 'a> BuildContext<'a, M> for () {
-    fn build(_msg: &'a M) -> Self {}
+impl<M: ?Sized> BuildContext<M> for () {
+    fn build(_msg: &M) -> Self {}
 }
