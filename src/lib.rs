@@ -35,6 +35,7 @@ mod buffered;
 mod capability;
 mod error;
 mod extensions;
+mod field;
 mod headers;
 mod message;
 mod publisher;
@@ -51,6 +52,7 @@ pub use capability::{
 };
 pub use error::AckError;
 pub use extensions::Extensions;
+pub use field::{Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;
