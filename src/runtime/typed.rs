@@ -27,7 +27,6 @@ where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: Handler<T>,
 {
     Typed {
         codec,
@@ -64,14 +63,15 @@ impl<M, T, C, H> fmt::Debug for Typed<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H> Handler<M> for Typed<M, T, C, H>
+impl<M, T, C, H, Cx> Handler<M, Cx> for Typed<M, T, C, H>
 where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: Handler<T>,
+    Cx: Send,
+    H: Handler<T, Cx>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx>) -> Settle {
         match self.codec.decode::<T>(msg.payload()) {
             Ok(value) => self.inner.handle(&value, ctx).await,
             Err(err) => {

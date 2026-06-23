@@ -36,8 +36,31 @@ struct HandlerParts<'a> {
     input_schema: TokenStream2,
     message_meta: TokenStream2,
     ctx_param: TokenStream2,
+    ctx_ty: TokenStream2,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
+}
+
+/// The per-delivery context type the handler named in its `ctx: &mut Context<'_, C>` parameter, or
+/// `()` when it named none. Threaded into the single-subscriber `SubscriberDef::Context` so a
+/// macro handler can read broker fields by key.
+fn context_type(func: &ItemFn) -> TokenStream2 {
+    let Some(FnArg::Typed(PatType { ty, .. })) = func.sig.inputs.get(1) else {
+        return quote!(());
+    };
+    // Dig the second generic argument (after the lifetime) out of `&mut Context<'_, C>`.
+    if let Type::Reference(reference) = &**ty
+        && let Type::Path(path) = &*reference.elem
+        && let Some(segment) = path.path.segments.last()
+        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+    {
+        for arg in &args.args {
+            if let syn::GenericArgument::Type(context_ty) = arg {
+                return quote!(#context_ty);
+            }
+        }
+    }
+    quote!(())
 }
 
 /// Renders the `on_failure(..)` clause as an override of the def's defaulted `failure_policies`
@@ -187,6 +210,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     } else {
         quote!(_ctx)
     };
+    let ctx_ty = context_type(func);
 
     let workers_method = workers_method(args)?;
     let failure_method = failure_method(args);
@@ -203,6 +227,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         input_schema,
         message_meta,
         ctx_param,
+        ctx_ty,
         workers_method,
         failure_method,
     })
@@ -225,6 +250,7 @@ fn expand_batch_publishing(
         input_schema,
         message_meta,
         ctx_param,
+        ctx_ty: _,
         workers_method,
         failure_method,
     } = parts;
@@ -315,6 +341,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         input_schema,
         message_meta,
         ctx_param,
+        ctx_ty: _,
         workers_method,
         failure_method,
     } = parts;
@@ -384,6 +411,7 @@ fn expand_publishing(
         input_schema,
         message_meta,
         ctx_param,
+        ctx_ty: _,
         workers_method,
         failure_method,
     } = parts;
@@ -455,6 +483,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         input_schema,
         message_meta,
         ctx_param,
+        ctx_ty,
         workers_method,
         failure_method,
     } = parts;
@@ -464,11 +493,11 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
             #[allow(non_camel_case_types)]
             #vis struct #name;
 
-            impl ::ruststream::runtime::Handler<#input_ty> for #name {
+            impl ::ruststream::runtime::Handler<#input_ty, #ctx_ty> for #name {
                 async fn handle(
                     &self,
                     #pat: &#input_ty,
-                    #ctx_param: &mut ::ruststream::runtime::Context<'_>,
+                    #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty>,
                 ) -> ::ruststream::runtime::Settle {
                     ::ruststream::runtime::IntoSettle::into_settle(
                         (async move #block).await,
@@ -478,6 +507,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
 
             impl ::ruststream::runtime::SubscriberDef for #name {
                 type Input = #input_ty;
+                type Context = #ctx_ty;
                 type Handler = Self;
                 type Source = #source_ty;
 

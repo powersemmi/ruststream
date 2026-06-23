@@ -156,10 +156,11 @@ impl<B: Broker + 'static, L, SC> BrokerScope<B, L, SC> {
         <S::Subscriber as Subscriber>::Message: 'static,
         D: SubscriberDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
         D::Handler: 'static,
         C: Codec + 'static,
         L: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context> + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
