@@ -88,3 +88,43 @@ pub trait FieldMut<Src: ?Sized>: Field<Src> {
     /// Writes `value` into `src` under this key.
     fn set(self, src: &mut Src, value: Self::Owned);
 }
+
+/// Builds a handler's per-delivery context value from the broker message.
+///
+/// The runtime calls this once per delivery to construct the typed context the handler reads its
+/// broker fields off (by [`Field`] key). A broker with per-delivery fields implements it for its
+/// own context type, reading the fields off its concrete message; the blanket `impl` for `()`
+/// gives the zero-field default, so a broker that exposes nothing needs no implementation.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::BuildContext;
+///
+/// struct Msg {
+///     offset: u64,
+/// }
+///
+/// // A broker context carrying one field, built from the message.
+/// struct OrdersContext {
+///     offset: u64,
+/// }
+///
+/// impl<'a> BuildContext<'a, Msg> for OrdersContext {
+///     fn build(msg: &'a Msg) -> Self {
+///         Self { offset: msg.offset }
+///     }
+/// }
+///
+/// let msg = Msg { offset: 9 };
+/// let cx = OrdersContext::build(&msg);
+/// assert_eq!(cx.offset, 9);
+/// ```
+pub trait BuildContext<'a, M: ?Sized + 'a> {
+    /// Builds the context value, borrowing from `msg` for `'a`.
+    fn build(msg: &'a M) -> Self;
+}
+
+impl<'a, M: ?Sized + 'a> BuildContext<'a, M> for () {
+    fn build(_msg: &'a M) -> Self {}
+}
