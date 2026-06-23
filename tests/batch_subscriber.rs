@@ -446,7 +446,7 @@ async fn batch_handler_reads_typed_state() {
     );
 
     // Each id was multiplied by the state's multiplier (10), proving the handler read typed state.
-    let scaled = SCALED.lock().unwrap();
+    let scaled = SCALED.lock().unwrap().clone();
     assert!(
         scaled.iter().all(|n| n % 10 == 0),
         "every value must be a multiple of the state multiplier; got {scaled:?}",
