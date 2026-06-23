@@ -20,7 +20,7 @@ use crate::codec::Codec;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
-use crate::{Extensions, Headers, Publisher, TransactionalPublisher};
+use crate::{Headers, Publisher, TransactionalPublisher};
 
 type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
 
@@ -104,15 +104,9 @@ pub trait PublishMiddleware: Send + Sync {
 }
 
 /// A cursor over the remaining publish middleware, ending in the broker publisher.
-///
-/// Carries the originating delivery's per-delivery [`Extensions`] (via
-/// [`extensions`](Self::extensions)), so a transactional middleware or publisher can read a
-/// broker-supplied commit token at commit time. A publish with no originating delivery (a fresh
-/// startup publish) sees an empty map.
 pub struct PublishNext<'a> {
     rest: &'a [Arc<dyn PublishMiddleware>],
     publisher: &'a dyn ErasedPublisher,
-    extensions: &'a Extensions,
 }
 
 impl<'a> PublishNext<'a> {
@@ -125,20 +119,12 @@ impl<'a> PublishNext<'a> {
                 PublishNext {
                     rest,
                     publisher: self.publisher,
-                    extensions: self.extensions,
                 },
             ),
             None => self
                 .publisher
                 .publish_message(out.name(), out.payload(), out.headers()),
         }
-    }
-
-    /// The originating delivery's per-delivery [`Extensions`], for a transactional middleware to
-    /// read a broker-supplied commit token. Empty for a publish with no originating delivery.
-    #[must_use]
-    pub fn extensions(&self) -> &Extensions {
-        self.extensions
     }
 }
 
@@ -150,18 +136,15 @@ impl std::fmt::Debug for PublishNext<'_> {
     }
 }
 
-/// Runs `out` through `pipeline`, then publishes it via `publisher`, carrying the originating
-/// delivery's `extensions` for any transactional middleware to read.
+/// Runs `out` through `pipeline`, then publishes it via `publisher`.
 pub(crate) fn run_publish<'a>(
     pipeline: &'a [Arc<dyn PublishMiddleware>],
     publisher: &'a dyn ErasedPublisher,
     out: &'a mut Outgoing<'a>,
-    extensions: &'a Extensions,
 ) -> PublishFut<'a> {
     PublishNext {
         rest: pipeline,
         publisher,
-        extensions,
     }
     .run(out)
 }
@@ -175,30 +158,26 @@ pub(crate) fn run_publish<'a>(
 pub struct ScopedPublisher<'a> {
     publisher: &'a dyn ErasedPublisher,
     pipeline: &'a [Arc<dyn PublishMiddleware>],
-    extensions: &'a Extensions,
 }
 
 impl<'a> ScopedPublisher<'a> {
     pub(crate) fn new(
         publisher: &'a dyn ErasedPublisher,
         pipeline: &'a [Arc<dyn PublishMiddleware>],
-        extensions: &'a Extensions,
     ) -> Self {
         Self {
             publisher,
             pipeline,
-            extensions,
         }
     }
 
-    /// Sends `out` through the publish pipeline to the broker, carrying the originating delivery's
-    /// per-delivery extensions for any transactional middleware to read.
+    /// Sends `out` through the publish pipeline to the broker.
     ///
     /// # Errors
     ///
     /// Returns the boxed error from a middleware or the broker publish if either fails.
     pub async fn publish(&self, mut out: Outgoing<'_>) -> Result<(), BoxError> {
-        run_publish(self.pipeline, self.publisher, &mut out, self.extensions).await
+        run_publish(self.pipeline, self.publisher, &mut out).await
     }
 }
 
@@ -340,14 +319,12 @@ impl<P, C, PL> TypedPublisher<P, C, PL> {
 }
 
 impl<P: Publisher, C: Codec, PL: PublishLayer> TypedPublisher<P, C, PL> {
-    /// Encodes `value`, applies the static transforms, then publishes to `name` through `pipeline`,
-    /// carrying the originating delivery's `extensions` for any transactional middleware to read.
+    /// Encodes `value`, applies the static transforms, then publishes to `name` through `pipeline`.
     pub(crate) async fn publish<T: Serialize + Sync>(
         &self,
         name: &str,
         value: &T,
         pipeline: &[Arc<dyn PublishMiddleware>],
-        extensions: &Extensions,
     ) -> Result<(), BoxError> {
         let payload = self
             .codec
@@ -355,7 +332,7 @@ impl<P: Publisher, C: Codec, PL: PublishLayer> TypedPublisher<P, C, PL> {
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = Outgoing::new(name, payload);
         self.layers.apply(&mut out);
-        run_publish(pipeline, &self.publisher, &mut out, extensions).await
+        run_publish(pipeline, &self.publisher, &mut out).await
     }
 }
 
@@ -412,7 +389,6 @@ pub trait ReplyPublisher: Sealed + Send + Sync {
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a [Arc<dyn PublishMiddleware>],
-        extensions: &'a Extensions,
     ) -> impl Future<Output = Result<(), BoxError>> + Send
     where
         T: Serialize + Sync;
@@ -437,13 +413,12 @@ where
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a [Arc<dyn PublishMiddleware>],
-        extensions: &'a Extensions,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
     {
         for reply in replies {
-            self.publish(name, reply, pipeline, extensions).await?;
+            self.publish(name, reply, pipeline).await?;
         }
         Ok(())
     }
@@ -470,7 +445,6 @@ where
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a [Arc<dyn PublishMiddleware>],
-        extensions: &'a Extensions,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
@@ -481,7 +455,7 @@ where
             .await
             .map_err(|e| Box::new(e) as BoxError)?;
         for reply in replies {
-            if let Err(err) = self.inner.publish(name, reply, pipeline, extensions).await {
+            if let Err(err) = self.inner.publish(name, reply, pipeline).await {
                 abort_quietly(publisher).await;
                 return Err(err);
             }

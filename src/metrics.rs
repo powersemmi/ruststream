@@ -194,10 +194,11 @@ impl<H> Layer<H> for MetricsLayer {
 // `MetricsHandler<H>` is already `Handler<M>` for any `H: Handler<M>`, so the blanket form just
 // delegates to the static one.
 impl BlanketLayer for MetricsLayer {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        H: Handler<M, C> + 'static,
     {
         self.layer(handler)
     }
@@ -216,12 +217,13 @@ impl<H> std::fmt::Debug for MetricsHandler<H> {
     }
 }
 
-impl<M, H> Handler<M> for MetricsHandler<H>
+impl<M, C, H> Handler<M, C> for MetricsHandler<H>
 where
     M: Sync,
-    H: Handler<M>,
+    C: Send,
+    H: Handler<M, C>,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = Settle> + Send {
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> impl Future<Output = Settle> + Send {
         let name = ctx.name().to_owned();
         async move {
             let started = std::time::Instant::now();

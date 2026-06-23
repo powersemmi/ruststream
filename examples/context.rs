@@ -56,14 +56,6 @@ async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
         println!("order {id} acked; sending the confirmation");
     });
 
-    // --8<-- [start:extensions]
-    // 5. Per-delivery extensions: a value scoped to this one delivery (set by middleware or a
-    // broker, then read by the handler). Distinct from the shared app state above.
-    ctx.insert(order.id);
-    if let Some(seen) = ctx.get::<u64>() {
-        println!("processing order {seen}");
-    }
-    // --8<-- [end:extensions]
     HandlerResult::Ack
 }
 // --8<-- [end:handler]

@@ -28,17 +28,18 @@ impl<H> Layer<H> for Observe {
 }
 
 impl BlanketLayer for Observe {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        H: Handler<M, C> + 'static,
     {
         Observed(handler)
     }
 }
 
-impl<M: Send + Sync, H: Handler<M>> Handler<M> for Observed<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+impl<M: Send + Sync, C: Send, H: Handler<M, C>> Handler<M, C> for Observed<H> {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> Settle {
         let channel = ctx.name().to_owned();
         let started = Instant::now();
         let settle = self.0.handle(msg, ctx).await;

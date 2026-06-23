@@ -60,7 +60,7 @@ impl<B: Broker + 'static> RouterSink<B> {
     }
 
     /// Erases an already-created subscriber and its handler into a starter.
-    pub(crate) fn push_handle<S, H>(
+    pub(crate) fn push_handle<S, H, Cx>(
         &mut self,
         subscriber: S,
         handler: H,
@@ -68,7 +68,8 @@ impl<B: Broker + 'static> RouterSink<B> {
         policies: FailurePolicies,
     ) where
         S: Subscriber + Send + 'static,
-        H: Handler<S::Message> + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        H: Handler<S::Message, Cx> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -121,7 +122,7 @@ impl<B: Broker + 'static> RouterSink<B> {
 
     /// Erases a source and its handler into a starter dispatching under the `workers` policy;
     /// the subscription opens after connect.
-    pub(crate) fn push_subscribe_workers<S, H>(
+    pub(crate) fn push_subscribe_workers<S, H, Cx>(
         &mut self,
         source: S,
         handler: H,
@@ -132,7 +133,8 @@ impl<B: Broker + 'static> RouterSink<B> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         SourceMessage<B, S>: Send + Sync + 'static,
-        H: Handler<SourceMessage<B, S>> + 'static,
+        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
+        H: Handler<SourceMessage<B, S>, Cx> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -154,7 +156,7 @@ impl<B: Broker + 'static> RouterSink<B> {
     }
 
     /// Erases a source and its handler into a starter; the subscription opens after connect.
-    pub(crate) fn push_subscribe<S, H>(
+    pub(crate) fn push_subscribe<S, H, Cx>(
         &mut self,
         source: S,
         handler: H,
@@ -163,7 +165,8 @@ impl<B: Broker + 'static> RouterSink<B> {
     ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
-        H: Handler<SourceMessage<B, S>> + 'static,
+        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
+        H: Handler<SourceMessage<B, S>, Cx> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());

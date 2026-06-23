@@ -154,7 +154,7 @@ where
                 let name = self.def.reply_name();
                 match self
                     .publisher
-                    .publish_batch(name, &replies, &self.pipeline, ctx.extensions())
+                    .publish_batch(name, &replies, &self.pipeline)
                     .await
                 {
                     Ok(()) => HandlerResult::Ack,
@@ -257,7 +257,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("orders", &headers, &state, &delivery);
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut input).await;
         handler.handle_batch(batch, &mut ctx).await;
 
@@ -295,7 +295,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("orders", &headers, &state, &delivery);
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut input).await;
         handler.handle_batch(batch, &mut ctx).await;
 

@@ -1,7 +1,8 @@
-//! Integration tests for the per-delivery `Context` extensions: isolation across deliveries, a
-//! broker-contributed extension (via the `IncomingMessage` seam) reaching the handler, a
-//! middleware-written extension reaching a downstream handler, and `ctx.state()` still reaching
-//! app state. All use the in-memory broker.
+//! Integration tests for the typed per-delivery `Context`: a broker-contributed field (built from
+//! the message via `BuildContext`) reaching the handler by key, a middleware-written scratch value
+//! reaching a downstream handler and being isolated per delivery, and `ctx.state()` still reaching
+//! app state. All use the in-memory broker with hand-written handlers (which can name a context
+//! type; macro handlers use the default `()` context).
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
@@ -13,16 +14,14 @@ use ruststream::runtime::{
     AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerResult, Layer, RustStream,
     Settle,
 };
-use ruststream::{AckError, Extensions, Headers, IncomingMessage, OutgoingMessage, Publisher};
+use ruststream::{
+    AckError, BuildContext, Field, FieldMut, Headers, IncomingMessage, OutgoingMessage, Publisher,
+};
 use tokio::sync::Notify;
 
-/// A broker-supplied per-delivery value, the kind a real broker would stash (an offset, a commit
-/// token, a reply-to handle).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct DeliveryTag(u32);
-
-/// Wraps a `MemoryMessage` and contributes a `DeliveryTag` through the `IncomingMessage`
-/// extensions seam, standing in for a broker that attaches native per-delivery metadata.
+/// A broker that attaches native per-delivery metadata: `TaggedMessage` carries a tag, and the
+/// `TagContext` reads it off the message via `BuildContext`, standing in for an offset / commit
+/// token / reply-to handle a real broker would expose.
 struct TaggedMessage {
     inner: MemoryMessage,
     tag: u32,
@@ -37,12 +36,6 @@ impl IncomingMessage for TaggedMessage {
         self.inner.headers()
     }
 
-    fn extensions(&self) -> Extensions {
-        let mut ext = Extensions::new();
-        ext.insert(DeliveryTag(self.tag));
-        ext
-    }
-
     async fn ack(self) -> Result<(), AckError> {
         self.inner.ack().await
     }
@@ -52,8 +45,30 @@ impl IncomingMessage for TaggedMessage {
     }
 }
 
+/// The broker's typed per-delivery context, built from the message.
+struct TagContext {
+    tag: u32,
+}
+
+impl BuildContext<TaggedMessage> for TagContext {
+    fn build(msg: &TaggedMessage) -> Self {
+        Self { tag: msg.tag }
+    }
+}
+
+/// The compile-time key reading the tag out of [`TagContext`].
+#[derive(Clone, Copy)]
+struct Tag;
+
+impl Field<TagContext> for Tag {
+    type Value<'a> = u32;
+    fn get(self, cx: &TagContext) -> u32 {
+        cx.tag
+    }
+}
+
 /// A subscriber that yields `TaggedMessage`s, numbering each delivery so the contributed tag
-/// differs per message (used to prove isolation as well as delivery).
+/// differs per message (proving delivery as well as per-delivery freshness).
 struct TaggedSubscriber {
     inner: MemorySubscriber,
     next_tag: u32,
@@ -85,7 +100,7 @@ async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn broker_contributed_extension_reaches_handler() {
+async fn broker_contributed_field_reaches_handler_by_key() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
@@ -99,14 +114,12 @@ async fn broker_contributed_extension_reaches_handler() {
         };
         b.handle(
             subscriber,
-            move |_msg: &TaggedMessage, ctx: &mut Context| {
-                // The broker-contributed extension is readable from the handler's context.
-                let tag = ctx.get::<DeliveryTag>().copied();
+            move |_msg: &TaggedMessage, ctx: &mut Context<'_, TagContext>| {
+                // The broker-contributed field is read off the typed context by key.
+                let tag = ctx.context(Tag);
                 let seen = Arc::clone(&seen_clone);
                 async move {
-                    if let Some(DeliveryTag(n)) = tag {
-                        seen.lock().expect("poisoned").push(n);
-                    }
+                    seen.lock().expect("poisoned").push(tag);
                     HandlerResult::Ack
                 }
             },
@@ -133,17 +146,48 @@ async fn broker_contributed_extension_reaches_handler() {
     )
     .await;
 
-    // Each delivery sees its own tag: the seam delivers a fresh value per message, and one
-    // delivery's value never leaks into the next.
+    // Each delivery is built a fresh context from its own message, so each sees its own tag.
     assert_eq!(*seen.lock().expect("poisoned"), vec![1, 2]);
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();
 }
 
-/// A layer that writes a per-delivery extension before the inner handler runs, then asserts the
-/// extension it wrote is gone on the next delivery (proving per-delivery isolation through the
-/// dispatch loop, not just within one `Extensions` value).
+/// A per-delivery scratch context a middleware writes and a downstream handler reads.
+#[derive(Default)]
+struct Scratch {
+    stamp: Option<u32>,
+}
+
+// Reads nothing off the message: each delivery starts from a fresh default, which is what makes
+// the value isolated per delivery.
+impl<M: ?Sized> BuildContext<M> for Scratch {
+    fn build(_msg: &M) -> Self {
+        Self::default()
+    }
+}
+
+/// The key reading / writing the middleware stamp.
+#[derive(Clone, Copy)]
+struct Stamp;
+
+impl Field<Scratch> for Stamp {
+    type Value<'a> = Option<&'a u32>;
+    fn get(self, cx: &Scratch) -> Option<&u32> {
+        cx.stamp.as_ref()
+    }
+}
+
+impl FieldMut<Scratch> for Stamp {
+    type Owned = u32;
+    fn set(self, cx: &mut Scratch, value: u32) {
+        cx.stamp = Some(value);
+    }
+}
+
+/// A layer that writes the scratch stamp before the inner handler runs, asserting first that no
+/// stamp survived from a previous delivery (proving per-delivery isolation through the dispatch
+/// loop).
 struct StampLayer {
     counter: Arc<std::sync::atomic::AtomicU32>,
 }
@@ -164,31 +208,28 @@ impl<H> Layer<H> for StampLayer {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct Stamp(u32);
-
-impl<M, H> Handler<M> for StampHandler<H>
+impl<M, H> Handler<M, Scratch> for StampHandler<H>
 where
     M: Sync,
-    H: Handler<M>,
+    H: Handler<M, Scratch>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Scratch>) -> Settle {
         // No value should survive from a previous delivery: the dispatch loop builds a fresh
         // context each time.
         assert!(
-            ctx.get::<Stamp>().is_none(),
-            "extension leaked across deliveries"
+            ctx.context(Stamp).is_none(),
+            "scratch leaked across deliveries"
         );
         let n = self
             .counter
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        ctx.insert(Stamp(n));
+        ctx.set(Stamp, n);
         self.inner.handle(msg, ctx).await
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn middleware_written_extension_reaches_downstream_handler_and_is_isolated() {
+async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
@@ -202,13 +243,13 @@ async fn middleware_written_extension_reaches_downstream_handler_and_is_isolated
             let layer = StampLayer {
                 counter: Arc::clone(&counter),
             };
-            (move |_msg: &MemoryMessage, ctx: &mut Context| {
-                // The layer ran first and wrote a per-delivery Stamp; the downstream handler reads
-                // it back from the same context.
-                let stamp = ctx.get::<Stamp>().copied();
+            (move |_msg: &MemoryMessage, ctx: &mut Context<'_, Scratch>| {
+                // The layer ran first and wrote a per-delivery stamp; the downstream handler reads
+                // it back from the same context by key.
+                let stamp = ctx.context(Stamp).copied();
                 let seen = Arc::clone(&seen_clone);
                 async move {
-                    if let Some(Stamp(n)) = stamp {
+                    if let Some(n) = stamp {
                         seen.lock().expect("poisoned").push(n);
                     }
                     HandlerResult::Ack
@@ -245,16 +286,12 @@ async fn middleware_written_extension_reaches_downstream_handler_and_is_isolated
 
 struct AppPrefix(String);
 
-/// What the handler observed: the app-state prefix (through `state()`) and the per-delivery `u8`
-/// extension (through `get`), which is empty here.
-type Observed = Option<(Option<String>, Option<u8>)>;
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_still_reaches_app_state_separately_from_extensions() {
+async fn state_reaches_app_state_independently_of_the_delivery_context() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let seen: Arc<Mutex<Observed>> = Arc::new(Mutex::new(None));
+    let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -263,14 +300,12 @@ async fn state_still_reaches_app_state_separately_from_extensions() {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &MemoryMessage, ctx: &mut Context| {
-                    // App state through state(); the per-delivery map is empty for this type.
+                move |_msg: &MemoryMessage, ctx: &mut Context<'_>| {
+                    // App state through state(), independent of the per-delivery context.
                     let prefix = ctx.state().get::<AppPrefix>().map(|p| p.0.clone());
-                    // The same accessor name on the per-delivery map sees a different (empty) store.
-                    let ext = ctx.get::<u8>().copied();
                     let seen = Arc::clone(&seen_clone);
                     async move {
-                        *seen.lock().expect("poisoned") = Some((prefix, ext));
+                        *seen.lock().expect("poisoned") = prefix;
                         HandlerResult::Ack
                     }
                 },
@@ -292,10 +327,7 @@ async fn state_still_reaches_app_state_separately_from_extensions() {
         Duration::from_secs(5),
     )
     .await;
-    assert_eq!(
-        *seen.lock().expect("poisoned"),
-        Some((Some("svc".to_owned()), None)),
-    );
+    assert_eq!(*seen.lock().expect("poisoned"), Some("svc".to_owned()));
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();

@@ -62,7 +62,7 @@ where
     H: Handler<SourceMessage<B, S>> + 'static,
 {
     fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
-        let handler = global.apply::<SourceMessage<B, S>, H>(self.handler);
+        let handler = global.apply::<SourceMessage<B, S>, (), H>(self.handler);
         sink.push_subscribe_workers(self.source, handler, self.meta, self.policies, self.workers);
     }
 
@@ -104,7 +104,7 @@ where
     H: Handler<S::Message> + 'static,
 {
     fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B>) {
-        let handler = global.apply::<S::Message, H>(self.handler);
+        let handler = global.apply::<S::Message, (), H>(self.handler);
         sink.push_handle(self.subscriber, handler, self.meta, self.policies);
     }
 

@@ -171,7 +171,7 @@ impl std::fmt::Debug for Delivery {
 /// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
 /// stream terminates. Each delivery is given a [`Context`] built from `name`, the message headers,
 /// shared `state`, and the `delivery` publish context.
-pub(crate) fn spawn_dispatch<S, H>(
+pub(crate) fn spawn_dispatch<S, H, C>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
@@ -182,7 +182,8 @@ pub(crate) fn spawn_dispatch<S, H>(
 ) -> JoinHandle<()>
 where
     S: Subscriber + Send + 'static,
-    H: Handler<S::Message> + 'static,
+    H: Handler<S::Message, C> + 'static,
+    C: crate::BuildContext<S::Message> + Send + 'static,
 {
     tokio::spawn(async move {
         let hooks = TaskTracker::new();
@@ -235,7 +236,7 @@ async fn drain_hooks(hooks: TaskTracker) {
 // identity, state, publish context, failure policy, worker policy); bundling them only to satisfy
 // the arg-count lint would hide what each spawn site passes.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_dispatch_workers<S, H>(
+pub(crate) fn spawn_dispatch_workers<S, H, C>(
     subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
@@ -248,7 +249,8 @@ pub(crate) fn spawn_dispatch_workers<S, H>(
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
-    H: Handler<S::Message> + 'static,
+    H: Handler<S::Message, C> + 'static,
+    C: crate::BuildContext<S::Message> + Send + 'static,
 {
     if workers.is_sequential() {
         return spawn_dispatch(
@@ -267,7 +269,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_dispatch_pool<S, H>(
+fn spawn_dispatch_pool<S, H, C>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
@@ -280,7 +282,8 @@ fn spawn_dispatch_pool<S, H>(
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
-    H: Handler<S::Message> + 'static,
+    H: Handler<S::Message, C> + 'static,
+    C: crate::BuildContext<S::Message> + Send + 'static,
 {
     tokio::spawn(async move {
         let hooks = TaskTracker::new();
@@ -332,7 +335,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_dispatch_lanes<S, H>(
+fn spawn_dispatch_lanes<S, H, C>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
@@ -345,7 +348,8 @@ fn spawn_dispatch_lanes<S, H>(
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
-    H: Handler<S::Message> + 'static,
+    H: Handler<S::Message, C> + 'static,
+    C: crate::BuildContext<S::Message> + Send + 'static,
 {
     tokio::spawn(async move {
         // One sequential worker per lane, fed by a capacity-1 channel: a keyed delivery always
@@ -521,7 +525,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-async fn dispatch<H, M>(
+async fn dispatch<H, M, C>(
     handler: &H,
     msg: M,
     name: &str,
@@ -530,13 +534,15 @@ async fn dispatch<H, M>(
     hooks: &TaskTracker,
     failure: &DispatchFailure,
 ) where
-    H: Handler<M>,
+    H: Handler<M, C>,
+    C: crate::BuildContext<M>,
     M: IncomingMessage,
 {
-    // Seed the per-delivery extensions from the broker's message, then attach the fail-fast handle.
-    let extensions = msg.extensions();
-    let mut ctx = Context::with_extensions(name, msg.headers(), state, extensions, delivery)
-        .with_failfast(&failure.shutdown);
+    // Build the broker's typed per-delivery context from the message, then attach the fail-fast
+    // handle.
+    let cx = C::build(&msg);
+    let mut ctx =
+        Context::new(name, msg.headers(), state, cx, delivery).with_failfast(&failure.shutdown);
     // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
     // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
     // the future borrows `&mut ctx`; that state is discarded with the failed delivery.
@@ -614,7 +620,8 @@ async fn run_batch<H, M>(
     M: IncomingMessage,
 {
     let empty = Headers::new();
-    let mut ctx = Context::new(name, &empty, state, delivery).with_failfast(&failure.shutdown);
+    // A batch has no single broker message, so its context is the unit (no per-delivery fields).
+    let mut ctx = Context::new(name, &empty, state, (), delivery).with_failfast(&failure.shutdown);
     let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
         .catch_unwind()
         .await;

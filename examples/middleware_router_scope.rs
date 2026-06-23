@@ -54,17 +54,18 @@ impl<H> Layer<H> for LogLayer {
 
 // A router hides its handlers' concrete types, so a router-scope layer must be a BlanketLayer.
 impl BlanketLayer for LogLayer {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, H>(&self, handler: H) -> impl Handler<M, C> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        H: Handler<M, C> + 'static,
     {
         Logged(handler)
     }
 }
 
-impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+impl<M: Send + Sync, C: Send, H: Handler<M, C>> Handler<M, C> for Logged<H> {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C>) -> Settle {
         println!("router layer -> {}", ctx.name());
         self.0.handle(msg, ctx).await
     }

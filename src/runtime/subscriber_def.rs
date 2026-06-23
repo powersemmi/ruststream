@@ -17,8 +17,12 @@ pub trait SubscriberDef: Sized {
     /// The decoded message type the handler consumes.
     type Input;
 
-    /// The concrete handler type over [`Input`](Self::Input).
-    type Handler: Handler<Self::Input>;
+    /// The broker's typed per-delivery context the handler reads by key (`()` when the handler
+    /// names no context type).
+    type Context;
+
+    /// The concrete handler type over [`Input`](Self::Input) and [`Context`](Self::Context).
+    type Handler: Handler<Self::Input, Self::Context>;
 
     /// The subscription source this handler binds to. The bound to
     /// [`SubscriptionSource`](crate::SubscriptionSource) for the target broker is applied where the
@@ -109,6 +113,7 @@ mod tests {
 
     impl SubscriberDef for ManualDef {
         type Input = u32;
+        type Context = ();
         type Handler = Noop;
         type Source = Name;
 
@@ -140,7 +145,7 @@ mod tests {
         let state = State::default();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("manual", &headers, &state, &delivery);
+        let mut ctx = Context::new("manual", &headers, &state, (), &delivery);
         assert_eq!(
             handler.handle(&7u32, &mut ctx).await.outcome(),
             HandlerResult::Ack

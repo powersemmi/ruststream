@@ -6,7 +6,7 @@ lifetimes:
 | Level | Type | Lives for | Holds |
 |---|---|---|---|
 | Application | `State` | the whole service | shared resources: pools, clients, configuration |
-| Delivery | `Context` | one message | the channel name, a headers working copy, a per-delivery `Extensions` type-map, access to `State` and named publishers |
+| Delivery | `Context` | one message | the channel name, a headers working copy, the broker's typed per-delivery context (read by key), access to `State` and named publishers |
 
 `State` is filled once, at startup. A `Context` is built fresh for every delivery and threaded as
 `&mut` through the middleware chain into the handler, so middleware and the handler observe (and
@@ -49,8 +49,8 @@ What the context exposes:
 | `headers()` | `&Headers` | the working copy of the message headers |
 | `headers_mut()` | `&mut Headers` | the same copy, for middleware to enrich |
 | `state()` | `&State` | shared application state (then `.get::<T>()`) |
-| `get::<T>()` | `Option<&T>` | a per-delivery [extension](#per-delivery-extensions) |
-| `insert::<T>(v)` | `()` | write a per-delivery [extension](#per-delivery-extensions) |
+| `context(KEY)` | `KEY::Value` | a [broker field](#per-delivery-context) read by compile-time key |
+| `set(KEY, v)` | `()` | write a per-delivery [scratch value](#per-delivery-context) (middleware) |
 | `publisher(name)` | `Option<ScopedPublisher>` | a [named publisher](publishing.md#publishing-from-inside-a-handler) |
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
@@ -58,23 +58,43 @@ What the context exposes:
 Closure handlers (the manual `typed(codec, |msg, ctx| ...)` form) always take the context as their
 second argument.
 
-## Per-delivery extensions
+## Per-delivery context
 
-Beside the shared `State`, the context carries an `Extensions` type-map scoped to one delivery:
-`ctx.insert::<T>(value)` writes it, `ctx.get::<T>()` reads it back, and it is dropped when the
-handler returns, so one delivery's values never leak into the next. Use it for data that belongs to
-a single message rather than the whole service - a correlation id, an authenticated user a layer
-resolved, a tracing span.
+Beside the shared `State`, the context carries the broker's typed per-delivery context, read by
+**compile-time key** with no hashing, boxing, or downcasting. A key is a zero-sized selector the
+broker exports; `ctx.context(KEY)` resolves it to a direct field read off the context, so a handler
+reads native delivery metadata - a stream id, an offset, a delivery handle - without the broker
+serializing it into the byte-only headers. A key implements `Field` only for the context types that
+carry its field, so an inapplicable key is a compile error rather than a runtime miss.
 
 ```rust
---8<-- "examples/context.rs:extensions"
+use ruststream::Field;
+
+// A broker crate ships its per-delivery context and the keys that read its fields; an application
+// reads a field by key from a handler taking `&mut Context<'_, Delivery>`.
+struct Delivery {
+    offset: u64,
+}
+
+#[derive(Clone, Copy)]
+struct Offset;
+
+impl Field<Delivery> for Offset {
+    type Value<'a> = u64;
+    fn get(self, d: &Delivery) -> u64 {
+        d.offset
+    }
+}
+// ... in the handler: `let offset = ctx.context(Offset);`
 ```
 
-A broker can also seed the map: implementing `IncomingMessage::extensions` lets it hand the handler
-typed per-delivery values (native delivery metadata, a commit token, a reply-to handle) without
-serializing them into the byte-only headers. The runtime moves the broker's map into the context
-before the handler runs, and those values stay reachable through the publish pipeline, so a
-transactional publisher can read a broker-supplied commit token at commit time.
+The context type is built from the message by `BuildContext`, which the runtime calls once per
+delivery; a broker with no per-delivery fields uses `()`, the default (so a `#[subscriber]` handler
+that names no context type sees `Context<'_>`). Middleware can also carry a typed scratch value to a
+downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value)` and the handler
+`ctx.context(KEY)` it back - a correlation id, an authenticated user a layer resolved - without
+serializing it into the headers. The context is built fresh per delivery, so one delivery's values
+never leak into the next.
 
 ## The headers working copy
 
