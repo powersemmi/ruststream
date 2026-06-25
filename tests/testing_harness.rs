@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use ruststream::memory::MemoryBroker;
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
 // needs no import (matching the `examples/publishing.rs` pattern).
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::testing::{Outcome, TestApp, TestError};
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -131,6 +131,7 @@ async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
         .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
     let tb = TestApp::start(app).await.unwrap();
 
+    // --8<-- [start:panic]
     // The panicking delivery still drives to quiescence (the message is dropped, unsettled).
     tb.broker::<MemoryBroker>()
         .publish("orders", &Order { id: 0 })
@@ -153,6 +154,7 @@ async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
             .await,
         Err(TestError::ShutDown)
     ));
+    // --8<-- [end:panic]
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -268,6 +270,7 @@ async fn requeue_redelivers_and_settles() {
 
 // --- Delayed redelivery: retry_after is recorded immediately and driven by advancing time. ---
 
+// --8<-- [start:retry_after]
 #[subscriber("delayed")]
 async fn delayed_retry(order: &Order, ctx: &mut Context<'_, (), Counter>) -> HandlerResult {
     let _ = order;
@@ -310,6 +313,7 @@ async fn retry_after_redelivers_after_advancing_time() {
         .settled(HandlerResult::Ack);
     assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
+// --8<-- [end:retry_after]
 
 // --- Multi-broker: label addressing, ambiguity, and a cross-broker cascade. ---
 
@@ -422,8 +426,11 @@ async fn with_state_injects_a_mirror_state() {
             b.include(forward);
             b.include(on_event);
         });
-    let tb = TestApp::with_state(app, |brokers| Egress {
-        egress: brokers.broker::<MemoryBroker>().publisher(),
+    let tb = TestApp::with_state(app, |brokers| {
+        assert!(format!("{brokers:?}").contains("TestBrokers"));
+        Egress {
+            egress: brokers.broker::<MemoryBroker>().publisher(),
+        }
     })
     .await
     .unwrap();
@@ -437,4 +444,73 @@ async fn with_state_injects_a_mirror_state() {
         .subscriber("events")
         .assert_called_once()
         .with(&Event { id: 9 });
+}
+
+// --- Raw inspection, empty-channel and Debug surfaces. ---
+
+#[subscriber("echo", publish("out"))]
+async fn echo(order: &Order) -> Order {
+    Order { id: order.id }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inspect_raw_messages_and_debug_surfaces() {
+    use ruststream::codec::{Codec, JsonCodec};
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        let out = TypedPublisher::new(b.broker().publisher());
+        b.include_publishing(echo, out);
+    });
+    let tb = TestApp::start(app).await.unwrap();
+
+    let raw = JsonCodec.encode(&Order { id: 7 }).unwrap();
+    tb.broker::<MemoryBroker>()
+        .publish("echo", &Order { id: 7 })
+        .await
+        .unwrap();
+
+    // Raw payloads, for the received delivery and the published reply.
+    tb.broker::<MemoryBroker>()
+        .subscriber("echo")
+        .assert_called_once()
+        .with_raw(&raw);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("out")
+        .assert_called_once()
+        .with_raw(&raw);
+    // A channel nobody published to.
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("never")
+        .assert_not_called();
+
+    // Debug surfaces and the cooperative drain are exercised here too.
+    assert!(format!("{tb:?}").contains("TestApp"));
+    assert!(format!("{:?}", tb.broker::<MemoryBroker>()).contains("BrokerHandle"));
+    tb.drain().await;
+    assert!(tb.run_result().is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "was not called")]
+async fn with_on_uncalled_subscriber_panics() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+    let tb = TestApp::start(app).await.unwrap();
+    // Nothing was published, so the subscriber was not called.
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .with(&Order { id: 1 });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "nothing was published")]
+async fn published_with_on_empty_channel_panics() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        let out = TypedPublisher::new(b.broker().publisher());
+        b.include_publishing(echo, out);
+    });
+    let tb = TestApp::start(app).await.unwrap();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("out")
+        .with(&Order { id: 1 });
 }

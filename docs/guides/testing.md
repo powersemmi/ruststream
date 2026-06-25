@@ -93,11 +93,7 @@ first-class path. Under the default `panic = fail_fast`, a handler panic tears t
 as in production:
 
 ```rust
-tb.broker::<MemoryBroker>().publish("orders", &Order { id: 0 }).await?;
-tb.broker::<MemoryBroker>().subscriber("orders").assert_called_once().panicked();
-tb.assert_shut_down();
-assert!(tb.run_result().is_err());                                  // mirrors the real run()
-assert!(tb.broker::<MemoryBroker>().publish("orders", &Order { id: 1 }).await.is_err());
+--8<-- "tests/testing_harness.rs:panic"
 ```
 
 Under `on_failure(panic = skip)` the panic is acked and consumption continues, so `tb.assert_running()`
@@ -115,13 +111,7 @@ immediate `NackAfter` settlement and returns; the redelivery is driven separatel
 paused clock:
 
 ```rust
-#[tokio::test(start_paused = true)]
-async fn redelivers() {
-    let tb = TestApp::start(app()).await?;
-    tb.publish("orders", &Order { id: 1 }).await?;          // first delivery, settles NackAfter
-    tb.advance(Duration::from_secs(30)).await?;             // fires the redelivery, drives it
-    tb.broker::<MemoryBroker>().subscriber("orders").assert_called(2);
-}
+--8<-- "tests/testing_harness.rs:retry_after"
 ```
 
 ## Integration tests against a real broker
@@ -162,13 +152,10 @@ A broker crate ships an in-process transport - a normal `Broker` that routes in 
 the broker's Core routing (subjects, wildcards, groups) - and implements the one
 [`TestableBroker`](../broker-authors/conformance.md) contract on it:
 
+The reference is `MemoryBroker`'s own implementation:
+
 ```rust
-impl TestableBroker for MyTestBroker {
-    fn install_coordinator(&self, c: Coordinator) { /* wire it into the bus */ }
-    fn inject(&self, message: OutgoingMessage<'_>) { /* publish as an external producer */ }
-    fn published(&self, name: &str) -> Vec<RawMessage> { /* the publish log */ }
-}
-ruststream::register_testable_broker!(MyTestBroker);
+--8<-- "src/memory/mod.rs:testable"
 ```
 
 The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and

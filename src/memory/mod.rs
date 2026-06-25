@@ -205,6 +205,7 @@ impl DescribeServer for MemoryBroker {
     }
 }
 
+// --8<-- [start:testable]
 #[cfg(feature = "testing")]
 impl crate::testing::TestableBroker for MemoryBroker {
     fn install_coordinator(&self, coordinator: Coordinator) {
@@ -232,6 +233,7 @@ impl crate::testing::TestableBroker for MemoryBroker {
 
 #[cfg(feature = "testing")]
 crate::register_testable_broker!(MemoryBroker);
+// --8<-- [end:testable]
 
 // `Self::subscribe` would read as a recursive call into this trait method; spell out the broker
 // type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).
