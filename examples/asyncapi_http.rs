@@ -37,6 +37,10 @@ async fn handle(order: &Order) -> HandlerResult {
 
 // --8<-- [start:server]
 fn service() -> RustStream {
+    // `MemoryBroker` has no network address, so its server is declared explicitly. A
+    // self-describing broker (the sibling NATS / Redis crates implement `DescribeServer`) is
+    // instead registered with `with_broker_labeled("production", broker, ...)`, which derives this
+    // server entry from the broker itself, with no separate `.server(..)` call.
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .server(
             "production",

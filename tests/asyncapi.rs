@@ -68,6 +68,67 @@ fn build_spec_includes_servers_and_yaml() {
     assert!(yaml.contains("host: nats.example.com:4222"));
 }
 
+/// A self-describing broker: a labeled registration derives its `AsyncAPI` server from this.
+struct DescribingBroker {
+    host: String,
+}
+
+impl DescribingBroker {
+    fn new(host: impl Into<String>) -> Self {
+        Self { host: host.into() }
+    }
+}
+
+impl ruststream::Broker for DescribingBroker {
+    type Error = std::convert::Infallible;
+
+    async fn connect(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl ruststream::DescribeServer for DescribingBroker {
+    fn describe_server(&self) -> ServerSpec {
+        ServerSpec::new(self.host.clone(), "nats").with_description("ingress")
+    }
+}
+
+#[test]
+fn labeled_broker_populates_server_from_describe() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
+        "ingress",
+        DescribingBroker::new("nats.example.com:4222"),
+        |_b| {},
+    );
+
+    let spec = build_spec(&app);
+    let server = &spec.servers["ingress"];
+    assert_eq!(server.host, "nats.example.com:4222");
+    assert_eq!(server.protocol, "nats");
+    assert_eq!(server.description.as_deref(), Some("ingress"));
+}
+
+#[test]
+fn explicit_server_overrides_labeled_broker() {
+    // An explicit server set for the same label takes precedence over the broker's own spec.
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .server("ingress", ServerSpec::new("override:4222", "custom"))
+        .with_broker_labeled(
+            "ingress",
+            DescribingBroker::new("nats.example.com:4222"),
+            |_b| {},
+        );
+
+    let spec = build_spec(&app);
+    let server = &spec.servers["ingress"];
+    assert_eq!(server.host, "override:4222");
+    assert_eq!(server.protocol, "custom");
+}
+
 #[test]
 fn viewer_html_embeds_spec_url_and_cdn() {
     let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
