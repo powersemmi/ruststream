@@ -143,6 +143,10 @@ impl RequestReply for MemoryRequester {
             Ok(Some(reply)) => Ok(MemoryMessage {
                 delivery: Some(reply),
                 requeue: tx,
+                // The inbox reply is consumed here, not by a dispatch loop, and its enqueue was not
+                // counted (see `fanout`), so it carries no coordinator.
+                #[cfg(feature = "testing")]
+                coordinator: None,
             }),
             // `tx` is held on this stack frame, so the channel cannot report closed.
             Ok(None) => unreachable!("request inbox closed while its sender is held"),
@@ -165,6 +169,8 @@ impl BatchSubscriber for MemorySubscriber {
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
         let limit = self.batch_limit.max(1);
         let requeue = self.requeue.clone();
+        #[cfg(feature = "testing")]
+        let coordinator = self.coordinator.clone();
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
         futures::stream::poll_fn(move |cx| {
@@ -174,12 +180,16 @@ impl BatchSubscriber for MemorySubscriber {
             let mut batch = vec![MemoryMessage {
                 delivery: Some(first),
                 requeue: requeue.clone(),
+                #[cfg(feature = "testing")]
+                coordinator: coordinator.clone(),
             }];
             while batch.len() < limit {
                 match self.rx.poll_recv(cx) {
                     Poll::Ready(Some(delivery)) => batch.push(MemoryMessage {
                         delivery: Some(delivery),
                         requeue: requeue.clone(),
+                        #[cfg(feature = "testing")]
+                        coordinator: coordinator.clone(),
                     }),
                     // Drained (pending) or closed: ship what we have; a closed channel ends
                     // the stream on the next poll.

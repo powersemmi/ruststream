@@ -8,6 +8,8 @@ mod service;
 
 pub use scope::BrokerScope;
 pub use service::RustStream;
+#[cfg(feature = "testing")]
+pub(crate) use service::{RegisteredBroker, TestParts};
 
 use std::sync::Arc;
 
@@ -21,7 +23,7 @@ use crate::runtime::lifecycle::{BoxError, BoxFuture};
 /// A registration deferred until [`RustStream::run`]: given the app's error-shutdown handle and the
 /// shutdown token, it opens the subscription (after the broker is connected) and spawns the dispatch
 /// task. The broker, source and handler are captured and type-erased.
-type Starter<St> = Box<
+pub(crate) type Starter<St> = Box<
     dyn FnOnce(
             Arc<St>,
             ErrorShutdown,
@@ -33,11 +35,12 @@ type Starter<St> = Box<
 /// The state initializer: produces the app state `St` once at startup (before brokers connect).
 /// The `on_startup` producer chain; a failing initializer aborts startup. The default is the unit
 /// state `()`.
-type StateInit<St> = Box<dyn FnOnce() -> BoxFuture<'static, Result<St, BoxError>> + Send>;
+pub(crate) type StateInit<St> =
+    Box<dyn FnOnce() -> BoxFuture<'static, Result<St, BoxError>> + Send>;
 
 /// A read-only lifespan hook (`after_startup` / `on_shutdown` / `after_shutdown`): runs once at the
 /// corresponding lifecycle point with a shared `Arc<St>` handle to the app state.
-type LifecycleHook<St> =
+pub(crate) type LifecycleHook<St> =
     Box<dyn FnOnce(Arc<St>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// Which read-only lifecycle hook list a hook is appended to.

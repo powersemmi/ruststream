@@ -1,20 +1,40 @@
-//! The [`TestClient`] trait: contract for a broker's in-process test transport.
+//! Testing support: the broker-author [`TestClient`] contract and, behind the `testing` feature,
+//! the application-level [`TestApp`] harness.
 //!
-//! Broker crates implement `TestClient` under their `testing` cargo feature so application
-//! developers can test their handlers without a real server. An implementation reproduces
-//! only Core routing: subject / name matching, fanout to subscribers opened after they
-//! subscribed, ack/nack as broker-side no-ops (a nack with requeue re-delivers the same
-//! payload to the same subscriber), and a recorded log of publishes behind
-//! [`TestClient::expect_published`].
+//! Two distinct tools live here:
 //!
-//! It must NOT simulate broker-specific semantics: durable cursors, consumer-group offsets,
-//! exchange / routing-key bindings, dead-letter queues, redelivery timers, retention. Those
-//! belong in env-gated integration tests against a real server, never in the test client.
-//! The [`crate::conformance::harness`] suite verifies exactly this Core-routing surface.
+//! - [`TestClient`] (always available) is the contract a broker crate implements so its in-process
+//!   routing can be exercised by the [`conformance`](crate::conformance) harness. It reproduces only
+//!   Core routing, never broker-specific semantics.
+//! - [`TestApp`] (the `testing` feature) drives a built [`RustStream`](crate::runtime::RustStream)
+//!   application in process - no network `connect`, no server - and records what each handler
+//!   received, how it settled, and what it published, for unit tests of the application itself.
+//!
+//! Note that [`MemoryBroker`](crate::memory::MemoryBroker) is a real broker (local in-process
+//! queues), not a testing tool; the harness drives it (or any broker) through the same dispatch
+//! path the production runtime uses.
 
 use std::{error::Error as StdError, future::Future, time::Duration};
 
 use crate::{Broker, Publisher, RawMessage, Subscriber};
+
+#[cfg(feature = "testing")]
+mod assertions;
+#[cfg(feature = "testing")]
+mod broker;
+#[cfg(feature = "testing")]
+pub(crate) mod coordinator;
+#[cfg(feature = "testing")]
+mod harness;
+
+#[cfg(feature = "testing")]
+pub use assertions::{PublishedAssertions, SubscriberAssertions};
+#[cfg(feature = "testing")]
+pub use broker::TestableBroker;
+#[cfg(feature = "testing")]
+pub use coordinator::{Coordinator, Outcome};
+#[cfg(feature = "testing")]
+pub use harness::{BrokerHandle, TestApp, TestBrokers, TestError};
 
 /// A broker test transport that runs in process, reproducing Core routing without a server.
 ///

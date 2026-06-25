@@ -27,6 +27,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, Broker, DescribeServer, Headers, IncomingMessage, OutgoingMessage, Publisher,
     RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
@@ -50,6 +52,10 @@ struct MemoryState {
     published: Mutex<HashMap<String, Vec<RawMessage>>>,
     notify: Notify,
     inbox_seq: AtomicU64,
+    /// The harness's quiescence-and-recording coordinator, installed by a
+    /// [`TestApp`](crate::testing::TestApp) run. Empty in production, so `fanout` does no extra work.
+    #[cfg(feature = "testing")]
+    coordinator: OnceLock<Coordinator>,
 }
 
 impl MemoryState {
@@ -86,9 +92,33 @@ impl MemoryState {
             .expect("memory broker mutex poisoned");
         if let Some(senders) = subs.get(&delivery.name) {
             for tx in senders {
-                let _ = tx.send(delivery.clone());
+                let sent = tx.send(delivery.clone());
+                // Count every live enqueue so the harness can drive to quiescence. Request inboxes
+                // (`_inbox.`) are excluded: their reply is consumed by the requester, not a dispatch
+                // loop, so it carries no coordinator and is never decremented.
+                #[cfg(feature = "testing")]
+                if sent.is_ok() && !delivery.name.starts_with("_inbox.") {
+                    if let Some(coordinator) = self.coordinator.get() {
+                        coordinator.enqueued();
+                    }
+                }
+                #[cfg(not(feature = "testing"))]
+                let _ = sent;
             }
         }
+    }
+
+    /// Installs the harness coordinator for a [`TestApp`](crate::testing::TestApp) run. Idempotent.
+    #[cfg(feature = "testing")]
+    fn install_coordinator(&self, coordinator: Coordinator) {
+        let _ = self.coordinator.set(coordinator);
+    }
+
+    /// A clone of the installed coordinator, threaded into each subscriber and delivery so a
+    /// requeue can re-count and a consumed delivery can decrement.
+    #[cfg(feature = "testing")]
+    fn coordinator(&self) -> Option<Coordinator> {
+        self.coordinator.get().cloned()
     }
 }
 
@@ -117,6 +147,8 @@ impl MemoryBroker {
             rx,
             requeue: tx,
             batch_limit: DEFAULT_BATCH_LIMIT,
+            #[cfg(feature = "testing")]
+            coordinator: self.state.coordinator(),
         }
     }
 
@@ -127,6 +159,17 @@ impl MemoryBroker {
             state: Arc::clone(&self.state),
             txn: Mutex::new(None),
         }
+    }
+
+    /// Injects a message onto the bus as an external producer would, synchronously (no awaiting),
+    /// for the test harness. Routes through `fanout`, so it is recorded and counted like any publish.
+    #[cfg(feature = "testing")]
+    pub(crate) fn deliver(&self, name: &str, payload: &[u8]) {
+        self.state.fanout(&MemoryDelivery {
+            name: name.to_owned(),
+            payload: Bytes::copy_from_slice(payload),
+            headers: Headers::new(),
+        });
     }
 
     /// Returns a request / reply-capable publisher bound to this broker.
@@ -171,6 +214,23 @@ impl DescribeServer for MemoryBroker {
     /// address each one by name.
     fn describe_server(&self) -> ServerSpec {
         ServerSpec::in_process("memory")
+    }
+}
+
+#[cfg(feature = "testing")]
+impl crate::testing::TestableBroker for MemoryBroker {
+    fn install_coordinator(&self, coordinator: Coordinator) {
+        self.state.install_coordinator(coordinator);
+    }
+
+    fn published_raw(&self, name: &str) -> Vec<RawMessage> {
+        self.state
+            .published
+            .lock()
+            .expect("memory broker mutex poisoned")
+            .get(name)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -231,6 +291,10 @@ pub struct MemorySubscriber {
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
     batch_limit: usize,
+    /// A clone of the broker's harness coordinator, threaded into each yielded message so a requeue
+    /// re-counts and a consumed delivery decrements. `None` outside a harness run.
+    #[cfg(feature = "testing")]
+    coordinator: Option<Coordinator>,
 }
 
 impl MemorySubscriber {
@@ -257,6 +321,8 @@ impl Subscriber for MemorySubscriber {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         let requeue = self.requeue.clone();
+        #[cfg(feature = "testing")]
+        let coordinator = self.coordinator.clone();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| {
@@ -265,6 +331,8 @@ impl Subscriber for MemorySubscriber {
                     Ok(MemoryMessage {
                         delivery: Some(delivery),
                         requeue: requeue.clone(),
+                        #[cfg(feature = "testing")]
+                        coordinator: coordinator.clone(),
                     })
                 })
             })
@@ -329,6 +397,23 @@ impl Publisher for MemoryPublisher {
 pub struct MemoryMessage {
     delivery: Option<MemoryDelivery>,
     requeue: Sender,
+    /// A clone of the broker's harness coordinator. When set, this delivery is counted in flight and
+    /// is decremented once when the message is consumed or dropped (see the `Drop` impl). `None`
+    /// outside a harness run and for request-reply inbox messages (which are not dispatch-driven).
+    #[cfg(feature = "testing")]
+    coordinator: Option<Coordinator>,
+}
+
+#[cfg(feature = "testing")]
+impl Drop for MemoryMessage {
+    /// Counts this delivery consumed exactly once: on ack, nack, `into_raw`, or an unsettled drop (a
+    /// fail-fast panic). A requeue (`nack(true)` / `nack_after`) re-enqueues a fresh delivery first,
+    /// so the in-flight count stays balanced across redelivery.
+    fn drop(&mut self) {
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.consumed();
+        }
+    }
 }
 
 impl std::fmt::Debug for MemoryMessage {
@@ -390,7 +475,17 @@ impl IncomingMessage for MemoryMessage {
     async fn nack(mut self, requeue: bool) -> Result<(), AckError> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         if requeue {
-            let _ = self.requeue.send(delivery);
+            let sent = self.requeue.send(delivery);
+            // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
+            // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
+            #[cfg(feature = "testing")]
+            if sent.is_ok() {
+                if let Some(coordinator) = &self.coordinator {
+                    coordinator.enqueued();
+                }
+            }
+            #[cfg(not(feature = "testing"))]
+            let _ = sent;
         }
         Ok(())
     }
@@ -404,10 +499,23 @@ impl IncomingMessage for MemoryMessage {
     async fn nack_after(mut self, delay: Duration) -> Result<(), AckError> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         let requeue = self.requeue.clone();
+        #[cfg(feature = "testing")]
+        let coordinator = self.coordinator.clone();
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.
-            let _ = requeue.send(delivery);
+            let sent = requeue.send(delivery);
+            // The deferred re-enqueue is counted only once it fires, so the in-flight count drops to
+            // zero during the delay window: a test must advance time and re-`settle` to observe the
+            // redelivery (timed redeliveries are not awaited by `drive`).
+            #[cfg(feature = "testing")]
+            if sent.is_ok() {
+                if let Some(coordinator) = &coordinator {
+                    coordinator.enqueued();
+                }
+            }
+            #[cfg(not(feature = "testing"))]
+            let _ = sent;
         });
         Ok(())
     }
