@@ -499,23 +499,24 @@ impl IncomingMessage for MemoryMessage {
     async fn nack_after(mut self, delay: Duration) -> Result<(), AckError> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         let requeue = self.requeue.clone();
+        // Under the harness, register the redelivery with the coordinator so the in-flight count is
+        // re-balanced when it fires and a test can drive it with `TestApp::advance`. The immediate
+        // settlement (`NackAfter`) was already recorded; the redelivery is off the synchronous
+        // reaction `drive` waits on.
         #[cfg(feature = "testing")]
-        let coordinator = self.coordinator.clone();
+        if let Some(coordinator) = self.coordinator.clone() {
+            let counter = coordinator.clone();
+            coordinator.schedule_redelivery(delay, move || {
+                if requeue.send(delivery).is_ok() {
+                    counter.enqueued();
+                }
+            });
+            return Ok(());
+        }
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.
-            let sent = requeue.send(delivery);
-            // The deferred re-enqueue is counted only once it fires, so the in-flight count drops to
-            // zero during the delay window: a test must advance time and re-`settle` to observe the
-            // redelivery (timed redeliveries are not awaited by `drive`).
-            #[cfg(feature = "testing")]
-            if sent.is_ok() {
-                if let Some(coordinator) = &coordinator {
-                    coordinator.enqueued();
-                }
-            }
-            #[cfg(not(feature = "testing"))]
-            let _ = sent;
+            let _ = requeue.send(delivery);
         });
         Ok(())
     }

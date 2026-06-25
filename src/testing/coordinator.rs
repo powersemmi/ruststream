@@ -14,6 +14,7 @@
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use bytes::Bytes;
 
@@ -133,6 +134,14 @@ struct Inner {
     max_steps: usize,
     notify: tokio::sync::Notify,
     records: Mutex<Vec<Record>>,
+    timers: Mutex<Vec<Timer>>,
+}
+
+/// A scheduled delayed redelivery (`nack_after` / `retry_after`): its deadline and the task that
+/// fires it. The harness awaits the due ones when a test advances time.
+struct Timer {
+    deadline: tokio::time::Instant,
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl Coordinator {
@@ -146,6 +155,7 @@ impl Coordinator {
                 max_steps,
                 notify: tokio::sync::Notify::new(),
                 records: Mutex::new(Vec::new()),
+                timers: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -176,6 +186,59 @@ impl Coordinator {
             .lock()
             .expect("coordinator records mutex poisoned")
             .push(record);
+    }
+
+    /// Schedules a delayed redelivery (`nack_after` / `retry_after`): after `delay`, `redeliver`
+    /// runs (it must re-enqueue the message and call [`enqueued`](Self::enqueued)). The redelivery is
+    /// off the synchronous reaction the harness drives, so a publish returns once the immediate
+    /// settlement is recorded; a test advances time with [`TestApp::advance`](super::TestApp) to
+    /// fire it.
+    ///
+    /// A broker calls this from its `nack_after` instead of a bare `tokio::spawn`, so the harness can
+    /// await the fired timers deterministically under a paused clock.
+    pub fn schedule_redelivery<F>(&self, delay: Duration, redeliver: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let deadline = tokio::time::Instant::now() + delay;
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            redeliver();
+        });
+        self.inner
+            .timers
+            .lock()
+            .expect("coordinator timers mutex poisoned")
+            .push(Timer { deadline, handle });
+    }
+
+    /// Awaits every scheduled redelivery whose deadline has now passed, so their re-enqueues are
+    /// counted before the caller drives the reaction. Called by `TestApp::advance` after advancing
+    /// the clock; redeliveries still in the future stay pending for a later advance.
+    pub(crate) async fn fire_due_timers(&self) {
+        let now = tokio::time::Instant::now();
+        let due: Vec<tokio::task::JoinHandle<()>> = {
+            let mut timers = self
+                .inner
+                .timers
+                .lock()
+                .expect("coordinator timers mutex poisoned");
+            let mut due = Vec::new();
+            let mut i = 0;
+            while i < timers.len() {
+                if timers[i].deadline <= now {
+                    due.push(timers.swap_remove(i).handle);
+                } else {
+                    i += 1;
+                }
+            }
+            due
+        };
+        for handle in due {
+            // The sleep has already elapsed, so the task runs its send and returns; a panic in the
+            // (panic-free) timer task is not expected, so a join error is ignored.
+            let _ = handle.await;
+        }
     }
 
     /// Waits until no message is in flight, or fails once `max_steps` deliveries have been

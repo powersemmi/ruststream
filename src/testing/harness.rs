@@ -424,6 +424,24 @@ impl<St: Send + Sync + 'static> TestApp<St> {
         self.coordinator.drive().await
     }
 
+    /// Advances the (paused) clock by `by`, fires every `nack_after` / `retry_after` redelivery now
+    /// due, and drives the resulting reaction to a standstill. Use it to test delayed redeliveries:
+    /// `publish` records the immediate `NackAfter` settlement and returns; `advance` then delivers
+    /// the message again.
+    ///
+    /// Requires a paused clock (`#[tokio::test(start_paused = true)]` or `tokio::time::pause`); on a
+    /// live clock `tokio::time::advance` panics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestError::NotQuiescent`] if the redelivered reaction does not settle within the
+    /// step budget.
+    pub async fn advance(&self, by: Duration) -> Result<(), TestError> {
+        tokio::time::advance(by).await;
+        self.coordinator.fire_due_timers().await;
+        self.coordinator.drive().await
+    }
+
     /// Waits (best-effort) for post-settle `and_after` continuations spawned so far to finish, for
     /// tests that assert on their side effects. Synchronous handler effects need only
     /// [`settle`](Self::settle).

@@ -222,6 +222,51 @@ async fn requeue_redelivers_and_settles() {
     assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
 
+// --- Delayed redelivery: retry_after is recorded immediately and driven by advancing time. ---
+
+#[subscriber("delayed")]
+async fn delayed_retry(order: &Order, ctx: &mut Context<'_, (), Counter>) -> HandlerResult {
+    let _ = order;
+    if ctx.state().seen.fetch_add(1, Ordering::SeqCst) == 0 {
+        HandlerResult::retry_after(std::time::Duration::from_secs(30))
+    } else {
+        HandlerResult::Ack
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_after_redelivers_after_advancing_time() {
+    let seen = Arc::new(AtomicU32::new(0));
+    let state_seen = Arc::clone(&seen);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_startup(move |()| {
+            let seen = state_seen;
+            async move { Ok::<_, std::convert::Infallible>(Counter { seen }) }
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(delayed_retry));
+    let tb = TestApp::start(app).await.unwrap();
+
+    // The publish records the immediate NackAfter settlement and returns; the redelivery is pending.
+    tb.publish("delayed", &Order { id: 1 }).await.unwrap();
+    tb.broker::<MemoryBroker>()
+        .subscriber("delayed")
+        .assert_called_once()
+        .settled(HandlerResult::NackAfter {
+            delay: std::time::Duration::from_secs(30),
+        });
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+
+    // Advancing past the delay fires the redelivery and drives it to settle.
+    tb.advance(std::time::Duration::from_secs(30))
+        .await
+        .unwrap();
+    tb.broker::<MemoryBroker>()
+        .subscriber("delayed")
+        .assert_called(2)
+        .settled(HandlerResult::Ack);
+    assert_eq!(seen.load(Ordering::SeqCst), 2);
+}
+
 // --- Multi-broker: label addressing, ambiguity, and a cross-broker cascade. ---
 
 /// Forwards each order to the `events` channel on a second broker held in state.
