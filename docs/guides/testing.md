@@ -2,54 +2,32 @@
 
 RustStream services are tested at two levels:
 
-1. **In-process tests** drive your real handlers, middleware, and codecs through an in-memory
-   broker - no server, no docker, no network. This is the default test path and it covers handler
-   logic end to end: decode, dispatch, ack, and any replies your handlers publish.
+1. **In-process unit tests** drive your real handlers, middleware, and codecs with the
+   [`TestApp`](#unit-testing-a-service-with-testapp) harness - no server, no docker, no network, no
+   `connect`. This is the default path and it covers handler logic end to end: decode, dispatch, the
+   outcome (ack / nack / drop / panic / decode failure), and any messages the handler publishes.
 2. **Integration tests** run against a real broker, gated behind an environment variable, and cover
    the semantics only a real server has (durable consumers, redelivery timers, partitions).
 
-!!! warning "What the test client does and does not do"
-    An in-memory test broker is a handler-stub dispatcher: publishing fans the message out to the
-    subscribers whose subject matches, runs your handler, and treats ack/nack as broker-side no-ops
-    (a nack with requeue redelivers the same payload to the same subscriber). It does **not** model
-    JetStream durable cursors, `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or
-    consumer groups, or RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns;
-    test them in the [integration suite](#integration-tests-against-a-real-broker).
+!!! warning "What the harness does and does not model"
+    The harness drives a broker's **in-process transport**: publishing fans a message out to the
+    subscribers whose subject matches, runs your handler through the real dispatch path, and records
+    the outcome and any downstream publishes. It does **not** model JetStream durable cursors,
+    `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or consumer groups, or
+    RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns; test them in the
+    [integration suite](#integration-tests-against-a-real-broker).
 
-## The `TestClient` contract
+    `MemoryBroker` is a real broker (local in-process queues), not a test double - the harness drives
+    it through the same dispatch path the production runtime uses.
 
-Every in-memory test transport implements the `TestClient` trait from `ruststream::testing`:
+## Unit-testing a service with `TestApp`
 
-| Method | Purpose |
-|---|---|
-| `start()` | starts a fresh, isolated in-memory broker |
-| `broker()` | the broker handle, for registering with a `RustStream` app |
-| `publish(name, payload)` | publishes as if from an external producer |
-| `subscribe(name)` | opens a raw subscription, for asserting on deliveries directly |
-| `publisher()` | a bound publisher, for publishing with headers or in a loop |
-| `expect_published(name, count, timeout)` | waits until `count` messages were published to `name` |
-| `shutdown()` | tears the in-memory broker down |
+`TestApp` takes a built `RustStream` application, mounts its handlers on the broker's in-process bus
+with no `connect`, and records every delivery. You publish input, and the publish drives the whole
+reaction (the handler, its downstream publishes, any cross-broker cascade) to a standstill before it
+returns - then you assert.
 
-`expect_published` resolves as soon as `count` messages have been observed on `name`; when the
-timeout elapses first it returns the messages observed so far, so assert on the returned
-messages, not just on `Ok`. It records **all** publishes - the ones your test sends and the ones
-your handlers send - which is what makes reply assertions one-liners.
-
-Two implementations ship today:
-
-- `MemoryBroker` (the `memory` feature of `ruststream`) implements `TestClient` itself - exact name
-  matching, broker-agnostic.
-- `ruststream-nats` ships `NatsTestClient` / `NatsTestBroker` under its `testing` feature - real
-  NATS subject matching (`*` and `>` wildcards), request-reply, header propagation.
-
-## Testing handlers with `MemoryBroker`
-
-The handlers, middleware, and codecs under test are the production ones; only the broker is
-swapped. The test starts the in-memory broker, runs the app on it, publishes a message as an
-external producer would, and asserts on what the handler published back.
-
-The handler under test (in a real service it lives in your handler module and the test imports
-it):
+The handler under test (in a real service it lives in your handler module and the test imports it):
 
 ```rust
 --8<-- "tests/doc_testing_memory.rs:handler"
@@ -66,119 +44,85 @@ The test:
     [`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
     which `cargo test --all-features` runs on every change - the example cannot silently rot.
 
-Three details carry the pattern:
+Enable the `testing` feature in your dev-dependencies:
 
-- **Readiness.** The in-memory broker does not buffer: a message published before the subscription
-  opens is lost. `after_startup` runs once every subscription is open, so a `Notify` signalled
-  there is the cheapest reliable "handlers are live" gate (no sleeps, no polling).
-- **Shutdown.** `run_until` resolves when the supplied future does, so the test owns the service's
-  lifetime; `service.await` then surfaces any startup or shutdown error.
-- **Assertions.** For a handler that publishes, assert through `expect_published`. For a handler
-  with side effects only, assert on its observable effect - a value pushed to a channel, a counter,
-  a stubbed repository inserted via [shared state](lifespan.md#shared-state).
-
-## Testing handlers against in-memory NATS
-
-For a NATS service, test against the NATS-flavoured test broker instead, so subject semantics are
-the real ones: `orders.*` matches one token, `orders.>` matches the tail, queue-group names are
-accepted, and request-reply works. Enable the broker crate's `testing` feature in your
-dev-dependencies (see the [`ruststream-nats` documentation](https://powersemmi.github.io/ruststream-nats/)
-for the dependency line and current version).
-
-The same pattern as above, with a wildcard subscriber that audits every order event:
-
-<!-- inline-rust: wildcard-subscriber test against the external ruststream-nats test broker; that broker lives in another repo, so this has no compiled home here -->
-```rust
-use std::convert::Infallible;
-use std::sync::Arc;
-use std::time::Duration;
-
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
-use ruststream::subscriber;
-use ruststream::testing::TestClient;
-use ruststream_nats::testing::NatsTestClient;
-use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
-
-#[derive(Debug, Deserialize)]
-struct Event {
-    id: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct AuditRecord {
-    id: u64,
-}
-
-#[subscriber("orders.*", publish("audit"))]
-async fn audit(event: &Event) -> AuditRecord {
-    AuditRecord { id: event.id }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn wildcard_subscriber_audits_all_order_events() {
-    let client = NatsTestClient::start().await.expect("start test broker");
-
-    let ready = Arc::new(Notify::new());
-    let on_ready = Arc::clone(&ready);
-    let app = RustStream::new(AppInfo::new("audit-test", "0.0.0"))
-        .after_startup(move |_state| async move {
-            on_ready.notify_one();
-            Ok::<_, Infallible>(())
-        })
-        .with_broker(client.broker().clone(), |b| {
-            let records = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(audit, records);
-        });
-
-    let stop = Arc::new(Notify::new());
-    let stop_signal = Arc::clone(&stop);
-    let service = tokio::spawn(app.run_until(async move { stop_signal.notified().await }));
-
-    ready.notified().await;
-    client
-        .publish("orders.created", br#"{"id":1}"#)
-        .await
-        .expect("publish");
-    client
-        .publish("orders.updated", br#"{"id":2}"#)
-        .await
-        .expect("publish");
-
-    // Both subjects matched "orders.*", so the handler ran twice and audited both.
-    let records = client
-        .expect_published("audit", 2, Duration::from_secs(1))
-        .await
-        .expect("expect_published");
-    assert_eq!(records.len(), 2, "expected two audit records");
-
-    stop.notify_one();
-    service.await.expect("join").expect("clean shutdown");
-}
+```toml
+[dev-dependencies]
+ruststream = { version = "0.5", features = ["testing", "memory", "macros", "json"] }
 ```
 
-The test broker also implements `RequestReply`, so a handler that responds to requests is testable
-in-process: publish with `publisher().request(..)` and assert on the reply.
+### Addressing brokers
 
-### Handlers declared with a JetStream descriptor
+`tb.broker::<MemoryBroker>()` addresses the broker by type; `tb.broker_named("ingress")` addresses
+it by the label from [`with_broker_labeled`](asyncapi.md) when a service mounts several brokers and
+their subjects collide. The unscoped `tb.publish(name, &value)` is a convenience for single-broker
+apps and returns `TestError::Ambiguous` when more than one broker is registered.
 
-A descriptor like `SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("workers")` names
-a real JetStream consumer; it implements `SubscriptionSource` for the real `NatsBroker` only,
-because durable names and ack waits have no in-process meaning. To unit-test that handler's logic,
-mount the same definition on the test broker with an explicit by-name source - `include_on`
-overrides the macro's source (the codec resolves the same way as for `include`):
+### Asserting on a handler
 
-<!-- inline-rust: include_on override fragment; the handler under test is declared with a real NatsBroker JetStream descriptor, which has no in-process compiled home, so the by-name remount is shown inline -->
+`tb.broker::<B>().subscriber(name)` returns a fluent builder over what that handler received:
+
+| Method | Asserts |
+|---|---|
+| `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | the delivery count |
+| `with(&value)` | the most recent delivery decodes to `value` (with the default codec) |
+| `with_raw(bytes)` | the most recent raw payload |
+| `settled(HandlerResult::Ack)` | how it settled |
+| `assert_outcome(Outcome::Drop)` | the classified outcome (ack / nack / drop / decode-failure / panic) |
+| `panicked()` | the handler panicked on the last delivery |
+| `assert_last_failed_to_decode()` | the payload failed to decode |
+
+`tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
+the broker's publish log: `.assert_called_once().with(&Receipt { id: 1 })`.
+
+Beyond the assertions, the messages themselves are retrievable for custom checks:
+`subscriber(name).received::<T>()` / `.received_raw()` returns what the handler received, and
+`published::<T>(name).decoded()` / `.messages()` returns every message published to the channel - both
+in order.
+
+The decoding helpers (`with`, `received`, `decoded`) use the default codec. If a handler or publisher
+was mounted with a different codec (`include_with` / `with_broker_codec`), pass it explicitly with the
+`_with` / `with_codec` variants - `subscriber(name).with_codec(&CborCodec, &expected)`,
+`.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
+`.decoded_with(&CborCodec)` - while `with_raw` / `received_raw` / `messages` stay codec-free.
+
+### Failure policy, panic, and shutdown
+
+The harness runs dispatch under the application's real `FailurePolicy`, so a negative test is a
+first-class path. Under the default `panic = fail_fast`, a handler panic tears the service down just
+as in production:
+
 ```rust
-use ruststream::Name;
-
-.with_broker(client.broker().clone(), |b| {
-    b.include_on(Name::new("orders.created"), handle);
-})
+tb.broker::<MemoryBroker>().publish("orders", &Order { id: 0 }).await?;
+tb.broker::<MemoryBroker>().subscriber("orders").assert_called_once().panicked();
+tb.assert_shut_down();
+assert!(tb.run_result().is_err());                                  // mirrors the real run()
+assert!(tb.broker::<MemoryBroker>().publish("orders", &Order { id: 1 }).await.is_err());
 ```
 
-What that mount does **not** cover - durable resume, `ack_wait` redelivery, `max_ack_pending` - is
-exactly what the integration suite is for.
+Under `on_failure(panic = skip)` the panic is acked and consumption continues, so `tb.assert_running()`
+holds. `run_result()` returns what the real [`run`](lifespan.md) would: `Ok` while healthy, an error
+once a fail-fast failure shut the service down.
+
+!!! note "Panic catching needs unwinding"
+    The harness rides the runtime's `catch_unwind`, so a deliberate panic does not kill the test
+    thread. A build compiled with `panic = "abort"` cannot catch handler panics.
+
+### Delayed redelivery (`retry_after`)
+
+A handler that returns `retry_after(delay)` schedules a delayed redelivery. `publish` records the
+immediate `NackAfter` settlement and returns; the redelivery is driven separately by advancing a
+paused clock:
+
+```rust
+#[tokio::test(start_paused = true)]
+async fn redelivers() {
+    let tb = TestApp::start(app()).await?;
+    tb.publish("orders", &Order { id: 1 }).await?;          // first delivery, settles NackAfter
+    tb.advance(Duration::from_secs(30)).await?;             // fires the redelivery, drives it
+    tb.broker::<MemoryBroker>().subscriber("orders").assert_called(2);
+}
+```
 
 ## Integration tests against a real broker
 
@@ -209,12 +153,33 @@ NATS_TEST_URL=nats://127.0.0.1:4222 cargo test --test integration_nats
 ```
 
 This mirrors faststream's `with_real=True` split: handler logic on the in-memory path, broker
-semantics on the real one. Keep both suites over the same handler modules so the production code
-has a single source of truth.
+semantics on the real one. Keep both suites over the same handler modules so the production code has
+a single source of truth.
 
 ## For broker authors
 
-If you are implementing a broker, ship a `TestClient` under a `testing` feature and prove it with
-the conformance harness: `run_suite` checks the routing surface of the test client, `lifecycle`
-checks the lazy-startup contract against the real transport. See
-[Conformance](../broker-authors/conformance.md).
+A broker crate ships an in-process transport - a normal `Broker` that routes in memory, emulating
+the broker's Core routing (subjects, wildcards, groups) - and implements the one
+[`TestableBroker`](../broker-authors/conformance.md) contract on it:
+
+```rust
+impl TestableBroker for MyTestBroker {
+    fn install_coordinator(&self, c: Coordinator) { /* wire it into the bus */ }
+    fn inject(&self, message: OutgoingMessage<'_>) { /* publish as an external producer */ }
+    fn published(&self, name: &str) -> Vec<RawMessage> { /* the publish log */ }
+}
+ruststream::register_testable_broker!(MyTestBroker);
+```
+
+The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and
+`Coordinator::consumed` when a delivery is settled or dropped (so the harness can tell when the
+reaction has settled), and routes delayed redeliveries through `Coordinator::schedule_redelivery`.
+That one type then works with both `TestApp` (above) and the conformance suite. Prove its routing
+with `conformance::harness::run_suite`:
+
+```rust
+--8<-- "tests/conformance_self.rs:run_suite"
+```
+
+See [Conformance](../broker-authors/conformance.md) for the full contract and the lazy-startup
+`lifecycle` check.

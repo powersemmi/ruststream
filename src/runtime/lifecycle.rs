@@ -18,11 +18,27 @@ pub(crate) trait BrokerLifecycle: Send + Sync {
     fn shutdown(&self) -> BoxFuture<'_, Result<(), BoxError>>;
     /// The concrete broker type's name, for diagnostics and logging.
     fn name(&self) -> &'static str;
+
+    /// The concrete broker as `&dyn Any`, so the test harness can recover its type from the erased
+    /// registration (`tb.broker::<MemoryBroker>()`). The `where Self: 'static` bound keeps the
+    /// method object-safe (it stays in the vtable) without tightening the blanket impl below.
+    #[cfg(feature = "testing")]
+    fn as_any(&self) -> &dyn core::any::Any
+    where
+        Self: 'static;
 }
 
 impl<B: Broker> BrokerLifecycle for B {
     fn name(&self) -> &'static str {
         type_name::<B>()
+    }
+
+    #[cfg(feature = "testing")]
+    fn as_any(&self) -> &dyn core::any::Any
+    where
+        Self: 'static,
+    {
+        self
     }
 
     fn connect(&self) -> BoxFuture<'_, Result<(), BoxError>> {

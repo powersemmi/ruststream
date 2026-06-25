@@ -15,6 +15,8 @@ use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
 use crate::runtime::publish::PublishMiddleware;
 use crate::runtime::router::RouterSink;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::TestHooks;
 
 use super::scope::BrokerScope;
 use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
@@ -74,6 +76,11 @@ pub struct RustStream<L = Identity, St = ()> {
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
     /// [`Delivery`].
     pub(super) continuations: TaskTracker,
+    /// Shared recording-and-quiescence hooks for the [`TestApp`](crate::testing::TestApp) harness,
+    /// cloned into every scope's [`Delivery`]. Empty until a harness installs a coordinator, so a
+    /// non-harness run with the `testing` feature enabled stays inert.
+    #[cfg(feature = "testing")]
+    pub(super) test_hooks: Arc<TestHooks>,
     pub(super) global: L,
 }
 
@@ -82,9 +89,23 @@ pub struct RustStream<L = Identity, St = ()> {
 /// The label is the broker's stable runtime identity and its `AsyncAPI` server name; it is `Some`
 /// for a broker registered through [`with_broker_labeled`](RustStream::with_broker_labeled) (or its
 /// codec variant) and `None` otherwise.
-pub(super) struct RegisteredBroker {
-    pub(super) lifecycle: Arc<dyn BrokerLifecycle>,
-    pub(super) label: Option<String>,
+pub(crate) struct RegisteredBroker {
+    pub(crate) lifecycle: Arc<dyn BrokerLifecycle>,
+    pub(crate) label: Option<String>,
+}
+
+/// The internals the [`TestApp`](crate::testing::TestApp) harness needs to drive an app without
+/// connecting: the brokers (to recover and instrument), the deferred starters, the lifecycle hooks,
+/// and the shared test hooks slot. Produced by [`RustStream::into_test_parts`].
+#[cfg(feature = "testing")]
+pub(crate) struct TestParts<St> {
+    pub(crate) brokers: Vec<RegisteredBroker>,
+    pub(crate) starters: Vec<Starter<St>>,
+    pub(crate) state_init: StateInit<St>,
+    pub(crate) after_startup: Vec<LifecycleHook<St>>,
+    pub(crate) shutdown_timeout: Option<Duration>,
+    pub(crate) continuations: TaskTracker,
+    pub(crate) test_hooks: Arc<TestHooks>,
 }
 
 impl<L, St> std::fmt::Debug for RustStream<L, St> {
@@ -115,6 +136,8 @@ impl RustStream<Identity, ()> {
             after_shutdown: Vec::new(),
             shutdown_timeout: None,
             continuations: TaskTracker::new(),
+            #[cfg(feature = "testing")]
+            test_hooks: Arc::new(TestHooks::detached()),
             global: Identity,
         }
     }
@@ -139,6 +162,8 @@ impl<L, St> RustStream<L, St> {
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             continuations: self.continuations,
+            #[cfg(feature = "testing")]
+            test_hooks: self.test_hooks,
             global: Stack::new(layer, self.global),
         }
     }
@@ -182,6 +207,8 @@ impl<L, St> RustStream<L, St> {
             after_shutdown: Vec::new(),
             shutdown_timeout: self.shutdown_timeout,
             continuations: self.continuations,
+            #[cfg(feature = "testing")]
+            test_hooks: self.test_hooks,
             global: self.global,
         }
     }
@@ -464,10 +491,20 @@ impl<L, St> RustStream<L, St> {
         St: Send + Sync + 'static,
     {
         let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
-        let delivery = Arc::new(Delivery {
-            retry_publisher: scope.retry_publisher.clone(),
-            tasks: self.continuations.clone(),
-        });
+        // The scope id is the index this broker will occupy once pushed below; the harness uses it
+        // to scope recorded deliveries per broker.
+        #[cfg(feature = "testing")]
+        let delivery = Arc::new(Delivery::instrumented(
+            scope.retry_publisher.clone(),
+            self.continuations.clone(),
+            self.test_hooks.clone(),
+            self.brokers.len(),
+        ));
+        #[cfg(not(feature = "testing"))]
+        let delivery = Arc::new(Delivery::detached(
+            scope.retry_publisher.clone(),
+            self.continuations.clone(),
+        ));
         let (starters, handlers) = scope.sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let broker = broker.clone();
@@ -497,5 +534,21 @@ impl<L, St> RustStream<L, St> {
     #[must_use]
     pub fn servers(&self) -> &BTreeMap<String, ServerSpec> {
         &self.servers
+    }
+
+    /// Decomposes the app into the pieces the [`TestApp`](crate::testing::TestApp) harness drives:
+    /// the brokers, the deferred starters, the lifecycle hooks, and the shared test-hooks slot.
+    /// Handlers metadata and `AsyncAPI` servers are dropped (the harness does not need them).
+    #[cfg(feature = "testing")]
+    pub(crate) fn into_test_parts(self) -> TestParts<St> {
+        TestParts {
+            brokers: self.brokers,
+            starters: self.starters,
+            state_init: self.state_init,
+            after_startup: self.after_startup,
+            shutdown_timeout: self.shutdown_timeout,
+            continuations: self.continuations,
+            test_hooks: self.test_hooks,
+        }
     }
 }

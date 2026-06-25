@@ -22,6 +22,8 @@ use super::context::Context;
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publisher_registry::ErasedPublisher;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::{Record, TestHooks};
 
 /// Header carrying the framework's deferred-republish retry count.
 ///
@@ -125,9 +127,50 @@ pub(crate) struct Delivery {
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
     pub(crate) tasks: TaskTracker,
+    /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
+    /// [`TestApp`](crate::testing::TestApp) run, so the per-delivery read is a single atomic load.
+    #[cfg(feature = "testing")]
+    pub(crate) hooks: Arc<TestHooks>,
+    /// This broker's registration index, used to scope recorded deliveries per broker.
+    #[cfg(feature = "testing")]
+    pub(crate) scope_id: usize,
 }
 
 impl Delivery {
+    /// A delivery context with no test instrumentation (production, and tests that do not drive the
+    /// harness). With the `testing` feature, `collect_scope` uses [`instrumented`](Self::instrumented)
+    /// instead, so this is reachable only in the non-testing build or from unit tests.
+    #[cfg(any(not(feature = "testing"), test))]
+    pub(crate) fn detached(
+        retry_publisher: Option<Arc<dyn ErasedPublisher>>,
+        tasks: TaskTracker,
+    ) -> Self {
+        Self {
+            retry_publisher,
+            tasks,
+            #[cfg(feature = "testing")]
+            hooks: Arc::new(TestHooks::detached()),
+            #[cfg(feature = "testing")]
+            scope_id: 0,
+        }
+    }
+
+    /// A delivery context carrying the harness hooks and this broker's scope id.
+    #[cfg(feature = "testing")]
+    pub(crate) fn instrumented(
+        retry_publisher: Option<Arc<dyn ErasedPublisher>>,
+        tasks: TaskTracker,
+        hooks: Arc<TestHooks>,
+        scope_id: usize,
+    ) -> Self {
+        Self {
+            retry_publisher,
+            tasks,
+            hooks,
+            scope_id,
+        }
+    }
+
     /// An empty delivery context: no retry publisher, a fresh continuation tracker. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
@@ -138,10 +181,7 @@ impl Delivery {
     /// observe the post-settle continuations spawned through it.
     #[cfg(test)]
     pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
-        Self {
-            retry_publisher: None,
-            tasks,
-        }
+        Self::detached(None, tasks)
     }
 }
 
@@ -543,6 +583,8 @@ async fn dispatch<H, M, C, St>(
     let result = AssertUnwindSafe(handler.handle(&msg, &mut ctx))
         .catch_unwind()
         .await;
+    #[cfg(feature = "testing")]
+    let panicked = result.is_err();
     // Resolve into a `Settle` regardless of whether the handler panicked. `None` means a fail-fast
     // panic tore the service down and left the message unsettled (a broker with redelivery hands it
     // back after the restart).
@@ -578,6 +620,21 @@ async fn dispatch<H, M, C, St>(
     let continuations = settle
         .as_ref()
         .map_or_else(Vec::new, |s| ctx.take_hooks_for(s.outcome()));
+    // The harness records what the handler saw and how it settled, BEFORE settling the message: the
+    // matching decrement runs in the broker message's `Drop` (during `settle_outcome`, or at the end
+    // of this function on the fail-fast path), so the record is in place by the time `drive` wakes.
+    // Captured here because `settle_outcome` consumes `msg` and `drop(ctx)` clears the decode flag.
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = delivery.hooks.coordinator() {
+        coordinator.record(Record {
+            scope_id: delivery.scope_id,
+            name: name.to_owned(),
+            raw: Bytes::copy_from_slice(msg.payload()),
+            settle: settle.as_ref().map(super::handler::Settle::outcome),
+            panicked,
+            decode_failed: ctx.took_decode_failed(),
+        });
+    }
     drop(ctx);
     if let Some(mut s) = settle {
         settle_outcome(msg, s.outcome(), name, delivery).await;
@@ -792,10 +849,7 @@ mod tests {
         let broker = MemoryBroker::new();
         // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery {
-            retry_publisher: Some(Arc::new(broker.publisher())),
-            tasks: TaskTracker::new(),
-        };
+        let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain(&[], &settled);
@@ -826,10 +880,7 @@ mod tests {
     async fn fallback_increments_an_existing_retry_count() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery {
-            retry_publisher: Some(Arc::new(broker.publisher())),
-            tasks: TaskTracker::new(),
-        };
+        let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
@@ -871,10 +922,7 @@ mod tests {
         // A separate broker backs the retry publisher; if the fallback fired, the republish would
         // land here and never on `sub`.
         let other = MemoryBroker::new();
-        let delivery = Delivery {
-            retry_publisher: Some(Arc::new(other.publisher())),
-            tasks: TaskTracker::new(),
-        };
+        let delivery = Delivery::detached(Some(Arc::new(other.publisher())), TaskTracker::new());
 
         let msg = {
             let mut stream = std::pin::pin!(sub.stream());

@@ -20,13 +20,19 @@ mod subscriber_def;
 mod typed;
 
 pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
+#[cfg(feature = "testing")]
+pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
 pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
+#[cfg(feature = "testing")]
+pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
+#[cfg(feature = "testing")]
+pub(crate) use lifecycle::BrokerLifecycle;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{

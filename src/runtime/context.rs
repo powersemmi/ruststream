@@ -73,6 +73,11 @@ pub struct Context<'a, C = (), S = ()> {
     delivery: &'a Delivery,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
+    /// Set by the [`Typed`](super::typed::Typed) decode adapter when the payload fails to decode,
+    /// so the dispatcher can record the outcome as a decode failure (otherwise indistinguishable
+    /// from a handler drop). Only present under the `testing` feature.
+    #[cfg(feature = "testing")]
+    decode_failed: bool,
 }
 
 impl<C, S> std::fmt::Debug for Context<'_, C, S> {
@@ -104,7 +109,22 @@ impl<'a, C, S> Context<'a, C, S> {
             delivery,
             after: Vec::new(),
             failfast: None,
+            #[cfg(feature = "testing")]
+            decode_failed: false,
         }
+    }
+
+    /// Records that the payload failed to decode for this delivery. Called by the decode adapter so
+    /// the harness can classify the outcome as a decode failure.
+    #[cfg(feature = "testing")]
+    pub(crate) fn mark_decode_failed(&mut self) {
+        self.decode_failed = true;
+    }
+
+    /// Returns and clears the decode-failure flag for this delivery.
+    #[cfg(feature = "testing")]
+    pub(crate) fn took_decode_failed(&mut self) -> bool {
+        std::mem::take(&mut self.decode_failed)
     }
 
     /// Attaches the runtime's error-shutdown handle, so a fail-fast decode policy can tear the

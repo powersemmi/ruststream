@@ -17,7 +17,7 @@ use std::{
 use common::handler_signal;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
-use ruststream::testing::TestClient;
+use ruststream::testing::expect_published;
 use ruststream::{Buffered, Name, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -82,10 +82,7 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     assert!(result.is_ok(), "batches did not flow through the pool");
 
     let handled = TX_HANDLED.load(Ordering::SeqCst);
-    let receipts = observer
-        .expect_published("tx-out", handled, Duration::from_secs(5))
-        .await
-        .unwrap();
+    let receipts = expect_published(&observer, "tx-out", handled, Duration::from_secs(5)).await;
     assert!(
         receipts.len() >= handled,
         "{} orders handled but only {} receipts committed",

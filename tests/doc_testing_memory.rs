@@ -1,19 +1,24 @@
-//! The `MemoryBroker` example from docs/guides/testing.md, kept compiling and passing here.
+//! The `TestApp` example from docs/guides/testing.md, kept compiling and passing here.
 //! The guide embeds this file via snippet markers; keep the marked sections in sync with the
 //! surrounding prose when editing.
-#![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+#![cfg(all(
+    feature = "testing",
+    feature = "macros",
+    feature = "memory",
+    feature = "json"
+))]
 
 // --8<-- [start:handler]
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 struct Order {
     id: u64,
     quantity: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 struct Confirmation {
     id: u64,
     accepted: bool,
@@ -29,57 +34,41 @@ async fn confirm(order: &Order) -> Confirmation {
 // --8<-- [end:handler]
 
 // --8<-- [start:test]
-use std::convert::Infallible;
-use std::sync::Arc;
-use std::time::Duration;
-
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
-use ruststream::testing::TestClient;
-use tokio::sync::Notify;
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
+use ruststream::testing::TestApp;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn confirms_valid_orders() {
-    let client = MemoryBroker::start().await.expect("start test broker");
-
-    // The app under test: production wiring, in-memory broker. Cloning the broker
-    // shares its state, so the client observes everything the app does.
-    let ready = Arc::new(Notify::new());
-    let on_ready = Arc::clone(&ready);
-    let app = RustStream::new(AppInfo::new("orders-test", "0.0.0"))
-        .after_startup(move |_state| async move {
-            on_ready.notify_one();
-            Ok::<_, Infallible>(())
-        })
-        .with_broker(client.broker().clone(), |b| {
+    // The app under test: production wiring, in-memory broker.
+    let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
             let replies = TypedPublisher::new(b.broker().publisher());
             b.include_publishing(confirm, replies);
-        });
+        },
+    );
 
-    let stop = Arc::new(Notify::new());
-    let stop_signal = Arc::clone(&stop);
-    let service = tokio::spawn(app.run_until(async move { stop_signal.notified().await }));
-
-    // Subscriptions are not buffered: wait for after_startup (it runs once they are open),
-    // then publish as an external producer.
-    ready.notified().await;
-    client
-        .publish("orders", br#"{"id":1,"quantity":2}"#)
+    // Start the harness (no connect, no server) and publish an order; the publish drives the
+    // handler to a standstill before it returns.
+    let tb = TestApp::start(app).await.expect("start harness");
+    tb.broker::<MemoryBroker>()
+        .publish("orders", &Order { id: 1, quantity: 2 })
         .await
         .expect("publish");
 
-    // The handler decoded the order and published a confirmation.
-    let replies = client
-        .expect_published("confirmations", 1, Duration::from_secs(1))
-        .await
-        .expect("expect_published");
-    assert_eq!(replies.len(), 1, "expected one confirmation");
-    let confirmation: serde_json::Value =
-        serde_json::from_slice(replies[0].payload()).expect("valid JSON reply");
-    assert_eq!(confirmation["id"], 1);
-    assert_eq!(confirmation["accepted"], true);
-
-    stop.notify_one();
-    service.await.expect("join").expect("clean shutdown");
+    // The handler decoded the order, acked, and published a confirmation.
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .with(&Order { id: 1, quantity: 2 })
+        .settled(HandlerResult::Ack);
+    tb.broker::<MemoryBroker>()
+        .published::<Confirmation>("confirmations")
+        .assert_called_once()
+        .with(&Confirmation {
+            id: 1,
+            accepted: true,
+        });
 }
 // --8<-- [end:test]

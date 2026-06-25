@@ -98,6 +98,10 @@ required-features = ["macros", "memory", "json", "logging"]
 name = "logging_middleware"
 required-features = ["macros", "memory", "json", "logging"]
 
+[[example]]
+name = "testing"
+required-features = ["testing", "macros", "memory", "json"]
+
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
@@ -108,7 +112,7 @@ required-features = ["asyncapi", "memory", "macros"]
 
 [[test]]
 name = "batch_subscriber"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "testing"]
 
 [[test]]
 name = "codecs"
@@ -116,7 +120,7 @@ required-features = ["macros", "memory", "cbor", "msgpack"]
 
 [[test]]
 name = "composition_rules"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "testing"]
 
 [[test]]
 name = "conformance_self"
@@ -124,7 +128,7 @@ required-features = ["conformance", "memory"]
 
 [[test]]
 name = "doc_testing_memory"
-required-features = ["memory", "macros", "json"]
+required-features = ["memory", "macros", "json", "testing"]
 
 [[test]]
 name = "failure_policy"
@@ -159,6 +163,10 @@ name = "workers"
 required-features = ["macros", "memory", "json"]
 
 [[test]]
+name = "testing_harness"
+required-features = ["testing", "macros", "memory", "json"]
+
+[[test]]
 name = "ui"
 required-features = ["macros", "memory", "json"]
 
@@ -178,7 +186,7 @@ categories = ["asynchronous", "network-programming"]
 [features]
 default = ["json"]
 memory = []
-conformance = []
+conformance = ["testing"]
 json = ["dep:serde_json"]
 msgpack = ["dep:rmp-serde"]
 cbor = ["dep:ciborium"]
@@ -187,6 +195,7 @@ asyncapi = ["json", "dep:schemars", "dep:serde_norway"]
 metrics = ["dep:prometheus"]
 logging = ["dep:tracing-subscriber"]
 cli = ["dep:clap", "dep:anyhow"]
+testing = ["dep:inventory", "tokio/test-util"]
 
 [dependencies]
 bytes = "1"
@@ -208,6 +217,7 @@ schemars = { version = "1", optional = true }
 serde_norway = { version = "0.9", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
+inventory = { version = "0.3", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

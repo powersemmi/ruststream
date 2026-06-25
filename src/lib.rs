@@ -21,8 +21,9 @@
 //!   ([`logging::init`]). The generated `cli` `run` command installs it automatically.
 //! * `conformance`: the [`conformance::harness`] contract suite, per-capability suites in
 //!   [`conformance::capabilities`], and broker-agnostic [`conformance::helpers`] for application
-//!   tests. Generic over any broker's `TestClient`, so it pulls in no concrete broker (enable
-//!   `memory` too to run it against [`memory::MemoryBroker`]).
+//!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker
+//!   (enable `memory` too to run it against [`memory::MemoryBroker`]).
+//! * `testing`: the [`testing::TestApp`] in-process harness for application unit tests.
 //! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
 //!
 //! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,
@@ -42,6 +43,11 @@ mod schema;
 mod subscriber;
 mod subscription;
 pub mod testing;
+
+/// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use inventory;
 
 pub use broker::Broker;
 pub use buffered::{Buffered, BufferedSubscriber};

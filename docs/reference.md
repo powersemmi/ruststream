@@ -27,5 +27,6 @@ cargo doc --all-features --open
 | `JsonCodec`, `MsgpackCodec`, `CborCodec` | `ruststream::codec` | wire codecs |
 | `build_spec` | `ruststream::asyncapi` | AsyncAPI generation |
 | `Metrics` | `ruststream::metrics` | Prometheus metrics |
-| `TestClient` | `ruststream::testing` | the test-client contract |
+| `TestApp` | `ruststream::testing` | in-process application unit-test harness |
+| `TestableBroker` | `ruststream::testing` | the broker test-transport contract |
 | `harness::run_suite` | `ruststream::conformance` | the conformance suite |
