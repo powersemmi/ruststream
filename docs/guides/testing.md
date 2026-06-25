@@ -80,6 +80,12 @@ Beyond the assertions, the messages themselves are retrievable for custom checks
 `published::<T>(name).decoded()` / `.messages()` returns every message published to the channel - both
 in order.
 
+The decoding helpers (`with`, `received`, `decoded`) use the default codec. If a handler or publisher
+was mounted with a different codec (`include_with` / `with_broker_codec`), pass it explicitly with the
+`_with` / `with_codec` variants - `subscriber(name).with_codec(&CborCodec, &expected)`,
+`.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
+`.decoded_with(&CborCodec)` - while `with_raw` / `received_raw` / `messages` stay codec-free.
+
 ### Failure policy, panic, and shutdown
 
 The harness runs dispatch under the application's real `FailurePolicy`, so a negative test is a

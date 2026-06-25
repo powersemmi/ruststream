@@ -13,6 +13,8 @@ use std::marker::PhantomData;
 use bytes::Bytes;
 
 use crate::RawMessage;
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::HandlerResult;
 
 use super::coordinator::{Coordinator, Outcome, Record};
@@ -90,7 +92,8 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Decodes every payload this subscriber received (with
-    /// [`DefaultCodec`](crate::codec::DefaultCodec)), in delivery order, for custom inspection.
+    /// [`DefaultCodec`](crate::codec::DefaultCodec)), in delivery order, for custom inspection. Use
+    /// [`received_with`](Self::received_with) for a non-default codec.
     ///
     /// # Panics
     ///
@@ -99,20 +102,33 @@ impl<'a> SubscriberAssertions<'a> {
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     #[must_use]
     pub fn received<T: serde::de::DeserializeOwned>(&self) -> Vec<T> {
-        use crate::codec::Codec;
+        self.received_with(&DefaultCodec::default())
+    }
+
+    /// Like [`received`](Self::received), but decodes with `codec` - use it when the handler was
+    /// mounted with a non-default codec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any received payload fails to decode as `T`.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    #[must_use]
+    pub fn received_with<T, C>(&self, codec: &C) -> Vec<T>
+    where
+        T: serde::de::DeserializeOwned,
+        C: Codec,
+    {
         self.with_records(|records| {
             records
                 .iter()
                 .map(|record| {
-                    crate::codec::DefaultCodec::default()
-                        .decode(&record.raw)
-                        .unwrap_or_else(|err| {
-                            panic!(
-                                "subscriber {:?} received a payload that did not decode as {}: {err}",
-                                self.name,
-                                std::any::type_name::<T>(),
-                            )
-                        })
+                    codec.decode(&record.raw).unwrap_or_else(|err| {
+                        panic!(
+                            "subscriber {:?} received a payload that did not decode as {}: {err}",
+                            self.name,
+                            std::any::type_name::<T>(),
+                        )
+                    })
                 })
                 .collect()
         })
@@ -133,7 +149,8 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Asserts the most recent delivery's payload decodes (with
-    /// [`DefaultCodec`](crate::codec::DefaultCodec)) to `expected`.
+    /// [`DefaultCodec`](crate::codec::DefaultCodec)) to `expected`. If the handler was mounted with a
+    /// different codec, use [`with_codec`](Self::with_codec).
     ///
     /// # Panics
     ///
@@ -144,17 +161,30 @@ impl<'a> SubscriberAssertions<'a> {
     where
         T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
     {
-        use crate::codec::Codec;
+        self.with_codec(&DefaultCodec::default(), expected)
+    }
+
+    /// Like [`with`](Self::with), but decodes the recorded payload with `codec` - use it when the
+    /// handler was mounted with a non-default codec (`include_with` / `with_broker_codec`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the subscriber was not called, the payload fails to decode, or the decoded value
+    /// differs from `expected`.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn with_codec<T, C>(self, codec: &C, expected: &T) -> Self
+    where
+        T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+        C: Codec,
+    {
         self.with_last("the received value", |record| {
-            let actual: T = crate::codec::DefaultCodec::default()
-                .decode(&record.raw)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "subscriber {:?} received a payload that did not decode as {}: {err}",
-                        self.name,
-                        std::any::type_name::<T>(),
-                    )
-                });
+            let actual: T = codec.decode(&record.raw).unwrap_or_else(|err| {
+                panic!(
+                    "subscriber {:?} received a payload that did not decode as {}: {err}",
+                    self.name,
+                    std::any::type_name::<T>(),
+                )
+            });
             assert_eq!(
                 &actual, expected,
                 "subscriber {:?} received an unexpected value",
@@ -336,14 +366,24 @@ where
     T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
 {
     /// Asserts the most recent published payload decodes (with
-    /// [`DefaultCodec`](crate::codec::DefaultCodec)) to `expected`.
+    /// [`DefaultCodec`](crate::codec::DefaultCodec)) to `expected`. If the publisher uses a different
+    /// codec, use [`with_codec`](Self::with_codec).
     ///
     /// # Panics
     ///
     /// Panics if nothing was published, the payload fails to decode, or it differs from `expected`.
     pub fn with(self, expected: &T) -> Self {
-        use crate::codec::Codec;
-        let actual: T = crate::codec::DefaultCodec::default()
+        self.with_codec(&DefaultCodec::default(), expected)
+    }
+
+    /// Like [`with`](Self::with), but decodes the published payload with `codec` - use it when the
+    /// publisher was built with a non-default codec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing was published, the payload fails to decode, or it differs from `expected`.
+    pub fn with_codec<C: Codec>(self, codec: &C, expected: &T) -> Self {
+        let actual: T = codec
             .decode(self.last("the published value").payload())
             .unwrap_or_else(|err| {
                 panic!(
@@ -364,26 +404,35 @@ where
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 impl<T: serde::de::DeserializeOwned> PublishedAssertions<T> {
     /// Decodes every message published to this channel (with
-    /// [`DefaultCodec`](crate::codec::DefaultCodec)), in publish order, for custom inspection.
+    /// [`DefaultCodec`](crate::codec::DefaultCodec)), in publish order, for custom inspection. Use
+    /// [`decoded_with`](Self::decoded_with) for a non-default codec.
     ///
     /// # Panics
     ///
     /// Panics if any published payload fails to decode as `T`.
     #[must_use]
     pub fn decoded(&self) -> Vec<T> {
-        use crate::codec::Codec;
+        self.decoded_with(&DefaultCodec::default())
+    }
+
+    /// Like [`decoded`](Self::decoded), but decodes with `codec` - use it when the publisher was
+    /// built with a non-default codec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any published payload fails to decode as `T`.
+    #[must_use]
+    pub fn decoded_with<C: Codec>(&self, codec: &C) -> Vec<T> {
         self.messages
             .iter()
             .map(|message| {
-                crate::codec::DefaultCodec::default()
-                    .decode(message.payload())
-                    .unwrap_or_else(|err| {
-                        panic!(
-                            "channel {:?} published a payload that did not decode as {}: {err}",
-                            self.name,
-                            std::any::type_name::<T>(),
-                        )
-                    })
+                codec.decode(message.payload()).unwrap_or_else(|err| {
+                    panic!(
+                        "channel {:?} published a payload that did not decode as {}: {err}",
+                        self.name,
+                        std::any::type_name::<T>(),
+                    )
+                })
             })
             .collect()
     }

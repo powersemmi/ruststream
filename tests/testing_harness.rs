@@ -194,6 +194,40 @@ async fn assert_not_called_when_no_input() {
         .assert_not_called();
 }
 
+// --- Custom codec: a handler mounted with CBOR; assertions decode with the same codec. ---
+
+#[cfg(feature = "cbor")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn custom_codec_assertions_use_the_handlers_codec() {
+    use ruststream::codec::{CborCodec, Codec};
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_codec(
+        MemoryBroker::new(),
+        CborCodec,
+        |b| b.include(handle_orders),
+    );
+    let tb = TestApp::start(app).await.unwrap();
+
+    // Inject CBOR-encoded input (the default-codec `publish` would be JSON the handler can't read).
+    let bytes = CborCodec.encode(&Order { id: 7 }).unwrap();
+    tb.broker::<MemoryBroker>()
+        .publish_raw("orders", &bytes)
+        .await
+        .unwrap();
+
+    // `with` (DefaultCodec) would not decode CBOR; `with_codec` uses the handler's actual codec.
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .with_codec(&CborCodec, &Order { id: 7 })
+        .settled(HandlerResult::Ack);
+    let received: Vec<Order> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("orders")
+        .received_with(&CborCodec);
+    assert_eq!(received, vec![Order { id: 7 }]);
+}
+
 // --- Requeue-then-ack: a stateful handler that nacks once, proving redelivery and quiescence. ---
 
 struct Counter {
