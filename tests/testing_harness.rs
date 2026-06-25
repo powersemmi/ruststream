@@ -76,6 +76,16 @@ async fn records_received_value_and_ack() {
         .with(&Order { id: 7 })
         .settled(HandlerResult::Ack)
         .assert_outcome(Outcome::Ack);
+
+    // The received messages can also be retrieved for custom inspection.
+    let received: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("orders").received();
+    assert_eq!(received, vec![Order { id: 7 }]);
+    let raw = tb
+        .broker::<MemoryBroker>()
+        .subscriber("orders")
+        .received_raw();
+    assert_eq!(raw.len(), 1);
+
     tb.assert_running();
 }
 
@@ -327,6 +337,15 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
         .published::<Event>("events")
         .assert_called_once()
         .with(&Event { id: 5 });
+
+    // The published messages themselves are retrievable, not just their count.
+    let events: Vec<Event> = tb
+        .broker_named("egress")
+        .published::<Event>("events")
+        .decoded();
+    assert_eq!(events, vec![Event { id: 5 }]);
+    let raw = tb.broker_named("egress").published::<Event>("events");
+    assert_eq!(raw.messages().len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

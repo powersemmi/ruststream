@@ -75,6 +75,11 @@ apps and returns `TestError::Ambiguous` when more than one broker is registered.
 `tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
 the broker's publish log: `.assert_called_once().with(&Receipt { id: 1 })`.
 
+Beyond the assertions, the messages themselves are retrievable for custom checks:
+`subscriber(name).received::<T>()` / `.received_raw()` returns what the handler received, and
+`published::<T>(name).decoded()` / `.messages()` returns every message published to the channel - both
+in order.
+
 ### Failure policy, panic, and shutdown
 
 The harness runs dispatch under the application's real `FailurePolicy`, so a negative test is a

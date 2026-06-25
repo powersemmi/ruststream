@@ -10,6 +10,8 @@
 
 use std::marker::PhantomData;
 
+use bytes::Bytes;
+
 use crate::RawMessage;
 use crate::runtime::HandlerResult;
 
@@ -78,6 +80,42 @@ impl<'a> SubscriberAssertions<'a> {
             self.name,
         );
         self
+    }
+
+    /// Every raw payload this subscriber received, in delivery order, for custom inspection beyond
+    /// the built-in assertions.
+    #[must_use]
+    pub fn received_raw(&self) -> Vec<Bytes> {
+        self.with_records(|records| records.iter().map(|record| record.raw.clone()).collect())
+    }
+
+    /// Decodes every payload this subscriber received (with
+    /// [`DefaultCodec`](crate::codec::DefaultCodec)), in delivery order, for custom inspection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any received payload fails to decode as `T` (a delivery the handler rejected as a
+    /// decode failure will fail here too).
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    #[must_use]
+    pub fn received<T: serde::de::DeserializeOwned>(&self) -> Vec<T> {
+        use crate::codec::Codec;
+        self.with_records(|records| {
+            records
+                .iter()
+                .map(|record| {
+                    crate::codec::DefaultCodec::default()
+                        .decode(&record.raw)
+                        .unwrap_or_else(|err| {
+                            panic!(
+                                "subscriber {:?} received a payload that did not decode as {}: {err}",
+                                self.name,
+                                std::any::type_name::<T>(),
+                            )
+                        })
+                })
+                .collect()
+        })
     }
 
     /// Asserts this subscriber was never called.
@@ -258,6 +296,14 @@ impl<T> PublishedAssertions<T> {
         );
     }
 
+    /// Every message published to this channel, in publish order, for custom inspection beyond the
+    /// built-in assertions. Bind the assertions to a variable to borrow them:
+    /// `let pubs = tb.broker::<B>().published::<T>("x"); for m in pubs.messages() { .. }`.
+    #[must_use]
+    pub fn messages(&self) -> &[RawMessage] {
+        &self.messages
+    }
+
     /// The most recent published message, panicking if there were none.
     fn last(&self, what: &str) -> &RawMessage {
         self.messages.last().unwrap_or_else(|| {
@@ -312,5 +358,33 @@ where
             self.name
         );
         self
+    }
+}
+
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+impl<T: serde::de::DeserializeOwned> PublishedAssertions<T> {
+    /// Decodes every message published to this channel (with
+    /// [`DefaultCodec`](crate::codec::DefaultCodec)), in publish order, for custom inspection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any published payload fails to decode as `T`.
+    #[must_use]
+    pub fn decoded(&self) -> Vec<T> {
+        use crate::codec::Codec;
+        self.messages
+            .iter()
+            .map(|message| {
+                crate::codec::DefaultCodec::default()
+                    .decode(message.payload())
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "channel {:?} published a payload that did not decode as {}: {err}",
+                            self.name,
+                            std::any::type_name::<T>(),
+                        )
+                    })
+            })
+            .collect()
     }
 }
