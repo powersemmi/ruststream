@@ -37,12 +37,16 @@ async fn handle(order: &Order) -> HandlerResult {
 
 // --8<-- [start:server]
 fn service() -> RustStream {
-    RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .server(
-            "production",
-            ruststream::ServerSpec::new("nats.example.com:4222", "nats"),
-        )
-        .with_broker(MemoryBroker::new(), |b| b.include(handle))
+    // `with_broker_labeled` records the broker under a label that is both its stable identity and
+    // its AsyncAPI server name, deriving the server entry from the broker's own `DescribeServer`
+    // spec - here the in-memory broker, which describes itself as an in-process "memory" server
+    // with no host. A broker without a `DescribeServer` impl is instead declared explicitly with
+    // `.server(name, spec)` alongside a plain `with_broker`.
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_labeled(
+        "in-process",
+        MemoryBroker::new(),
+        |b| b.include(handle),
+    )
 }
 // --8<-- [end:server]
 

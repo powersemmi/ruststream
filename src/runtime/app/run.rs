@@ -70,8 +70,16 @@ impl<L: Send, St: Send + Sync> RustStream<L, St> {
         let state = Arc::new(state);
 
         for broker in &brokers {
-            broker.connect().await.map_err(RustStreamError::Connect)?;
-            info!(target: "ruststream::lifecycle", broker = broker.name(), "broker connected");
+            broker
+                .lifecycle
+                .connect()
+                .await
+                .map_err(RustStreamError::Connect)?;
+            info!(
+                target: "ruststream::lifecycle",
+                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+                "broker connected",
+            );
         }
 
         let token = CancellationToken::new();
@@ -128,8 +136,16 @@ impl<L: Send, St: Send + Sync> RustStream<L, St> {
         drain_continuations(continuations, shutdown_timeout).await;
 
         for broker in brokers.iter().rev() {
-            broker.shutdown().await.map_err(RustStreamError::Shutdown)?;
-            debug!(target: "ruststream::lifecycle", broker = broker.name(), "broker shut down");
+            broker
+                .lifecycle
+                .shutdown()
+                .await
+                .map_err(RustStreamError::Shutdown)?;
+            debug!(
+                target: "ruststream::lifecycle",
+                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+                "broker shut down",
+            );
         }
 
         for hook in after_shutdown {

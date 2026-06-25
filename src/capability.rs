@@ -144,9 +144,12 @@ pub trait Subscribe: Broker {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ServerSpec {
-    /// The host (and optional port) clients connect to, e.g. `"nats.example.com:4222"`.
-    pub host: String,
-    /// The messaging protocol, e.g. `"nats"`, `"kafka"`, `"amqp"`.
+    /// The host (and optional port) clients connect to, e.g. `"nats.example.com:4222"`. `None` for
+    /// an in-process broker with no network address (the in-memory broker), reachable only within
+    /// the running service; such a server carries no `host` in the `AsyncAPI` document.
+    pub host: Option<String>,
+    /// The messaging protocol, e.g. `"nats"`, `"kafka"`, `"amqp"`, or `"memory"` for the in-process
+    /// broker.
     pub protocol: String,
     /// An optional human description of this server.
     pub description: Option<String>,
@@ -157,7 +160,21 @@ impl ServerSpec {
     #[must_use]
     pub fn new(host: impl Into<String>, protocol: impl Into<String>) -> Self {
         Self {
-            host: host.into(),
+            host: Some(host.into()),
+            protocol: protocol.into(),
+            description: None,
+        }
+    }
+
+    /// Describes an in-process server with no network address (the in-memory broker), reachable only
+    /// within the running service.
+    ///
+    /// It still has a stable identity (its label / server name) so a multi-broker service can route
+    /// to and distinguish it, but the generated `AsyncAPI` server carries no `host`.
+    #[must_use]
+    pub fn in_process(protocol: impl Into<String>) -> Self {
+        Self {
+            host: None,
             protocol: protocol.into(),
             description: None,
         }
@@ -174,9 +191,11 @@ impl ServerSpec {
 /// A broker that describes itself as an `AsyncAPI` server.
 ///
 /// Broker crates implement this so their connection coordinates land in the generated `AsyncAPI`
-/// document; wire it onto a service with
-/// [`RustStream::server`](crate::runtime::RustStream::server). Brokers without a meaningful network
-/// address (the in-memory test broker) simply do not implement it.
+/// document and the broker carries a stable identity when registered with
+/// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled); it can also be wired on
+/// manually with [`RustStream::server`](crate::runtime::RustStream::server). A broker without a
+/// network address (the in-memory broker) describes itself with
+/// [`ServerSpec::in_process`], so it still gets a label / identity for multi-broker routing.
 ///
 /// # Examples
 ///

@@ -59,13 +59,102 @@ fn build_spec_includes_servers_and_yaml() {
 
     let spec = build_spec(&app);
     let server = &spec.servers["nats"];
-    assert_eq!(server.host, "nats.example.com:4222");
+    assert_eq!(server.host.as_deref(), Some("nats.example.com:4222"));
     assert_eq!(server.protocol, "nats");
     assert_eq!(server.description.as_deref(), Some("primary"));
 
     let yaml = spec.to_yaml().unwrap();
     assert!(yaml.contains("asyncapi: 3.0.0"));
     assert!(yaml.contains("host: nats.example.com:4222"));
+}
+
+/// A self-describing broker: a labeled registration derives its `AsyncAPI` server from this.
+struct DescribingBroker {
+    host: String,
+}
+
+impl DescribingBroker {
+    fn new(host: impl Into<String>) -> Self {
+        Self { host: host.into() }
+    }
+}
+
+impl ruststream::Broker for DescribingBroker {
+    type Error = std::convert::Infallible;
+
+    async fn connect(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl ruststream::DescribeServer for DescribingBroker {
+    fn describe_server(&self) -> ServerSpec {
+        ServerSpec::new(self.host.clone(), "nats").with_description("ingress")
+    }
+}
+
+#[test]
+fn labeled_broker_populates_server_from_describe() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
+        "ingress",
+        DescribingBroker::new("nats.example.com:4222"),
+        |_b| {},
+    );
+
+    let spec = build_spec(&app);
+    let server = &spec.servers["ingress"];
+    assert_eq!(server.host.as_deref(), Some("nats.example.com:4222"));
+    assert_eq!(server.protocol, "nats");
+    assert_eq!(server.description.as_deref(), Some("ingress"));
+}
+
+#[test]
+fn labeled_memory_broker_is_an_in_process_server() {
+    // The in-memory broker has no network address: a labeled registration still gives it a server
+    // entry (its label) over the "memory" protocol, with no host. This is what lets a service mount
+    // several memory brokers with disjoint routing and address each by name.
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
+        "local",
+        MemoryBroker::new(),
+        |b| {
+            let orders = b.broker().subscribe("orders");
+            b.handle(
+                orders,
+                |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+                HandlerMetadata::raw("orders"),
+            );
+        },
+    );
+
+    let spec = build_spec(&app);
+    let server = &spec.servers["local"];
+    assert_eq!(server.host, None);
+    assert_eq!(server.protocol, "memory");
+
+    // A server with no host must not emit a `host` key in the document.
+    let json = spec.to_json().unwrap();
+    assert!(!json.contains("\"host\""));
+}
+
+#[test]
+fn explicit_server_overrides_labeled_broker() {
+    // An explicit server set for the same label takes precedence over the broker's own spec.
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .server("ingress", ServerSpec::new("override:4222", "custom"))
+        .with_broker_labeled(
+            "ingress",
+            DescribingBroker::new("nats.example.com:4222"),
+            |_b| {},
+        );
+
+    let spec = build_spec(&app);
+    let server = &spec.servers["ingress"];
+    assert_eq!(server.host.as_deref(), Some("override:4222"));
+    assert_eq!(server.protocol, "custom");
 }
 
 #[test]

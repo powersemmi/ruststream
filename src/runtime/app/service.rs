@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::codec::Codec;
-use crate::{Broker, ServerSpec};
+use crate::{Broker, DescribeServer, ServerSpec};
 
 use tokio_util::task::TaskTracker;
 
@@ -60,7 +60,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// ```
 pub struct RustStream<L = Identity, St = ()> {
     pub(super) info: AppInfo,
-    pub(super) brokers: Vec<Arc<dyn BrokerLifecycle>>,
+    pub(super) brokers: Vec<RegisteredBroker>,
     pub(super) starters: Vec<Starter<St>>,
     pub(super) handlers: Vec<HandlerMetadata>,
     pub(super) servers: BTreeMap<String, ServerSpec>,
@@ -75,6 +75,16 @@ pub struct RustStream<L = Identity, St = ()> {
     /// [`Delivery`].
     pub(super) continuations: TaskTracker,
     pub(super) global: L,
+}
+
+/// A broker held by the app for lifecycle management, paired with its optional label.
+///
+/// The label is the broker's stable runtime identity and its `AsyncAPI` server name; it is `Some`
+/// for a broker registered through [`with_broker_labeled`](RustStream::with_broker_labeled) (or its
+/// codec variant) and `None` otherwise.
+pub(super) struct RegisteredBroker {
+    pub(super) lifecycle: Arc<dyn BrokerLifecycle>,
+    pub(super) label: Option<String>,
 }
 
 impl<L, St> std::fmt::Debug for RustStream<L, St> {
@@ -262,7 +272,10 @@ impl<L, St> RustStream<L, St> {
     where
         B: Broker + 'static,
     {
-        self.brokers.push(Arc::new(broker));
+        self.brokers.push(RegisteredBroker {
+            lifecycle: Arc::new(broker),
+            label: None,
+        });
         self
     }
 
@@ -271,6 +284,11 @@ impl<L, St> RustStream<L, St> {
     /// Build the [`ServerSpec`] directly, or get it from a broker that implements
     /// [`DescribeServer`](crate::DescribeServer): `app.server("nats", broker.describe_server())`.
     /// `build_spec` emits these in the document's `servers` section.
+    ///
+    /// For a self-describing broker, prefer
+    /// [`with_broker_labeled`](Self::with_broker_labeled), which derives this entry from the broker
+    /// under its label in one step. Use this method for brokers without a network address (the
+    /// in-memory broker), or to override a labeled broker's own spec.
     #[must_use]
     pub fn server(mut self, name: impl Into<String>, spec: ServerSpec) -> Self {
         self.servers.insert(name.into(), spec);
@@ -296,7 +314,7 @@ impl<L, St> RustStream<L, St> {
         let broker = Arc::new(broker);
         let mut scope = self.new_scope(&broker, ());
         build(&mut scope);
-        self.collect_scope(&broker, scope);
+        self.collect_scope(&broker, scope, None);
         self
     }
 
@@ -318,8 +336,103 @@ impl<L, St> RustStream<L, St> {
         let broker = Arc::new(broker);
         let mut scope = self.new_scope(&broker, codec);
         build(&mut scope);
-        self.collect_scope(&broker, scope);
+        self.collect_scope(&broker, scope, None);
         self
+    }
+
+    /// Registers a self-describing broker under `label`, along with the handlers attached to it.
+    ///
+    /// The `label` is the broker's stable identity in the service and the name of its `AsyncAPI`
+    /// server: the broker's [`describe_server`](DescribeServer::describe_server) coordinates are
+    /// recorded in the `servers` map under `label`, so the document stays in sync with the brokers
+    /// actually mounted, with no separate [`server`](Self::server) call. An explicit
+    /// [`server(label, spec)`](Self::server) entry for the same label takes precedence.
+    ///
+    /// Like [`with_broker`](Self::with_broker), the scope has no default codec; use
+    /// [`with_broker_labeled_codec`](Self::with_broker_labeled_codec) to set one.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "memory")]
+    /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    /// use ruststream::{Broker, DescribeServer, ServerSpec};
+    ///
+    /// # struct NatsBroker;
+    /// # impl NatsBroker { fn new(_: &str) -> Self { Self } }
+    /// # impl Broker for NatsBroker {
+    /// #     type Error = std::io::Error;
+    /// #     async fn connect(&self) -> Result<(), Self::Error> { Ok(()) }
+    /// #     async fn shutdown(&self) -> Result<(), Self::Error> { Ok(()) }
+    /// # }
+    /// # impl DescribeServer for NatsBroker {
+    /// #     fn describe_server(&self) -> ServerSpec { ServerSpec::new("nats:4222", "nats") }
+    /// # }
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker_labeled("ingress", NatsBroker::new("nats://localhost"), |_b| {});
+    /// // The AsyncAPI `servers` map now carries "ingress" with the broker's host / protocol.
+    /// app.run().await
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_broker_labeled<B, F>(
+        mut self,
+        label: impl Into<String>,
+        broker: B,
+        build: F,
+    ) -> Self
+    where
+        B: DescribeServer + 'static,
+        L: Clone,
+        St: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, L, (), St>),
+    {
+        let label = self.record_server(label, &broker);
+        let broker = Arc::new(broker);
+        let mut scope = self.new_scope(&broker, ());
+        build(&mut scope);
+        self.collect_scope(&broker, scope, Some(label));
+        self
+    }
+
+    /// Registers a self-describing broker under `label` with a default `codec`.
+    ///
+    /// Combines [`with_broker_labeled`](Self::with_broker_labeled) (the label is the broker's
+    /// identity and `AsyncAPI` server name) with
+    /// [`with_broker_codec`](Self::with_broker_codec) (macro handlers mount without repeating the
+    /// codec).
+    #[must_use]
+    pub fn with_broker_labeled_codec<B, C, F>(
+        mut self,
+        label: impl Into<String>,
+        broker: B,
+        codec: C,
+        build: F,
+    ) -> Self
+    where
+        B: DescribeServer + 'static,
+        C: Codec + Clone + 'static,
+        L: Clone,
+        St: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, L, C, St>),
+    {
+        let label = self.record_server(label, &broker);
+        let broker = Arc::new(broker);
+        let mut scope = self.new_scope(&broker, codec);
+        build(&mut scope);
+        self.collect_scope(&broker, scope, Some(label));
+        self
+    }
+
+    /// Records `broker`'s server coordinates under `label` (keeping an explicit
+    /// [`server`](Self::server) entry already set for the same label), returning the owned label.
+    fn record_server<B: DescribeServer>(&mut self, label: impl Into<String>, broker: &B) -> String {
+        let label = label.into();
+        self.servers
+            .entry(label.clone())
+            .or_insert_with(|| broker.describe_server());
+        label
     }
 
     /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
@@ -339,9 +452,14 @@ impl<L, St> RustStream<L, St> {
         }
     }
 
-    /// Drains a built scope's registrations into the app and holds the broker for lifecycle.
-    fn collect_scope<B, C>(&mut self, broker: &Arc<B>, scope: BrokerScope<B, L, C, St>)
-    where
+    /// Drains a built scope's registrations into the app and holds the broker for lifecycle,
+    /// recording `label` as the broker's stable runtime identity (`None` when unlabeled).
+    fn collect_scope<B, C>(
+        &mut self,
+        broker: &Arc<B>,
+        scope: BrokerScope<B, L, C, St>,
+        label: Option<String>,
+    ) where
         B: Broker + 'static,
         St: Send + Sync + 'static,
     {
@@ -359,7 +477,7 @@ impl<L, St> RustStream<L, St> {
             }));
             self.handlers.push(meta);
         }
-        self.brokers.push(lifecycle);
+        self.brokers.push(RegisteredBroker { lifecycle, label });
     }
 
     /// Returns metadata for every registered handler, in registration order. Input to the
