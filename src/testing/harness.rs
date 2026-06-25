@@ -9,13 +9,14 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use crate::RawMessage;
+use crate::OutgoingMessage;
 use crate::runtime::{
     BrokerLifecycle, ErrorShutdown, LifecycleHook, RegisteredBroker, RustStream, RustStreamError,
     Starter, TestParts,
 };
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
+use super::broker::{TestableBroker, TestableRegistration};
 use super::coordinator::Coordinator;
 
 /// The default cap on dispatched deliveries before [`TestApp::publish`] gives up driving a reaction
@@ -53,35 +54,22 @@ pub enum TestError {
     Encode(String),
 }
 
-/// A broker's in-process transport, recovered from the erased app for the harness: inject input and
-/// read the publish log. Implemented for each concrete testable broker (downcast at setup time).
-pub(crate) trait ErasedTransport: Send + Sync {
-    /// Injects a raw message onto the bus as an external producer would.
-    fn publish_raw(&self, name: &str, payload: &[u8]);
-    /// Every message published to `name`, in publish order.
-    fn published_raw(&self, name: &str) -> Vec<RawMessage>;
-}
-
-#[cfg(feature = "memory")]
-impl ErasedTransport for crate::memory::MemoryBroker {
-    fn publish_raw(&self, name: &str, payload: &[u8]) {
-        self.deliver(name, payload);
-    }
-
-    fn published_raw(&self, name: &str) -> Vec<RawMessage> {
-        <Self as super::TestableBroker>::published_raw(self, name)
-    }
-}
-
 /// One broker registered in the app under test: its label, its erased lifecycle handle (for
-/// type/label addressing), and its recovered in-process transport (when it is testable).
+/// type/label addressing), and the registration that recovers its [`TestableBroker`] view (when it
+/// is registered with [`register_testable_broker!`](crate::register_testable_broker)).
 struct BrokerEntry {
     label: Option<String>,
     lifecycle: Arc<dyn BrokerLifecycle>,
-    transport: Option<Box<dyn ErasedTransport>>,
+    registration: Option<&'static TestableRegistration>,
 }
 
 impl BrokerEntry {
+    /// The broker's `TestableBroker` view, recovered from the erased handle via its registration.
+    fn testable(&self) -> Option<&dyn TestableBroker> {
+        self.registration
+            .and_then(|registration| registration.resolve(self.lifecycle.as_any()))
+    }
+
     /// The name used to address this broker in diagnostics: its label, else its broker type name.
     fn display(&self) -> String {
         self.label
@@ -90,22 +78,20 @@ impl BrokerEntry {
     }
 }
 
-/// Recovers a broker's in-process transport and installs the coordinator into it, by downcasting the
-/// erased handle to each known testable broker type. Returns `None` for a non-testable broker.
-fn recover_transport(
+/// Finds the [`TestableBroker`] registration matching this broker and installs the coordinator into
+/// its bus. Returns `None` for a broker whose type was not registered with
+/// [`register_testable_broker!`](crate::register_testable_broker).
+fn recover_testable(
     lifecycle: &Arc<dyn BrokerLifecycle>,
     coordinator: &Coordinator,
-) -> Option<Box<dyn ErasedTransport>> {
-    #[cfg(feature = "memory")]
-    if let Some(broker) = lifecycle
-        .as_any()
-        .downcast_ref::<crate::memory::MemoryBroker>()
-    {
-        use super::TestableBroker;
-        broker.install_coordinator(coordinator.clone());
-        return Some(Box::new(broker.clone()));
+) -> Option<&'static TestableRegistration> {
+    let any = lifecycle.as_any();
+    for registration in inventory::iter::<TestableRegistration> {
+        if let Some(broker) = registration.resolve(any) {
+            broker.install_coordinator(coordinator.clone());
+            return Some(registration);
+        }
     }
-    let _ = (lifecycle, coordinator);
     None
 }
 
@@ -290,11 +276,11 @@ impl<St: Send + Sync + 'static> TestApp<St> {
         let entries = std::mem::take(&mut parts.brokers)
             .into_iter()
             .map(|RegisteredBroker { lifecycle, label }| {
-                let transport = recover_transport(&lifecycle, &coordinator);
+                let registration = recover_testable(&lifecycle, &coordinator);
                 BrokerEntry {
                     label,
                     lifecycle,
-                    transport,
+                    registration,
                 }
             })
             .collect();
@@ -388,7 +374,7 @@ impl<St: Send + Sync + 'static> TestApp<St> {
         BrokerHandle {
             scope_id,
             coordinator: &self.coordinator,
-            transport: entry.transport.as_deref(),
+            testable: entry.testable(),
             token: &self.token,
             label: entry.display(),
         }
@@ -532,7 +518,7 @@ struct SpawnArgs<St> {
 pub struct BrokerHandle<'a> {
     scope_id: usize,
     coordinator: &'a Coordinator,
-    transport: Option<&'a dyn ErasedTransport>,
+    testable: Option<&'a dyn TestableBroker>,
     token: &'a CancellationToken,
     label: String,
 }
@@ -541,7 +527,7 @@ impl std::fmt::Debug for BrokerHandle<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrokerHandle")
             .field("broker", &self.label)
-            .field("has_transport", &self.transport.is_some())
+            .field("testable", &self.testable.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -579,9 +565,9 @@ impl BrokerHandle<'_> {
             return Err(TestError::ShutDown);
         }
         let transport = self
-            .transport
+            .testable
             .ok_or_else(|| TestError::NoTransport(self.label.clone()))?;
-        transport.publish_raw(name, payload);
+        transport.inject(OutgoingMessage::new(name, payload));
         self.coordinator.drive().await
     }
 
@@ -594,10 +580,7 @@ impl BrokerHandle<'_> {
     /// Asserts on what was published to `name` on this broker (the broker's publish log).
     #[must_use]
     pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
-        let messages = self
-            .transport
-            .map(|t| t.published_raw(name))
-            .unwrap_or_default();
+        let messages = self.testable.map(|t| t.published(name)).unwrap_or_default();
         PublishedAssertions::new(name.to_owned(), messages)
     }
 }

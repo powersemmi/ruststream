@@ -16,7 +16,6 @@
 //! [`MemoryPublisher`], and partition keys on [`MemoryMessage`].
 
 mod capability;
-mod test_client;
 
 pub use capability::{MemoryRequester, PARTITION_KEY_HEADER, RequestError};
 
@@ -161,17 +160,6 @@ impl MemoryBroker {
         }
     }
 
-    /// Injects a message onto the bus as an external producer would, synchronously (no awaiting),
-    /// for the test harness. Routes through `fanout`, so it is recorded and counted like any publish.
-    #[cfg(feature = "testing")]
-    pub(crate) fn deliver(&self, name: &str, payload: &[u8]) {
-        self.state.fanout(&MemoryDelivery {
-            name: name.to_owned(),
-            payload: Bytes::copy_from_slice(payload),
-            headers: Headers::new(),
-        });
-    }
-
     /// Returns a request / reply-capable publisher bound to this broker.
     ///
     /// Unlike [`MemoryBroker::publisher`], whose fire-and-forget operations cannot fail, a
@@ -223,7 +211,15 @@ impl crate::testing::TestableBroker for MemoryBroker {
         self.state.install_coordinator(coordinator);
     }
 
-    fn published_raw(&self, name: &str) -> Vec<RawMessage> {
+    fn inject(&self, message: OutgoingMessage<'_>) {
+        self.state.fanout(&MemoryDelivery {
+            name: message.name().to_owned(),
+            payload: Bytes::copy_from_slice(message.payload()),
+            headers: message.headers().clone(),
+        });
+    }
+
+    fn published(&self, name: &str) -> Vec<RawMessage> {
         self.state
             .published
             .lock()
@@ -233,6 +229,9 @@ impl crate::testing::TestableBroker for MemoryBroker {
             .unwrap_or_default()
     }
 }
+
+#[cfg(feature = "testing")]
+crate::register_testable_broker!(MemoryBroker);
 
 // `Self::subscribe` would read as a recursive call into this trait method; spell out the broker
 // type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).

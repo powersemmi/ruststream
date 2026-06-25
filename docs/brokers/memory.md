@@ -64,8 +64,9 @@ use ruststream::memory::MemorySource;
 --8<-- "examples/routed_service/orders.rs:descriptor"
 ```
 
-## As a test client
+## For testing
 
-`MemoryBroker` implements the `TestClient` trait itself: `MemoryBroker::start()` gives a client
-whose `publish` and `expect_published` drive and observe the broker from the outside. See
-[Testing](../guides/testing.md#testing-handlers-with-memorybroker) for the full pattern.
+`MemoryBroker` implements `TestableBroker` and is registered with `register_testable_broker!`, so the
+[`TestApp`](../guides/testing.md) harness drives it directly: build an app on a `MemoryBroker`, hand
+it to `TestApp::start`, publish, and assert on what the handlers received and published. See
+[Testing](../guides/testing.md#unit-testing-a-service-with-testapp) for the full pattern.

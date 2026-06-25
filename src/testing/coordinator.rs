@@ -196,6 +196,10 @@ impl Coordinator {
     ///
     /// A broker calls this from its `nack_after` instead of a bare `tokio::spawn`, so the harness can
     /// await the fired timers deterministically under a paused clock.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal timers mutex was poisoned by an earlier panic while it was held.
     pub fn schedule_redelivery<F>(&self, delay: Duration, redeliver: F)
     where
         F: FnOnce() + Send + 'static,
@@ -215,6 +219,9 @@ impl Coordinator {
     /// Awaits every scheduled redelivery whose deadline has now passed, so their re-enqueues are
     /// counted before the caller drives the reaction. Called by `TestApp::advance` after advancing
     /// the clock; redeliveries still in the future stay pending for a later advance.
+    // The guard is dropped at the end of the block (before the awaits); held only to drain the due
+    // timers out of the shared list.
+    #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn fire_due_timers(&self) {
         let now = tokio::time::Instant::now();
         let due: Vec<tokio::task::JoinHandle<()>> = {

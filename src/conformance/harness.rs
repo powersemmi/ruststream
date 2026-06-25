@@ -1,28 +1,29 @@
-//! Conformance test suite that any [`TestClient`] implementation must pass.
+//! Conformance test suite that any [`TestableBroker`] implementation must pass.
 //!
-//! Broker authors prove their implementation honours the [`Broker`] contract by running the
-//! suite against the [`TestClient`] their crate ships under the `testing` feature. Each test
-//! starts from a fresh broker instance produced by the caller-supplied factory.
+//! Broker authors prove their in-process transport honours Core routing by running the suite
+//! against the [`TestableBroker`] their crate ships under the `testing` feature. Each test starts
+//! from a fresh broker produced by the caller-supplied factory and drives it through the broker's
+//! own [`Subscribe`] / [`TestableBroker::inject`] surface - no server.
 //!
 //! # Examples
 //!
 //! The example uses [`crate::memory::MemoryBroker`] as a stand-in broker, so it needs the
-//! `memory` feature; a broker crate substitutes its own `TestClient` here.
+//! `memory` feature; a broker crate substitutes its own in-process transport here.
 //!
 //! ```no_run
-//! # #[cfg(feature = "memory")]
+//! # #[cfg(all(feature = "testing", feature = "memory"))]
 //! # async fn run() {
 //! use ruststream::{conformance::harness, memory::MemoryBroker};
 //!
-//! harness::run_suite(|| async { Ok::<_, std::convert::Infallible>(MemoryBroker::new()) }).await;
+//! harness::run_suite(MemoryBroker::new).await;
 //! # }
 //! ```
 
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 
 use crate::{
-    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber,
-    SubscriptionSource, testing::TestClient,
+    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscribe, Subscriber,
+    SubscriptionSource, testing::TestableBroker,
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -38,22 +39,18 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// # Panics
 ///
 /// Panics if any scenario fails an assertion. The panic message identifies the scenario.
-pub async fn run_suite<T, F, Fut, E>(factory: F)
+pub async fn run_suite<B, F>(factory: F)
 where
-    T: TestClient<Error = E>,
-    F: Fn() -> Fut + Send + Sync,
-    Fut: Future<Output = Result<T, E>> + Send,
-    E: std::fmt::Debug,
+    B: TestableBroker + Subscribe,
+    F: Fn() -> B,
 {
-    let fresh = || async { factory().await.expect("test client factory failed") };
-
-    ordering(fresh().await).await;
-    publish_after_subscribe(fresh().await).await;
-    ack_consumes_delivery(fresh().await).await;
-    nack_with_requeue_redelivers(fresh().await).await;
-    nack_without_requeue_drops(fresh().await).await;
-    headers_propagate(fresh().await).await;
-    expect_published_observes_publishes(fresh().await).await;
+    ordering(factory()).await;
+    publish_after_subscribe(factory()).await;
+    ack_consumes_delivery(factory()).await;
+    nack_with_requeue_redelivers(factory()).await;
+    nack_without_requeue_drops(factory()).await;
+    headers_propagate(factory()).await;
+    published_log_observes_publishes(factory()).await;
 }
 
 /// Verifies a broker honours the lazy-startup contract end to end.
@@ -144,21 +141,16 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .expect("broker must shut down cleanly");
 }
 
-async fn ordering<T: TestClient>(client: T) {
-    let mut subscriber = client
-        .subscribe("conformance.ordering")
+async fn ordering<B: TestableBroker + Subscribe>(broker: B) {
+    let mut subscriber = Subscribe::subscribe(&broker, "conformance.ordering")
         .await
         .expect("subscribe failed");
-    let publisher = client.publisher().await.expect("publisher failed");
 
     for i in 0..10u32 {
-        publisher
-            .publish(OutgoingMessage::new(
-                "conformance.ordering",
-                i.to_be_bytes().as_slice(),
-            ))
-            .await
-            .expect("publish failed");
+        broker.inject(OutgoingMessage::new(
+            "conformance.ordering",
+            i.to_be_bytes().as_slice(),
+        ));
     }
 
     let mut stream = std::pin::pin!(subscriber.stream());
@@ -171,32 +163,23 @@ async fn ordering<T: TestClient>(client: T) {
         );
         msg.ack().await.expect("ack failed");
     }
-    client.shutdown().await.expect("shutdown failed");
+    Broker::shutdown(&broker).await.expect("shutdown failed");
 }
 
-async fn publish_after_subscribe<T: TestClient>(client: T) {
-    let publisher = client.publisher().await.expect("publisher failed");
+async fn publish_after_subscribe<B: TestableBroker + Subscribe>(broker: B) {
+    broker.inject(OutgoingMessage::new(
+        "conformance.late",
+        b"before-subscribe".as_slice(),
+    ));
 
-    publisher
-        .publish(OutgoingMessage::new(
-            "conformance.late",
-            b"before-subscribe".as_slice(),
-        ))
-        .await
-        .expect("publish failed");
-
-    let mut subscriber = client
-        .subscribe("conformance.late")
+    let mut subscriber = Subscribe::subscribe(&broker, "conformance.late")
         .await
         .expect("subscribe failed");
 
-    publisher
-        .publish(OutgoingMessage::new(
-            "conformance.late",
-            b"after-subscribe".as_slice(),
-        ))
-        .await
-        .expect("publish failed");
+    broker.inject(OutgoingMessage::new(
+        "conformance.late",
+        b"after-subscribe".as_slice(),
+    ));
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "publish_after_subscribe").await;
@@ -206,43 +189,33 @@ async fn publish_after_subscribe<T: TestClient>(client: T) {
         "subscriber must receive only messages published after subscription opened",
     );
     msg.ack().await.expect("ack failed");
-    client.shutdown().await.expect("shutdown failed");
+    Broker::shutdown(&broker).await.expect("shutdown failed");
 }
 
-async fn ack_consumes_delivery<T: TestClient>(client: T) {
-    let mut subscriber = client
-        .subscribe("conformance.ack")
+async fn ack_consumes_delivery<B: TestableBroker + Subscribe>(broker: B) {
+    let mut subscriber = Subscribe::subscribe(&broker, "conformance.ack")
         .await
         .expect("subscribe failed");
-    let publisher = client.publisher().await.expect("publisher failed");
 
-    publisher
-        .publish(OutgoingMessage::new("conformance.ack", b"one".as_slice()))
-        .await
-        .expect("publish failed");
+    broker.inject(OutgoingMessage::new("conformance.ack", b"one".as_slice()));
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "ack_consumes_delivery").await;
     msg.ack().await.expect("ack failed");
 
     expect_no_more(&mut stream, "ack_consumes_delivery").await;
-    client.shutdown().await.expect("shutdown failed");
+    Broker::shutdown(&broker).await.expect("shutdown failed");
 }
 
-async fn nack_with_requeue_redelivers<T: TestClient>(client: T) {
-    let mut subscriber = client
-        .subscribe("conformance.requeue")
+async fn nack_with_requeue_redelivers<B: TestableBroker + Subscribe>(broker: B) {
+    let mut subscriber = Subscribe::subscribe(&broker, "conformance.requeue")
         .await
         .expect("subscribe failed");
-    let publisher = client.publisher().await.expect("publisher failed");
 
-    publisher
-        .publish(OutgoingMessage::new(
-            "conformance.requeue",
-            b"retry-me".as_slice(),
-        ))
-        .await
-        .expect("publish failed");
+    broker.inject(OutgoingMessage::new(
+        "conformance.requeue",
+        b"retry-me".as_slice(),
+    ));
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let first = expect_next(&mut stream, "nack_with_requeue first").await;
@@ -256,84 +229,64 @@ async fn nack_with_requeue_redelivers<T: TestClient>(client: T) {
         "nack(requeue=true) must redeliver the same payload",
     );
     second.ack().await.expect("ack failed");
-    client.shutdown().await.expect("shutdown failed");
+    Broker::shutdown(&broker).await.expect("shutdown failed");
 }
 
-async fn nack_without_requeue_drops<T: TestClient>(client: T) {
-    let mut subscriber = client
-        .subscribe("conformance.drop")
+async fn nack_without_requeue_drops<B: TestableBroker + Subscribe>(broker: B) {
+    let mut subscriber = Subscribe::subscribe(&broker, "conformance.drop")
         .await
         .expect("subscribe failed");
-    let publisher = client.publisher().await.expect("publisher failed");
 
-    publisher
-        .publish(OutgoingMessage::new("conformance.drop", b"gone".as_slice()))
-        .await
-        .expect("publish failed");
+    broker.inject(OutgoingMessage::new("conformance.drop", b"gone".as_slice()));
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "nack_without_requeue").await;
     msg.nack(false).await.expect("nack failed");
 
     expect_no_more(&mut stream, "nack_without_requeue").await;
-    client.shutdown().await.expect("shutdown failed");
+    Broker::shutdown(&broker).await.expect("shutdown failed");
 }
 
-async fn headers_propagate<T: TestClient>(client: T) {
-    let mut subscriber = client
-        .subscribe("conformance.headers")
+async fn headers_propagate<B: TestableBroker + Subscribe>(broker: B) {
+    let mut subscriber = Subscribe::subscribe(&broker, "conformance.headers")
         .await
         .expect("subscribe failed");
-    let publisher = client.publisher().await.expect("publisher failed");
 
     let mut headers = Headers::new();
     headers.insert("Content-Type", "application/json");
     headers.insert("X-Tenant", Bytes::from_static(b"acme"));
 
-    publisher
-        .publish(
-            OutgoingMessage::new("conformance.headers", b"{}".as_slice()).with_headers(headers),
-        )
-        .await
-        .expect("publish failed");
+    broker.inject(
+        OutgoingMessage::new("conformance.headers", b"{}".as_slice()).with_headers(headers),
+    );
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "headers_propagate").await;
     assert_eq!(msg.headers().content_type(), Some("application/json"));
     assert_eq!(msg.headers().get("x-tenant"), Some(b"acme".as_slice()));
     msg.ack().await.expect("ack failed");
-    client.shutdown().await.expect("shutdown failed");
+    Broker::shutdown(&broker).await.expect("shutdown failed");
 }
 
-async fn expect_published_observes_publishes<T: TestClient>(client: T) {
-    let publisher = client.publisher().await.expect("publisher failed");
-    publisher
-        .publish(OutgoingMessage::new(
-            "conformance.observe",
-            b"first".as_slice(),
-        ))
-        .await
-        .expect("publish failed");
-    publisher
-        .publish(OutgoingMessage::new(
-            "conformance.observe",
-            b"second".as_slice(),
-        ))
-        .await
-        .expect("publish failed");
+async fn published_log_observes_publishes<B: TestableBroker + Subscribe>(broker: B) {
+    broker.inject(OutgoingMessage::new(
+        "conformance.observe",
+        b"first".as_slice(),
+    ));
+    broker.inject(OutgoingMessage::new(
+        "conformance.observe",
+        b"second".as_slice(),
+    ));
 
-    let observed = client
-        .expect_published("conformance.observe", 2, DEFAULT_TIMEOUT)
-        .await
-        .expect("expect_published failed");
+    let observed = broker.published("conformance.observe");
     assert_eq!(
         observed.len(),
         2,
-        "expect_published must observe every publish"
+        "the publish log must observe every publish",
     );
     assert_eq!(observed[0].payload(), b"first");
     assert_eq!(observed[1].payload(), b"second");
-    client.shutdown().await.expect("shutdown failed");
+    Broker::shutdown(&broker).await.expect("shutdown failed");
 }
 
 pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M

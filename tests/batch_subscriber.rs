@@ -15,7 +15,7 @@ use std::{
 use common::handler_signal;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
-use ruststream::testing::TestClient;
+use ruststream::testing::expect_published;
 use ruststream::{Buffered, Name, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -336,10 +336,8 @@ async fn batch_replies_publish_transactionally() {
                 .publish(OutgoingMessage::new("requests", &order_bytes(7)))
                 .await;
             handler_signal(&BATCH_CONFIRM_NOTIFY).await;
-            let confirmed = observer
-                .expect_published("confirmations", 1, Duration::from_millis(200))
-                .await
-                .unwrap();
+            let confirmed =
+                expect_published(&observer, "confirmations", 1, Duration::from_millis(200)).await;
             if !confirmed.is_empty() {
                 break;
             }
@@ -348,10 +346,8 @@ async fn batch_replies_publish_transactionally() {
     .await;
     assert!(result.is_ok(), "no confirmation arrived");
 
-    let confirmed = observer
-        .expect_published("confirmations", 1, Duration::from_millis(100))
-        .await
-        .unwrap();
+    let confirmed =
+        expect_published(&observer, "confirmations", 1, Duration::from_millis(100)).await;
     for raw in &confirmed {
         let confirmation: Confirmation = serde_json::from_slice(raw.payload()).unwrap();
         assert_eq!(confirmation.id, 7);

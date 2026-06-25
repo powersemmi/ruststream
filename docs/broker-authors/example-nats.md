@@ -529,7 +529,8 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 ## Proving it
 
-Ship a `TestClient` under a `testing` feature that does core routing only (a subject matcher fanning
-published messages out to subscribers), then run the conformance suite against it. The test client
-must not simulate JetStream cursors, redelivery timers, or retention; those are checked end to end
-against a real `nats-server`. See [Conformance](conformance.md).
+Ship an in-process transport implementing `TestableBroker` under a `testing` feature (registered with
+`register_testable_broker!`) that does core routing only (a subject matcher fanning published
+messages out to subscribers), then run the conformance suite against it. The transport must not
+simulate JetStream cursors, redelivery timers, or retention; those are checked end to end against a
+real `nats-server`. See [Conformance](conformance.md).
