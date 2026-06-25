@@ -311,8 +311,8 @@ async fn scope_default_codec_drops_per_call_codec() {
 /// A static (zero-cost) publish transform baked onto the `TypedPublisher`.
 struct StaticEnvelope;
 
-impl PublishLayer for StaticEnvelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<C> PublishLayer<C> for StaticEnvelope {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
         out.headers_mut().insert("x-static", b"1".to_vec());
     }
 }

@@ -60,8 +60,8 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 /// attaches it to the confirmations publisher, so every confirmation carries the header.
 pub(crate) struct StampSource;
 
-impl PublishLayer for StampSource {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<C> PublishLayer<C> for StampSource {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
         out.headers_mut()
             .insert("x-source-service", b"orders-service".to_vec());
     }

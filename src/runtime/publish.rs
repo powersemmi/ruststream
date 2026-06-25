@@ -149,26 +149,77 @@ pub(crate) fn run_publish<'a>(
     .run(out)
 }
 
-/// A static, compile-time publish transform: mutates an [`Outgoing`] before it is sent.
+/// A read-only view of the originating delivery, handed to a [`PublishLayer`].
+///
+/// A reply is published from inside a handler, so the static publish transform can read the
+/// delivery that produced it: its channel [`name`](Self::name), the incoming
+/// [`headers`](Self::headers) (a W3C `traceparent`, a correlation id), and the broker's typed
+/// per-delivery [`context`](Self::context) by [`Field`] key. This is how a trace / correlation id
+/// propagates from the incoming message onto the reply (the static, zero-cost path; the dynamic
+/// [`PublishMiddleware`] stays context-agnostic, like a [`DynStack`](super::DynStack)). `C` is the
+/// handler's context type (`()` when it names none).
+pub struct PublishContext<'a, C = ()> {
+    name: &'a str,
+    headers: &'a Headers,
+    cx: &'a C,
+}
+
+impl<'a, C> PublishContext<'a, C> {
+    /// Builds the view from the parts the runtime already holds at publish time.
+    pub(crate) fn new(name: &'a str, headers: &'a Headers, cx: &'a C) -> Self {
+        Self { name, headers, cx }
+    }
+
+    /// The channel the originating message was delivered on.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    /// The originating message's headers (the working copy the handler saw).
+    #[must_use]
+    pub fn headers(&self) -> &Headers {
+        self.headers
+    }
+
+    /// Reads a broker-supplied per-delivery field off the typed context by compile-time `key`,
+    /// mirroring [`Context::context`](super::Context::context).
+    pub fn context<K: crate::Field<C>>(&self, key: K) -> K::Value<'_> {
+        key.get(self.cx)
+    }
+}
+
+impl<C> std::fmt::Debug for PublishContext<'_, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PublishContext")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A static, compile-time publish transform: mutates an [`Outgoing`] before it is sent, with
+/// read access to the originating delivery through [`PublishContext`].
 ///
 /// The publish-side counterpart to the consume-side [`Layer`](super::Layer): zero-cost composition,
 /// no `dyn` dispatch. Baked onto a [`TypedPublisher`] with [`TypedPublisher::layer`]. Use for
 /// per-destination transforms that belong to the publisher itself - a Confluent / Avro envelope, a
-/// fixed content-type header. For cross-cutting *observation* across every publish (metrics), use
-/// the dynamic [`PublishMiddleware`] via
+/// fixed content-type header, or stamping the delivery's trace / correlation id onto the reply
+/// (read it from `cx`). The `C` parameter is the originating handler's context type; a layer that
+/// ignores the context is generic over it (mounts on any handler). For cross-cutting *observation*
+/// across every publish (metrics), use the dynamic [`PublishMiddleware`] via
 /// [`RustStream::publish_layer`](super::RustStream::publish_layer) instead; the static transforms
 /// run first (closest to the value), then the dynamic pipeline, then the send.
-pub trait PublishLayer: Send + Sync {
-    /// Transforms `out` in place before it is sent.
-    fn apply(&self, out: &mut Outgoing<'_>);
+pub trait PublishLayer<C = ()>: Send + Sync {
+    /// Transforms `out` in place before it is sent, reading the delivery through `cx`.
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>);
 }
 
 /// The no-op [`PublishLayer`]: the default for a [`TypedPublisher`] with no static transforms.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishIdentity;
 
-impl PublishLayer for PublishIdentity {
-    fn apply(&self, _out: &mut Outgoing<'_>) {}
+impl<C> PublishLayer<C> for PublishIdentity {
+    fn apply(&self, _out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {}
 }
 
 /// Composes two [`PublishLayer`]s: `inner` runs first, then `outer`. Built by
@@ -179,10 +230,12 @@ pub struct PublishStack<Inner, Outer> {
     outer: Outer,
 }
 
-impl<Inner: PublishLayer, Outer: PublishLayer> PublishLayer for PublishStack<Inner, Outer> {
-    fn apply(&self, out: &mut Outgoing<'_>) {
-        self.inner.apply(out);
-        self.outer.apply(out);
+impl<C, Inner: PublishLayer<C>, Outer: PublishLayer<C>> PublishLayer<C>
+    for PublishStack<Inner, Outer>
+{
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+        self.inner.apply(out, cx);
+        self.outer.apply(out, cx);
     }
 }
 
@@ -278,20 +331,26 @@ impl<P, C, PL> TypedPublisher<P, C, PL> {
     }
 }
 
-impl<P: Publisher, C: Codec, PL: PublishLayer> TypedPublisher<P, C, PL> {
-    /// Encodes `value`, applies the static transforms, then publishes to `name` through `pipeline`.
-    pub(crate) async fn publish<T: Serialize + Sync>(
+impl<P: Publisher, C: Codec, PL> TypedPublisher<P, C, PL> {
+    /// Encodes `value`, applies the static transforms (reading the originating delivery through
+    /// `cx`), then publishes to `name` through `pipeline`.
+    pub(crate) async fn publish<T: Serialize + Sync, Cx>(
         &self,
         name: &str,
         value: &T,
         pipeline: &[Arc<dyn PublishMiddleware>],
-    ) -> Result<(), BoxError> {
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), BoxError>
+    where
+        PL: PublishLayer<Cx>,
+        Cx: Sync,
+    {
         let payload = self
             .codec
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = Outgoing::new(name, payload);
-        self.layers.apply(&mut out);
+        self.layers.apply(&mut out, cx);
         run_publish(pipeline, &self.publisher, &mut out).await
     }
 }
@@ -331,8 +390,9 @@ mod sealed {
 ///
 /// Implemented by a plain [`TypedPublisher`] (each reply published independently) and by a
 /// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by
-/// exactly those two types.
-pub trait ReplyPublisher: Sealed + Send + Sync {
+/// exactly those two types. `Cx` is the originating batch handler's context type, threaded so the
+/// static [`PublishLayer`] reads the delivery while publishing each reply.
+pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
     /// The codec replies are encoded with (also reused as the decode codec when a batch
     /// publishing handler is mounted without an explicit one).
     type Codec: Codec;
@@ -341,23 +401,26 @@ pub trait ReplyPublisher: Sealed + Send + Sync {
     #[doc(hidden)]
     fn reply_codec(&self) -> &Self::Codec;
 
-    /// Publishes one batch's replies to `name` through `pipeline`.
+    /// Publishes one batch's replies to `name` through `pipeline`, reading the originating
+    /// delivery through `cx`.
     #[doc(hidden)]
     fn publish_batch<'a, T>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a [Arc<dyn PublishMiddleware>],
+        cx: &'a PublishContext<'a, Cx>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send
     where
         T: Serialize + Sync;
 }
 
-impl<P, C, PL> ReplyPublisher for TypedPublisher<P, C, PL>
+impl<P, C, PL, Cx> ReplyPublisher<Cx> for TypedPublisher<P, C, PL>
 where
     P: Publisher,
     C: Codec,
-    PL: PublishLayer,
+    PL: PublishLayer<Cx>,
+    Cx: Sync,
 {
     type Codec = C;
 
@@ -372,22 +435,24 @@ where
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a [Arc<dyn PublishMiddleware>],
+        cx: &'a PublishContext<'a, Cx>,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
     {
         for reply in replies {
-            self.publish(name, reply, pipeline).await?;
+            self.publish(name, reply, pipeline, cx).await?;
         }
         Ok(())
     }
 }
 
-impl<P, C, PL> ReplyPublisher for Transactional<P, C, PL>
+impl<P, C, PL, Cx> ReplyPublisher<Cx> for Transactional<P, C, PL>
 where
     P: TransactionalPublisher,
     C: Codec,
-    PL: PublishLayer,
+    PL: PublishLayer<Cx>,
+    Cx: Sync,
 {
     type Codec = C;
 
@@ -402,6 +467,7 @@ where
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a [Arc<dyn PublishMiddleware>],
+        cx: &'a PublishContext<'a, Cx>,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
@@ -412,7 +478,7 @@ where
             .await
             .map_err(|e| Box::new(e) as BoxError)?;
         for reply in replies {
-            if let Err(err) = self.inner.publish(name, reply, pipeline).await {
+            if let Err(err) = self.inner.publish(name, reply, pipeline, cx).await {
                 abort_quietly(publisher).await;
                 return Err(err);
             }

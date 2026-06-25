@@ -235,13 +235,15 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
         D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
+        D::Context:
+            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         C: Codec + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer + 'static,
+        PL: PublishLayer<D::Context> + 'static,
         St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, C, P, PC, PL>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, (), St> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();

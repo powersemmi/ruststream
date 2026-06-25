@@ -471,7 +471,7 @@ fn expand_publishing(
         input_schema,
         message_meta,
         ctx_param,
-        ctx_ty: _,
+        ctx_ty,
         state_ty,
         workers_method,
         failure_method,
@@ -514,6 +514,7 @@ fn expand_publishing(
         impl ::ruststream::runtime::PublishingDef for #name {
             type Input = #input_ty;
             type Reply = #reply_ty;
+            type Context = #ctx_ty;
             type Source = #source_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
@@ -538,7 +539,7 @@ fn expand_publishing(
             async fn call(
                 &self,
                 #pat: &#input_ty,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
                 #call_body
             }

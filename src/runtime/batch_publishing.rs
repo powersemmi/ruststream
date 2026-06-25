@@ -21,7 +21,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishMiddleware, ReplyPublisher};
+use super::publish::{PublishContext, PublishMiddleware, ReplyPublisher};
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -161,9 +161,10 @@ where
         let outcome = match self.def.call(&values, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
+                let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
                 match self
                     .publisher
-                    .publish_batch(name, &replies, &self.pipeline)
+                    .publish_batch(name, &replies, &self.pipeline, &pubcx)
                     .await
                 {
                     Ok(()) => HandlerResult::Ack,
