@@ -28,8 +28,8 @@ use std::{
 };
 
 use crate::{
-    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, RawMessage, Subscribe,
-    Subscriber, SubscriptionSource,
+    AckError, Broker, DescribeServer, Headers, IncomingMessage, OutgoingMessage, Publisher,
+    RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -160,6 +160,17 @@ impl Broker for MemoryBroker {
             .expect("memory broker mutex poisoned")
             .clear();
         Ok(())
+    }
+}
+
+impl DescribeServer for MemoryBroker {
+    /// The in-memory broker has no network address, so it describes itself as an in-process server
+    /// over the `"memory"` protocol. Registered with
+    /// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled), the label is its
+    /// stable identity, letting a service mount several memory brokers with disjoint routing and
+    /// address each one by name.
+    fn describe_server(&self) -> ServerSpec {
+        ServerSpec::in_process("memory")
     }
 }
 

@@ -60,8 +60,10 @@ impl Spec {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct Server {
-    /// The host (and optional port), e.g. `"nats.example.com:4222"`.
-    pub host: String,
+    /// The host (and optional port), e.g. `"nats.example.com:4222"`. Absent for an in-process
+    /// broker with no network address (the in-memory broker).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     /// The messaging protocol, e.g. `"nats"`.
     pub protocol: String,
     /// Optional human description.

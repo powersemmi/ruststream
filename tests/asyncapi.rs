@@ -59,7 +59,7 @@ fn build_spec_includes_servers_and_yaml() {
 
     let spec = build_spec(&app);
     let server = &spec.servers["nats"];
-    assert_eq!(server.host, "nats.example.com:4222");
+    assert_eq!(server.host.as_deref(), Some("nats.example.com:4222"));
     assert_eq!(server.protocol, "nats");
     assert_eq!(server.description.as_deref(), Some("primary"));
 
@@ -107,9 +107,37 @@ fn labeled_broker_populates_server_from_describe() {
 
     let spec = build_spec(&app);
     let server = &spec.servers["ingress"];
-    assert_eq!(server.host, "nats.example.com:4222");
+    assert_eq!(server.host.as_deref(), Some("nats.example.com:4222"));
     assert_eq!(server.protocol, "nats");
     assert_eq!(server.description.as_deref(), Some("ingress"));
+}
+
+#[test]
+fn labeled_memory_broker_is_an_in_process_server() {
+    // The in-memory broker has no network address: a labeled registration still gives it a server
+    // entry (its label) over the "memory" protocol, with no host. This is what lets a service mount
+    // several memory brokers with disjoint routing and address each by name.
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
+        "local",
+        MemoryBroker::new(),
+        |b| {
+            let orders = b.broker().subscribe("orders");
+            b.handle(
+                orders,
+                |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+                HandlerMetadata::raw("orders"),
+            );
+        },
+    );
+
+    let spec = build_spec(&app);
+    let server = &spec.servers["local"];
+    assert_eq!(server.host, None);
+    assert_eq!(server.protocol, "memory");
+
+    // A server with no host must not emit a `host` key in the document.
+    let json = spec.to_json().unwrap();
+    assert!(!json.contains("\"host\""));
 }
 
 #[test]
@@ -125,7 +153,7 @@ fn explicit_server_overrides_labeled_broker() {
 
     let spec = build_spec(&app);
     let server = &spec.servers["ingress"];
-    assert_eq!(server.host, "override:4222");
+    assert_eq!(server.host.as_deref(), Some("override:4222"));
     assert_eq!(server.protocol, "custom");
 }
 
