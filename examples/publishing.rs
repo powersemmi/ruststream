@@ -1,5 +1,6 @@
-//! The publishing forms from the Publishing guide: a reply handler, a named publisher resolved
-//! from the context, and the two-level publish pipeline (static layer + dynamic middleware).
+//! The publishing forms from the Publishing guide: a reply handler, a publisher shared through the
+//! typed application state, and the two-level publish pipeline (a per-publisher transform and an
+//! app-wide publish layer).
 //!
 //! ```text
 //! cargo run --example publishing --features macros,memory,json -- run
@@ -9,13 +10,18 @@ use std::future::Future;
 use std::pin::Pin;
 
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishLayer, PublishMiddleware, PublishNext, RustStream,
+    App, AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
     TypedPublisher,
 };
-use ruststream::subscriber;
+use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
+
+// A publisher shared with handlers as a typed field of the application state.
+struct AppState {
+    egress: MemoryPublisher,
+}
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -33,6 +39,8 @@ struct Event {
 }
 
 // --8<-- [start:reply]
+// A `publish(..)` handler that does not read the app state omits the `Context` parameter entirely;
+// it stays generic over the state and mounts on an app with any state type.
 #[subscriber("requests", publish("responses"))]
 async fn respond(req: &Request) -> Response {
     println!("responding to request {}", req.id);
@@ -53,39 +61,40 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // --8<-- [end:reply_result]
 
 // --8<-- [start:forward]
+// The egress publisher is a typed field of the app state, so the handler reaches it through
+// `ctx.state()` and publishes with the publisher's own API - no registry, no erased lookup.
 #[subscriber("ingress")]
-async fn forward(event: &Event, ctx: &mut Context<'_>) -> HandlerResult {
-    if let Some(publisher) = ctx.publisher("egress") {
-        let payload = JsonCodec.encode(event).expect("serializable");
-        let out = Outgoing::new("egress", payload);
-        if publisher.publish(out).await.is_err() {
-            return HandlerResult::retry();
-        }
+async fn forward(event: &Event, ctx: &mut Context<'_, (), AppState>) -> HandlerResult {
+    let payload = JsonCodec.encode(event).expect("serializable");
+    let out = OutgoingMessage::new("egress", payload.as_ref());
+    if ctx.state().egress.publish(out).await.is_err() {
+        return HandlerResult::retry();
     }
     HandlerResult::Ack
 }
 // --8<-- [end:forward]
 
-// --8<-- [start:static_layer]
+// --8<-- [start:static_transform]
 /// A static, per-publisher transform: stamps an envelope header on every outgoing message.
-struct EnvelopeLayer;
+struct EnvelopeTransform;
 
-impl PublishLayer for EnvelopeLayer {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<C> PublishTransform<C> for EnvelopeTransform {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
-// --8<-- [end:static_layer]
+// --8<-- [end:static_transform]
 
-// --8<-- [start:dynamic_middleware]
-/// A dynamic, app-wide middleware: observes every publish, then passes it on.
+// --8<-- [start:app_layer]
+/// A static, app-wide publish layer: observes every publish, then passes it on.
+#[derive(Clone)]
 struct AuditPublish;
 
-impl PublishMiddleware for AuditPublish {
-    fn on_publish<'a>(
+impl PublishLayer for AuditPublish {
+    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a>,
+        next: PublishNext<'a, N>,
     ) -> Pin<
         Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
     > {
@@ -95,7 +104,7 @@ impl PublishMiddleware for AuditPublish {
         })
     }
 }
-// --8<-- [end:dynamic_middleware]
+// --8<-- [end:app_layer]
 
 // --8<-- [start:batch_publishing]
 /// Confirms a whole page of orders; the replies become visible atomically on commit.
@@ -108,19 +117,21 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 }
 // --8<-- [end:batch_publishing]
 
+// `impl App` hides the composed pipeline type: the app-wide `publish_layer` would otherwise surface
+// in the return type as `RustStream<_, AppState, PublishStack<AuditPublish, PublishIdentity>>`.
 #[ruststream::app]
-fn app() -> RustStream {
+fn app() -> impl App {
     let broker = MemoryBroker::new();
     let egress = broker.publisher();
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
-        // dynamic, app-wide: wraps every published message
+        // app-wide layer: wraps every published reply
         .publish_layer(AuditPublish)
-        // a named publisher, resolvable from any handler's context
-        .publisher("egress", egress)
+        // a publisher shared with handlers as typed state, reached via `ctx.state().egress`
+        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(AppState { egress }) })
         .with_broker(broker, |b| {
             // static, per-publisher: composed onto this TypedPublisher at compile time
-            let replies = TypedPublisher::new(b.broker().publisher()).layer(EnvelopeLayer);
+            let replies = TypedPublisher::new(b.broker().publisher()).transform(EnvelopeTransform);
             b.include_publishing(respond, replies);
             let validated = TypedPublisher::new(b.broker().publisher());
             b.include_publishing(validate, validated);

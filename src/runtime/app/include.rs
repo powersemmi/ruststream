@@ -8,17 +8,17 @@ use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchDef;
-use crate::runtime::batch_publishing::BatchPublishingDef;
+use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::middleware::Layer;
-use crate::runtime::publish::{PublishLayer, ReplyPublisher, TypedPublisher};
-use crate::runtime::publishing::{PublishingDef, PublishingHandler};
+use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
+use crate::runtime::publishing::{PublishingCall, PublishingHandler};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
 use super::scope::BrokerScope;
 
-impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
+impl<B: Broker + 'static, L, St, PP> BrokerScope<B, L, (), St, PP> {
     /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
     /// [`DefaultCodec`](crate::codec::DefaultCodec) and wrapping the handler with the global stack.
     ///
@@ -41,6 +41,11 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
+        D::Context: crate::BuildContext<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+            > + Send
+            + 'static,
+        St: Send + Sync + 'static,
         L: Layer<
             Typed<
                 <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
@@ -49,8 +54,11 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
                 D::Handler,
             >,
         >,
-        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
-            + 'static,
+        L::Handler: Handler<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                D::Context,
+                St,
+            > + 'static,
     {
         let source = def.source();
         self.mount_subscriber(source, def, crate::codec::DefaultCodec::default());
@@ -71,6 +79,8 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         D: SubscriberDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
+        D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
+        St: Send + Sync + 'static,
         L: Layer<
             Typed<
                 <S::Subscriber as Subscriber>::Message,
@@ -79,7 +89,7 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
                 D::Handler,
             >,
         >,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         self.mount_subscriber(source, def, crate::codec::DefaultCodec::default());
     }
@@ -101,7 +111,8 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
+        St: Send + Sync + 'static,
     {
         let source = def.source();
         self.mount_batch(source, def, crate::codec::DefaultCodec::default());
@@ -117,7 +128,8 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
+        St: Send + Sync + 'static,
     {
         self.mount_batch(source, def, crate::codec::DefaultCodec::default());
     }
@@ -132,13 +144,15 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     /// every reply, commits, then acks the batch; any failure aborts and the batch is retried.
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
         RP::Codec: Clone + 'static,
+        St: Send + Sync + 'static,
     {
         let codec = publisher.reply_codec().clone();
         let source = def.source();
@@ -151,11 +165,13 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
         RP::Codec: Clone + 'static,
+        St: Send + Sync + 'static,
     {
         let codec = publisher.reply_codec().clone();
         self.mount_batch_publishing(source, def, codec, publisher);
@@ -168,18 +184,28 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
     /// default with [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec).
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
+        D::Context: crate::BuildContext<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+            > + Send
+            + Sync
+            + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer + 'static,
-        L: Layer<PublishingHandler<D, PC, P, PC, PL>>,
-        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
-            + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
+        St: Send + Sync + 'static,
+        L: Layer<PublishingHandler<D, PC, P, PC, PL, PP>>,
+        L::Handler: Handler<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                D::Context,
+                St,
+            > + 'static,
     {
         let codec = publisher.codec().clone();
         let source = def.source();
@@ -197,21 +223,25 @@ impl<B: Broker + 'static, L> BrokerScope<B, L, ()> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
+        D::Context:
+            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer + 'static,
-        L: Layer<PublishingHandler<D, PC, P, PC, PL>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
+        St: Send + Sync + 'static,
+        L: Layer<PublishingHandler<D, PC, P, PC, PL, PP>>,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let codec = publisher.codec().clone();
         self.mount_publishing(source, def, codec, publisher);
     }
 }
 
-impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
+impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St, PP> BrokerScope<B, L, C, St, PP> {
     /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
     /// scope's default codec (set by
     /// [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)).
@@ -223,6 +253,11 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
+        D::Context: crate::BuildContext<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+            > + Send
+            + 'static,
+        St: Send + Sync + 'static,
         L: Layer<
             Typed<
                 <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
@@ -231,8 +266,11 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
                 D::Handler,
             >,
         >,
-        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
-            + 'static,
+        L::Handler: Handler<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                D::Context,
+                St,
+            > + 'static,
     {
         let codec = self.codec.clone();
         let source = def.source();
@@ -249,8 +287,10 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         D: SubscriberDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
+        D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
+        St: Send + Sync + 'static,
         L: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let codec = self.codec.clone();
         self.mount_subscriber(source, def, codec);
@@ -265,7 +305,8 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
+        St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
         let source = def.source();
@@ -280,7 +321,8 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
+        D::Handler: crate::runtime::SliceHandler<D::Input, St> + 'static,
+        St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
         self.mount_batch(source, def, codec);
@@ -291,12 +333,14 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
     /// through `publisher`.
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
+        St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
         let source = def.source();
@@ -309,10 +353,12 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef + 'static,
+        D: BatchPublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
+        St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
         self.mount_batch_publishing(source, def, codec, publisher);
@@ -322,18 +368,28 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
     /// input with the scope's default codec and sending the reply through `publisher`.
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Source: SubscriptionSource<B> + Send + 'static,
         <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
         <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
+        D::Context: crate::BuildContext<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+            > + Send
+            + Sync
+            + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer + 'static,
-        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
-        L::Handler: Handler<<<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message>
-            + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
+        St: Send + Sync + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,
+        L::Handler: Handler<
+                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                D::Context,
+                St,
+            > + 'static,
     {
         let codec = self.codec.clone();
         let source = def.source();
@@ -351,14 +407,18 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static> BrokerScope<B, L, C> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
-        D: PublishingDef + 'static,
+        D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
+        D::Context:
+            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer + 'static,
-        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
+        St: Send + Sync + 'static,
+        L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let codec = self.codec.clone();
         self.mount_publishing(source, def, codec, publisher);

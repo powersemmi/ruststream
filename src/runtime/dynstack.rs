@@ -160,7 +160,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::super::HandlerExt;
-    use super::super::context::{Context, State};
+    use super::super::context::Context;
     use super::super::handler::{Handler, HandlerResult};
     use super::{BoxFut, DynMiddleware, DynStack, Next};
     use crate::Headers;
@@ -199,10 +199,10 @@ mod tests {
             }
         };
         let handler = inner.with(stack);
-        let state = State::default();
+        let state = ();
         let delivery = crate::runtime::dispatch::Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("test", &headers, &state, &delivery);
+        let mut ctx = Context::new("test", &headers, &state, (), &delivery);
         assert_eq!(
             handler.handle(&Input, &mut ctx).await.outcome(),
             HandlerResult::Ack

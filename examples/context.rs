@@ -21,7 +21,7 @@ struct Order {
 }
 
 // --8<-- [start:state]
-/// Shared configuration: inserted once at build time, read by every handler.
+/// Shared configuration: produced once at startup, read by every handler as the typed app state.
 #[derive(Debug)]
 struct AppConfig {
     reject_zero_ids: bool,
@@ -30,7 +30,7 @@ struct AppConfig {
 
 // --8<-- [start:handler]
 #[subscriber("orders")]
-async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
+async fn handle(order: &Order, ctx: &mut Context<'_, (), AppConfig>) -> HandlerResult {
     // 1. The channel the message arrived on.
     println!("received on {}", ctx.name());
 
@@ -39,11 +39,8 @@ async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
         println!("request {}", String::from_utf8_lossy(id));
     }
 
-    // 3. App-level shared state, reached through state().
-    let config = ctx
-        .state()
-        .get::<AppConfig>()
-        .expect("config inserted at build time");
+    // 3. The typed app-level shared state, borrowed through state().
+    let config = ctx.state();
     if config.reject_zero_ids && order.id == 0 {
         return HandlerResult::drop();
     }
@@ -56,14 +53,6 @@ async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
         println!("order {id} acked; sending the confirmation");
     });
 
-    // --8<-- [start:extensions]
-    // 5. Per-delivery extensions: a value scoped to this one delivery (set by middleware or a
-    // broker, then read by the handler). Distinct from the shared app state above.
-    ctx.insert(order.id);
-    if let Some(seen) = ctx.get::<u64>() {
-        println!("processing order {seen}");
-    }
-    // --8<-- [end:extensions]
     HandlerResult::Ack
 }
 // --8<-- [end:handler]
@@ -84,8 +73,12 @@ impl<H> Layer<H> for RequestId {
 
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 
-impl<M: Send + Sync, H: Handler<M>> Handler<M> for WithRequestId<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+// The layer is state-agnostic: it threads the context `C` and state `S` through unchanged, so it
+// wraps a handler whatever typed state the app declares.
+impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S>
+    for WithRequestId<H>
+{
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
         if ctx.headers().get("x-request-id").is_none() {
             let id = format!("req-{}", NEXT_REQUEST.fetch_add(1, Ordering::Relaxed));
             ctx.headers_mut().insert("x-request-id", id.into_bytes());
@@ -96,11 +89,14 @@ impl<M: Send + Sync, H: Handler<M>> Handler<M> for WithRequestId<H> {
 // --8<-- [end:enrich]
 
 // --8<-- [start:app]
+// `on_startup` fixes the app's state type to `AppConfig`; `.layer` then grows the global stack.
 #[ruststream::app]
-fn app() -> RustStream<Stack<RequestId, Identity>> {
+fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
     RustStream::new(AppInfo::new("context", "0.1.0"))
-        .insert_state(AppConfig {
-            reject_zero_ids: true,
+        .on_startup(|()| async {
+            Ok::<_, std::convert::Infallible>(AppConfig {
+                reject_zero_ids: true,
+            })
         })
         .layer(RequestId)
         .with_broker(MemoryBroker::new(), |b| b.include(handle))

@@ -14,7 +14,10 @@ use crate::runtime::failure::ErrorShutdown;
 
 use super::{RustStream, RustStreamError};
 
-impl<L> RustStream<L> {
+// `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
+// `block_on`), so their futures must be `Send`: the shared state is held as `Arc<St>` across the
+// startup awaits (needs `St: Sync`) and the global stack `L` is carried in `self` (needs `L: Send`).
+impl<L: Send, St: Send + Sync, PP> RustStream<L, St, PP> {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///
@@ -44,8 +47,7 @@ impl<L> RustStream<L> {
             brokers,
             starters,
             handlers,
-            mut state,
-            on_startup,
+            state_init,
             after_startup,
             on_shutdown,
             after_shutdown,
@@ -63,17 +65,21 @@ impl<L> RustStream<L> {
             "starting service",
         );
 
-        if !on_startup.is_empty() {
-            debug!(target: "ruststream::lifecycle", count = on_startup.len(), "running on_startup hooks");
-        }
-        for hook in on_startup {
-            state = hook(state).await.map_err(RustStreamError::Startup)?;
-        }
+        debug!(target: "ruststream::lifecycle", "producing application state");
+        let state = state_init().await.map_err(RustStreamError::Startup)?;
         let state = Arc::new(state);
 
         for broker in &brokers {
-            broker.connect().await.map_err(RustStreamError::Connect)?;
-            info!(target: "ruststream::lifecycle", broker = broker.name(), "broker connected");
+            broker
+                .lifecycle
+                .connect()
+                .await
+                .map_err(RustStreamError::Connect)?;
+            info!(
+                target: "ruststream::lifecycle",
+                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+                "broker connected",
+            );
         }
 
         let token = CancellationToken::new();
@@ -130,8 +136,16 @@ impl<L> RustStream<L> {
         drain_continuations(continuations, shutdown_timeout).await;
 
         for broker in brokers.iter().rev() {
-            broker.shutdown().await.map_err(RustStreamError::Shutdown)?;
-            debug!(target: "ruststream::lifecycle", broker = broker.name(), "broker shut down");
+            broker
+                .lifecycle
+                .shutdown()
+                .await
+                .map_err(RustStreamError::Shutdown)?;
+            debug!(
+                target: "ruststream::lifecycle",
+                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+                "broker shut down",
+            );
         }
 
         for hook in after_shutdown {

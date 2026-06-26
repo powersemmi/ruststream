@@ -1,5 +1,5 @@
 //! Shared state and lifecycle hooks from the Lifespan guide: a resource opened in `on_startup`,
-//! shared with handlers through `State`, and closed in `after_shutdown`.
+//! shared with handlers as the typed application state, and closed in `after_shutdown`.
 //!
 //! The `Database` here is a stand-in for any async resource (a `sqlx::PgPool`, an HTTP client);
 //! only its `connect` / `close` calls would differ.
@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, Identity, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -48,12 +48,11 @@ impl Database {
 }
 
 // --8<-- [start:handler]
+// The handler names the app's state type as the third `Context` generic; `ctx.state()` then borrows
+// the typed `Database` directly, with no lookup or downcast.
 #[subscriber("orders")]
-async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
-    let db = ctx
-        .state()
-        .get::<Database>()
-        .expect("database inserted in on_startup");
+async fn handle(order: &Order, ctx: &mut Context<'_, (), Database>) -> HandlerResult {
+    let db = ctx.state();
     if db.insert_order(order.id).await.is_err() {
         return HandlerResult::retry();
     }
@@ -62,20 +61,15 @@ async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
 // --8<-- [end:handler]
 
 // --8<-- [start:hooks]
+// The builder's state type is `Database` once `on_startup` produces it, so the return type names it.
 #[ruststream::app]
-fn app() -> RustStream {
+fn app() -> RustStream<Identity, Database> {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
-        // before brokers connect: open the resource and put it in shared state
-        .on_startup(|mut state| async move {
-            let db = Database::connect("postgres://localhost/orders").await?;
-            state.insert(db);
-            Ok::<_, DbError>(state)
-        })
-        // after brokers shut down: close it cleanly
-        .after_shutdown(|state| async move {
-            if let Some(db) = state.get::<Database>() {
-                db.close().await;
-            }
+        // before brokers connect: open the resource; the produced value becomes the typed app state
+        .on_startup(|()| async move { Database::connect("postgres://localhost/orders").await })
+        // after brokers shut down: close it cleanly (the state is shared as `Arc<Database>`)
+        .after_shutdown(|db: std::sync::Arc<Database>| async move {
+            db.close().await;
             Ok::<_, DbError>(())
         })
         // bound the post-shutdown drain of in-flight handlers

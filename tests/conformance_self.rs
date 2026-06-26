@@ -3,8 +3,6 @@
 //! If this test fails, either `MemoryBroker` regressed or the harness expectations are
 //! inconsistent.
 
-use std::convert::Infallible;
-
 use ruststream::{
     conformance::{capabilities, harness},
     memory::{MemoryBroker, MemorySource},
@@ -13,7 +11,7 @@ use ruststream::{
 // --8<-- [start:run_suite]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_conformance_suite() {
-    harness::run_suite(|| async { Ok::<_, Infallible>(MemoryBroker::new()) }).await;
+    harness::run_suite(MemoryBroker::new).await;
 }
 // --8<-- [end:run_suite]
 

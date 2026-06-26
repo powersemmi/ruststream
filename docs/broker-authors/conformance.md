@@ -3,7 +3,8 @@
 The conformance harness proves a broker honours the core contract. It has two entry points, both of
 which panic with a descriptive message on the first failure:
 
-- `harness::run_suite` checks the **routing surface** against your in-process `TestClient`.
+- `harness::run_suite` checks the **routing surface** against your in-process transport (the
+  [`TestableBroker`](../guides/testing.md#for-broker-authors) you ship).
 - `harness::lifecycle` checks the **lazy-startup contract** end to end against a connected broker.
 
 Run both: `run_suite` for the dispatch guarantees, `lifecycle` to prove `new` -> `connect` ->
@@ -11,18 +12,18 @@ subscribe -> publish -> ack -> `shutdown` works on the real transport.
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.4", features = ["conformance"] }
+ruststream = { version = "0.5", features = ["conformance"] }
 ```
 
-Enable your crate's own `testing` feature alongside it, since `run_suite` drives the `TestClient` you
-ship there.
+The `conformance` feature pulls in `testing`, so the one `TestableBroker` your crate ships works with
+both `run_suite` here and the [`TestApp`](../guides/testing.md) harness users write.
 
 ## The routing suite
 
-`harness::run_suite` takes a factory that builds a fresh client per scenario. The factory is
-fallible (it returns the `TestClient::start` result) and is invoked once per scenario, so scenarios
-cannot leak state into each other. This is the in-memory reference broker's own suite run,
-verbatim; substitute your `TestClient::start` in the factory:
+`harness::run_suite` takes a synchronous factory (`Fn() -> B`) that builds a fresh in-process
+transport per scenario, so scenarios cannot leak state into each other. `B` is your
+`TestableBroker` (it also implements `Subscribe`). This is the in-memory reference broker's own suite
+run, verbatim; substitute your transport's constructor in the factory:
 
 ```rust
 use ruststream::conformance::harness;
@@ -40,7 +41,7 @@ use ruststream::conformance::harness;
 | nack with requeue redelivers | `nack(requeue = true)` delivers the message again |
 | nack without requeue drops | `nack(requeue = false)` does not redeliver |
 | headers propagate | message headers survive the round trip |
-| expect_published observes publishes | the test client records published messages |
+| published log observes publishes | `published(name)` records every published message |
 
 These are core-routing guarantees, the contract every broker must meet. The harness does **not** test
 broker-specific semantics (durable resume, redelivery on timeout, partition assignment); those are
@@ -48,7 +49,7 @@ not part of the contract and are verified in your own end-to-end suite against a
 
 ## The lifecycle check
 
-`run_suite` exercises routing through the `TestClient`; `harness::lifecycle` exercises the
+`run_suite` exercises routing through the in-process transport; `harness::lifecycle` exercises the
 **lazy-startup contract** through the real `Broker`: synchronous construction with no I/O, then
 `connect`, a subscription opened through the broker's own `SubscriptionSource`, a publish the
 subscription receives and acks, and finally `shutdown`. It takes three factories that keep it
@@ -129,7 +130,8 @@ Before publishing a broker crate:
 - [ ] The crate owns its `Config`; fields without a sane default do not get a `Default`.
 - [ ] Capability traits are implemented only where the broker genuinely supports them, and each
       implemented capability passes its `conformance::capabilities` suite.
-- [ ] A `TestClient` is shipped under a `testing` feature, doing core routing only.
+- [ ] An in-process transport implementing `TestableBroker` is shipped under a `testing` feature
+      (core routing only) and registered with `register_testable_broker!`.
 - [ ] `harness::run_suite` passes (the routing surface).
 - [ ] `harness::lifecycle` passes against a real server, gated behind an environment variable (the
       lazy-startup contract: sync `new`, lazy `connect`, subscribe, ack, `shutdown`).

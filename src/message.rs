@@ -4,7 +4,7 @@ use std::{future::Future, time::Duration};
 
 use bytes::Bytes;
 
-use crate::{AckError, Extensions, Headers};
+use crate::{AckError, Headers};
 
 /// An owned snapshot of a message as it travels through the framework.
 ///
@@ -150,50 +150,6 @@ pub trait IncomingMessage: Send + Sync {
 
     /// Returns the headers attached to the message.
     fn headers(&self) -> &Headers;
-
-    /// Contributes per-delivery typed data to the handler's
-    /// [`Context`](crate::runtime::Context), built fresh for this one delivery.
-    ///
-    /// Defaulted to an empty [`Extensions`] so existing implementations keep compiling. A broker
-    /// overrides it to stash typed per-delivery values the handler (and the publish path) can read
-    /// without going through the byte-only headers: native delivery metadata (Kafka
-    /// offset/partition, a delivery handle), a transactional commit token, or a reply-to handle.
-    /// The runtime moves the returned map into the `Context` before invoking the handler, so each
-    /// delivery sees only its own values.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::{Extensions, Headers, IncomingMessage};
-    /// # use ruststream::AckError;
-    ///
-    /// struct Offset(u64);
-    ///
-    /// struct KafkaLike {
-    ///     payload: Vec<u8>,
-    ///     headers: Headers,
-    ///     offset: u64,
-    /// }
-    ///
-    /// impl IncomingMessage for KafkaLike {
-    ///     fn payload(&self) -> &[u8] {
-    ///         &self.payload
-    ///     }
-    ///     fn headers(&self) -> &Headers {
-    ///         &self.headers
-    ///     }
-    ///     fn extensions(&self) -> Extensions {
-    ///         let mut ext = Extensions::new();
-    ///         ext.insert(Offset(self.offset));
-    ///         ext
-    ///     }
-    ///     # async fn ack(self) -> Result<(), AckError> { Ok(()) }
-    ///     # async fn nack(self, _requeue: bool) -> Result<(), AckError> { Ok(()) }
-    /// }
-    /// ```
-    fn extensions(&self) -> Extensions {
-        Extensions::new()
-    }
 
     /// Returns the routing key the broker partitioned this message by, or `None` when the
     /// message carries no key.

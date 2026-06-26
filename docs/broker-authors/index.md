@@ -149,8 +149,9 @@ enums `#[non_exhaustive]`. Never use `anyhow` in a library crate.
 
 ## Test support
 
-Ship a `TestClient` under a `testing` feature so users can unit-test handlers against your broker
-in-process. The test client does **core routing only**: it dispatches published messages to matching
+Ship an in-process transport implementing `TestableBroker` under a `testing` feature (registered with
+`register_testable_broker!`) so users can unit-test handlers against your broker with the `TestApp`
+harness. The transport does **core routing only**: it dispatches published messages to matching
 subscribers and treats ack/nack as effectively a no-op. Do not simulate broker-specific semantics
 (durable cursors, redelivery timers, offsets, dead-letter routing) in it; those are verified end to
 end against a real server. See [Testing](../guides/testing.md) for the user-facing side, and

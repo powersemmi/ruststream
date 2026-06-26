@@ -8,7 +8,6 @@ use tokio_util::sync::CancellationToken;
 use crate::{BatchSubscriber, Broker, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchHandler;
-use crate::runtime::context::State;
 use crate::runtime::dispatch::{
     Delivery, Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers,
 };
@@ -22,10 +21,10 @@ use super::SourceMessage;
 /// A deferred registration: given the broker (after connect), shared state, the per-scope publish
 /// [`Delivery`] context, and the shutdown token, it opens the subscription and spawns the dispatch
 /// task. The source and handler are captured and type-erased.
-pub(crate) type BoundStarter<B> = Box<
+pub(crate) type BoundStarter<B, St> = Box<
     dyn FnOnce(
             Arc<B>,
-            Arc<State>,
+            Arc<St>,
             Arc<Delivery>,
             ErrorShutdown,
             CancellationToken,
@@ -35,15 +34,18 @@ pub(crate) type BoundStarter<B> = Box<
 
 /// The runtime collector a router mounts into: type-erased starters plus handler metadata.
 ///
+/// `St` is the app's shared state type, threaded so a handler is only mounted on a sink whose state
+/// type it matches.
+///
 /// Created and drained inside the application; a [`RouterDef`](crate::runtime::RouterDef) pushes
 /// into it during [`include_router`](crate::runtime::BrokerScope::include_router). You do not
 /// construct one directly.
-pub struct RouterSink<B> {
-    starters: Vec<BoundStarter<B>>,
+pub struct RouterSink<B, St = ()> {
+    starters: Vec<BoundStarter<B, St>>,
     handlers: Vec<HandlerMetadata>,
 }
 
-impl<B> std::fmt::Debug for RouterSink<B> {
+impl<B, St> std::fmt::Debug for RouterSink<B, St> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RouterSink")
             .field("handlers", &self.handlers.len())
@@ -51,7 +53,7 @@ impl<B> std::fmt::Debug for RouterSink<B> {
     }
 }
 
-impl<B: Broker + 'static> RouterSink<B> {
+impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
     pub(crate) fn new() -> Self {
         Self {
             starters: Vec::new(),
@@ -60,7 +62,7 @@ impl<B: Broker + 'static> RouterSink<B> {
     }
 
     /// Erases an already-created subscriber and its handler into a starter.
-    pub(crate) fn push_handle<S, H>(
+    pub(crate) fn push_handle<S, H, Cx>(
         &mut self,
         subscriber: S,
         handler: H,
@@ -68,7 +70,8 @@ impl<B: Broker + 'static> RouterSink<B> {
         policies: FailurePolicies,
     ) where
         S: Subscriber + Send + 'static,
-        H: Handler<S::Message> + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        H: Handler<S::Message, Cx, St> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -98,7 +101,7 @@ impl<B: Broker + 'static> RouterSink<B> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         SourceMessage<B, S>: Send + 'static,
-        H: BatchHandler<SourceMessage<B, S>> + 'static,
+        H: BatchHandler<SourceMessage<B, S>, St> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -121,7 +124,7 @@ impl<B: Broker + 'static> RouterSink<B> {
 
     /// Erases a source and its handler into a starter dispatching under the `workers` policy;
     /// the subscription opens after connect.
-    pub(crate) fn push_subscribe_workers<S, H>(
+    pub(crate) fn push_subscribe_workers<S, H, Cx>(
         &mut self,
         source: S,
         handler: H,
@@ -132,7 +135,8 @@ impl<B: Broker + 'static> RouterSink<B> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         SourceMessage<B, S>: Send + Sync + 'static,
-        H: Handler<SourceMessage<B, S>> + 'static,
+        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
+        H: Handler<SourceMessage<B, S>, Cx, St> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -154,7 +158,7 @@ impl<B: Broker + 'static> RouterSink<B> {
     }
 
     /// Erases a source and its handler into a starter; the subscription opens after connect.
-    pub(crate) fn push_subscribe<S, H>(
+    pub(crate) fn push_subscribe<S, H, Cx>(
         &mut self,
         source: S,
         handler: H,
@@ -163,7 +167,8 @@ impl<B: Broker + 'static> RouterSink<B> {
     ) where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
-        H: Handler<SourceMessage<B, S>> + 'static,
+        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
+        H: Handler<SourceMessage<B, S>, Cx, St> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -184,7 +189,7 @@ impl<B: Broker + 'static> RouterSink<B> {
         self.handlers.push(meta);
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B>>, Vec<HandlerMetadata>) {
+    pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B, St>>, Vec<HandlerMetadata>) {
         (self.starters, self.handlers)
     }
 }

@@ -20,6 +20,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       dist: ${{ steps.filter.outputs.dist }}
+      templates: ${{ steps.filter.outputs.templates }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,6 +46,11 @@ jobs:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+            templates:
+              - 'templates/**'
+              - 'src/**'
+              - 'Cargo.toml'
               - '.github/workflows/ci.yml'
 
   toolchains:
@@ -120,11 +126,14 @@ jobs:
       # The trybuild UI snapshots in tests/ui are rustc-version-sensitive, so they
       # run on stable only: RUN_UI_TESTS=1 opts the `ui` test in here, every other
       # run (the 1.85 job, the coverage job, a local `cargo test`) leaves it unset
-      # and the test skips itself.
+      # and the test skips itself. RUN_SCAFFOLD_BUILD=1 opts in the heavy `ruststream
+      # new` compile-check the same way (a nested `cargo build` of the rendered
+      # memory template), so template rot fails CI instead of a user's first build.
       - name: cargo test
         if: matrix.toolchain == 'stable' || matrix.toolchain == '1.85'
         env:
           RUN_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
+          RUN_SCAFFOLD_BUILD: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
         run: cargo test --workspace --all-features
 
   coverage:
@@ -226,3 +235,38 @@ jobs:
       # gated: advisories arrive over time, not only with manifest changes.
       - name: cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
+
+  templates:
+    name: Templates (render + compile)
+    needs: changes
+    if: ${{ needs.changes.outputs.templates == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-generate
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-generate
+
+      # The template-contract drift check: render the in-memory scaffold and compile it, so an API
+      # change that breaks the template fails here, not a user's first `cargo build`. The rendered
+      # project pins `ruststream` by version; until 0.5 is published, patch it to this checkout so
+      # the scaffold builds against the local crate. Each broker repo mirrors this for its templates.
+      - name: Render and check templates/memory
+        run: |
+          cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
+          {
+            echo ""
+            echo "[patch.crates-io]"
+            echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
+          } >> "$RUNNER_TEMP/smoke/Cargo.toml"
+          cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"

@@ -1,7 +1,7 @@
 # Publishing and replies
 
 There are two ways to publish: return a reply from a handler, or publish explicitly from inside a
-handler through a named publisher. Both run through the publish pipeline.
+handler through a publisher held in the typed application state.
 
 ## Replying from a handler
 
@@ -55,22 +55,19 @@ Make publishing handlers idempotent under redelivery.
 ## Publishing from inside a handler
 
 To publish to a destination other than a single reply (fan-out, side effects, routing to a different
-broker), register a named publisher on the application and resolve it from the context.
-
-<!-- inline-rust: minimal named-publisher registration fragment; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
-```rust
-// register at build time
-let app = RustStream::new(info)
-    .publisher("egress", egress_publisher)
-    .with_broker(broker, |b| b.include(forward));
-```
+broker), put the publisher in the [typed application state](lifespan.md) and reach it from the
+handler with `ctx.state()`. A publisher is a value like any other shared resource; in the state it
+stays typed, so the handler uses its own API directly, with no registry and no runtime lookup.
 
 ```rust
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::runtime::{HandlerResult, Outgoing};
+use ruststream::{OutgoingMessage, Publisher};
 
 --8<-- "examples/publishing.rs:forward"
 ```
+
+The publisher is produced in `on_startup` and stored in the state struct, the same as a database
+pool or HTTP client (see [Lifespan](lifespan.md)).
 
 !!! note "Handlers that publish must own their context"
     A closure handler cannot return a future that borrows `&mut Context`. Use a `#[subscriber]`
@@ -81,24 +78,36 @@ use ruststream::runtime::{HandlerResult, Outgoing};
 
 Two kinds of transform run before a message leaves the process, and they compose:
 
-- **Static `PublishLayer`** on a `TypedPublisher`, added with `.layer(..)`. Zero-cost,
-  per-destination transforms (an envelope, a fixed content type). They run first, closest to the
-  value.
-- **Dynamic publish middleware** on the application, added with `.publish_layer(..)`. Cross-cutting
-  concerns (publish metrics, a dead-letter wrapper) applied to every published message. They run
-  outside the static layers, then the message is sent.
+- **Static `PublishTransform`** on a `TypedPublisher`, added with `.transform(..)`. Zero-cost,
+  per-destination transforms (an envelope, a fixed content type, or stamping the delivery's trace /
+  correlation id onto the reply). They run first, closest to the value.
+- **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
+  concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
+  send so they can observe its result. The chain composes into a concrete type (no `dyn` dispatch at
+  all), so it becomes part of the app's type. A builder usually returns `impl App` and never spells
+  it; name the concrete `RustStream<L, St, PublishStack<MyMiddleware, PublishIdentity>>` and the
+  pipeline shows up there, while an app with no `publish_layer` keeps the default `PublishIdentity`.
+  Each middleware must be `Clone` (the pipeline is cloned into each publishing handler), and the last
+  one added runs outermost. The default (no middleware) is a direct send. For a middleware set decided
+  at runtime, wrap it in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that.
 
-A static `PublishLayer` implements `apply(&mut Outgoing<'_>)`:
+A static `PublishTransform` implements `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`; the
+`PublishContext` is a read-only view of the delivery that produced the reply (its channel, the
+incoming headers, and the broker's typed per-delivery context by `Field` key), so a transform can
+carry a value from the incoming message onto the reply:
 
 ```rust
---8<-- "examples/publishing.rs:static_layer"
+--8<-- "examples/publishing.rs:static_transform"
 ```
 
-A dynamic middleware implements `PublishMiddleware` with an around/next signature, so it can
-short-circuit, retry, or observe:
+A batch handler's replies skip the per-message `.transform(..)` stack; add a transform there with
+`.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`.
+
+A `PublishLayer` implements an around/next signature, so it can short-circuit, retry, or
+observe (reserve "dynamic" for `PublishDynLayer` inside a `PublishDynStack`):
 
 ```rust
---8<-- "examples/publishing.rs:dynamic_middleware"
+--8<-- "examples/publishing.rs:app_layer"
 ```
 
 Both levels compose on the application:
@@ -107,8 +116,9 @@ Both levels compose on the application:
 --8<-- "examples/publishing.rs:pipeline"
 ```
 
-Manual publishes through `ctx.publisher(..)` run through the dynamic pipeline (the static layer is a
-property of a specific `TypedPublisher`). The full program is
+The pipeline runs on the reply path (the `publish(..)` form). A publisher held in the state is used
+directly, so compose any per-publisher transforms onto it with `TypedPublisher::transform` when you
+build it. The full program is
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 
 ## Batch replies and transactions

@@ -134,25 +134,25 @@ impl IntoBatchResult for Vec<HandlerResult> {
 ///     });
 /// }
 /// ```
-pub trait SliceHandler<T>: Send + Sync {
-    /// Handles one decoded batch, with the per-batch [`Context`].
+pub trait SliceHandler<T, S = ()>: Send + Sync {
+    /// Handles one decoded batch, with the per-batch [`Context`] carrying the typed app state `S`.
     fn handle_slice(
         &self,
         batch: &[T],
-        ctx: &mut Context,
+        ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = BatchResult> + Send;
 }
 
-impl<T, F, Fut> SliceHandler<T> for F
+impl<T, F, Fut, S> SliceHandler<T, S> for F
 where
-    F: Fn(&[T], &mut Context) -> Fut + Send + Sync,
+    F: Fn(&[T], &mut Context<'_, (), S>) -> Fut + Send + Sync,
     Fut: Future + Send,
     Fut::Output: IntoBatchResult,
 {
     fn handle_slice(
         &self,
         batch: &[T],
-        ctx: &mut Context,
+        ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = BatchResult> + Send {
         // Build the inner future before the async block so the returned future does not hold
         // `&[T]` (which would demand `T: Sync` for it to be `Send`).
@@ -172,7 +172,12 @@ pub trait BatchDef: Sized {
     type Input;
 
     /// The concrete handler type over batches of [`Input`](Self::Input).
-    type Handler: SliceHandler<Self::Input>;
+    ///
+    /// As for [`SubscriberDef::Handler`](super::SubscriberDef::Handler), the state-typed bound is
+    /// enforced where the def is mounted, not on the trait: a batch handler that reads typed state
+    /// is [`SliceHandler<Input, St>`](SliceHandler) only for its declared `St`, while one that
+    /// ignores state is generic over it.
+    type Handler;
 
     /// The subscription source this handler binds to (see
     /// [`SubscriberDef::Source`](super::SubscriberDef::Source)).
@@ -234,9 +239,13 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
 
 /// The dispatch-side consumer of one raw batch: decode, run the handler, settle every delivery.
 /// The batch counterpart of [`Handler`](super::Handler) at the raw-message level.
-pub(crate) trait BatchHandler<M>: Send + Sync {
+pub(crate) trait BatchHandler<M, S = ()>: Send + Sync {
     /// Consumes one batch of raw deliveries, acknowledging each of them.
-    fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context) -> impl Future<Output = ()> + Send;
+    fn handle_batch(
+        &self,
+        batch: Vec<M>,
+        ctx: &mut Context<'_, (), S>,
+    ) -> impl Future<Output = ()> + Send;
 }
 
 /// Build a [`TypedBatch`] that decodes each element with `codec` into `T` and forwards the batch
@@ -246,7 +255,6 @@ where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: SliceHandler<T>,
 {
     TypedBatch {
         codec,
@@ -286,14 +294,15 @@ impl<M, T, C, H> std::fmt::Debug for TypedBatch<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H> BatchHandler<M> for TypedBatch<M, T, C, H>
+impl<M, T, C, H, S> BatchHandler<M, S> for TypedBatch<M, T, C, H>
 where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: SliceHandler<T>,
+    H: SliceHandler<T, S>,
+    S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
         let subscription = ctx.name().to_owned();
         let (values, accepted) = decode_batch(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
@@ -347,16 +356,17 @@ where
 /// across an `.await` would wrongly require `Context: Sync`.
 // The `&mut` is for Send-ness, not mutation (only `&self` methods are called), so the lint fires.
 #[allow(clippy::needless_pass_by_ref_mut)]
-pub(crate) async fn decode_batch<M, T, C>(
+pub(crate) async fn decode_batch<M, T, C, S>(
     batch: Vec<M>,
     codec: &C,
     decode: FailurePolicy,
-    ctx: &mut Context<'_>,
+    ctx: &mut Context<'_, (), S>,
 ) -> (Vec<T>, Vec<M>)
 where
     M: IncomingMessage,
     T: DeserializeOwned,
     C: Codec,
+    S: Send + Sync,
 {
     let subscription = ctx.name().to_owned();
     let mut values = Vec::with_capacity(batch.len());
@@ -410,7 +420,6 @@ pub(crate) async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult, su
 mod tests {
     use futures::StreamExt;
 
-    use super::super::context::State;
     use super::super::dispatch::Delivery;
     use super::*;
     use crate::codec::JsonCodec;
@@ -451,10 +460,10 @@ mod tests {
             async move { outcomes }
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("selective", &headers, &state, &delivery);
+        let mut ctx = Context::new("selective", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 3);
         handler.handle_batch(batch, &mut ctx).await;
@@ -499,10 +508,10 @@ mod tests {
         });
 
         let tasks = TaskTracker::new();
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::with_tasks(tasks.clone());
         let headers = Headers::new();
-        let mut ctx = Context::new("after-batch", &headers, &state, &delivery);
+        let mut ctx = Context::new("after-batch", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         handler.handle_batch(batch, &mut ctx).await;
 
@@ -531,10 +540,10 @@ mod tests {
             vec![HandlerResult::Ack]
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("short", &headers, &state, &delivery);
+        let mut ctx = Context::new("short", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 3);
         handler.handle_batch(batch, &mut ctx).await;
@@ -566,10 +575,10 @@ mod tests {
             async move { outcomes }
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("delayed", &headers, &state, &delivery);
+        let mut ctx = Context::new("delayed", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         handler.handle_batch(batch, &mut ctx).await;
 
@@ -593,10 +602,10 @@ mod tests {
             HandlerResult::retry()
         });
 
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("uniform", &headers, &state, &delivery);
+        let mut ctx = Context::new("uniform", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
         handler.handle_batch(batch, &mut ctx).await;

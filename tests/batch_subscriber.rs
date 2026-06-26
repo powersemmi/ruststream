@@ -15,7 +15,7 @@ use std::{
 use common::handler_signal;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
-use ruststream::testing::TestClient;
+use ruststream::testing::expect_published;
 use ruststream::{Buffered, Name, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -73,9 +73,15 @@ async fn batch_macro_def_receives_batches() {
     .await;
     assert!(result.is_ok(), "no batch arrived within the deadline");
 
-    // Order within and across batches must follow publish order.
+    // Order within and across batches must follow publish order. The subscription opens inside
+    // run(), so the first publish round can be partly dropped (sent before the subscriber is
+    // ready); the surviving stream still follows the repeating 0,1,2 publish cycle, so assert each
+    // consecutive pair advances the cycle rather than requiring the stream to start at 0.
     let flattened: Vec<u32> = BATCHES.lock().unwrap().iter().flatten().copied().collect();
-    assert!(flattened.starts_with(&[0, 1, 2]), "got {flattened:?}");
+    assert!(
+        flattened.windows(2).all(|w| w[1] == (w[0] + 1) % 3),
+        "deliveries out of publish order: {flattened:?}",
+    );
     assert!(
         BATCHES
             .lock()
@@ -336,10 +342,8 @@ async fn batch_replies_publish_transactionally() {
                 .publish(OutgoingMessage::new("requests", &order_bytes(7)))
                 .await;
             handler_signal(&BATCH_CONFIRM_NOTIFY).await;
-            let confirmed = observer
-                .expect_published("confirmations", 1, Duration::from_millis(200))
-                .await
-                .unwrap();
+            let confirmed =
+                expect_published(&observer, "confirmations", 1, Duration::from_millis(200)).await;
             if !confirmed.is_empty() {
                 break;
             }
@@ -348,10 +352,8 @@ async fn batch_replies_publish_transactionally() {
     .await;
     assert!(result.is_ok(), "no confirmation arrived");
 
-    let confirmed = observer
-        .expect_published("confirmations", 1, Duration::from_millis(100))
-        .await
-        .unwrap();
+    let confirmed =
+        expect_published(&observer, "confirmations", 1, Duration::from_millis(100)).await;
     for raw in &confirmed {
         let confirmation: Confirmation = serde_json::from_slice(raw.payload()).unwrap();
         assert_eq!(confirmation.id, 7);
@@ -390,4 +392,69 @@ fn batch_def_records_metadata() {
         app.handlers()[0].description.as_deref(),
         Some("Settles a whole page of orders at once."),
     );
+}
+
+/// Typed application state read from a batch handler: the multiplier is produced at startup and
+/// reaches the whole-batch handler through `ctx.state()`, the same as a single-message handler.
+#[derive(Clone, Copy)]
+struct Tally {
+    multiplier: u32,
+}
+
+static SCALED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static SCALE_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber(batch("scale"))]
+async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> HandlerResult {
+    let multiplier = ctx.state().multiplier;
+    SCALED
+        .lock()
+        .unwrap()
+        .extend(orders.iter().map(|o| o.id * multiplier));
+    SCALE_NOTIFY.notify_one();
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_handler_reads_typed_state() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .on_startup(|()| async { Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }) })
+        .with_broker(broker, |b| b.include_batch(scale));
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            for id in 1..4u32 {
+                let _ = publisher
+                    .publish(OutgoingMessage::new("scale", &order_bytes(id)))
+                    .await;
+            }
+            handler_signal(&SCALE_NOTIFY).await;
+            if SCALED.lock().unwrap().len() >= 3 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "no scaled batch arrived within the deadline"
+    );
+
+    // Each id was multiplied by the state's multiplier (10), proving the handler read typed state.
+    let scaled = SCALED.lock().unwrap().clone();
+    assert!(
+        scaled.iter().all(|n| n % 10 == 0),
+        "every value must be a multiple of the state multiplier; got {scaled:?}",
+    );
+    assert!(scaled.contains(&10) && scaled.contains(&20) && scaled.contains(&30));
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
 }

@@ -7,7 +7,7 @@
 //! [`TypedPublisher::transactional`](super::TypedPublisher::transactional)) makes the whole
 //! batch's replies visible atomically - the consume-transform-produce pattern.
 
-use std::{future::Future, sync::Arc};
+use std::future::Future;
 
 use serde::{Serialize, de::DeserializeOwned};
 use tracing::warn;
@@ -21,15 +21,15 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishMiddleware, ReplyPublisher};
+use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
 
 /// A batch subscriber definition that produces replies to publish.
 ///
 /// The batch counterpart of [`PublishingDef`](super::PublishingDef): the handler consumes the
 /// whole decoded batch and returns the replies for it, all-or-nothing. Selective per-element
 /// outcomes are deliberately unsupported here - there is no coherent transaction commit for a
-/// half-nacked batch; handlers needing both publish manually via
-/// [`Context::publisher`](super::Context::publisher) from a plain batch handler.
+/// half-nacked batch; handlers needing both publish manually from a plain batch handler through a
+/// publisher held in the typed application state.
 pub trait BatchPublishingDef: Send + Sync {
     /// The decoded element type; the handler consumes `&[Input]`.
     type Input;
@@ -83,15 +83,23 @@ pub trait BatchPublishingDef: Send + Sync {
     fn message_description(&self) -> Option<&'static str> {
         None
     }
+}
 
+/// Runs a [`BatchPublishingDef`]'s handler body over an app state of type `S`.
+///
+/// Split from [`BatchPublishingDef`] so a handler that ignores the app state is generic over `S`
+/// (mounts on any app), while one that reads it via [`Context::state`](super::Context::state)
+/// implements this only for its declared `S` - the state match is checked at compile time without
+/// pinning a single `State` on the def.
+pub trait BatchPublishingCall<S>: BatchPublishingDef {
     /// Runs the handler body on one decoded batch.
     ///
-    /// `Ok(replies)` publishes every reply to [`reply_name`](Self::reply_name) and acks the
-    /// batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
+    /// `Ok(replies)` publishes every reply to [`reply_name`](BatchPublishingDef::reply_name) and
+    /// acks the batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
     fn call(
         &self,
         batch: &[Self::Input],
-        ctx: &mut Context<'_>,
+        ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = Result<Vec<Self::Reply>, HandlerResult>> + Send;
 }
 
@@ -118,43 +126,46 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
 /// with a plain publisher a mid-batch failure can therefore re-publish the earlier replies on
 /// redelivery (at-least-once), while a [`Transactional`](super::Transactional) publisher never
 /// leaves them half-visible.
-pub struct BatchPublishingHandler<D, C, R> {
+pub struct BatchPublishingHandler<D, C, R, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: R,
-    pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) pipeline: PP,
     pub(crate) decode: FailurePolicy,
 }
 
-impl<D, C, R> std::fmt::Debug for BatchPublishingHandler<D, C, R> {
+impl<D, C, R, PP> std::fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BatchPublishingHandler")
             .finish_non_exhaustive()
     }
 }
 
-impl<M, D, C, R> BatchHandler<M> for BatchPublishingHandler<D, C, R>
+impl<M, D, C, R, PP, S> BatchHandler<M, S> for BatchPublishingHandler<D, C, R, PP>
 where
     M: IncomingMessage,
-    D: BatchPublishingDef,
+    D: BatchPublishingCall<S>,
     D::Input: DeserializeOwned + Send + Sync,
     D::Reply: Serialize + Send + Sync,
     C: Codec,
     R: ReplyPublisher,
+    PP: PublishPipeline,
+    S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_>) {
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
         let subscription = ctx.name().to_owned();
         let (values, accepted) =
-            decode_batch::<M, D::Input, C>(batch, &self.codec, self.decode, ctx).await;
+            decode_batch::<M, D::Input, C, S>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }
         let outcome = match self.def.call(&values, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
+                let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
                 match self
                     .publisher
-                    .publish_batch(name, &replies, &self.pipeline, ctx.extensions())
+                    .publish_batch(name, &replies, &self.pipeline, &pubcx)
                     .await
                 {
                     Ok(()) => HandlerResult::Ack,
@@ -183,7 +194,6 @@ where
 mod tests {
     use futures::StreamExt;
 
-    use super::super::context::State;
     use super::super::dispatch::Delivery;
     use super::super::publish::TypedPublisher;
     use super::*;
@@ -208,11 +218,14 @@ mod tests {
         fn reply_name(&self) -> &str {
             self.reply_to
         }
+    }
 
+    // Ignores the app state, so it is generic over it (mounts on any app).
+    impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
         async fn call(
             &self,
             batch: &[u32],
-            _ctx: &mut Context<'_>,
+            _ctx: &mut Context<'_, (), S>,
         ) -> Result<Vec<u32>, HandlerResult> {
             if let Some(result) = self.fail_with {
                 return Err(result);
@@ -249,15 +262,15 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: Arc::from([]),
+            pipeline: PublishIdentity,
             decode: FailurePolicy::Drop,
         };
 
         publish_numbers(&broker, "orders", &[1, 2]).await;
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("orders", &headers, &state, &delivery);
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut input).await;
         handler.handle_batch(batch, &mut ctx).await;
 
@@ -287,15 +300,15 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: Arc::from([]),
+            pipeline: PublishIdentity,
             decode: FailurePolicy::Drop,
         };
 
         publish_numbers(&broker, "orders", &[1, 2]).await;
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("orders", &headers, &state, &delivery);
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut input).await;
         handler.handle_batch(batch, &mut ctx).await;
 

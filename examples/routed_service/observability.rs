@@ -11,7 +11,9 @@
 
 use std::time::Instant;
 
-use ruststream::runtime::{BlanketLayer, Context, Handler, Layer, Outgoing, PublishLayer, Settle};
+use ruststream::runtime::{
+    BlanketLayer, Context, Handler, Layer, Outgoing, PublishTransform, Settle,
+};
 
 /// The layer value added with `RustStream::layer`.
 #[derive(Clone)]
@@ -28,17 +30,21 @@ impl<H> Layer<H> for Observe {
 }
 
 impl BlanketLayer for Observe {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         Observed(handler)
     }
 }
 
-impl<M: Send + Sync, H: Handler<M>> Handler<M> for Observed<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S>
+    for Observed<H>
+{
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
         let channel = ctx.name().to_owned();
         let started = Instant::now();
         let settle = self.0.handle(msg, ctx).await;
@@ -50,14 +56,14 @@ impl<M: Send + Sync, H: Handler<M>> Handler<M> for Observed<H> {
 /// A static publish-side layer: stamps a provenance header on every message a publisher sends.
 ///
 /// This is the other kind of publisher customisation. Where the consume `Observe` layer wraps
-/// handlers, a [`PublishLayer`] is composed onto one [`TypedPublisher`](ruststream::runtime::TypedPublisher)
+/// handlers, a [`PublishTransform`] is composed onto one [`TypedPublisher`](ruststream::runtime::TypedPublisher)
 /// at build time with `.layer(..)` - zero-cost and scoped to that publisher, unlike the dynamic,
 /// app-wide metrics middleware added with `RustStream::publish_layer`. [`routes`](crate::routes)
 /// attaches it to the confirmations publisher, so every confirmation carries the header.
 pub(crate) struct StampSource;
 
-impl PublishLayer for StampSource {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<C> PublishTransform<C> for StampSource {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
         out.headers_mut()
             .insert("x-source-service", b"orders-service".to_vec());
     }

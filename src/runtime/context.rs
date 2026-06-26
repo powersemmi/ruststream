@@ -1,23 +1,22 @@
-//! Per-delivery [`Context`] and the app-level [`State`] type-map.
+//! Per-delivery [`Context`], generic over the broker's typed per-delivery context `C` and the
+//! application's typed shared state `S`.
 //!
 //! A `Context` is built for each delivery and threaded (as `&mut`) through the middleware chain
 //! into the handler. It carries the channel the message arrived on, a working copy of the
-//! headers (middleware may enrich them), shared application state ([`Context::state`]), and a
-//! per-delivery [`Extensions`] type-map ([`Context::get`] / [`Context::insert`]). The copy is
-//! lazy: the message headers are borrowed until the first [`headers_mut`](Context::headers_mut),
-//! so a delivery whose middleware never touches them pays no clone.
+//! headers (middleware may enrich them), the typed shared application state ([`Context::state`]),
+//! and the broker's typed per-delivery context read by key ([`Context::context`] /
+//! [`Context::set`]). The copy is lazy: the message headers are borrowed until the first
+//! [`headers_mut`](Context::headers_mut), so a delivery whose middleware never touches them pays no
+//! clone.
 
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::{Extensions, Headers};
+use crate::{Field, FieldMut, Headers};
 
 use super::dispatch::Delivery;
 use super::failure::ErrorShutdown;
 use super::handler::HandlerResult;
-use super::publish::ScopedPublisher;
 
 /// A post-settle continuation: a boxed `Send` future the dispatcher runs after the message (or
 /// batch) has been settled.
@@ -56,60 +55,32 @@ struct AfterHook {
     fut: Continuation,
 }
 
-/// App-level shared state: a type-map holding one value per type.
-///
-/// Put shared resources (database pools, HTTP clients, configuration) in here with
-/// [`RustStream::insert_state`](super::RustStream::insert_state); handlers and middleware read them
-/// from the [`Context`] with [`Context::state`] then [`State::get`]. For data scoped to a single
-/// delivery (set by a broker or middleware), use the per-delivery [`Extensions`] instead, reached
-/// with [`Context::get`] / [`Context::insert`].
-#[derive(Default)]
-pub struct State {
-    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-}
-
-impl State {
-    /// Inserts `value`, replacing any previous value of the same type.
-    pub fn insert<T: Any + Send + Sync>(&mut self, value: T) {
-        self.map.insert(TypeId::of::<T>(), Box::new(value));
-    }
-
-    /// Returns the stored value of type `T`, if any.
-    #[must_use]
-    pub fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
-        self.map.get(&TypeId::of::<T>())?.downcast_ref::<T>()
-    }
-}
-
-impl std::fmt::Debug for State {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("State")
-            .field("entries", &self.map.len())
-            .finish_non_exhaustive()
-    }
-}
-
 /// Per-delivery context, threaded through middleware and into the handler.
 ///
 /// Carries the channel ([`name`](Self::name)), a working copy of the message
 /// [`headers`](Self::headers) (middleware may enrich them for the handler; the broker message
-/// itself is untouched), shared application [state](Self::state), a per-delivery
-/// [`Extensions`] type-map ([`get`](Self::get) / [`insert`](Self::insert)), and access to named
-/// [`publisher`](Self::publisher)s for publishing from inside a handler. The headers copy is made
-/// lazily on the first [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit
-/// it: replies and manual publishes start from fresh headers, shaped by the publish pipeline.
-pub struct Context<'a> {
+/// itself is untouched), the typed shared application [state](Self::state) (where a publisher to
+/// publish from a handler lives), and the broker's typed per-delivery context read by key
+/// ([`context`](Self::context) / [`set`](Self::set)). The headers copy is made lazily on the first
+/// [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit it: replies and manual
+/// publishes start from fresh headers, shaped by the publish pipeline.
+pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
     original: &'a Headers,
     modified: Option<Headers>,
-    state: &'a State,
-    extensions: Extensions,
+    state: &'a S,
+    cx: C,
     delivery: &'a Delivery,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
+    /// Set by the [`Typed`](super::typed::Typed) decode adapter when the payload fails to decode,
+    /// so the dispatcher can record the outcome as a decode failure (otherwise indistinguishable
+    /// from a handler drop). Only present under the `testing` feature.
+    #[cfg(feature = "testing")]
+    decode_failed: bool,
 }
 
-impl std::fmt::Debug for Context<'_> {
+impl<C, S> std::fmt::Debug for Context<'_, C, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context")
             .field("name", &self.name)
@@ -118,26 +89,15 @@ impl std::fmt::Debug for Context<'_> {
     }
 }
 
-impl<'a> Context<'a> {
-    /// Creates a context for one delivery, borrowing the message headers until first mutation,
-    /// with an empty per-delivery [`Extensions`] map.
+impl<'a, C, S> Context<'a, C, S> {
+    /// Creates a context for one delivery, borrowing the message headers until first mutation and
+    /// carrying the typed per-delivery context `cx` (built by
+    /// [`BuildContext`](crate::BuildContext) from the broker message).
     pub(crate) fn new(
         name: &'a str,
         headers: &'a Headers,
-        state: &'a State,
-        delivery: &'a Delivery,
-    ) -> Self {
-        Self::with_extensions(name, headers, state, Extensions::new(), delivery)
-    }
-
-    /// Creates a context seeded with per-delivery `extensions`, used by the dispatch loop to carry
-    /// the broker's [`IncomingMessage::extensions`](crate::IncomingMessage::extensions) into the
-    /// handler.
-    pub(crate) fn with_extensions(
-        name: &'a str,
-        headers: &'a Headers,
-        state: &'a State,
-        extensions: Extensions,
+        state: &'a S,
+        cx: C,
         delivery: &'a Delivery,
     ) -> Self {
         Self {
@@ -145,11 +105,26 @@ impl<'a> Context<'a> {
             original: headers,
             modified: None,
             state,
-            extensions,
+            cx,
             delivery,
             after: Vec::new(),
             failfast: None,
+            #[cfg(feature = "testing")]
+            decode_failed: false,
         }
+    }
+
+    /// Records that the payload failed to decode for this delivery. Called by the decode adapter so
+    /// the harness can classify the outcome as a decode failure.
+    #[cfg(feature = "testing")]
+    pub(crate) fn mark_decode_failed(&mut self) {
+        self.decode_failed = true;
+    }
+
+    /// Returns and clears the decode-failure flag for this delivery.
+    #[cfg(feature = "testing")]
+    pub(crate) fn took_decode_failed(&mut self) -> bool {
+        std::mem::take(&mut self.decode_failed)
     }
 
     /// Attaches the runtime's error-shutdown handle, so a fail-fast decode policy can tear the
@@ -176,22 +151,6 @@ impl<'a> Context<'a> {
         self.name
     }
 
-    /// Resolves a named publisher (registered with
-    /// [`RustStream::publisher`](super::RustStream::publisher)) to publish from this handler.
-    ///
-    /// Sends through it run the scope's publish middleware (envelope, metrics) - the same chain as a
-    /// macro reply - so a manual publish is not a hole in the pipeline. Returns `None` if no
-    /// publisher is registered under `name`.
-    #[must_use]
-    pub fn publisher(&self, name: &str) -> Option<ScopedPublisher<'_>> {
-        let publisher = self.delivery.publishers.get(name)?;
-        Some(ScopedPublisher::new(
-            publisher.as_ref(),
-            &self.delivery.pipeline,
-            &self.extensions,
-        ))
-    }
-
     /// The working copy of the message headers.
     #[must_use]
     pub fn headers(&self) -> &Headers {
@@ -204,9 +163,8 @@ impl<'a> Context<'a> {
         self.modified.get_or_insert_with(|| self.original.clone())
     }
 
-    /// Returns the shared application [`State`], the type-map set once at build with
-    /// [`RustStream::insert_state`](super::RustStream::insert_state). Read a value from it with
-    /// [`State::get`].
+    /// Returns the shared application state: the typed `S` the app's `on_startup` produced (or
+    /// `()` when the app declares none), borrowed for the delivery. Read its fields directly.
     ///
     /// # Examples
     ///
@@ -214,65 +172,106 @@ impl<'a> Context<'a> {
     /// use ruststream::IncomingMessage;
     /// use ruststream::runtime::{Context, HandlerResult};
     ///
-    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
-    ///     if let Some(prefix) = ctx.state().get::<String>() {
-    ///         let _ = prefix;
-    ///     }
+    /// struct AppState {
+    ///     prefix: String,
+    /// }
+    ///
+    /// async fn handle<M: IncomingMessage>(
+    ///     _msg: &M,
+    ///     ctx: &mut Context<'_, (), AppState>,
+    /// ) -> HandlerResult {
+    ///     let _prefix = &ctx.state().prefix;
     ///     HandlerResult::Ack
     /// }
     /// ```
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &S {
         self.state
     }
 
-    /// Returns the per-delivery [`Extensions`] value of type `T`, if any.
+    /// Reads a broker-supplied per-delivery field off the typed context by compile-time `key`.
     ///
-    /// This reads the per-delivery type-map (broker-contributed metadata, middleware-set values),
-    /// not the app [`state`](Self::state). For shared app state use `ctx.state().get::<T>()`.
+    /// The key is a zero-sized selector the broker exports; resolution is a direct field read off
+    /// the typed context (no hashing, boxing, or downcasting). The default `()` context carries no
+    /// fields, so keys exist only for brokers that expose a context type. For shared app state use
+    /// [`state`](Self::state) instead.
     ///
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
+    /// use ruststream::{Field, IncomingMessage};
     /// use ruststream::runtime::{Context, HandlerResult};
     ///
-    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
-    ///     if let Some(span_id) = ctx.get::<u64>() {
-    ///         let _ = span_id;
+    /// // A broker context with one field and the key that reads it.
+    /// struct Delivery {
+    ///     offset: u64,
+    /// }
+    /// #[derive(Clone, Copy)]
+    /// struct Offset;
+    /// impl Field<Delivery> for Offset {
+    ///     type Value<'a> = u64;
+    ///     fn get(self, d: &Delivery) -> u64 {
+    ///         d.offset
     ///     }
+    /// }
+    ///
+    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Delivery>) -> HandlerResult {
+    ///     let _offset = ctx.context(Offset);
     ///     HandlerResult::Ack
     /// }
     /// ```
-    #[must_use]
-    pub fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
-        self.extensions.get::<T>()
+    pub fn context<K: Field<C>>(&self, key: K) -> K::Value<'_> {
+        key.get(&self.cx)
     }
 
-    /// Inserts a per-delivery [`Extensions`] value, replacing any previous value of the same type.
+    /// The broker's per-delivery context, borrowed for the publish path.
+    ///
+    /// A reply published from this handler carries the delivery's typed context to its static
+    /// [`PublishTransform`](super::PublishTransform) as a [`PublishContext`](super::PublishContext); this is
+    /// the accessor the runtime uses to build that read-only view.
+    pub(crate) fn cx_ref(&self) -> &C {
+        &self.cx
+    }
+
+    /// Writes a per-delivery scratch value downstream handlers read by `key`.
     ///
     /// Middleware uses this to hand typed data to downstream handlers (an authenticated user, a
-    /// correlation id) without serializing it into the headers.
+    /// correlation id) without serializing it into the headers, when the context type exposes a
+    /// writable ([`FieldMut`](crate::FieldMut)) key.
     ///
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
+    /// use ruststream::{Field, FieldMut, IncomingMessage};
     /// use ruststream::runtime::{Context, HandlerResult};
     ///
-    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerResult {
-    ///     ctx.insert(123u64);
-    ///     assert_eq!(ctx.get::<u64>(), Some(&123));
+    /// #[derive(Default)]
+    /// struct Scratch {
+    ///     user: Option<u64>,
+    /// }
+    /// #[derive(Clone, Copy)]
+    /// struct User;
+    /// impl Field<Scratch> for User {
+    ///     type Value<'a> = Option<&'a u64>;
+    ///     fn get(self, s: &Scratch) -> Option<&u64> {
+    ///         s.user.as_ref()
+    ///     }
+    /// }
+    /// impl FieldMut<Scratch> for User {
+    ///     type Owned = u64;
+    ///     fn set(self, s: &mut Scratch, value: u64) {
+    ///         s.user = Some(value);
+    ///     }
+    /// }
+    ///
+    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Scratch>) -> HandlerResult {
+    ///     ctx.set(User, 7);
+    ///     assert_eq!(ctx.context(User), Some(&7));
     ///     HandlerResult::Ack
     /// }
     /// ```
-    pub fn insert<T: Any + Send + Sync>(&mut self, value: T) {
-        self.extensions.insert(value);
-    }
-
-    /// Returns the per-delivery [`Extensions`] map, for the publish path to read at send time.
-    pub(crate) fn extensions(&self) -> &Extensions {
-        &self.extensions
+    pub fn set<K: FieldMut<C>>(&mut self, key: K, value: K::Owned) {
+        key.set(&mut self.cx, value);
     }
 
     /// Begins registering a post-settle hook gated on `outcome`.
@@ -312,7 +311,7 @@ impl<'a> Context<'a> {
     ///     };
     /// }
     /// ```
-    pub fn after(&mut self, outcome: HandlerResult) -> After<'_, 'a> {
+    pub fn after(&mut self, outcome: HandlerResult) -> After<'_, 'a, C, S> {
         After {
             ctx: self,
             gate: Some(OutcomeKind::of(outcome)),
@@ -428,18 +427,18 @@ impl<'a> Context<'a> {
 /// Call [`then`](Self::then) to register the continuation. Holding it without calling `then`
 /// registers nothing.
 #[must_use = "call `.then(fut)` to register the post-settle hook"]
-pub struct After<'ctx, 'a> {
-    ctx: &'ctx mut Context<'a>,
+pub struct After<'ctx, 'a, C = (), S = ()> {
+    ctx: &'ctx mut Context<'a, C, S>,
     gate: Option<OutcomeKind>,
 }
 
-impl std::fmt::Debug for After<'_, '_> {
+impl<C, S> std::fmt::Debug for After<'_, '_, C, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("After").field("gate", &self.gate).finish()
     }
 }
 
-impl After<'_, '_> {
+impl<C, S> After<'_, '_, C, S> {
     /// Registers `fut` to run after the message settles, if the settlement matches the gate this
     /// builder was created with (see [`Context::after`]).
     ///
@@ -473,7 +472,7 @@ mod tests {
 
     use futures::future::join_all;
 
-    use super::{Context, Extensions, State};
+    use super::Context;
     use crate::Headers;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::handler::HandlerResult;
@@ -512,10 +511,10 @@ mod tests {
 
     #[test]
     fn take_hooks_runs_only_the_matching_gate() {
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("t", &headers, &state, &delivery);
+        let mut ctx = Context::new("t", &headers, &state, (), &delivery);
 
         let acked = Arc::new(AtomicU32::new(0));
         let dropped = Arc::new(AtomicU32::new(0));
@@ -555,10 +554,10 @@ mod tests {
 
     #[test]
     fn take_settle_hooks_drops_outcome_gated_ones() {
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("t", &headers, &state, &delivery);
+        let mut ctx = Context::new("t", &headers, &state, (), &delivery);
 
         let gated = Arc::new(AtomicU32::new(0));
         let ungated = Arc::new(AtomicU32::new(0));
@@ -579,54 +578,72 @@ mod tests {
     }
 
     #[test]
-    fn extensions_one_value_per_type_and_isolation() {
-        let mut ext = Extensions::new();
-        assert!(ext.is_empty());
-        ext.insert(1u32);
-        ext.insert(2u32);
-        // Same type replaces, distinct types coexist.
-        assert_eq!(ext.get::<u32>(), Some(&2));
-        ext.insert("tag");
-        assert_eq!(ext.get::<&str>(), Some(&"tag"));
-        assert_eq!(ext.get::<i64>(), None);
+    fn context_reads_typed_field_by_key() {
+        use crate::Field;
+
+        struct Meta {
+            offset: u64,
+        }
+        #[derive(Clone, Copy)]
+        struct Offset;
+        impl Field<Meta> for Offset {
+            type Value<'a> = u64;
+            fn get(self, m: &Meta) -> u64 {
+                m.offset
+            }
+        }
+
+        let state = String::from("app");
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let ctx = Context::new("test", &headers, &state, Meta { offset: 42 }, &delivery);
+
+        // The typed broker field is read by key, straight off the context.
+        assert_eq!(ctx.context(Offset), 42);
+        // App state is reached only through state(), independent of the per-delivery context.
+        assert_eq!(ctx.state().as_str(), "app");
     }
 
     #[test]
-    fn ctx_get_insert_hit_extensions_state_unaffected() {
-        let mut state = State::default();
-        state.insert(String::from("app"));
-        let headers = Headers::new();
+    fn set_writes_scratch_and_reads_it_back() {
+        use crate::{Field, FieldMut};
+
+        #[derive(Default)]
+        struct Scratch {
+            user: Option<u64>,
+        }
+        #[derive(Clone, Copy)]
+        struct User;
+        impl Field<Scratch> for User {
+            type Value<'a> = Option<&'a u64>;
+            fn get(self, s: &Scratch) -> Option<&u64> {
+                s.user.as_ref()
+            }
+        }
+        impl FieldMut<Scratch> for User {
+            type Owned = u64;
+            fn set(self, s: &mut Scratch, value: u64) {
+                s.user = Some(value);
+            }
+        }
+
+        let state = ();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("test", &headers, &state, &delivery);
-
-        // ctx.get / ctx.insert operate on the per-delivery extensions.
-        assert_eq!(ctx.get::<u32>(), None);
-        ctx.insert(99u32);
-        assert_eq!(ctx.get::<u32>(), Some(&99));
-
-        // App state is reached only through state(); the per-delivery map does not shadow it.
-        assert_eq!(ctx.state().get::<String>().map(String::as_str), Some("app"));
-        assert_eq!(ctx.get::<String>(), None);
-    }
-
-    #[test]
-    fn seeded_extensions_reach_the_context() {
-        let state = State::default();
         let headers = Headers::new();
-        let delivery = Delivery::empty();
-        let mut seed = Extensions::new();
-        seed.insert(7u8);
-        let ctx = Context::with_extensions("test", &headers, &state, seed, &delivery);
-        assert_eq!(ctx.get::<u8>(), Some(&7));
+        let mut ctx = Context::new("test", &headers, &state, Scratch::default(), &delivery);
+
+        assert_eq!(ctx.context(User), None);
+        ctx.set(User, 9);
+        assert_eq!(ctx.context(User), Some(&9));
     }
 
     #[test]
     fn headers_clone_only_on_first_mutation() {
         let mut original = Headers::new();
         original.insert("k", "v");
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
-        let mut ctx = Context::new("test", &original, &state, &delivery);
+        let mut ctx = Context::new("test", &original, &state, (), &delivery);
 
         // Untouched: the context borrows the message headers, no copy exists.
         assert!(std::ptr::eq(ctx.headers(), &raw const original));

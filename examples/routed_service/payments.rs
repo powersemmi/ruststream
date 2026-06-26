@@ -13,11 +13,11 @@ use crate::domain::{Clearing, Payment, Repository, Settlement};
 /// an immediate retry, so a flaky downstream is not hammered.
 // --8<-- [start:workers]
 #[subscriber("payments", workers(8, by_key))]
-pub(crate) async fn process_payment(payment: &Payment, ctx: &mut Context<'_>) -> HandlerResult {
-    let repo = ctx
-        .state()
-        .get::<Repository>()
-        .expect("repository set in on_startup");
+pub(crate) async fn process_payment(
+    payment: &Payment,
+    ctx: &mut Context<'_, (), Repository>,
+) -> HandlerResult {
+    let repo = ctx.state();
     tracing::debug!(order = payment.order_id, customer = %payment.customer, "charging payment");
     if repo
         .charge(payment.order_id, payment.amount_cents)
@@ -35,6 +35,8 @@ pub(crate) async fn process_payment(payment: &Payment, ctx: &mut Context<'_>) ->
 /// atomically on commit. The batch contract guarantees a non-empty page, so the handler maps it
 /// straight to replies; returning the bare `Vec` publishes them all and acks the batch.
 // --8<-- [start:batch]
+// This handler ignores the app state, so it omits the `Context` parameter and stays generic over
+// the state; it still mounts alongside the stateful `process_payment` handler on the same router.
 #[subscriber(batch("clearings"), publish("settlements"))]
 pub(crate) async fn settle(clearings: &[Clearing]) -> Vec<Settlement> {
     clearings

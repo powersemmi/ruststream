@@ -16,7 +16,6 @@
 //! [`MemoryPublisher`], and partition keys on [`MemoryMessage`].
 
 mod capability;
-mod test_client;
 
 pub use capability::{MemoryRequester, PARTITION_KEY_HEADER, RequestError};
 
@@ -27,9 +26,11 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, RawMessage, Subscribe,
-    Subscriber, SubscriptionSource,
+    AckError, Broker, DescribeServer, Headers, IncomingMessage, OutgoingMessage, Publisher,
+    RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -50,6 +51,10 @@ struct MemoryState {
     published: Mutex<HashMap<String, Vec<RawMessage>>>,
     notify: Notify,
     inbox_seq: AtomicU64,
+    /// The harness's quiescence-and-recording coordinator, installed by a
+    /// [`TestApp`](crate::testing::TestApp) run. Empty in production, so `fanout` does no extra work.
+    #[cfg(feature = "testing")]
+    coordinator: OnceLock<Coordinator>,
 }
 
 impl MemoryState {
@@ -86,9 +91,33 @@ impl MemoryState {
             .expect("memory broker mutex poisoned");
         if let Some(senders) = subs.get(&delivery.name) {
             for tx in senders {
-                let _ = tx.send(delivery.clone());
+                let sent = tx.send(delivery.clone());
+                // Count every live enqueue so the harness can drive to quiescence. Request inboxes
+                // (`_inbox.`) are excluded: their reply is consumed by the requester, not a dispatch
+                // loop, so it carries no coordinator and is never decremented.
+                #[cfg(feature = "testing")]
+                if sent.is_ok() && !delivery.name.starts_with("_inbox.") {
+                    if let Some(coordinator) = self.coordinator.get() {
+                        coordinator.enqueued();
+                    }
+                }
+                #[cfg(not(feature = "testing"))]
+                let _ = sent;
             }
         }
+    }
+
+    /// Installs the harness coordinator for a [`TestApp`](crate::testing::TestApp) run. Idempotent.
+    #[cfg(feature = "testing")]
+    fn install_coordinator(&self, coordinator: Coordinator) {
+        let _ = self.coordinator.set(coordinator);
+    }
+
+    /// A clone of the installed coordinator, threaded into each subscriber and delivery so a
+    /// requeue can re-count and a consumed delivery can decrement.
+    #[cfg(feature = "testing")]
+    fn coordinator(&self) -> Option<Coordinator> {
+        self.coordinator.get().cloned()
     }
 }
 
@@ -117,6 +146,8 @@ impl MemoryBroker {
             rx,
             requeue: tx,
             batch_limit: DEFAULT_BATCH_LIMIT,
+            #[cfg(feature = "testing")]
+            coordinator: self.state.coordinator(),
         }
     }
 
@@ -162,6 +193,47 @@ impl Broker for MemoryBroker {
         Ok(())
     }
 }
+
+impl DescribeServer for MemoryBroker {
+    /// The in-memory broker has no network address, so it describes itself as an in-process server
+    /// over the `"memory"` protocol. Registered with
+    /// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled), the label is its
+    /// stable identity, letting a service mount several memory brokers with disjoint routing and
+    /// address each one by name.
+    fn describe_server(&self) -> ServerSpec {
+        ServerSpec::in_process("memory")
+    }
+}
+
+// --8<-- [start:testable]
+#[cfg(feature = "testing")]
+impl crate::testing::TestableBroker for MemoryBroker {
+    fn install_coordinator(&self, coordinator: Coordinator) {
+        self.state.install_coordinator(coordinator);
+    }
+
+    fn inject(&self, message: OutgoingMessage<'_>) {
+        self.state.fanout(&MemoryDelivery {
+            name: message.name().to_owned(),
+            payload: Bytes::copy_from_slice(message.payload()),
+            headers: message.headers().clone(),
+        });
+    }
+
+    fn published(&self, name: &str) -> Vec<RawMessage> {
+        self.state
+            .published
+            .lock()
+            .expect("memory broker mutex poisoned")
+            .get(name)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(feature = "testing")]
+crate::register_testable_broker!(MemoryBroker);
+// --8<-- [end:testable]
 
 // `Self::subscribe` would read as a recursive call into this trait method; spell out the broker
 // type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).
@@ -220,6 +292,10 @@ pub struct MemorySubscriber {
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
     batch_limit: usize,
+    /// A clone of the broker's harness coordinator, threaded into each yielded message so a requeue
+    /// re-counts and a consumed delivery decrements. `None` outside a harness run.
+    #[cfg(feature = "testing")]
+    coordinator: Option<Coordinator>,
 }
 
 impl MemorySubscriber {
@@ -246,6 +322,8 @@ impl Subscriber for MemorySubscriber {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         let requeue = self.requeue.clone();
+        #[cfg(feature = "testing")]
+        let coordinator = self.coordinator.clone();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| {
@@ -254,6 +332,8 @@ impl Subscriber for MemorySubscriber {
                     Ok(MemoryMessage {
                         delivery: Some(delivery),
                         requeue: requeue.clone(),
+                        #[cfg(feature = "testing")]
+                        coordinator: coordinator.clone(),
                     })
                 })
             })
@@ -318,6 +398,23 @@ impl Publisher for MemoryPublisher {
 pub struct MemoryMessage {
     delivery: Option<MemoryDelivery>,
     requeue: Sender,
+    /// A clone of the broker's harness coordinator. When set, this delivery is counted in flight and
+    /// is decremented once when the message is consumed or dropped (see the `Drop` impl). `None`
+    /// outside a harness run and for request-reply inbox messages (which are not dispatch-driven).
+    #[cfg(feature = "testing")]
+    coordinator: Option<Coordinator>,
+}
+
+#[cfg(feature = "testing")]
+impl Drop for MemoryMessage {
+    /// Counts this delivery consumed exactly once: on ack, nack, `into_raw`, or an unsettled drop (a
+    /// fail-fast panic). A requeue (`nack(true)` / `nack_after`) re-enqueues a fresh delivery first,
+    /// so the in-flight count stays balanced across redelivery.
+    fn drop(&mut self) {
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.consumed();
+        }
+    }
 }
 
 impl std::fmt::Debug for MemoryMessage {
@@ -379,7 +476,17 @@ impl IncomingMessage for MemoryMessage {
     async fn nack(mut self, requeue: bool) -> Result<(), AckError> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         if requeue {
-            let _ = self.requeue.send(delivery);
+            let sent = self.requeue.send(delivery);
+            // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
+            // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
+            #[cfg(feature = "testing")]
+            if sent.is_ok() {
+                if let Some(coordinator) = &self.coordinator {
+                    coordinator.enqueued();
+                }
+            }
+            #[cfg(not(feature = "testing"))]
+            let _ = sent;
         }
         Ok(())
     }
@@ -393,6 +500,20 @@ impl IncomingMessage for MemoryMessage {
     async fn nack_after(mut self, delay: Duration) -> Result<(), AckError> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         let requeue = self.requeue.clone();
+        // Under the harness, register the redelivery with the coordinator so the in-flight count is
+        // re-balanced when it fires and a test can drive it with `TestApp::advance`. The immediate
+        // settlement (`NackAfter`) was already recorded; the redelivery is off the synchronous
+        // reaction `drive` waits on.
+        #[cfg(feature = "testing")]
+        if let Some(coordinator) = self.coordinator.clone() {
+            let counter = coordinator.clone();
+            coordinator.schedule_redelivery(delay, move || {
+                if requeue.send(delivery).is_ok() {
+                    counter.enqueued();
+                }
+            });
+            return Ok(());
+        }
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.

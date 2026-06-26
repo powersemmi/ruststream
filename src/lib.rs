@@ -21,8 +21,9 @@
 //!   ([`logging::init`]). The generated `cli` `run` command installs it automatically.
 //! * `conformance`: the [`conformance::harness`] contract suite, per-capability suites in
 //!   [`conformance::capabilities`], and broker-agnostic [`conformance::helpers`] for application
-//!   tests. Generic over any broker's `TestClient`, so it pulls in no concrete broker (enable
-//!   `memory` too to run it against [`memory::MemoryBroker`]).
+//!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker
+//!   (enable `memory` too to run it against [`memory::MemoryBroker`]).
+//! * `testing`: the [`testing::TestApp`] in-process harness for application unit tests.
 //! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
 //!
 //! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,
@@ -34,7 +35,7 @@ mod broker;
 mod buffered;
 mod capability;
 mod error;
-mod extensions;
+mod field;
 mod headers;
 mod message;
 mod publisher;
@@ -43,6 +44,11 @@ mod subscriber;
 mod subscription;
 pub mod testing;
 
+/// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use inventory;
+
 pub use broker::Broker;
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
@@ -50,7 +56,7 @@ pub use capability::{
     TransactionalPublisher,
 };
 pub use error::AckError;
-pub use extensions::Extensions;
+pub use field::{BuildContext, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;
@@ -105,6 +111,9 @@ pub mod metrics;
 
 #[cfg(feature = "logging")]
 pub mod logging;
+
+#[cfg(feature = "opentelemetry")]
+pub mod opentelemetry;
 
 /// Implementation detail used by the `#[subscriber]` macro to capture a payload's JSON Schema.
 ///

@@ -19,18 +19,16 @@ mod routes;
 mod sink;
 
 pub use builder::Router;
-pub use routes::RouterDef;
+pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
 use crate::{Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, TypedBatch};
-use crate::runtime::batch_publishing::BatchPublishingHandler;
-use crate::runtime::publishing::PublishingHandler;
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
-use routes::{BatchRoute, SubscribeRoute};
+use routes::{BatchPublishingRoute, BatchRoute, PublishingRoute, SubscribeRoute};
 
 /// The message a source's subscriber yields, for broker `B`. Tames the long projection in bounds
 /// and return types.
@@ -62,13 +60,13 @@ type IncludedBatchRouter<B, S, D, C, RC, RL, R> =
 /// source `S` (decoded with `C`, replying through a `P`/`PC`/`PL` publisher) onto `R` produces.
 /// `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
 type PublishingRouter<B, S, D, C, P, PC, PL, RC, RL, R> =
-    Router<B, (SubscribeRoute<S, PublishingHandler<D, C, P, PC, PL>>, R), RC, RL>;
+    Router<B, (PublishingRoute<S, D, C, P, PC, PL>, R), RC, RL>;
 
 /// The router that mounting a batch publishing
 /// [`BatchPublishingDef`](crate::runtime::BatchPublishingDef) `D` on source `S` (decoded with `C`,
 /// replying through the [`ReplyPublisher`](crate::runtime::ReplyPublisher) `RP`) onto `R` produces.
 type BatchPublishingRouter<B, S, D, C, RP, RC, RL, R> =
-    Router<B, (BatchRoute<S, BatchPublishingHandler<D, C, RP>>, R), RC, RL>;
+    Router<B, (BatchPublishingRoute<S, D, C, RP>, R), RC, RL>;
 
 /// The router that a [`Router::subscribe_batch`] closure registration produces: the slice
 /// handler `H` is wrapped in a [`TypedBatch`] decoding elements to `T` with `C`.

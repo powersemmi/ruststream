@@ -11,13 +11,11 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerResult, Layer, Outgoing,
-    PublishMiddleware, PublishNext, Router, RustStream, Settle, State,
+    AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerResult, Layer, Router,
+    RustStream, Settle,
 };
 use ruststream::{Name, OutgoingMessage, Publisher};
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -50,12 +48,14 @@ impl<H> Layer<H> for CountLayer {
     }
 }
 
-impl<M, H> Handler<M> for CountHandler<H>
+impl<M, C, S, H> Handler<M, C, S> for CountHandler<H>
 where
     M: Sync,
-    H: Handler<M>,
+    C: Send,
+    S: Send + Sync,
+    H: Handler<M, C, S>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.inner.handle(msg, ctx).await
     }
@@ -63,10 +63,12 @@ where
 
 // Lets CountLayer be an app-global layer that reaches router handlers via include_router.
 impl BlanketLayer for CountLayer {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         CountHandler {
             inner: handler,
@@ -384,24 +386,28 @@ async fn global_layer_wraps_handlers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cross_broker_publish_via_named_publisher() {
+async fn cross_broker_publish_via_captured_publisher() {
     let ingress = MemoryBroker::new();
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
+    // Capture the egress broker's own publisher into a handler on the ingress broker - typed, no
+    // registry.
+    let egress_pub = egress.publisher();
 
     let received = Arc::new(AtomicU32::new(0));
     let received_clone = Arc::clone(&received);
 
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
-        .publisher("egress", egress.publisher())
         .with_broker(ingress, |b| {
-            let out = b.publisher("egress").expect("egress registered");
+            let out = egress_pub.clone();
             b.subscribe(
                 Name::new("orders"),
                 move |_msg: &_, _ctx: &mut Context| {
-                    let out = Arc::clone(&out);
+                    let out = out.clone();
                     async move {
-                        let _ = out.publish_bytes("responses", b"reply").await;
+                        let _ = out
+                            .publish(OutgoingMessage::new("responses", b"reply".as_slice()))
+                            .await;
                         HandlerResult::Ack
                     }
                 },
@@ -462,22 +468,23 @@ async fn handler_reads_context_topic_and_state() {
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .insert_state(Config {
-            greeting: "hello".to_owned(),
+        .on_startup(|()| async {
+            Ok::<_, std::convert::Infallible>(Config {
+                greeting: "hello".to_owned(),
+            })
         })
         .with_broker(broker, |b| {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &_, ctx: &mut Context| {
+                move |_msg: &_, ctx: &mut Context<'_, (), Config>| {
                     let name = ctx.name().to_owned();
-                    let greeting = ctx.state().get::<Config>().map(|c| c.greeting.clone());
+                    let greeting = ctx.state().greeting.clone();
                     // Middleware/handlers may enrich the working headers.
                     ctx.headers_mut().insert("x-seen", b"1".to_vec());
                     let seen = Arc::clone(&seen_clone);
                     async move {
-                        *seen.lock().expect("poisoned") =
-                            Some((name, greeting.unwrap_or_default()));
+                        *seen.lock().expect("poisoned") = Some((name, greeting));
                         HandlerResult::Ack
                     }
                 },
@@ -520,35 +527,34 @@ async fn lifespan_hooks_run_in_order() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
-        .on_startup(move |mut state: State| {
+        .on_startup(move |()| {
             let o1 = Arc::clone(&o1);
             async move {
-                state.insert(Config {
-                    greeting: "lazy".to_owned(),
-                });
                 o1.lock().expect("poisoned").push("startup");
-                Ok::<State, std::convert::Infallible>(state)
+                Ok::<Config, std::convert::Infallible>(Config {
+                    greeting: "lazy".to_owned(),
+                })
             }
         })
-        .after_startup(move |_state| {
+        .after_startup(move |_state: Arc<Config>| {
             let o2 = Arc::clone(&o2);
             async move {
                 o2.lock().expect("poisoned").push("after_startup");
                 Ok::<(), std::convert::Infallible>(())
             }
         })
-        .on_shutdown(move |_state| {
+        .on_shutdown(move |_state: Arc<Config>| {
             let o3 = Arc::clone(&o3);
             async move {
                 o3.lock().expect("poisoned").push("on_shutdown");
                 Ok::<(), std::convert::Infallible>(())
             }
         })
-        .after_shutdown(move |state| {
+        .after_shutdown(move |state: Arc<Config>| {
             let o4 = Arc::clone(&o4);
-            let greeting = state.get::<Config>().map(|c| c.greeting.clone());
+            let greeting = state.greeting.clone();
             async move {
-                assert_eq!(greeting.as_deref(), Some("lazy"));
+                assert_eq!(greeting.as_str(), "lazy");
                 o4.lock().expect("poisoned").push("after_shutdown");
                 Ok::<(), std::convert::Infallible>(())
             }
@@ -628,98 +634,4 @@ async fn wait_for_published(publisher: &impl Publisher, seen: &AtomicU32, timeou
     })
     .await;
     assert!(result.is_ok(), "no delivery within {timeout:?}");
-}
-
-/// A publish middleware that tags every outgoing message with a header.
-struct Tagger;
-
-impl PublishMiddleware for Tagger {
-    fn on_publish<'a>(
-        &'a self,
-        out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a>,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
-    > {
-        Box::pin(async move {
-            out.headers_mut().insert("x-envelope", b"1".to_vec());
-            next.run(out).await
-        })
-    }
-}
-
-/// A handler that publishes manually via `ctx.publisher`. A struct (not a closure) so the future
-/// may borrow `ctx` across the await.
-struct Bridge;
-
-impl<M: Send + Sync> Handler<M> for Bridge {
-    async fn handle(&self, _msg: &M, ctx: &mut Context<'_>) -> Settle {
-        if let Some(out) = ctx.publisher("egress") {
-            let _ = out
-                .publish(Outgoing::new("responses", b"reply".as_slice()))
-                .await;
-        }
-        HandlerResult::Ack.into()
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ctx_publisher_runs_through_pipeline() {
-    let ingress = MemoryBroker::new();
-    let egress = MemoryBroker::new();
-    let ingress_pub = ingress.publisher();
-
-    let tagged = Arc::new(AtomicU32::new(0));
-    let tagged_clone = Arc::clone(&tagged);
-
-    let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
-        .publisher("egress", egress.publisher())
-        .publish_layer(Tagger)
-        .with_broker(ingress, |b| {
-            b.subscribe(Name::new("orders"), Bridge, HandlerMetadata::raw("orders"));
-        })
-        .with_broker(egress, |b| {
-            let subscriber = b.broker().subscribe("responses");
-            b.handle(
-                subscriber,
-                move |msg: &_, _ctx: &mut Context| {
-                    let tagged = Arc::clone(&tagged_clone);
-                    // The Tagger middleware must have run on the manual publish.
-                    let has_header = ruststream::IncomingMessage::headers(msg)
-                        .get("x-envelope")
-                        .is_some();
-                    async move {
-                        if has_header {
-                            tagged.fetch_add(1, Ordering::SeqCst);
-                        }
-                        HandlerResult::Ack
-                    }
-                },
-                HandlerMetadata::raw("responses"),
-            );
-        });
-
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
-
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = ingress_pub
-                .publish(OutgoingMessage::new("orders", b"x"))
-                .await;
-            tokio::task::yield_now().await;
-            if tagged.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "manual publish did not reach egress with the pipeline header",
-    );
-
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
 }

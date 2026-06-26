@@ -2,7 +2,7 @@
 //!
 //! A single [`Metrics`] object owns the counters and the [`Registry`] they are
 //! registered in, and hands out two middleware: a static consume-side [`Layer`] and a publish-side
-//! [`PublishMiddleware`]. Both share the same registry, so one [`Metrics::export`] renders the whole
+//! [`PublishLayer`]. Both share the same registry, so one [`Metrics::export`] renders the whole
 //! picture. The registry is the global default unless you pass your own.
 //!
 //! HTTP exposition is the user's concern: call [`export`](Metrics::export) and serve the string from
@@ -33,8 +33,8 @@ use prometheus::{
 };
 
 use crate::runtime::{
-    BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishMiddleware, PublishNext,
-    Settle,
+    BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishLayer, PublishNext,
+    PublishPipeline, Settle,
 };
 
 /// Default histogram buckets (seconds) for handler duration.
@@ -137,7 +137,7 @@ impl Metrics {
         }
     }
 
-    /// A publish-side [`PublishMiddleware`] that counts each published message.
+    /// A publish-side [`PublishLayer`] that counts each published message.
     #[must_use]
     pub fn publish_layer(&self) -> MetricsPublish {
         MetricsPublish {
@@ -194,10 +194,12 @@ impl<H> Layer<H> for MetricsLayer {
 // `MetricsHandler<H>` is already `Handler<M>` for any `H: Handler<M>`, so the blanket form just
 // delegates to the static one.
 impl BlanketLayer for MetricsLayer {
-    fn apply<M, H>(&self, handler: H) -> impl Handler<M> + 'static
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
-        H: Handler<M> + 'static,
+        C: Send + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         self.layer(handler)
     }
@@ -216,12 +218,14 @@ impl<H> std::fmt::Debug for MetricsHandler<H> {
     }
 }
 
-impl<M, H> Handler<M> for MetricsHandler<H>
+impl<M, C, S, H> Handler<M, C, S> for MetricsHandler<H>
 where
     M: Sync,
-    H: Handler<M>,
+    C: Send,
+    S: Send + Sync,
+    H: Handler<M, C, S>,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context) -> impl Future<Output = Settle> + Send {
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send {
         let name = ctx.name().to_owned();
         async move {
             let started = std::time::Instant::now();
@@ -241,7 +245,7 @@ where
     }
 }
 
-/// The [`PublishMiddleware`] handed out by [`Metrics::publish_layer`].
+/// The [`PublishLayer`] handed out by [`Metrics::publish_layer`].
 #[derive(Clone)]
 pub struct MetricsPublish {
     inner: Arc<Inner>,
@@ -253,11 +257,11 @@ impl std::fmt::Debug for MetricsPublish {
     }
 }
 
-impl PublishMiddleware for MetricsPublish {
-    fn on_publish<'a>(
+impl PublishLayer for MetricsPublish {
+    fn on_publish<'a, N: PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a>,
+        next: PublishNext<'a, N>,
     ) -> PublishFut<'a> {
         let name = out.name().to_owned();
         Box::pin(async move {

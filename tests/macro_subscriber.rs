@@ -15,7 +15,7 @@ use common::handler_signal;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishLayer, PublishMiddleware, PublishNext, RustStream,
+    AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
     TypedPublisher,
 };
 use ruststream::{Message, OutgoingMessage, Publisher, SubscriptionSource, subscriber};
@@ -311,8 +311,8 @@ async fn scope_default_codec_drops_per_call_codec() {
 /// A static (zero-cost) publish transform baked onto the `TypedPublisher`.
 struct StaticEnvelope;
 
-impl PublishLayer for StaticEnvelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<C> PublishTransform<C> for StaticEnvelope {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
         out.headers_mut().insert("x-static", b"1".to_vec());
     }
 }
@@ -346,7 +346,7 @@ async fn static_publish_layer_transforms_reply() {
     let ingress_pub = ingress.publisher();
 
     // The static layer is composed onto the publisher at compile time - no dyn dispatch.
-    let egress_pub = TypedPublisher::new(egress.publisher()).layer(StaticEnvelope);
+    let egress_pub = TypedPublisher::new(egress.publisher()).transform(StaticEnvelope);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(ingress, |b| {
@@ -395,13 +395,14 @@ static REPLY_DOUBLED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static REPLY_TAGGED: AtomicU32 = AtomicU32::new(0);
 
 /// A publish middleware that tags every outgoing reply with a header (envelope-style).
+#[derive(Clone)]
 struct Tagger;
 
-impl PublishMiddleware for Tagger {
-    fn on_publish<'a>(
+impl PublishLayer for Tagger {
+    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a>,
+        next: PublishNext<'a, N>,
     ) -> Pin<
         Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
     > {
@@ -571,8 +572,8 @@ static CTX_REPLY: AtomicU32 = AtomicU32::new(0);
 static CTX_REPLY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("ctx-in", publish("ctx-out"))]
-async fn ctx_reply(req: &Request, ctx: &mut Context) -> Response {
-    let bump = ctx.state().get::<Bump>().map_or(0, |b| b.0);
+async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
+    let bump = ctx.state().0;
     Response {
         doubled: req.n + bump,
     }
@@ -592,7 +593,7 @@ async fn publishing_handler_reads_context_state() {
     let replies = TypedPublisher::new(broker.publisher());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .insert_state(Bump(100))
+        .on_startup(|()| async { Ok::<_, Infallible>(Bump(100)) })
         .with_broker(broker, |b| {
             b.include_publishing(ctx_reply, replies);
             b.include(ctx_sink);

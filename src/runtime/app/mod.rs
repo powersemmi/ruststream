@@ -1,13 +1,17 @@
 //! The [`RustStream`] application object: binds brokers, handlers and lifecycle into one runnable
 //! service.
 
+mod app_trait;
 mod include;
 mod run;
 mod scope;
 mod service;
 
+pub use app_trait::App;
 pub use scope::BrokerScope;
 pub use service::RustStream;
+#[cfg(feature = "testing")]
+pub(crate) use service::{RegisteredBroker, TestParts};
 
 use std::sync::Arc;
 
@@ -15,30 +19,31 @@ use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::runtime::context::State;
 use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 
 /// A registration deferred until [`RustStream::run`]: given the app's error-shutdown handle and the
 /// shutdown token, it opens the subscription (after the broker is connected) and spawns the dispatch
 /// task. The broker, source and handler are captured and type-erased.
-type Starter = Box<
+pub(crate) type Starter<St> = Box<
     dyn FnOnce(
-            Arc<State>,
+            Arc<St>,
             ErrorShutdown,
             CancellationToken,
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
 >;
 
-/// The `on_startup` lifespan hook: runs once before brokers connect. It receives the app [`State`]
-/// by value (so its future can own it across awaits - e.g. connect a database, then insert the
-/// pool) and returns it, populated.
-type StartupHook = Box<dyn FnOnce(State) -> BoxFuture<'static, Result<State, BoxError>> + Send>;
+/// The state initializer: produces the app state `St` once at startup (before brokers connect).
+/// The `on_startup` producer chain; a failing initializer aborts startup. The default is the unit
+/// state `()`.
+pub(crate) type StateInit<St> =
+    Box<dyn FnOnce() -> BoxFuture<'static, Result<St, BoxError>> + Send>;
 
 /// A read-only lifespan hook (`after_startup` / `on_shutdown` / `after_shutdown`): runs once at the
-/// corresponding lifecycle point with a shared [`State`] handle (read via [`State::get`]).
-type LifecycleHook = Box<dyn FnOnce(Arc<State>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
+/// corresponding lifecycle point with a shared `Arc<St>` handle to the app state.
+pub(crate) type LifecycleHook<St> =
+    Box<dyn FnOnce(Arc<St>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// Which read-only lifecycle hook list a hook is appended to.
 #[derive(Clone, Copy)]

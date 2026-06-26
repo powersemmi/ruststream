@@ -3,6 +3,8 @@
 
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
+// Kept in scope for the `[`Handler`]` intra-doc links; the trait no longer bounds `type Handler`.
+#[allow(unused_imports)]
 use super::handler::Handler;
 use super::metadata::HandlerMetadata;
 
@@ -17,8 +19,17 @@ pub trait SubscriberDef: Sized {
     /// The decoded message type the handler consumes.
     type Input;
 
-    /// The concrete handler type over [`Input`](Self::Input).
-    type Handler: Handler<Self::Input>;
+    /// The broker's typed per-delivery context the handler reads by key (`()` when the handler
+    /// names no context type).
+    type Context;
+
+    /// The concrete handler type over [`Input`](Self::Input) and [`Context`](Self::Context).
+    ///
+    /// The handler bound is enforced where the def is mounted (against the app's state type `St`),
+    /// not on the trait: a handler that reads typed application state is
+    /// [`Handler<Input, Context, St>`](Handler) only for its declared `St`, while one that ignores
+    /// state is generic over it. Pinning a single state type here would reject both shapes.
+    type Handler;
 
     /// The subscription source this handler binds to. The bound to
     /// [`SubscriptionSource`](crate::SubscriptionSource) for the target broker is applied where the
@@ -91,7 +102,7 @@ mod tests {
     use super::{SubscriberDef, subscriber_metadata};
     use crate::Headers;
     use crate::Name;
-    use crate::runtime::context::{Context, State};
+    use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
     use crate::runtime::handler::{Handler, HandlerResult, Settle};
 
@@ -109,6 +120,7 @@ mod tests {
 
     impl SubscriberDef for ManualDef {
         type Input = u32;
+        type Context = ();
         type Handler = Noop;
         type Source = Name;
 
@@ -137,10 +149,10 @@ mod tests {
 
         // Drive the consumed handler so source(), into_handler() and the Noop body are exercised.
         let handler = def.into_handler();
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("manual", &headers, &state, &delivery);
+        let mut ctx = Context::new("manual", &headers, &state, (), &delivery);
         assert_eq!(
             handler.handle(&7u32, &mut ctx).await.outcome(),
             HandlerResult::Ack

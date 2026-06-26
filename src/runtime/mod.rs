@@ -19,23 +19,31 @@ mod router;
 mod subscriber_def;
 mod typed;
 
-pub use crate::Extensions;
-pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
+pub use app::{App, AppInfo, BrokerScope, RustStream, RustStreamError};
+#[cfg(feature = "testing")]
+pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
-pub use batch_publishing::{BatchPublishingDef, BatchPublishingHandler};
-pub use context::{After, Context, State};
+pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
+pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
+#[cfg(feature = "testing")]
+pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
+#[cfg(feature = "testing")]
+pub(crate) use lifecycle::BrokerLifecycle;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
-    Outgoing, PublishIdentity, PublishLayer, PublishMiddleware, PublishNext, PublishStack,
-    ReplyPublisher, ScopedPublisher, Transactional, TypedPublisher,
+    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
+    PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
+    PublishLayer, PublishNext, PublishPipeline, PublishStack, PublishTransform,
+    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, Transactional, TypedPublisher,
+    for_batch,
 };
 pub use publisher_registry::ErasedPublisher;
-pub use publishing::{PublishingDef, PublishingHandler};
-pub use router::{Router, RouterDef, RouterSink};
+pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
+pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

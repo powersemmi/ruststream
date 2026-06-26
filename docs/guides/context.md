@@ -5,27 +5,30 @@ lifetimes:
 
 | Level | Type | Lives for | Holds |
 |---|---|---|---|
-| Application | `State` | the whole service | shared resources: pools, clients, configuration |
-| Delivery | `Context` | one message | the channel name, a headers working copy, a per-delivery `Extensions` type-map, access to `State` and named publishers |
+| Application | the state type `S` | the whole service | shared resources: pools, clients, configuration |
+| Delivery | `Context<'_, C, S>` | one message | the channel name, a headers working copy, the broker's typed per-delivery context `C` (read by key), and the typed shared state `S` |
 
-`State` is filled once, at startup. A `Context` is built fresh for every delivery and threaded as
-`&mut` through the middleware chain into the handler, so middleware and the handler observe (and
-can enrich) the same per-message view.
+The state is produced once, at startup, and is a single typed value of your own choosing. A
+`Context` is built fresh for every delivery and threaded as `&mut` through the middleware chain into
+the handler, so middleware and the handler observe (and can enrich) the same per-message view.
 
-## Application level: `State`
+## Application level: typed state
 
-`State` is a type-map: one value per type, `Send + Sync`. Two ways to fill it:
+The shared application state is one typed value `S` (a struct you define, or `()` when the service
+needs none). It is produced by an `on_startup` hook - the value the hook returns becomes the state,
+fixing the app's state type:
 
-- **At build time** with `RustStream::insert_state(value)` - for values that need no async work
-  (parsed configuration, a constructed client).
-- **In an `on_startup` hook** with `state.insert(value)` - for resources that need `await` to
-  create (a database pool). See [Lifespan](lifespan.md) for the hook contract.
+```rust
+--8<-- "examples/context.rs:app"
+```
 
-Inserting a second value of the same type replaces the first. Handlers read it through the context
-with `ctx.state().get::<T>()`, which returns `Option<&T>` - `None` only if nothing of that type was
-inserted. The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
-references, not copies; interior mutability (an `AtomicU64`, a mutex-guarded map) is the tool when
-a shared value must change at runtime.
+The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
+the third `Context` generic (`Context<'_, C, S>`), and the runtime only lets that handler mount on
+an app whose state type matches. A handler that names no state type is generic over it, so it mounts
+on any app - this holds for `publish(..)` handlers too: one that ignores the state omits the
+`Context` parameter entirely and still mounts on a stateful app. The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
+references, not copies; interior mutability (an `AtomicU64`, a mutex-guarded map) is the tool when a
+shared value must change at runtime. See [Lifespan](lifespan.md) for the startup-hook contract.
 
 ```rust
 --8<-- "examples/context.rs:state"
@@ -48,33 +51,35 @@ What the context exposes:
 | `name()` | `&str` | the channel / subject the message arrived on |
 | `headers()` | `&Headers` | the working copy of the message headers |
 | `headers_mut()` | `&mut Headers` | the same copy, for middleware to enrich |
-| `state()` | `&State` | shared application state (then `.get::<T>()`) |
-| `get::<T>()` | `Option<&T>` | a per-delivery [extension](#per-delivery-extensions) |
-| `insert::<T>(v)` | `()` | write a per-delivery [extension](#per-delivery-extensions) |
-| `publisher(name)` | `Option<ScopedPublisher>` | a [named publisher](publishing.md#publishing-from-inside-a-handler) |
+| `state()` | `&S` | the typed shared application state, borrowed directly |
+| `context(KEY)` | `KEY::Value` | a [broker field](#per-delivery-context) read by compile-time key |
+| `set(KEY, v)` | `()` | write a per-delivery [scratch value](#per-delivery-context) (middleware) |
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 
 Closure handlers (the manual `typed(codec, |msg, ctx| ...)` form) always take the context as their
 second argument.
 
-## Per-delivery extensions
+## Per-delivery context
 
-Beside the shared `State`, the context carries an `Extensions` type-map scoped to one delivery:
-`ctx.insert::<T>(value)` writes it, `ctx.get::<T>()` reads it back, and it is dropped when the
-handler returns, so one delivery's values never leak into the next. Use it for data that belongs to
-a single message rather than the whole service - a correlation id, an authenticated user a layer
-resolved, a tracing span.
+Beside the shared application state, the context carries the broker's typed per-delivery context,
+read by **compile-time key** with no hashing, boxing, or downcasting. A key is a zero-sized selector the
+broker exports; `ctx.context(KEY)` resolves it to a direct field read off the context, so a handler
+reads native delivery metadata - a stream id, an offset, a delivery handle - without the broker
+serializing it into the byte-only headers. A key implements `Field` only for the context types that
+carry its field, so an inapplicable key is a compile error rather than a runtime miss.
 
 ```rust
---8<-- "examples/context.rs:extensions"
+--8<-- "examples/context_field.rs:field"
 ```
 
-A broker can also seed the map: implementing `IncomingMessage::extensions` lets it hand the handler
-typed per-delivery values (native delivery metadata, a commit token, a reply-to handle) without
-serializing them into the byte-only headers. The runtime moves the broker's map into the context
-before the handler runs, and those values stay reachable through the publish pipeline, so a
-transactional publisher can read a broker-supplied commit token at commit time.
+The context type is built from the message by `BuildContext`, which the runtime calls once per
+delivery; a broker with no per-delivery fields uses `()`, the default (so a `#[subscriber]` handler
+that names no context type sees `Context<'_>`). Middleware can also carry a typed scratch value to a
+downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value)` and the handler
+`ctx.context(KEY)` it back - a correlation id, an authenticated user a layer resolved - without
+serializing it into the headers. The context is built fresh per delivery, so one delivery's values
+never leak into the next.
 
 ## The headers working copy
 
@@ -100,14 +105,13 @@ Two boundaries to keep in mind:
   untouched.
 - Outgoing messages do not inherit the copy. Replies and manual publishes start from fresh
   headers; attach outgoing metadata in the [publish pipeline](publishing.md#the-publish-pipeline)
-  (a `PublishLayer` or `PublishMiddleware`) instead.
+  (a `PublishTransform` or `PublishLayer`) instead.
 
-## Publishing through the context
+## Publishing from a handler
 
-`ctx.publisher("name")` resolves a publisher registered with `RustStream::publisher(name, p)` and
-returns `None` when nothing is registered under that name. Sends through it run the application's
-dynamic publish middleware - the same chain as a macro reply - so a manual publish is not a hole
-in the pipeline:
+To publish from inside a handler (beyond the `publish(..)` reply form), put the publisher in the
+typed application state and reach it with `ctx.state()` - it stays typed, so the handler uses its
+own API directly:
 
 ```rust
 --8<-- "examples/publishing.rs:forward"

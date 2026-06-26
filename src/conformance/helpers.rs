@@ -1,7 +1,7 @@
 //! Async assertion helpers for end-user broker integration tests.
 //!
 //! These are intentionally broker-agnostic and operate on the `ruststream-core` traits, so
-//! they can be reused by application tests against any broker that ships a `TestClient`.
+//! they can be reused by application tests against any broker.
 
 use std::{future::Future, time::Duration};
 

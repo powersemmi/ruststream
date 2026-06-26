@@ -27,7 +27,6 @@ where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: Handler<T>,
 {
     Typed {
         codec,
@@ -64,14 +63,16 @@ impl<M, T, C, H> fmt::Debug for Typed<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H> Handler<M> for Typed<M, T, C, H>
+impl<M, T, C, H, Cx, St> Handler<M, Cx, St> for Typed<M, T, C, H>
 where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync,
     C: Codec,
-    H: Handler<T>,
+    Cx: Send,
+    St: Send + Sync,
+    H: Handler<T, Cx, St>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> Settle {
         match self.codec.decode::<T>(msg.payload()) {
             Ok(value) => self.inner.handle(&value, ctx).await,
             Err(err) => {
@@ -82,6 +83,8 @@ where
                     error = %err,
                     "codec decode failed",
                 );
+                #[cfg(feature = "testing")]
+                ctx.mark_decode_failed();
                 match self.decode {
                     FailurePolicy::FailFast => {
                         ctx.fail_fast(&format!("decode failed: {err}"));
@@ -104,7 +107,7 @@ mod tests {
 
     use super::typed;
     use crate::codec::JsonCodec;
-    use crate::runtime::context::{Context, State};
+    use crate::runtime::context::Context;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::failure::FailurePolicy;
     use crate::runtime::handler::{Handler, HandlerResult};
@@ -147,10 +150,10 @@ mod tests {
     async fn decoded_value_reaches_inner() {
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = StubMsg(b"7".to_vec(), Headers::new());
         assert_eq!(
@@ -164,10 +167,10 @@ mod tests {
     async fn decode_failure_drops_by_default() {
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
         assert_eq!(
@@ -182,10 +185,10 @@ mod tests {
         let seen = Arc::new(AtomicU32::new(0));
         let handler =
             typed(JsonCodec, counting_inner(&seen)).on_decode_failure(FailurePolicy::Retry);
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
         assert_eq!(
@@ -199,10 +202,10 @@ mod tests {
     async fn typed_handler_is_debug_and_stub_acks() {
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("typed", &headers, &state, &delivery);
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
         // Drive one delivery to pin the message type, then check the Debug rendering.
         let msg = StubMsg(b"5".to_vec(), Headers::new());
         let _ = handler.handle(&msg, &mut ctx).await;
@@ -263,10 +266,10 @@ mod tests {
 
         let seen = Arc::new(AtomicU32::new(0));
         let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = State::default();
+        let state = ();
         let delivery = Delivery::empty();
         let headers = Headers::new();
-        let mut ctx = Context::new("orders.inbound", &headers, &state, &delivery);
+        let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
         let msg = StubMsg(b"not json".to_vec(), Headers::new());
         assert_eq!(
             handler.handle(&msg, &mut ctx).await.outcome(),

@@ -1,0 +1,8 @@
+# cargo-generate manifest for the in-memory RustStream starter.
+#
+# Render it with:
+#   cargo generate --git https://github.com/powersemmi/ruststream templates/memory --name my-service
+#
+# `{{project-name}}` (the --name value) is a cargo-generate built-in; no placeholders need declaring.
+[template]
+description = "An in-memory RustStream starter service (no external broker)"

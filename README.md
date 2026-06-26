@@ -91,8 +91,11 @@ fn app() -> RustStream {
 ```bash
 ruststream run                 # start the service (or: cargo run -- run)
 ruststream asyncapi gen        # print the AsyncAPI document
-ruststream new my-service      # scaffold a new project
 ```
+
+Scaffold a fresh project with `cargo generate --git https://github.com/powersemmi/ruststream
+templates/memory --name my-service` (each broker crate ships its own template). See the
+[quick start](https://powersemmi.github.io/ruststream/getting-started/quickstart/).
 
 ## Test it
 

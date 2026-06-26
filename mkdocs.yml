@@ -90,11 +90,13 @@ nav:
   - Observability:
       - guides/logging.md
       - guides/metrics.md
+      - guides/opentelemetry.md
       - guides/asyncapi.md
   - Testing:
       - guides/testing.md
   - CLI:
       - guides/cli.md
+      - guides/templates.md
   - Brokers:
       - brokers/index.md
       - brokers/memory.md
