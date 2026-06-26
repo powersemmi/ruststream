@@ -77,8 +77,8 @@ async fn forward(event: &Event, ctx: &mut Context<'_, (), AppState>) -> HandlerR
 /// A static, per-publisher transform: stamps an envelope header on every outgoing message.
 struct EnvelopeLayer;
 
-impl PublishLayer for EnvelopeLayer {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<C> PublishLayer<C> for EnvelopeLayer {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
@@ -89,10 +89,10 @@ impl PublishLayer for EnvelopeLayer {
 struct AuditPublish;
 
 impl PublishMiddleware for AuditPublish {
-    fn on_publish<'a>(
+    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a>,
+        next: PublishNext<'a, N>,
     ) -> Pin<
         Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
     > {

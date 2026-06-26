@@ -21,7 +21,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishMiddleware, ReplyPublisher};
+use super::publish::{PublishContext, PublishPipeline, ReplyPublisher};
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -130,7 +130,7 @@ pub struct BatchPublishingHandler<D, C, R> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: R,
-    pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) pipeline: Arc<dyn PublishPipeline>,
     pub(crate) decode: FailurePolicy,
 }
 
@@ -161,9 +161,10 @@ where
         let outcome = match self.def.call(&values, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
+                let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
                 match self
                     .publisher
-                    .publish_batch(name, &replies, &self.pipeline)
+                    .publish_batch(name, &replies, &*self.pipeline, &pubcx)
                     .await
                 {
                     Ok(()) => HandlerResult::Ack,
@@ -260,7 +261,7 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: Arc::from([]),
+            pipeline: Arc::new(crate::runtime::PublishEnd),
             decode: FailurePolicy::Drop,
         };
 
@@ -298,7 +299,7 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: Arc::from([]),
+            pipeline: Arc::new(crate::runtime::PublishEnd),
             decode: FailurePolicy::Drop,
         };
 

@@ -16,7 +16,7 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
-use crate::runtime::publish::{PublishLayer, PublishMiddleware, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher};
 use crate::runtime::publisher_registry::ErasedPublisher;
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
 use crate::runtime::router::{RouterDef, RouterSink};
@@ -33,7 +33,7 @@ use crate::runtime::typed::{Typed, typed};
 pub struct BrokerScope<B, L = Identity, C = (), St = ()> {
     pub(super) broker: Arc<B>,
     pub(super) sink: RouterSink<B, St>,
-    pub(super) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(super) pipeline: Arc<dyn PublishPipeline>,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(super) global: L,
     pub(super) codec: C,
@@ -235,13 +235,15 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
         D: PublishingCall<St> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
+        D::Context:
+            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         C: Codec + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer + 'static,
+        PL: PublishLayer<D::Context> + 'static,
         St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, C, P, PC, PL>>,
-        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, (), St> + 'static,
+        L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();

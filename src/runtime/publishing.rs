@@ -18,7 +18,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishLayer, PublishMiddleware, TypedPublisher};
+use super::publish::{PublishContext, PublishLayer, PublishPipeline, TypedPublisher};
 
 /// A subscriber definition that produces a reply to publish.
 ///
@@ -31,6 +31,13 @@ pub trait PublishingDef: Send + Sync {
 
     /// The reply type the handler produces, encoded and published.
     type Reply;
+
+    /// The broker's typed per-delivery context the handler reads by key, mirroring
+    /// [`SubscriberDef::Context`](super::SubscriberDef::Context) (`()` when the handler names
+    /// none). It is threaded onto the reply's static
+    /// [`PublishLayer`](super::PublishLayer) so a publish transform can stamp the delivery's trace
+    /// or correlation id on the reply.
+    type Context;
 
     /// The subscription source this handler binds to (see
     /// [`SubscriberDef::Source`](super::SubscriberDef::Source)).
@@ -94,7 +101,7 @@ pub trait PublishingCall<S>: PublishingDef {
     fn call(
         &self,
         input: &Self::Input,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
 }
 
@@ -121,7 +128,7 @@ pub struct PublishingHandler<D, C, P, PC, PL> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: TypedPublisher<P, PC, PL>,
-    pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) pipeline: Arc<dyn PublishPipeline>,
     pub(crate) decode: FailurePolicy,
 }
 
@@ -133,19 +140,20 @@ impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
     }
 }
 
-impl<M, D, C, P, PC, PL, S> Handler<M, (), S> for PublishingHandler<D, C, P, PC, PL>
+impl<M, D, C, P, PC, PL, S> Handler<M, D::Context, S> for PublishingHandler<D, C, P, PC, PL>
 where
     M: IncomingMessage,
     D: PublishingCall<S>,
     D::Input: DeserializeOwned + Send + Sync,
     D::Reply: Serialize + Send + Sync,
+    D::Context: Send + Sync,
     C: Codec,
     P: Publisher,
     PC: Codec,
-    PL: PublishLayer,
+    PL: PublishLayer<D::Context>,
     S: Send + Sync,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, (), S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, D::Context, S>) -> Settle {
         // The publishing path settles by a bare outcome (no per-element continuation): decode,
         // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
         let input = match self.codec.decode::<D::Input>(msg.payload()) {
@@ -175,7 +183,10 @@ where
             Err(result) => return result.into(),
         };
         let name = self.def.reply_name();
-        let publish = self.publisher.publish(name, &reply, &self.pipeline);
+        let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
+        let publish = self
+            .publisher
+            .publish(name, &reply, &*self.pipeline, &pubcx);
         if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",
@@ -207,6 +218,7 @@ mod tests {
     impl PublishingDef for ManualPub {
         type Input = u32;
         type Reply = u32;
+        type Context = ();
         type Source = Name;
 
         fn source(&self) -> Name {

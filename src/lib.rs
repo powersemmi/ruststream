@@ -112,6 +112,9 @@ pub mod metrics;
 #[cfg(feature = "logging")]
 pub mod logging;
 
+#[cfg(feature = "opentelemetry")]
+pub mod opentelemetry;
+
 /// Implementation detail used by the `#[subscriber]` macro to capture a payload's JSON Schema.
 ///
 /// Not part of the public API; no stability guarantees.
