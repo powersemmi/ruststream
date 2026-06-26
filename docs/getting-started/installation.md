@@ -5,7 +5,7 @@ features. Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.4", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.5", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
