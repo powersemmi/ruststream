@@ -21,7 +21,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishContext, PublishEnd, PublishPipeline, ReplyPublisher};
+use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -126,7 +126,7 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
 /// with a plain publisher a mid-batch failure can therefore re-publish the earlier replies on
 /// redelivery (at-least-once), while a [`Transactional`](super::Transactional) publisher never
 /// leaves them half-visible.
-pub struct BatchPublishingHandler<D, C, R, PP = PublishEnd> {
+pub struct BatchPublishingHandler<D, C, R, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: R,
@@ -262,7 +262,7 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: PublishEnd,
+            pipeline: PublishIdentity,
             decode: FailurePolicy::Drop,
         };
 
@@ -300,7 +300,7 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: PublishEnd,
+            pipeline: PublishIdentity,
             decode: FailurePolicy::Drop,
         };
 

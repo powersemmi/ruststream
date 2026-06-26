@@ -17,7 +17,7 @@ use common::handler_signal;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishContext, PublishLayer, Router, RustStream,
+    AppInfo, HandlerResult, Outgoing, PublishContext, PublishTransform, Router, RustStream,
     TypedPublisher,
 };
 use ruststream::{
@@ -333,7 +333,7 @@ async fn chain_codec_router_batch_publishing_replies() {
 #[derive(Clone)]
 struct StampApp;
 
-impl ruststream::runtime::PublishMiddleware for StampApp {
+impl ruststream::runtime::PublishLayer for StampApp {
     fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
@@ -504,7 +504,7 @@ impl Field<TraceCtx> for Correlation {
 
 struct PropagateCorrelation;
 
-impl PublishLayer<TraceCtx> for PropagateCorrelation {
+impl PublishTransform<TraceCtx> for PropagateCorrelation {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
         if let Some(id) = cx.context(Correlation) {
             out.headers_mut()
@@ -536,7 +536,7 @@ async fn router_publishing_threads_typed_delivery_context() {
 
     let router = Router::<MemoryBroker>::new().include_publishing(
         tc_relay,
-        TypedPublisher::new(broker.publisher()).layer(PropagateCorrelation),
+        TypedPublisher::new(broker.publisher()).transform(PropagateCorrelation),
     );
 
     let app = RustStream::new(AppInfo::new("tc", "0.1.0")).with_broker(broker, |b| {

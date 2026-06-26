@@ -10,7 +10,7 @@
 //!   incoming [W3C `traceparent`](https://www.w3.org/TR/trace-context/) header, opens a `tracing`
 //!   span for the handler, and stamps the *consumer's* span onto the working headers so a reply
 //!   published from that handler becomes its child.
-//! - [`OpenTelemetry::propagation`] - a static [`PublishLayer`] that copies the working
+//! - [`OpenTelemetry::propagation`] - a static [`PublishTransform`] that copies the working
 //!   `traceparent` onto every reply. Reuse it on a batch publisher with
 //!   [`for_batch`](crate::runtime::for_batch).
 //!
@@ -31,7 +31,7 @@
 //! let otel = OpenTelemetry::new();
 //! let broker = MemoryBroker::new();
 //! // Replies carry the delivery's trace context.
-//! let publisher = TypedPublisher::new(broker.publisher()).layer(otel.propagation());
+//! let publisher = TypedPublisher::new(broker.publisher()).transform(otel.propagation());
 //! # let _ = publisher;
 //! # }
 //! ```
@@ -44,7 +44,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::Instrument;
 
 use crate::runtime::{
-    BlanketLayer, Context, Handler, Layer, Outgoing, PublishContext, PublishLayer, Settle,
+    BlanketLayer, Context, Handler, Layer, Outgoing, PublishContext, PublishTransform, Settle,
 };
 
 /// The HTTP header carrying the W3C trace context.
@@ -247,7 +247,7 @@ impl TraceContext {
 }
 
 /// The OpenTelemetry tracing integration: hands out the consume-side span [`Layer`] and the
-/// publish-side propagation [`PublishLayer`].
+/// publish-side propagation [`PublishTransform`].
 ///
 /// Cheap to construct and clone (it holds no state); make one and reuse it across the app.
 ///
@@ -294,9 +294,9 @@ impl OpenTelemetry {
         OpenTelemetryLayer
     }
 
-    /// The publish-side [`PublishLayer`]: copies the delivery's `traceparent` onto every reply. Bake
+    /// The publish-side [`PublishTransform`]: copies the delivery's `traceparent` onto every reply. Bake
     /// it onto a [`TypedPublisher`](crate::runtime::TypedPublisher) with
-    /// [`layer`](crate::runtime::TypedPublisher::layer) (or, for a batch publisher, via
+    /// [`transform`](crate::runtime::TypedPublisher::transform) (or, for a batch publisher, via
     /// [`for_batch`](crate::runtime::for_batch)).
     ///
     /// # Examples
@@ -374,14 +374,14 @@ where
     }
 }
 
-/// The publish-side [`PublishLayer`] handed out by [`OpenTelemetry::propagation`].
+/// The publish-side [`PublishTransform`] handed out by [`OpenTelemetry::propagation`].
 ///
 /// Copies the originating delivery's `traceparent` (and `tracestate`) onto the reply, so the trace
 /// continues across the publish. Generic over the handler context, so it mounts on any publisher.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TracePropagation;
 
-impl<C> PublishLayer<C> for TracePropagation {
+impl<C> PublishTransform<C> for TracePropagation {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         if let Some(traceparent) = cx.headers().get_str(TRACEPARENT) {
             out.headers_mut()

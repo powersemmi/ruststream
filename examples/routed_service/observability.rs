@@ -11,7 +11,9 @@
 
 use std::time::Instant;
 
-use ruststream::runtime::{BlanketLayer, Context, Handler, Layer, Outgoing, PublishLayer, Settle};
+use ruststream::runtime::{
+    BlanketLayer, Context, Handler, Layer, Outgoing, PublishTransform, Settle,
+};
 
 /// The layer value added with `RustStream::layer`.
 #[derive(Clone)]
@@ -54,13 +56,13 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 /// A static publish-side layer: stamps a provenance header on every message a publisher sends.
 ///
 /// This is the other kind of publisher customisation. Where the consume `Observe` layer wraps
-/// handlers, a [`PublishLayer`] is composed onto one [`TypedPublisher`](ruststream::runtime::TypedPublisher)
+/// handlers, a [`PublishTransform`] is composed onto one [`TypedPublisher`](ruststream::runtime::TypedPublisher)
 /// at build time with `.layer(..)` - zero-cost and scoped to that publisher, unlike the dynamic,
 /// app-wide metrics middleware added with `RustStream::publish_layer`. [`routes`](crate::routes)
 /// attaches it to the confirmations publisher, so every confirmation carries the header.
 pub(crate) struct StampSource;
 
-impl<C> PublishLayer<C> for StampSource {
+impl<C> PublishTransform<C> for StampSource {
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
         out.headers_mut()
             .insert("x-source-service", b"orders-service".to_vec());

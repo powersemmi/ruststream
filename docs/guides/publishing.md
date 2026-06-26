@@ -78,36 +78,36 @@ pool or HTTP client (see [Lifespan](lifespan.md)).
 
 Two kinds of transform run before a message leaves the process, and they compose:
 
-- **Static `PublishLayer`** on a `TypedPublisher`, added with `.layer(..)`. Zero-cost,
+- **Static `PublishTransform`** on a `TypedPublisher`, added with `.transform(..)`. Zero-cost,
   per-destination transforms (an envelope, a fixed content type, or stamping the delivery's trace /
   correlation id onto the reply). They run first, closest to the value.
-- **Static `PublishMiddleware`** on the application, added with `.publish_layer(..)`. Cross-cutting
+- **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can observe its result. The chain composes into a concrete type (no `dyn` dispatch at
   all), so it appears in the app's type parameter: a function that names its return type and calls
-  `publish_layer` spells the pipeline (`RustStream<L, St, PublishCons<MyMiddleware, PublishEnd>>`);
-  an app with no `publish_layer` keeps the default `PublishEnd` and omits it. Each middleware must be
+  `publish_layer` spells the pipeline (`RustStream<L, St, PublishStack<MyMiddleware, PublishIdentity>>`);
+  an app with no `publish_layer` keeps the default `PublishIdentity` and omits it. Each middleware must be
   `Clone` (the pipeline is cloned into each publishing handler), and the last one added runs
   outermost. The default (no middleware) is a direct send. For a middleware set decided at runtime,
   wrap it in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that.
 
-A static `PublishLayer` implements `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`; the
+A static `PublishTransform` implements `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`; the
 `PublishContext` is a read-only view of the delivery that produced the reply (its channel, the
-incoming headers, and the broker's typed per-delivery context by `Field` key), so a layer can carry
-a value from the incoming message onto the reply:
+incoming headers, and the broker's typed per-delivery context by `Field` key), so a transform can
+carry a value from the incoming message onto the reply:
 
 ```rust
---8<-- "examples/publishing.rs:static_layer"
+--8<-- "examples/publishing.rs:static_transform"
 ```
 
-A batch handler's replies skip the per-message `.layer(..)` stack; add a transform there with
-`.batch_layer(..)`, reusing a per-message `PublishLayer` via `for_batch(layer)`.
+A batch handler's replies skip the per-message `.transform(..)` stack; add a transform there with
+`.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`.
 
-A `PublishMiddleware` implements an around/next signature, so it can short-circuit, retry, or
-observe (reserve "dynamic" for `DynPublishMiddleware` inside a `PublishDynStack`):
+A `PublishLayer` implements an around/next signature, so it can short-circuit, retry, or
+observe (reserve "dynamic" for `PublishDynLayer` inside a `PublishDynStack`):
 
 ```rust
---8<-- "examples/publishing.rs:dynamic_middleware"
+--8<-- "examples/publishing.rs:app_layer"
 ```
 
 Both levels compose on the application:
@@ -117,7 +117,7 @@ Both levels compose on the application:
 ```
 
 The pipeline runs on the reply path (the `publish(..)` form). A publisher held in the state is used
-directly, so compose any per-publisher transforms onto it with `TypedPublisher::layer` when you
+directly, so compose any per-publisher transforms onto it with `TypedPublisher::transform` when you
 build it. The full program is
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 

@@ -17,7 +17,7 @@ use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
 use crate::runtime::publish::{
-    PublishEnd, PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher,
+    PublishIdentity, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
 use crate::runtime::publisher_registry::ErasedPublisher;
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
@@ -32,7 +32,7 @@ use crate::runtime::typed::{Typed, typed};
 /// stack `L`; registrations are collected and started later, in
 /// [`RustStream::run`](crate::runtime::RustStream::run). Each handler registered here is wrapped
 /// with `L` before it is stored.
-pub struct BrokerScope<B, L = Identity, C = (), St = (), PP = PublishEnd> {
+pub struct BrokerScope<B, L = Identity, C = (), St = (), PP = PublishIdentity> {
     pub(super) broker: Arc<B>,
     pub(super) sink: RouterSink<B, St>,
     pub(super) pipeline: PP,
@@ -244,7 +244,7 @@ impl<B: Broker + 'static, L, SC, St, PP> BrokerScope<B, L, SC, St, PP> {
         C: Codec + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
         PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,

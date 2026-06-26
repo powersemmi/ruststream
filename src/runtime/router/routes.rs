@@ -13,7 +13,7 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
-use crate::runtime::publish::{PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
 
 use super::SourceMessage;
@@ -228,7 +228,7 @@ where
     C: Codec + 'static,
     P: Publisher + 'static,
     PC: Codec + 'static,
-    PL: PublishLayer<D::Context> + 'static,
+    PL: PublishTransform<D::Context> + 'static,
 {
     fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
         self,

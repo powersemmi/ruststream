@@ -227,7 +227,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// The broker's per-delivery context, borrowed for the publish path.
     ///
     /// A reply published from this handler carries the delivery's typed context to its static
-    /// [`PublishLayer`](super::PublishLayer) as a [`PublishContext`](super::PublishContext); this is
+    /// [`PublishTransform`](super::PublishTransform) as a [`PublishContext`](super::PublishContext); this is
     /// the accessor the runtime uses to build that read-only view.
     pub(crate) fn cx_ref(&self) -> &C {
         &self.cx

@@ -15,7 +15,7 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
-use crate::runtime::publish::{PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::typed;
@@ -382,7 +382,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         C: Codec + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();

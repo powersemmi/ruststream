@@ -2,7 +2,7 @@
 //!
 //! A single [`Metrics`] object owns the counters and the [`Registry`] they are
 //! registered in, and hands out two middleware: a static consume-side [`Layer`] and a publish-side
-//! [`PublishMiddleware`]. Both share the same registry, so one [`Metrics::export`] renders the whole
+//! [`PublishLayer`]. Both share the same registry, so one [`Metrics::export`] renders the whole
 //! picture. The registry is the global default unless you pass your own.
 //!
 //! HTTP exposition is the user's concern: call [`export`](Metrics::export) and serve the string from
@@ -33,7 +33,7 @@ use prometheus::{
 };
 
 use crate::runtime::{
-    BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishMiddleware, PublishNext,
+    BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishLayer, PublishNext,
     PublishPipeline, Settle,
 };
 
@@ -137,7 +137,7 @@ impl Metrics {
         }
     }
 
-    /// A publish-side [`PublishMiddleware`] that counts each published message.
+    /// A publish-side [`PublishLayer`] that counts each published message.
     #[must_use]
     pub fn publish_layer(&self) -> MetricsPublish {
         MetricsPublish {
@@ -245,7 +245,7 @@ where
     }
 }
 
-/// The [`PublishMiddleware`] handed out by [`Metrics::publish_layer`].
+/// The [`PublishLayer`] handed out by [`Metrics::publish_layer`].
 #[derive(Clone)]
 pub struct MetricsPublish {
     inner: Arc<Inner>,
@@ -257,7 +257,7 @@ impl std::fmt::Debug for MetricsPublish {
     }
 }
 
-impl PublishMiddleware for MetricsPublish {
+impl PublishLayer for MetricsPublish {
     fn on_publish<'a, N: PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,

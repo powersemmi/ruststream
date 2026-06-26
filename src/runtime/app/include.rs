@@ -11,7 +11,7 @@ use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::middleware::Layer;
-use crate::runtime::publish::{PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
@@ -197,7 +197,7 @@ impl<B: Broker + 'static, L, St, PP> BrokerScope<B, L, (), St, PP> {
             + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
         PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, PC, P, PC, PL, PP>>,
@@ -230,7 +230,7 @@ impl<B: Broker + 'static, L, St, PP> BrokerScope<B, L, (), St, PP> {
             crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
         PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, PC, P, PC, PL, PP>>,
@@ -381,7 +381,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St, PP> BrokerScope<B, 
             + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
         PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,
@@ -414,7 +414,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St, PP> BrokerScope<B, 
             crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
         PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
         L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,

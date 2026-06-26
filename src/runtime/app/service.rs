@@ -13,7 +13,7 @@ use crate::runtime::dispatch::Delivery;
 use crate::runtime::lifecycle::{BoxError, BrokerLifecycle};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
-use crate::runtime::publish::{PublishCons, PublishEnd, PublishMiddleware};
+use crate::runtime::publish::{PublishIdentity, PublishLayer, PublishStack};
 use crate::runtime::router::RouterSink;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
@@ -60,7 +60,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// app.run().await
 /// # }
 /// ```
-pub struct RustStream<L = Identity, St = (), PP = PublishEnd> {
+pub struct RustStream<L = Identity, St = (), PP = PublishIdentity> {
     pub(super) info: AppInfo,
     pub(super) brokers: Vec<RegisteredBroker>,
     pub(super) starters: Vec<Starter<St>>,
@@ -118,7 +118,7 @@ impl<L, St, PP> std::fmt::Debug for RustStream<L, St, PP> {
     }
 }
 
-impl RustStream<Identity, (), PublishEnd> {
+impl RustStream<Identity, (), PublishIdentity> {
     /// Creates an empty service with the given metadata, no global middleware, and the unit
     /// application state `()`. Produce a typed state with [`on_startup`](Self::on_startup).
     #[must_use]
@@ -129,7 +129,7 @@ impl RustStream<Identity, (), PublishEnd> {
             starters: Vec::new(),
             handlers: Vec::new(),
             servers: BTreeMap::new(),
-            publish_pipeline: PublishEnd,
+            publish_pipeline: PublishIdentity,
             state_init: Box::new(|| Box::pin(async { Ok(()) })),
             after_startup: Vec::new(),
             on_shutdown: Vec::new(),
@@ -287,9 +287,9 @@ impl<L, St, PP> RustStream<L, St, PP> {
     /// be [`Clone`] (the pipeline is cloned into each publishing handler). Call before
     /// [`with_broker`](Self::with_broker).
     #[must_use]
-    pub fn publish_layer<M>(self, middleware: M) -> RustStream<L, St, PublishCons<M, PP>>
+    pub fn publish_layer<M>(self, middleware: M) -> RustStream<L, St, PublishStack<M, PP>>
     where
-        M: PublishMiddleware + Clone + 'static,
+        M: PublishLayer + Clone + 'static,
     {
         // Prepend `middleware` as the new outermost wrapper: the publish pipeline stays a statically
         // composed type (no `dyn` dispatch), and the last one added runs outermost.
@@ -299,7 +299,7 @@ impl<L, St, PP> RustStream<L, St, PP> {
             starters: self.starters,
             handlers: self.handlers,
             servers: self.servers,
-            publish_pipeline: PublishCons::new(middleware, self.publish_pipeline),
+            publish_pipeline: PublishStack::new(middleware, self.publish_pipeline),
             state_init: self.state_init,
             after_startup: self.after_startup,
             on_shutdown: self.on_shutdown,

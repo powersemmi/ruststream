@@ -18,7 +18,9 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishContext, PublishEnd, PublishLayer, PublishPipeline, TypedPublisher};
+use super::publish::{
+    PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
+};
 
 /// A subscriber definition that produces a reply to publish.
 ///
@@ -35,7 +37,7 @@ pub trait PublishingDef: Send + Sync {
     /// The broker's typed per-delivery context the handler reads by key, mirroring
     /// [`SubscriberDef::Context`](super::SubscriberDef::Context) (`()` when the handler names
     /// none). It is threaded onto the reply's static
-    /// [`PublishLayer`](super::PublishLayer) so a publish transform can stamp the delivery's trace
+    /// [`PublishTransform`](super::PublishTransform) so a publish transform can stamp the delivery's trace
     /// or correlation id on the reply.
     type Context;
 
@@ -120,11 +122,11 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, encode the reply, publish, ack.
 ///
 /// `C` decodes the incoming message; the reply is encoded by the [`TypedPublisher`] (with its static
-/// [`PublishLayer`] stack `PL`) and sent to the definition's
+/// [`PublishTransform`] stack `PL`) and sent to the definition's
 /// [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)` skips the publish;
 /// a failed reply publish nacks the incoming message with `requeue = true`, so the broker
 /// redelivers it instead of silently losing the reply.
-pub struct PublishingHandler<D, C, P, PC, PL, PP = PublishEnd> {
+pub struct PublishingHandler<D, C, P, PC, PL, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: TypedPublisher<P, PC, PL>,
@@ -150,7 +152,7 @@ where
     C: Codec,
     P: Publisher,
     PC: Codec,
-    PL: PublishLayer<D::Context>,
+    PL: PublishTransform<D::Context>,
     PP: PublishPipeline,
     S: Send + Sync,
 {

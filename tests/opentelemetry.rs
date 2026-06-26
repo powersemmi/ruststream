@@ -55,7 +55,7 @@ async fn run_and_capture(incoming: Option<&'static str>) -> TraceContext {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
     // The publisher propagates the delivery's trace context onto each reply.
-    let reply_pub = TypedPublisher::new(broker.publisher()).layer(otel.propagation());
+    let reply_pub = TypedPublisher::new(broker.publisher()).transform(otel.propagation());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         // The consume layer opens a span per delivery and records the consumer's trace context.
