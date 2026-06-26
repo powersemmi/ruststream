@@ -239,6 +239,88 @@ impl<C, Inner: PublishLayer<C>, Outer: PublishLayer<C>> PublishLayer<C>
     }
 }
 
+/// A static publish transform that runs only on a `#[subscriber(batch(..), publish(..))]` handler's
+/// replies, not on single-message replies.
+///
+/// The batch counterpart of [`PublishLayer`], kept a distinct trait so a transform that belongs to
+/// the batch path only (a header marking a reply as batched, a per-batch sampling decision) cannot
+/// be added with [`TypedPublisher::layer`] by mistake; it is added with
+/// [`TypedPublisher::batch_layer`], which the single-message mounts reject at compile time. The
+/// per-message [`PublishLayer`] stack does not run for batched replies and this one does not run for
+/// single-message replies - the two paths are independent. To use the same transform on both, add
+/// it to each, reusing it on the batch side with [`for_batch`] (no second implementation). Each
+/// reply in the batch is passed through it individually, reading the delivery through
+/// [`PublishContext`].
+pub trait BatchPublishLayer<C = ()>: Send + Sync {
+    /// Transforms one of the batch's outgoing replies before it is sent.
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>);
+}
+
+/// The no-op [`BatchPublishLayer`]: the default for a [`TypedPublisher`] with no batch transforms.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BatchIdentity;
+
+impl<C> BatchPublishLayer<C> for BatchIdentity {
+    fn apply(&self, _out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {}
+}
+
+/// Composes two [`BatchPublishLayer`]s: `inner` runs first, then `outer`. Built by
+/// [`TypedPublisher::batch_layer`]; you rarely name it directly.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BatchPublishStack<Inner, Outer> {
+    inner: Inner,
+    outer: Outer,
+}
+
+impl<C, Inner: BatchPublishLayer<C>, Outer: BatchPublishLayer<C>> BatchPublishLayer<C>
+    for BatchPublishStack<Inner, Outer>
+{
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+        self.inner.apply(out, cx);
+        self.outer.apply(out, cx);
+    }
+}
+
+/// Adapts a per-message [`PublishLayer`] into a [`BatchPublishLayer`], applying it to each reply of
+/// a batch. Built by [`for_batch`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ForBatch<L>(L);
+
+impl<C, L: PublishLayer<C>> BatchPublishLayer<C> for ForBatch<L> {
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+        self.0.apply(out, cx);
+    }
+}
+
+/// Lifts a per-message [`PublishLayer`] onto the batch path so the same transform can be added with
+/// [`TypedPublisher::batch_layer`] without a second implementation.
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # {
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::runtime::{for_batch, Outgoing, PublishContext, PublishLayer, TypedPublisher};
+///
+/// struct Stamp;
+/// impl<C> PublishLayer<C> for Stamp {
+///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+///         out.headers_mut().insert("x-stamp", b"1".to_vec());
+///     }
+/// }
+///
+/// let broker = MemoryBroker::new();
+/// // The same `Stamp` on both paths: per message, and batched.
+/// let publisher = TypedPublisher::new(broker.publisher())
+///     .layer(Stamp)
+///     .batch_layer(for_batch(Stamp));
+/// # let _ = publisher;
+/// # }
+/// ```
+#[must_use]
+pub fn for_batch<L>(layer: L) -> ForBatch<L> {
+    ForBatch(layer)
+}
+
 /// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishLayer`] stack, ready to send
 /// typed values.
 ///
@@ -263,13 +345,14 @@ impl<C, Inner: PublishLayer<C>, Outer: PublishLayer<C>> PublishLayer<C>
 /// ```
 ///
 /// [macro]: crate::subscriber
-pub struct TypedPublisher<P, C, PL = PublishIdentity> {
+pub struct TypedPublisher<P, C, PL = PublishIdentity, BL = BatchIdentity> {
     publisher: P,
     codec: C,
     layers: PL,
+    batch_layers: BL,
 }
 
-impl<P, C> TypedPublisher<P, C, PublishIdentity> {
+impl<P, C> TypedPublisher<P, C, PublishIdentity, BatchIdentity> {
     /// Pairs `publisher` with an explicit `codec` and no static transforms.
     #[must_use]
     pub fn with_codec(publisher: P, codec: C) -> Self {
@@ -277,12 +360,13 @@ impl<P, C> TypedPublisher<P, C, PublishIdentity> {
             publisher,
             codec,
             layers: PublishIdentity,
+            batch_layers: BatchIdentity,
         }
     }
 }
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-impl<P> TypedPublisher<P, DefaultCodec, PublishIdentity> {
+impl<P> TypedPublisher<P, DefaultCodec, PublishIdentity, BatchIdentity> {
     /// Pairs `publisher` with the [`DefaultCodec`](DefaultCodec) and no static
     /// transforms. Use [`with_codec`](Self::with_codec) to name a codec explicitly.
     #[must_use]
@@ -291,22 +375,44 @@ impl<P> TypedPublisher<P, DefaultCodec, PublishIdentity> {
     }
 }
 
-impl<P, C, PL> TypedPublisher<P, C, PL> {
+impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// The codec this publisher encodes replies with. Lets the runtime reuse it as the decode
     /// codec when a publishing handler is mounted without an explicit one.
     pub(crate) const fn codec(&self) -> &C {
         &self.codec
     }
 
-    /// Adds a static [`PublishLayer`], applied to every outgoing message from this publisher. The
-    /// first one added runs first (closest to the encoded value).
+    /// Adds a static [`PublishLayer`], applied to every single-message reply from this publisher
+    /// (a `#[subscriber(.., publish(..))]` handler). It does not run on the batch path; use
+    /// [`batch_layer`](Self::batch_layer) for that. The first one added runs first (closest to the
+    /// encoded value).
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> TypedPublisher<P, C, PublishStack<PL, N>> {
+    pub fn layer<N>(self, layer: N) -> TypedPublisher<P, C, PublishStack<PL, N>, BL> {
         TypedPublisher {
             publisher: self.publisher,
             codec: self.codec,
             layers: PublishStack {
                 inner: self.layers,
+                outer: layer,
+            },
+            batch_layers: self.batch_layers,
+        }
+    }
+
+    /// Adds a static [`BatchPublishLayer`], applied to every reply of a
+    /// `#[subscriber(batch(..), publish(..))]` handler only (after the per-message
+    /// [`PublishLayer`] stack), never to a single-message reply. Wrap a per-message
+    /// [`PublishLayer`] with [`for_batch`] to reuse it here. The single-message mounts reject a
+    /// publisher carrying a non-trivial batch stack, so a batch-only transform cannot leak onto the
+    /// single path.
+    #[must_use]
+    pub fn batch_layer<N>(self, layer: N) -> TypedPublisher<P, C, PL, BatchPublishStack<BL, N>> {
+        TypedPublisher {
+            publisher: self.publisher,
+            codec: self.codec,
+            layers: self.layers,
+            batch_layers: BatchPublishStack {
+                inner: self.batch_layers,
                 outer: layer,
             },
         }
@@ -323,7 +429,7 @@ impl<P, C, PL> TypedPublisher<P, C, PL> {
     /// round-trips for no atomicity gain, so the single-message `include_publishing` forms keep
     /// taking a plain [`TypedPublisher`].
     #[must_use]
-    pub fn transactional(self) -> Transactional<P, C, PL>
+    pub fn transactional(self) -> Transactional<P, C, PL, BL>
     where
         P: TransactionalPublisher,
     {
@@ -331,7 +437,7 @@ impl<P, C, PL> TypedPublisher<P, C, PL> {
     }
 }
 
-impl<P: Publisher, C: Codec, PL> TypedPublisher<P, C, PL> {
+impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
     /// `cx`), then publishes to `name` through `pipeline`.
     pub(crate) async fn publish<T: Serialize + Sync, Cx>(
@@ -343,6 +449,7 @@ impl<P: Publisher, C: Codec, PL> TypedPublisher<P, C, PL> {
     ) -> Result<(), BoxError>
     where
         PL: PublishLayer<Cx>,
+        BL: Sync,
         Cx: Sync,
     {
         let payload = self
@@ -353,9 +460,34 @@ impl<P: Publisher, C: Codec, PL> TypedPublisher<P, C, PL> {
         self.layers.apply(&mut out, cx);
         run_publish(pipeline, &self.publisher, &mut out).await
     }
+
+    /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishLayer`] stack
+    /// instead of the per-message [`PublishLayer`] one. Used per reply on the batch path: the
+    /// per-message transforms do not run for batched replies (a transform wanted on both paths is
+    /// added to each, reusing it on the batch side with [`for_batch`]).
+    pub(crate) async fn publish_batched<T: Serialize + Sync, Cx>(
+        &self,
+        name: &str,
+        value: &T,
+        pipeline: &[Arc<dyn PublishMiddleware>],
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), BoxError>
+    where
+        PL: Sync,
+        BL: BatchPublishLayer<Cx>,
+        Cx: Sync,
+    {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(|e| Box::new(e) as BoxError)?;
+        let mut out = Outgoing::new(name, payload);
+        self.batch_layers.apply(&mut out, cx);
+        run_publish(pipeline, &self.publisher, &mut out).await
+    }
 }
 
-impl<P, C, PL> std::fmt::Debug for TypedPublisher<P, C, PL> {
+impl<P, C, PL, BL> std::fmt::Debug for TypedPublisher<P, C, PL, BL> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TypedPublisher").finish_non_exhaustive()
     }
@@ -367,11 +499,11 @@ impl<P, C, PL> std::fmt::Debug for TypedPublisher<P, C, PL> {
 /// `include_batch_publishing` mounts. Per batch, the runtime begins a transaction, publishes
 /// every reply, then commits before the incoming batch is acked; any failure aborts the
 /// transaction and the batch is retried, so replies are never half-visible.
-pub struct Transactional<P, C, PL = PublishIdentity> {
-    inner: TypedPublisher<P, C, PL>,
+pub struct Transactional<P, C, PL = PublishIdentity, BL = BatchIdentity> {
+    inner: TypedPublisher<P, C, PL, BL>,
 }
 
-impl<P, C, PL> std::fmt::Debug for Transactional<P, C, PL> {
+impl<P, C, PL, BL> std::fmt::Debug for Transactional<P, C, PL, BL> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Transactional").finish_non_exhaustive()
     }
@@ -382,8 +514,8 @@ mod sealed {
     /// two wirings above, not an extension point.
     pub trait Sealed {}
 
-    impl<P, C, PL> Sealed for super::TypedPublisher<P, C, PL> {}
-    impl<P, C, PL> Sealed for super::Transactional<P, C, PL> {}
+    impl<P, C, PL, BL> Sealed for super::TypedPublisher<P, C, PL, BL> {}
+    impl<P, C, PL, BL> Sealed for super::Transactional<P, C, PL, BL> {}
 }
 
 /// The reply wiring accepted by the `include_batch_publishing` mounts.
@@ -415,11 +547,12 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
         T: Serialize + Sync;
 }
 
-impl<P, C, PL, Cx> ReplyPublisher<Cx> for TypedPublisher<P, C, PL>
+impl<P, C, PL, BL, Cx> ReplyPublisher<Cx> for TypedPublisher<P, C, PL, BL>
 where
     P: Publisher,
     C: Codec,
-    PL: PublishLayer<Cx>,
+    PL: Send + Sync,
+    BL: BatchPublishLayer<Cx>,
     Cx: Sync,
 {
     type Codec = C;
@@ -441,17 +574,18 @@ where
         T: Serialize + Sync,
     {
         for reply in replies {
-            self.publish(name, reply, pipeline, cx).await?;
+            self.publish_batched(name, reply, pipeline, cx).await?;
         }
         Ok(())
     }
 }
 
-impl<P, C, PL, Cx> ReplyPublisher<Cx> for Transactional<P, C, PL>
+impl<P, C, PL, BL, Cx> ReplyPublisher<Cx> for Transactional<P, C, PL, BL>
 where
     P: TransactionalPublisher,
     C: Codec,
-    PL: PublishLayer<Cx>,
+    PL: Send + Sync,
+    BL: BatchPublishLayer<Cx>,
     Cx: Sync,
 {
     type Codec = C;
@@ -478,7 +612,7 @@ where
             .await
             .map_err(|e| Box::new(e) as BoxError)?;
         for reply in replies {
-            if let Err(err) = self.inner.publish(name, reply, pipeline, cx).await {
+            if let Err(err) = self.inner.publish_batched(name, reply, pipeline, cx).await {
                 abort_quietly(publisher).await;
                 return Err(err);
             }

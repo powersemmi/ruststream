@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
-    AppInfo, Outgoing, PublishContext, PublishLayer, RustStream, TypedPublisher,
+    AppInfo, Outgoing, PublishContext, PublishLayer, RustStream, TypedPublisher, for_batch,
 };
 use ruststream::{
     BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
@@ -123,6 +123,74 @@ async fn delivery_context_propagates_to_the_reply() {
         CAPTURED.lock().expect("poisoned").as_deref(),
         Some("trace-abc"),
         "the reply should carry the delivery's correlation id, stamped by the publish layer"
+    );
+
+    shutdown.notify_one();
+    run.await.expect("join").expect("run");
+}
+
+/// A batch-only transform: marks every batched reply, never a single-message one.
+struct MarkBatched;
+
+impl<C> PublishLayer<C> for MarkBatched {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+        out.headers_mut().insert("x-batched", b"1".to_vec());
+    }
+}
+
+#[subscriber(batch("batch-in"), publish("batch-out"))]
+async fn batch_echo(reqs: &[Req]) -> Vec<Resp> {
+    reqs.iter().map(|r| Resp { n: r.n }).collect()
+}
+
+static BATCHED: LazyLock<Mutex<Option<bool>>> = LazyLock::new(|| Mutex::new(None));
+static BATCH_GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber("batch-out")]
+async fn batch_capture(_resp: &Resp, ctx: &mut Context<'_>) {
+    *BATCHED.lock().expect("poisoned") = Some(ctx.headers().get("x-batched").is_some());
+    BATCH_GOT.notify_one();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_layer_runs_only_on_batched_replies() {
+    let broker = MemoryBroker::new();
+    let ingress_pub = broker.publisher();
+    // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
+    // single-message mounts would reject a publisher carrying it.
+    let reply_pub = TypedPublisher::new(broker.publisher()).batch_layer(for_batch(MarkBatched));
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch_publishing(batch_echo, reply_pub);
+        b.include(batch_capture);
+    });
+
+    let shutdown = Arc::new(Notify::new());
+    let signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
+    let captured = tokio::time::timeout(Duration::from_secs(2), async {
+        let notified = BATCH_GOT.notified();
+        tokio::pin!(notified);
+        loop {
+            ingress_pub
+                .publish(OutgoingMessage::new("batch-in", &payload))
+                .await
+                .expect("publish");
+            tokio::select! {
+                () = &mut notified => break,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(captured.is_ok(), "batched reply never captured");
+
+    assert_eq!(
+        *BATCHED.lock().expect("poisoned"),
+        Some(true),
+        "the batch layer should stamp every batched reply"
     );
 
     shutdown.notify_one();
