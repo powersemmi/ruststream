@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::opentelemetry::{OpenTelemetry, TraceContext};
-use ruststream::runtime::{AppInfo, Context, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
 use ruststream::{Headers, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -45,17 +45,21 @@ async fn capture(_resp: &Resp, ctx: &mut Context<'_>) {
 /// captured reply `traceparent`.
 async fn run_and_capture(incoming: Option<&'static str>) -> TraceContext {
     *CAPTURED.lock().expect("poisoned") = None;
+    // --8<-- [start:wiring]
     let otel = OpenTelemetry::new();
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
+    // The publisher propagates the delivery's trace context onto each reply.
     let reply_pub = TypedPublisher::new(broker.publisher()).layer(otel.propagation());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        // The consume layer opens a span per delivery and records the consumer's trace context.
         .layer(otel.consume_layer())
         .with_broker(broker, |b| {
             b.include_publishing(echo, reply_pub);
             b.include(capture);
         });
+    // --8<-- [end:wiring]
 
     let shutdown = Arc::new(Notify::new());
     let signal = Arc::clone(&shutdown);

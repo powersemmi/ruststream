@@ -79,17 +79,25 @@ pool or HTTP client (see [Lifespan](lifespan.md)).
 Two kinds of transform run before a message leaves the process, and they compose:
 
 - **Static `PublishLayer`** on a `TypedPublisher`, added with `.layer(..)`. Zero-cost,
-  per-destination transforms (an envelope, a fixed content type). They run first, closest to the
-  value.
-- **Dynamic publish middleware** on the application, added with `.publish_layer(..)`. Cross-cutting
-  concerns (publish metrics, a dead-letter wrapper) applied to every published message. They run
-  outside the static layers, then the message is sent.
+  per-destination transforms (an envelope, a fixed content type, or stamping the delivery's trace /
+  correlation id onto the reply). They run first, closest to the value.
+- **Static `PublishMiddleware`** on the application, added with `.publish_layer(..)`. Cross-cutting
+  concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
+  send so they can observe its result. The chain composes into a concrete type, mirroring the
+  consume-side stack: the default (no middleware) is a direct send. For a middleware set decided at
+  runtime, wrap it in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that.
 
-A static `PublishLayer` implements `apply(&mut Outgoing<'_>)`:
+A static `PublishLayer` implements `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`; the
+`PublishContext` is a read-only view of the delivery that produced the reply (its channel, the
+incoming headers, and the broker's typed per-delivery context by `Field` key), so a layer can carry
+a value from the incoming message onto the reply:
 
 ```rust
 --8<-- "examples/publishing.rs:static_layer"
 ```
+
+A batch handler's replies skip the per-message `.layer(..)` stack; add a transform there with
+`.batch_layer(..)`, reusing a per-message `PublishLayer` via `for_batch(layer)`.
 
 A dynamic middleware implements `PublishMiddleware` with an around/next signature, so it can
 short-circuit, retry, or observe:
