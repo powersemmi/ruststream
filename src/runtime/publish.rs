@@ -127,18 +127,6 @@ impl PublishPipeline for PublishEnd {
     }
 }
 
-// Lets the app store the composed chain boxed once behind a single indirection (the middleware
-// inside it stay statically composed) and lets each `publish_layer` prepend to that boxed tail.
-impl PublishPipeline for Arc<dyn PublishPipeline> {
-    fn run<'a>(
-        &'a self,
-        out: &'a mut Outgoing<'a>,
-        send: &'a dyn ErasedPublisher,
-    ) -> PublishFut<'a> {
-        (**self).run(out, send)
-    }
-}
-
 /// Prepends a [`PublishMiddleware`] `Head` to a [`PublishPipeline`] `Tail`. Built by
 /// [`RustStream::publish_layer`](super::RustStream::publish_layer); you rarely name it directly.
 #[derive(Debug, Clone, Copy, Default)]
@@ -611,17 +599,18 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
 impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
     /// `cx`), then publishes to `name` through `pipeline`.
-    pub(crate) async fn publish<T: Serialize + Sync, Cx>(
+    pub(crate) async fn publish<T: Serialize + Sync, Cx, PP>(
         &self,
         name: &str,
         value: &T,
-        pipeline: &dyn PublishPipeline,
+        pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
         PL: PublishLayer<Cx>,
         BL: Sync,
         Cx: Sync,
+        PP: PublishPipeline,
     {
         let payload = self
             .codec
@@ -636,17 +625,18 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// instead of the per-message [`PublishLayer`] one. Used per reply on the batch path: the
     /// per-message transforms do not run for batched replies (a transform wanted on both paths is
     /// added to each, reusing it on the batch side with [`for_batch`]).
-    pub(crate) async fn publish_batched<T: Serialize + Sync, Cx>(
+    pub(crate) async fn publish_batched<T: Serialize + Sync, Cx, PP>(
         &self,
         name: &str,
         value: &T,
-        pipeline: &dyn PublishPipeline,
+        pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
         PL: Sync,
         BL: BatchPublishLayer<Cx>,
         Cx: Sync,
+        PP: PublishPipeline,
     {
         let payload = self
             .codec
@@ -707,15 +697,16 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
     /// Publishes one batch's replies to `name` through `pipeline`, reading the originating
     /// delivery through `cx`.
     #[doc(hidden)]
-    fn publish_batch<'a, T>(
+    fn publish_batch<'a, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
-        pipeline: &'a dyn PublishPipeline,
+        pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send
     where
-        T: Serialize + Sync;
+        T: Serialize + Sync,
+        PP: PublishPipeline;
 }
 
 impl<P, C, PL, BL, Cx> ReplyPublisher<Cx> for TypedPublisher<P, C, PL, BL>
@@ -734,15 +725,16 @@ where
 
     /// Each reply is published independently: a mid-batch failure leaves the earlier replies
     /// visible, and the retried batch may publish them again (at-least-once).
-    async fn publish_batch<'a, T>(
+    async fn publish_batch<'a, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
-        pipeline: &'a dyn PublishPipeline,
+        pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
+        PP: PublishPipeline,
     {
         for reply in replies {
             self.publish_batched(name, reply, pipeline, cx).await?;
@@ -767,15 +759,16 @@ where
 
     /// All replies publish inside one transaction: begin, publish each, commit. Any failure
     /// aborts the transaction, so none of the batch's replies become visible.
-    async fn publish_batch<'a, T>(
+    async fn publish_batch<'a, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
-        pipeline: &'a dyn PublishPipeline,
+        pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
+        PP: PublishPipeline,
     {
         let publisher = &self.inner.publisher;
         publisher

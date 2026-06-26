@@ -11,8 +11,8 @@ use std::pin::Pin;
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Identity, Outgoing, PublishLayer, PublishMiddleware, PublishNext,
-    RustStream, TypedPublisher,
+    AppInfo, HandlerResult, Identity, Outgoing, PublishCons, PublishEnd, PublishLayer,
+    PublishMiddleware, PublishNext, RustStream, TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -86,6 +86,7 @@ impl<C> PublishLayer<C> for EnvelopeLayer {
 
 // --8<-- [start:dynamic_middleware]
 /// A dynamic, app-wide middleware: observes every publish, then passes it on.
+#[derive(Clone)]
 struct AuditPublish;
 
 impl PublishMiddleware for AuditPublish {
@@ -115,8 +116,11 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 }
 // --8<-- [end:batch_publishing]
 
+// The app-wide `publish_layer` composes into the pipeline type parameter, so the explicit return
+// type names it (`PublishCons<AuditPublish, PublishEnd>`). An app with no `publish_layer` keeps the
+// default `PublishEnd` and can omit the parameter.
 #[ruststream::app]
-fn app() -> RustStream<Identity, AppState> {
+fn app() -> RustStream<Identity, AppState, PublishCons<AuditPublish, PublishEnd>> {
     let broker = MemoryBroker::new();
     let egress = broker.publisher();
     // --8<-- [start:pipeline]

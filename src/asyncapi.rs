@@ -183,7 +183,7 @@ impl Reference {
 /// # }
 /// ```
 #[must_use]
-pub fn build_spec<L, St>(app: &RustStream<L, St>) -> Spec {
+pub fn build_spec<L, St, PP>(app: &RustStream<L, St, PP>) -> Spec {
     let info = Info {
         title: app.info().title.clone(),
         version: app.info().version.clone(),

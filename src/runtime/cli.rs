@@ -98,11 +98,11 @@ enum Command {
 /// # }
 /// ```
 #[must_use]
-pub fn run_main<L, St, F>(build: F) -> ExitCode
+pub fn run_main<L, St, PP, F>(build: F) -> ExitCode
 where
     L: Send,
     St: Send + Sync,
-    F: FnOnce() -> RustStream<L, St>,
+    F: FnOnce() -> RustStream<L, St, PP>,
 {
     match execute(build) {
         Ok(()) => ExitCode::SUCCESS,
@@ -113,11 +113,11 @@ where
     }
 }
 
-fn execute<L, St, F>(build: F) -> Result<(), CliError>
+fn execute<L, St, PP, F>(build: F) -> Result<(), CliError>
 where
     L: Send,
     St: Send + Sync,
-    F: FnOnce() -> RustStream<L, St>,
+    F: FnOnce() -> RustStream<L, St, PP>,
 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse(&args)? {
@@ -166,8 +166,8 @@ fn parse_asyncapi(args: &[String]) -> Result<Command, CliError> {
 }
 
 #[cfg(feature = "asyncapi")]
-fn generate_spec<L, St>(
-    app: &RustStream<L, St>,
+fn generate_spec<L, St, PP>(
+    app: &RustStream<L, St, PP>,
     out: Option<&str>,
     yaml: bool,
 ) -> Result<(), CliError> {
@@ -189,8 +189,8 @@ fn generate_spec<L, St>(
 }
 
 #[cfg(not(feature = "asyncapi"))]
-fn generate_spec<L, St>(
-    _app: &RustStream<L, St>,
+fn generate_spec<L, St, PP>(
+    _app: &RustStream<L, St, PP>,
     _out: Option<&str>,
     _yaml: bool,
 ) -> Result<(), CliError> {

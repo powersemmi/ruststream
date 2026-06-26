@@ -321,3 +321,85 @@ async fn chain_codec_router_batch_publishing_replies() {
     shutdown.notify_one();
     run.await.unwrap().unwrap();
 }
+
+// A static, app-wide publish middleware that stamps a header onto every reply. Used to prove the
+// app's `publish_layer` chain reaches a router-mounted publishing handler (it previously did not -
+// router publishing handlers were built with an empty pipeline).
+#[derive(Clone)]
+struct StampApp;
+
+impl ruststream::runtime::PublishMiddleware for StampApp {
+    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
+        &'a self,
+        out: &'a mut ruststream::runtime::Outgoing<'a>,
+        next: ruststream::runtime::PublishNext<'a, N>,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
+    > {
+        out.headers_mut().insert("x-app", b"1".to_vec());
+        next.run(out)
+    }
+}
+
+#[subscriber("rl-in", publish("rl-out"))]
+async fn rl_relay(o: &Order) -> Receipt {
+    Receipt { id: o.id }
+}
+
+static RL_STAMPED: LazyLock<std::sync::Mutex<Option<bool>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+static RL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber("rl-out")]
+async fn rl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+    *RL_STAMPED.lock().unwrap() = Some(ctx.headers().get("x-app").is_some());
+    RL_NOTIFY.notify_one();
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn app_publish_layer_reaches_router_publishing_handlers() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let router = Router::<MemoryBroker>::new()
+        .include_publishing(rl_relay, TypedPublisher::new(broker.publisher()));
+
+    let app = RustStream::new(AppInfo::new("rl", "0.1.0"))
+        .publish_layer(StampApp)
+        .with_broker(broker, |b| {
+            b.include_router(router);
+            b.include(rl_check);
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    // Re-publish until the reply lands (subscriptions open inside run()).
+    let payload = order_bytes(1);
+    let driven = tokio::time::timeout(Duration::from_secs(5), async {
+        let notified = RL_NOTIFY.notified();
+        tokio::pin!(notified);
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("rl-in", &payload))
+                .await;
+            tokio::select! {
+                () = &mut notified => break,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(driven.is_ok(), "router publishing handler never replied");
+
+    assert_eq!(
+        *RL_STAMPED.lock().unwrap(),
+        Some(true),
+        "the app-wide publish_layer must reach a router-mounted publishing handler"
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}

@@ -32,8 +32,8 @@ use std::time::Duration;
 
 use ruststream::ServerSpec;
 use ruststream::memory::MemoryBroker;
-use ruststream::metrics::Metrics;
-use ruststream::runtime::{AppInfo, Identity, RustStream, Stack};
+use ruststream::metrics::{Metrics, MetricsPublish};
+use ruststream::runtime::{AppInfo, Identity, PublishCons, PublishEnd, RustStream, Stack};
 
 use std::sync::Arc;
 
@@ -44,7 +44,8 @@ use crate::observability::Observe;
 /// type: `Observe` wraps every handler, including the router-mounted ones (it is a `BlanketLayer`),
 /// with `Identity` as the base; `Repository` is the shared state `on_startup` produces.
 #[ruststream::app]
-fn app() -> RustStream<Stack<Observe, Identity>, Repository> {
+fn app() -> RustStream<Stack<Observe, Identity>, Repository, PublishCons<MetricsPublish, PublishEnd>>
+{
     let metrics = Metrics::new().expect("create metrics registry");
     // A second handle for the shutdown dump; `Metrics` is cheap to clone (shared registry).
     let metrics_dump = metrics.clone();

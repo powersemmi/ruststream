@@ -16,7 +16,9 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
-use crate::runtime::publish::{PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{
+    PublishEnd, PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher,
+};
 use crate::runtime::publisher_registry::ErasedPublisher;
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
 use crate::runtime::router::{RouterDef, RouterSink};
@@ -30,16 +32,16 @@ use crate::runtime::typed::{Typed, typed};
 /// stack `L`; registrations are collected and started later, in
 /// [`RustStream::run`](crate::runtime::RustStream::run). Each handler registered here is wrapped
 /// with `L` before it is stored.
-pub struct BrokerScope<B, L = Identity, C = (), St = ()> {
+pub struct BrokerScope<B, L = Identity, C = (), St = (), PP = PublishEnd> {
     pub(super) broker: Arc<B>,
     pub(super) sink: RouterSink<B, St>,
-    pub(super) pipeline: Arc<dyn PublishPipeline>,
+    pub(super) pipeline: PP,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(super) global: L,
     pub(super) codec: C,
 }
 
-impl<B: Broker + 'static, L, C, St> BrokerScope<B, L, C, St> {
+impl<B: Broker + 'static, L, C, St, PP> BrokerScope<B, L, C, St, PP> {
     /// Returns the broker, for creating subscribers or publishers with its own API.
     #[must_use]
     pub fn broker(&self) -> &B {
@@ -134,12 +136,13 @@ impl<B: Broker + 'static, L, C, St> BrokerScope<B, L, C, St> {
         R: RouterDef<B, St>,
         St: Send + Sync + 'static,
         L: BlanketLayer,
+        PP: PublishPipeline + Clone + 'static,
     {
-        router.mount(&self.global, &mut self.sink);
+        router.mount(&self.global, &self.pipeline, &mut self.sink);
     }
 }
 
-impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
+impl<B: Broker + 'static, L, SC, St, PP> BrokerScope<B, L, SC, St, PP> {
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
     /// `include` / `include_on` forms.
     pub(super) fn mount_subscriber<S, D, C>(&mut self, source: S, def: D, codec: C)
@@ -204,6 +207,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
@@ -241,8 +245,9 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
         P: Publisher + 'static,
         PC: Codec + 'static,
         PL: PublishLayer<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
-        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
+        L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
@@ -260,7 +265,7 @@ impl<B: Broker + 'static, L, SC, St> BrokerScope<B, L, SC, St> {
     }
 }
 
-impl<B, L, C, St> std::fmt::Debug for BrokerScope<B, L, C, St> {
+impl<B, L, C, St, PP> std::fmt::Debug for BrokerScope<B, L, C, St, PP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrokerScope")
             .field("sink", &self.sink)

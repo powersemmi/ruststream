@@ -17,7 +17,7 @@ use super::{RustStream, RustStreamError};
 // `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
 // `block_on`), so their futures must be `Send`: the shared state is held as `Arc<St>` across the
 // startup awaits (needs `St: Sync`) and the global stack `L` is carried in `self` (needs `L: Send`).
-impl<L: Send, St: Send + Sync> RustStream<L, St> {
+impl<L: Send, St: Send + Sync, PP> RustStream<L, St, PP> {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///

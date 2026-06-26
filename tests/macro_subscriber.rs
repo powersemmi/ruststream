@@ -395,6 +395,7 @@ static REPLY_DOUBLED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static REPLY_TAGGED: AtomicU32 = AtomicU32::new(0);
 
 /// A publish middleware that tags every outgoing reply with a header (envelope-style).
+#[derive(Clone)]
 struct Tagger;
 
 impl PublishMiddleware for Tagger {

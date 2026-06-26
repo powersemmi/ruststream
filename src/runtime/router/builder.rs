@@ -1,7 +1,6 @@
 //! The [`Router`] builder: chaining registrations, codecs and layers, and mounting the result.
 
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -10,23 +9,20 @@ use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, SliceHandler, batch_metadata, typed_batch};
-use crate::runtime::batch_publishing::{
-    BatchPublishingDef, BatchPublishingHandler, batch_publishing_metadata,
-};
+use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
-use crate::runtime::publish::{
-    PublishEnd, PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher,
-};
-use crate::runtime::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
+use crate::runtime::publish::{PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher};
+use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::typed;
 
 use super::routes::{
-    BatchRoute, HandleRoute, MountRoute, RouteMeta, RouterDef, RouterHandlers, SubscribeRoute,
+    BatchPublishingRoute, BatchRoute, HandleRoute, MountRoute, PublishingRoute, RouteMeta,
+    RouterDef, RouterHandlers, SubscribeRoute,
 };
 use super::sink::RouterSink;
 use super::{
@@ -346,19 +342,16 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let pipeline: Arc<dyn PublishPipeline> = Arc::new(PublishEnd);
-        let handler = BatchPublishingHandler {
-            def,
-            codec,
-            publisher,
-            pipeline,
-            decode: policies.decode,
-        };
+        // Defer building the handler: the app's publish pipeline is only known at mount time, so the
+        // reply pipeline is injected then (see `BatchPublishingRoute`), letting a router-mounted
+        // batch publishing handler pick up the app-wide `publish_layer` chain.
         Router {
             routes: (
-                BatchRoute {
+                BatchPublishingRoute {
                     source,
-                    handler,
+                    def,
+                    codec,
+                    publisher,
                     meta,
                     policies,
                     workers,
@@ -389,24 +382,21 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         C: Codec + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer + 'static,
+        PL: PublishLayer<D::Context> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let pipeline: Arc<dyn PublishPipeline> = Arc::new(PublishEnd);
-        let handler = PublishingHandler {
-            def,
-            codec,
-            publisher,
-            pipeline,
-            decode: policies.decode,
-        };
+        // Defer building the handler: the app's publish pipeline is only known at mount time, so the
+        // reply pipeline is injected then (see `PublishingRoute`), letting a router-mounted
+        // publishing handler pick up the app-wide `publish_layer` chain.
         Router {
             routes: (
-                SubscribeRoute {
+                PublishingRoute {
                     source,
-                    handler,
+                    def,
+                    codec,
+                    publisher,
                     meta,
                     policies,
                     workers,
@@ -504,12 +494,17 @@ where
     R: RouterDef<B, St>,
     L: BlanketLayer,
 {
-    fn mount<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B, St>) {
+    fn mount<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
+        self,
+        global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, St>,
+    ) {
         let composed = ComposedBlanket {
             outer: global,
             inner: &self.layers,
         };
-        self.routes.mount(&composed, sink);
+        self.routes.mount(&composed, pipeline, sink);
     }
 }
 
@@ -529,8 +524,13 @@ where
     R: RouterDef<B, St>,
     L: BlanketLayer,
 {
-    fn mount_one<G: BlanketLayer>(self, global: &G, sink: &mut RouterSink<B, St>) {
-        RouterDef::mount(self, global, sink);
+    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
+        self,
+        global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, St>,
+    ) {
+        RouterDef::mount(self, global, pipeline, sink);
     }
 }
 

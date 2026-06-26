@@ -41,9 +41,14 @@ async fn capture(_resp: &Resp, ctx: &mut Context<'_>) {
     GOT.notify_one();
 }
 
+/// Serializes the two tests: they share the `CAPTURED` slot and the `in` / `out` channels, so they
+/// must not run concurrently (cargo runs a file's tests in parallel by default).
+static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Drives the app until the reply lands, re-publishing to defeat the startup race, and returns the
 /// captured reply `traceparent`.
 async fn run_and_capture(incoming: Option<&'static str>) -> TraceContext {
+    let _serial = SERIAL.lock().await;
     *CAPTURED.lock().expect("poisoned") = None;
     // --8<-- [start:wiring]
     let otel = OpenTelemetry::new();
