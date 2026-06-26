@@ -84,12 +84,12 @@ Two kinds of transform run before a message leaves the process, and they compose
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can observe its result. The chain composes into a concrete type (no `dyn` dispatch at
-  all), so it appears in the app's type parameter: a function that names its return type and calls
-  `publish_layer` spells the pipeline (`RustStream<L, St, PublishStack<MyMiddleware, PublishIdentity>>`);
-  an app with no `publish_layer` keeps the default `PublishIdentity` and omits it. Each middleware must be
-  `Clone` (the pipeline is cloned into each publishing handler), and the last one added runs
-  outermost. The default (no middleware) is a direct send. For a middleware set decided at runtime,
-  wrap it in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that.
+  all), so it becomes part of the app's type. A builder usually returns `impl App` and never spells
+  it; name the concrete `RustStream<L, St, PublishStack<MyMiddleware, PublishIdentity>>` and the
+  pipeline shows up there, while an app with no `publish_layer` keeps the default `PublishIdentity`.
+  Each middleware must be `Clone` (the pipeline is cloned into each publishing handler), and the last
+  one added runs outermost. The default (no middleware) is a direct send. For a middleware set decided
+  at runtime, wrap it in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that.
 
 A static `PublishTransform` implements `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`; the
 `PublishContext` is a read-only view of the delivery that produced the reply (its channel, the

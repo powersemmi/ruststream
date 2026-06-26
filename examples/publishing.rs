@@ -12,8 +12,8 @@ use std::pin::Pin;
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Identity, Outgoing, PublishIdentity, PublishLayer, PublishNext,
-    PublishStack, PublishTransform, RustStream, TypedPublisher,
+    App, AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
+    TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -117,11 +117,10 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 }
 // --8<-- [end:batch_publishing]
 
-// The app-wide `publish_layer` composes into the pipeline type parameter, so the explicit return
-// type names it (`PublishStack<AuditPublish, PublishIdentity>`). An app with no `publish_layer` keeps the
-// default `PublishIdentity` and can omit the parameter.
+// `impl App` hides the composed pipeline type: the app-wide `publish_layer` would otherwise surface
+// in the return type as `RustStream<_, AppState, PublishStack<AuditPublish, PublishIdentity>>`.
 #[ruststream::app]
-fn app() -> RustStream<Identity, AppState, PublishStack<AuditPublish, PublishIdentity>> {
+fn app() -> impl App {
     let broker = MemoryBroker::new();
     let egress = broker.publisher();
     // --8<-- [start:pipeline]

@@ -19,7 +19,7 @@ mod router;
 mod subscriber_def;
 mod typed;
 
-pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
+pub use app::{App, AppInfo, BrokerScope, RustStream, RustStreamError};
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
