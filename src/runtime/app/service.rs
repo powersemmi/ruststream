@@ -281,15 +281,18 @@ impl<L, St, PP> RustStream<L, St, PP> {
     }
 
     /// Adds an outgoing publish middleware, run on every published reply before it reaches the
-    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). The first one added runs
-    /// outermost. Call before [`with_broker`](Self::with_broker).
+    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). It composes into the
+    /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the
+    /// consume-side [`layer`](Self::layer), where the first added is outermost); the middleware must
+    /// be [`Clone`] (the pipeline is cloned into each publishing handler). Call before
+    /// [`with_broker`](Self::with_broker).
     #[must_use]
     pub fn publish_layer<M>(self, middleware: M) -> RustStream<L, St, PublishCons<M, PP>>
     where
         M: PublishMiddleware + Clone + 'static,
     {
-        // Prepend `middleware`: the publish pipeline stays a statically composed type (no `dyn`
-        // dispatch), and the first one added runs outermost.
+        // Prepend `middleware` as the new outermost wrapper: the publish pipeline stays a statically
+        // composed type (no `dyn` dispatch), and the last one added runs outermost.
         RustStream {
             info: self.info,
             brokers: self.brokers,

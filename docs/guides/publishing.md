@@ -83,9 +83,13 @@ Two kinds of transform run before a message leaves the process, and they compose
   correlation id onto the reply). They run first, closest to the value.
 - **Static `PublishMiddleware`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
-  send so they can observe its result. The chain composes into a concrete type, mirroring the
-  consume-side stack: the default (no middleware) is a direct send. For a middleware set decided at
-  runtime, wrap it in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that.
+  send so they can observe its result. The chain composes into a concrete type (no `dyn` dispatch at
+  all), so it appears in the app's type parameter: a function that names its return type and calls
+  `publish_layer` spells the pipeline (`RustStream<L, St, PublishCons<MyMiddleware, PublishEnd>>`);
+  an app with no `publish_layer` keeps the default `PublishEnd` and omits it. Each middleware must be
+  `Clone` (the pipeline is cloned into each publishing handler), and the last one added runs
+  outermost. The default (no middleware) is a direct send. For a middleware set decided at runtime,
+  wrap it in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that.
 
 A static `PublishLayer` implements `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`; the
 `PublishContext` is a read-only view of the delivery that produced the reply (its channel, the
@@ -99,8 +103,8 @@ a value from the incoming message onto the reply:
 A batch handler's replies skip the per-message `.layer(..)` stack; add a transform there with
 `.batch_layer(..)`, reusing a per-message `PublishLayer` via `for_batch(layer)`.
 
-A dynamic middleware implements `PublishMiddleware` with an around/next signature, so it can
-short-circuit, retry, or observe:
+A `PublishMiddleware` implements an around/next signature, so it can short-circuit, retry, or
+observe (reserve "dynamic" for `DynPublishMiddleware` inside a `PublishDynStack`):
 
 ```rust
 --8<-- "examples/publishing.rs:dynamic_middleware"

@@ -18,7 +18,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishContext, PublishLayer, PublishPipeline, TypedPublisher};
+use super::publish::{PublishContext, PublishEnd, PublishLayer, PublishPipeline, TypedPublisher};
 
 /// A subscriber definition that produces a reply to publish.
 ///
@@ -124,7 +124,7 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 /// [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)` skips the publish;
 /// a failed reply publish nacks the incoming message with `requeue = true`, so the broker
 /// redelivers it instead of silently losing the reply.
-pub struct PublishingHandler<D, C, P, PC, PL, PP> {
+pub struct PublishingHandler<D, C, P, PC, PL, PP = PublishEnd> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: TypedPublisher<P, PC, PL>,
