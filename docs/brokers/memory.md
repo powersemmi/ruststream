@@ -1,8 +1,8 @@
 # Memory
 
 The `memory` feature provides `MemoryBroker`, an in-process broker. It needs no external service,
-which makes it ideal for examples, unit tests, and prototypes; the CLI scaffold uses it by default
-so a fresh project runs with zero dependencies.
+which makes it ideal for examples, unit tests, and prototypes; the default `cargo generate` template
+(`templates/memory`) uses it so a fresh project runs with zero dependencies.
 
 ```toml
 ruststream = { version = "0.4", features = ["macros", "memory", "json"] }

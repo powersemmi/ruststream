@@ -1,5 +1,9 @@
 [workspace]
 members = ["crates/ruststream-macros"]
+# `templates/` holds cargo-generate scaffolds (rendered by `cargo generate`, not built here): their
+# sources carry `{{project-name}}` placeholders that are not valid Rust/TOML until rendered, so they
+# must stay out of the workspace.
+exclude = ["templates"]
 
 [workspace.package]
 version = "0.5.0"

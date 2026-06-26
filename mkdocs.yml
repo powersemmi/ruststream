@@ -96,6 +96,7 @@ nav:
       - guides/testing.md
   - CLI:
       - guides/cli.md
+      - guides/templates.md
   - Brokers:
       - brokers/index.md
       - brokers/memory.md

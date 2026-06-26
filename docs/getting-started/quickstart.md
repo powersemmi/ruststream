@@ -1,16 +1,18 @@
 # Quick start
 
-The fastest way to a running service is the CLI scaffolder.
+The fastest way to a running service is to scaffold one with `cargo generate`.
 
 ## Scaffold a project
 
 ```bash
-cargo install ruststream --features cli
-ruststream new my-service
+cargo install cargo-generate
+cargo generate --git https://github.com/powersemmi/ruststream templates/memory --name my-service
 cd my-service
 ```
 
-This writes an idiomatic, multi-file project:
+`templates/memory` is the in-memory starter (no external broker); each broker crate ships its own
+template (for example `--git https://github.com/powersemmi/ruststream-nats templates/nats`). This
+writes an idiomatic, multi-file project:
 
 ```
 my-service/
@@ -26,19 +28,19 @@ my-service/
 `#[ruststream::app]` generates `main`, so the binary already understands the framework commands:
 
 ```bash
-ruststream run                  # or: cargo run -- run
+cargo run -- run                # or: ruststream run, with the CLI installed
 ```
 
-`ruststream run` shells out to `cargo run -- run`, which starts a tokio runtime and runs the service
-until you press ++ctrl+c++. The scaffold uses the in-memory broker, so it runs with no external
-dependencies.
+`cargo run -- run` starts a tokio runtime and runs the service until you press ++ctrl+c++ (the
+`ruststream run` CLI is a convenience that forwards to it). The scaffold uses the in-memory broker,
+so it runs with no external dependencies.
 
 ## Generate the AsyncAPI document
 
 ```bash
-ruststream asyncapi gen                 # prints JSON to stdout
-ruststream asyncapi gen -o asyncapi.json
-ruststream asyncapi gen --yaml
+cargo run -- asyncapi gen                 # prints JSON to stdout
+cargo run -- asyncapi gen -o asyncapi.json
+cargo run -- asyncapi gen --yaml
 ```
 
 ## What the entry point looks like

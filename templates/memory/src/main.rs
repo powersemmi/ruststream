@@ -1,4 +1,4 @@
-//! {{name}} - a RustStream service.
+//! {{project-name}} - a RustStream service.
 //!
 //! Handlers live in `orders`, wiring in `routes`; `#[ruststream::app]` generates `main`, so there
 //! is no runtime boilerplate to maintain:
@@ -15,7 +15,7 @@ use ruststream::runtime::{AppInfo, RustStream};
 /// Builds the service: one in-memory broker with the orders router mounted.
 #[ruststream::app]
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("{{name}}", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    RustStream::new(AppInfo::new("{{project-name}}", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         let router = routes::orders(b.broker());
         b.include_router(router);
     })

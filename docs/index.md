@@ -36,7 +36,7 @@ Two architectural commitments shape the framework:
 <div class="grid cards" markdown>
 
 - :material-download: **[Installation](getting-started/installation.md)** - features and crate setup.
-- :material-rocket-launch: **[Quick start](getting-started/quickstart.md)** - scaffold a service with the CLI.
+- :material-rocket-launch: **[Quick start](getting-started/quickstart.md)** - scaffold a service with `cargo generate`.
 - :material-school: **[Tutorial](getting-started/tutorial.md)** - build a service step by step.
 - :material-test-tube: **[Testing](guides/testing.md)** - test handlers in-process, no server needed.
 - :material-transit-connection-variant: **[Brokers](brokers/index.md)** - the in-memory broker, NATS, and Redis.

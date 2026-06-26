@@ -20,6 +20,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       dist: ${{ steps.filter.outputs.dist }}
+      templates: ${{ steps.filter.outputs.templates }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,6 +46,11 @@ jobs:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+            templates:
+              - 'templates/**'
+              - 'src/**'
+              - 'Cargo.toml'
               - '.github/workflows/ci.yml'
 
   toolchains:
@@ -229,3 +235,38 @@ jobs:
       # gated: advisories arrive over time, not only with manifest changes.
       - name: cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
+
+  templates:
+    name: Templates (render + compile)
+    needs: changes
+    if: ${{ needs.changes.outputs.templates == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-generate
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-generate
+
+      # The template-contract drift check: render the in-memory scaffold and compile it, so an API
+      # change that breaks the template fails here, not a user's first `cargo build`. The rendered
+      # project pins `ruststream` by version; until 0.5 is published, patch it to this checkout so
+      # the scaffold builds against the local crate. Each broker repo mirrors this for its templates.
+      - name: Render and check templates/memory
+        run: |
+          cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
+          {
+            echo ""
+            echo "[patch.crates-io]"
+            echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
+          } >> "$RUNNER_TEMP/smoke/Cargo.toml"
+          cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
