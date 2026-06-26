@@ -34,7 +34,7 @@ use prometheus::{
 
 use crate::runtime::{
     BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishMiddleware, PublishNext,
-    Settle,
+    PublishPipeline, Settle,
 };
 
 /// Default histogram buckets (seconds) for handler duration.
@@ -258,10 +258,10 @@ impl std::fmt::Debug for MetricsPublish {
 }
 
 impl PublishMiddleware for MetricsPublish {
-    fn on_publish<'a>(
+    fn on_publish<'a, N: PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a>,
+        next: PublishNext<'a, N>,
     ) -> PublishFut<'a> {
         let name = out.name().to_owned();
         Box::pin(async move {

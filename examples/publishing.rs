@@ -89,10 +89,10 @@ impl<C> PublishLayer<C> for EnvelopeLayer {
 struct AuditPublish;
 
 impl PublishMiddleware for AuditPublish {
-    fn on_publish<'a>(
+    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a>,
+        next: PublishNext<'a, N>,
     ) -> Pin<
         Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
     > {

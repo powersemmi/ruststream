@@ -18,7 +18,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishContext, PublishLayer, PublishMiddleware, TypedPublisher};
+use super::publish::{PublishContext, PublishLayer, PublishPipeline, TypedPublisher};
 
 /// A subscriber definition that produces a reply to publish.
 ///
@@ -128,7 +128,7 @@ pub struct PublishingHandler<D, C, P, PC, PL> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: TypedPublisher<P, PC, PL>,
-    pub(crate) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(crate) pipeline: Arc<dyn PublishPipeline>,
     pub(crate) decode: FailurePolicy,
 }
 
@@ -184,7 +184,9 @@ where
         };
         let name = self.def.reply_name();
         let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
-        let publish = self.publisher.publish(name, &reply, &self.pipeline, &pubcx);
+        let publish = self
+            .publisher
+            .publish(name, &reply, &*self.pipeline, &pubcx);
         if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",

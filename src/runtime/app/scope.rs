@@ -16,7 +16,7 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
-use crate::runtime::publish::{PublishLayer, PublishMiddleware, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher};
 use crate::runtime::publisher_registry::ErasedPublisher;
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
 use crate::runtime::router::{RouterDef, RouterSink};
@@ -33,7 +33,7 @@ use crate::runtime::typed::{Typed, typed};
 pub struct BrokerScope<B, L = Identity, C = (), St = ()> {
     pub(super) broker: Arc<B>,
     pub(super) sink: RouterSink<B, St>,
-    pub(super) pipeline: Arc<[Arc<dyn PublishMiddleware>]>,
+    pub(super) pipeline: Arc<dyn PublishPipeline>,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(super) global: L,
     pub(super) codec: C,

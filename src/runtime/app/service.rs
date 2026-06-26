@@ -13,7 +13,7 @@ use crate::runtime::dispatch::Delivery;
 use crate::runtime::lifecycle::{BoxError, BrokerLifecycle};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
-use crate::runtime::publish::PublishMiddleware;
+use crate::runtime::publish::{PublishCons, PublishEnd, PublishMiddleware, PublishPipeline};
 use crate::runtime::router::RouterSink;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
@@ -66,7 +66,7 @@ pub struct RustStream<L = Identity, St = ()> {
     pub(super) starters: Vec<Starter<St>>,
     pub(super) handlers: Vec<HandlerMetadata>,
     pub(super) servers: BTreeMap<String, ServerSpec>,
-    pub(super) publish_layers: Vec<Arc<dyn PublishMiddleware>>,
+    pub(super) publish_pipeline: Arc<dyn PublishPipeline>,
     pub(super) state_init: StateInit<St>,
     pub(super) after_startup: Vec<LifecycleHook<St>>,
     pub(super) on_shutdown: Vec<LifecycleHook<St>>,
@@ -129,7 +129,7 @@ impl RustStream<Identity, ()> {
             starters: Vec::new(),
             handlers: Vec::new(),
             servers: BTreeMap::new(),
-            publish_layers: Vec::new(),
+            publish_pipeline: Arc::new(PublishEnd),
             state_init: Box::new(|| Box::pin(async { Ok(()) })),
             after_startup: Vec::new(),
             on_shutdown: Vec::new(),
@@ -155,7 +155,7 @@ impl<L, St> RustStream<L, St> {
             starters: self.starters,
             handlers: self.handlers,
             servers: self.servers,
-            publish_layers: self.publish_layers,
+            publish_pipeline: self.publish_pipeline,
             state_init: self.state_init,
             after_startup: self.after_startup,
             on_shutdown: self.on_shutdown,
@@ -195,7 +195,7 @@ impl<L, St> RustStream<L, St> {
             starters: Vec::new(),
             handlers: self.handlers,
             servers: self.servers,
-            publish_layers: self.publish_layers,
+            publish_pipeline: self.publish_pipeline,
             state_init: Box::new(move || {
                 Box::pin(async move {
                     let prev_state = prev().await?;
@@ -288,7 +288,11 @@ impl<L, St> RustStream<L, St> {
     where
         M: PublishMiddleware + 'static,
     {
-        self.publish_layers.push(Arc::new(middleware));
+        // Prepend `middleware` to the boxed tail: the chain stays statically composed inside the
+        // single `Arc<dyn PublishPipeline>` (no per-layer `dyn` dispatch), the first added runs
+        // outermost.
+        let tail = self.publish_pipeline;
+        self.publish_pipeline = Arc::new(PublishCons::new(middleware, tail));
         self
     }
 
@@ -472,7 +476,7 @@ impl<L, St> RustStream<L, St> {
         BrokerScope {
             broker: broker.clone(),
             sink: RouterSink::new(),
-            pipeline: self.publish_layers.iter().cloned().collect(),
+            pipeline: self.publish_pipeline.clone(),
             retry_publisher: None,
             global: self.global.clone(),
             codec,

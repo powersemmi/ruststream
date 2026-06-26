@@ -36,9 +36,9 @@ pub(crate) use lifecycle::BrokerLifecycle;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
-    BatchIdentity, BatchPublishLayer, BatchPublishStack, ForBatch, Outgoing, PublishContext,
-    PublishIdentity, PublishLayer, PublishMiddleware, PublishNext, PublishStack, ReplyPublisher,
-    Transactional, TypedPublisher, for_batch,
+    BatchIdentity, BatchPublishLayer, BatchPublishStack, ForBatch, Outgoing, PublishCons,
+    PublishContext, PublishEnd, PublishIdentity, PublishLayer, PublishMiddleware, PublishNext,
+    PublishPipeline, PublishStack, ReplyPublisher, Transactional, TypedPublisher, for_batch,
 };
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};

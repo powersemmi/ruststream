@@ -93,60 +93,117 @@ impl<'a> Outgoing<'a> {
     }
 }
 
+/// A static, app-wide publish pipeline: an around-style chain of [`PublishMiddleware`] ending in
+/// the broker send.
+///
+/// The publish-side analog of the consume-side static [`Stack`](super::Stack) / [`Identity`]: the
+/// app's publish middleware (added with
+/// [`RustStream::publish_layer`](super::RustStream::publish_layer)) compose into a concrete type, so
+/// the default path ([`PublishEnd`], no middleware) is a zero-cost direct send with no `dyn`
+/// dispatch. You rarely name this trait; it is built for you. (A runtime-composed escape hatch, the
+/// publish counterpart of [`DynStack`](super::DynStack), can be layered in later without changing
+/// this contract.)
+pub trait PublishPipeline: Send + Sync {
+    /// Runs `out` through the remaining middleware, then sends it via `send`.
+    fn run<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        send: &'a dyn ErasedPublisher,
+    ) -> PublishFut<'a>;
+}
+
+/// The terminal [`PublishPipeline`]: no middleware, just the broker send. The default for an app
+/// with no [`publish_layer`](super::RustStream::publish_layer).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PublishEnd;
+
+impl PublishPipeline for PublishEnd {
+    fn run<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        send: &'a dyn ErasedPublisher,
+    ) -> PublishFut<'a> {
+        send.publish_message(out.name(), out.payload(), out.headers())
+    }
+}
+
+// Lets the app store the composed chain boxed once behind a single indirection (the middleware
+// inside it stay statically composed) and lets each `publish_layer` prepend to that boxed tail.
+impl PublishPipeline for Arc<dyn PublishPipeline> {
+    fn run<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        send: &'a dyn ErasedPublisher,
+    ) -> PublishFut<'a> {
+        (**self).run(out, send)
+    }
+}
+
+/// Prepends a [`PublishMiddleware`] `Head` to a [`PublishPipeline`] `Tail`. Built by
+/// [`RustStream::publish_layer`](super::RustStream::publish_layer); you rarely name it directly.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PublishCons<Head, Tail> {
+    head: Head,
+    tail: Tail,
+}
+
+impl<Head, Tail> PublishCons<Head, Tail> {
+    /// Composes `head` in front of `tail`.
+    pub(crate) const fn new(head: Head, tail: Tail) -> Self {
+        Self { head, tail }
+    }
+}
+
+impl<Head: PublishMiddleware, Tail: PublishPipeline> PublishPipeline for PublishCons<Head, Tail> {
+    fn run<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        send: &'a dyn ErasedPublisher,
+    ) -> PublishFut<'a> {
+        self.head.on_publish(
+            out,
+            PublishNext {
+                tail: &self.tail,
+                send,
+            },
+        )
+    }
+}
+
 /// Middleware that transforms (or observes) an [`Outgoing`] message before it is published.
 ///
 /// Each middleware inspects / mutates `out`, then calls [`PublishNext::run`] to continue; the chain
-/// ends in the actual broker publish.
+/// ends in the actual broker publish. Static (no `dyn` dispatch): a middleware is generic over the
+/// rest of the pipeline `N`, so the whole chain monomorphizes. Added app-wide with
+/// [`RustStream::publish_layer`](super::RustStream::publish_layer).
 pub trait PublishMiddleware: Send + Sync {
     /// Handle the outgoing message, calling `next` to continue the pipeline.
-    fn on_publish<'a>(&'a self, out: &'a mut Outgoing<'a>, next: PublishNext<'a>)
-    -> PublishFut<'a>;
+    fn on_publish<'a, N: PublishPipeline>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: PublishNext<'a, N>,
+    ) -> PublishFut<'a>;
 }
 
-/// A cursor over the remaining publish middleware, ending in the broker publisher.
-pub struct PublishNext<'a> {
-    rest: &'a [Arc<dyn PublishMiddleware>],
-    publisher: &'a dyn ErasedPublisher,
+/// A cursor over the rest of the publish pipeline, ending in the broker send. Handed to a
+/// [`PublishMiddleware`]; call [`run`](Self::run) to continue.
+pub struct PublishNext<'a, N> {
+    tail: &'a N,
+    send: &'a dyn ErasedPublisher,
 }
 
-impl<'a> PublishNext<'a> {
-    /// Runs the next middleware, or sends the message if the pipeline is exhausted.
+impl<'a, N: PublishPipeline> PublishNext<'a, N> {
+    /// Runs the rest of the pipeline (the remaining middleware, then the send).
     #[must_use]
     pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
-        match self.rest.split_first() {
-            Some((middleware, rest)) => middleware.on_publish(
-                out,
-                PublishNext {
-                    rest,
-                    publisher: self.publisher,
-                },
-            ),
-            None => self
-                .publisher
-                .publish_message(out.name(), out.payload(), out.headers()),
-        }
+        self.tail.run(out, self.send)
     }
 }
 
-impl std::fmt::Debug for PublishNext<'_> {
+impl<N> std::fmt::Debug for PublishNext<'_, N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PublishNext")
-            .field("remaining", &self.rest.len())
-            .finish_non_exhaustive()
+        f.debug_struct("PublishNext").finish_non_exhaustive()
     }
-}
-
-/// Runs `out` through `pipeline`, then publishes it via `publisher`.
-pub(crate) fn run_publish<'a>(
-    pipeline: &'a [Arc<dyn PublishMiddleware>],
-    publisher: &'a dyn ErasedPublisher,
-    out: &'a mut Outgoing<'a>,
-) -> PublishFut<'a> {
-    PublishNext {
-        rest: pipeline,
-        publisher,
-    }
-    .run(out)
 }
 
 /// A read-only view of the originating delivery, handed to a [`PublishLayer`].
@@ -444,7 +501,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         &self,
         name: &str,
         value: &T,
-        pipeline: &[Arc<dyn PublishMiddleware>],
+        pipeline: &dyn PublishPipeline,
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
@@ -458,7 +515,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = Outgoing::new(name, payload);
         self.layers.apply(&mut out, cx);
-        run_publish(pipeline, &self.publisher, &mut out).await
+        pipeline.run(&mut out, &self.publisher).await
     }
 
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishLayer`] stack
@@ -469,7 +526,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         &self,
         name: &str,
         value: &T,
-        pipeline: &[Arc<dyn PublishMiddleware>],
+        pipeline: &dyn PublishPipeline,
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
@@ -483,7 +540,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = Outgoing::new(name, payload);
         self.batch_layers.apply(&mut out, cx);
-        run_publish(pipeline, &self.publisher, &mut out).await
+        pipeline.run(&mut out, &self.publisher).await
     }
 }
 
@@ -540,7 +597,7 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
         &'a self,
         name: &'a str,
         replies: &'a [T],
-        pipeline: &'a [Arc<dyn PublishMiddleware>],
+        pipeline: &'a dyn PublishPipeline,
         cx: &'a PublishContext<'a, Cx>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send
     where
@@ -567,7 +624,7 @@ where
         &'a self,
         name: &'a str,
         replies: &'a [T],
-        pipeline: &'a [Arc<dyn PublishMiddleware>],
+        pipeline: &'a dyn PublishPipeline,
         cx: &'a PublishContext<'a, Cx>,
     ) -> Result<(), BoxError>
     where
@@ -600,7 +657,7 @@ where
         &'a self,
         name: &'a str,
         replies: &'a [T],
-        pipeline: &'a [Arc<dyn PublishMiddleware>],
+        pipeline: &'a dyn PublishPipeline,
         cx: &'a PublishContext<'a, Cx>,
     ) -> Result<(), BoxError>
     where

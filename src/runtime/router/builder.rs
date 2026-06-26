@@ -18,7 +18,9 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
-use crate::runtime::publish::{PublishLayer, PublishMiddleware, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{
+    PublishEnd, PublishLayer, PublishPipeline, ReplyPublisher, TypedPublisher,
+};
 use crate::runtime::publishing::{PublishingDef, PublishingHandler, publishing_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::typed;
@@ -344,7 +346,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
+        let pipeline: Arc<dyn PublishPipeline> = Arc::new(PublishEnd);
         let handler = BatchPublishingHandler {
             def,
             codec,
@@ -392,7 +394,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let pipeline: Arc<[Arc<dyn PublishMiddleware>]> = Arc::from([]);
+        let pipeline: Arc<dyn PublishPipeline> = Arc::new(PublishEnd);
         let handler = PublishingHandler {
             def,
             codec,
