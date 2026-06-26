@@ -194,6 +194,7 @@ macros = ["dep:ruststream-macros"]
 asyncapi = ["json", "dep:schemars", "dep:serde_norway"]
 metrics = ["dep:prometheus"]
 logging = ["dep:tracing-subscriber"]
+opentelemetry = []
 cli = ["dep:clap", "dep:anyhow"]
 testing = ["dep:inventory", "tokio/test-util"]
 
