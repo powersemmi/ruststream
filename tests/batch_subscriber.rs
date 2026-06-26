@@ -73,9 +73,15 @@ async fn batch_macro_def_receives_batches() {
     .await;
     assert!(result.is_ok(), "no batch arrived within the deadline");
 
-    // Order within and across batches must follow publish order.
+    // Order within and across batches must follow publish order. The subscription opens inside
+    // run(), so the first publish round can be partly dropped (sent before the subscriber is
+    // ready); the surviving stream still follows the repeating 0,1,2 publish cycle, so assert each
+    // consecutive pair advances the cycle rather than requiring the stream to start at 0.
     let flattened: Vec<u32> = BATCHES.lock().unwrap().iter().flatten().copied().collect();
-    assert!(flattened.starts_with(&[0, 1, 2]), "got {flattened:?}");
+    assert!(
+        flattened.windows(2).all(|w| w[1] == (w[0] + 1) % 3),
+        "deliveries out of publish order: {flattened:?}",
+    );
     assert!(
         BATCHES
             .lock()
