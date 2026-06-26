@@ -2,12 +2,15 @@
 //! originating delivery (issue #103) and stamps the reply, propagating a correlation id.
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
-    AppInfo, Outgoing, PublishContext, PublishLayer, RustStream, TypedPublisher, for_batch,
+    AppInfo, DynPublishMiddleware, Outgoing, PublishContext, PublishDynNext, PublishDynStack,
+    PublishLayer, RustStream, TypedPublisher, for_batch,
 };
 use ruststream::{
     BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
@@ -191,6 +194,85 @@ async fn batch_layer_runs_only_on_batched_replies() {
         *BATCHED.lock().expect("poisoned"),
         Some(true),
         "the batch layer should stamp every batched reply"
+    );
+
+    shutdown.notify_one();
+    run.await.expect("join").expect("run");
+}
+
+/// A dynamic, runtime-built publish middleware: stamps a header, then continues.
+struct StampDyn;
+
+impl DynPublishMiddleware for StampDyn {
+    fn on_publish<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: PublishDynNext<'a>,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            out.headers_mut().insert("x-dyn", b"1".to_vec());
+            next.run(out).await
+        })
+    }
+}
+
+#[subscriber("dyn-in", publish("dyn-out"))]
+async fn dyn_echo(req: &Req) -> Resp {
+    Resp { n: req.n }
+}
+
+static DYN_SEEN: LazyLock<Mutex<Option<bool>>> = LazyLock::new(|| Mutex::new(None));
+static DYN_GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber("dyn-out")]
+async fn dyn_capture(_resp: &Resp, ctx: &mut Context<'_>) {
+    *DYN_SEEN.lock().expect("poisoned") = Some(ctx.headers().get("x-dyn").is_some());
+    DYN_GOT.notify_one();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dyn_stack_runs_a_runtime_built_middleware() {
+    let broker = MemoryBroker::new();
+    let ingress_pub = broker.publisher();
+    // The middleware set is decided at runtime and inserted as one static layer.
+    let stack = PublishDynStack::new([Arc::new(StampDyn) as Arc<dyn DynPublishMiddleware>]);
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .publish_layer(stack)
+        .with_broker(broker, |b| {
+            let reply_pub = TypedPublisher::new(b.broker().publisher());
+            b.include_publishing(dyn_echo, reply_pub);
+            b.include(dyn_capture);
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Req { n: 3 }).expect("encode");
+    let captured = tokio::time::timeout(Duration::from_secs(2), async {
+        let notified = DYN_GOT.notified();
+        tokio::pin!(notified);
+        loop {
+            ingress_pub
+                .publish(OutgoingMessage::new("dyn-in", &payload))
+                .await
+                .expect("publish");
+            tokio::select! {
+                () = &mut notified => break,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(captured.is_ok(), "reply never captured");
+
+    assert_eq!(
+        *DYN_SEEN.lock().expect("poisoned"),
+        Some(true),
+        "the dynamic stack middleware should run and stamp the reply"
     );
 
     shutdown.notify_one();

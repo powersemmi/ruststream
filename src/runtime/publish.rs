@@ -206,6 +206,120 @@ impl<N> std::fmt::Debug for PublishNext<'_, N> {
     }
 }
 
+/// An object-safe publish middleware, for a [`PublishDynStack`].
+///
+/// The dynamic counterpart of [`PublishMiddleware`]: it cannot name the rest of the pipeline as a
+/// type parameter (that is what keeps it object-safe and lets a heterogeneous, runtime-built list
+/// live in one [`PublishDynStack`]), so it continues through the type-erased [`PublishDynNext`]
+/// instead. Use it only when the middleware set is decided at runtime; otherwise a static
+/// [`PublishMiddleware`] is zero-cost.
+pub trait DynPublishMiddleware: Send + Sync {
+    /// Handle the outgoing message, calling `next` to continue.
+    fn on_publish<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: PublishDynNext<'a>,
+    ) -> PublishFut<'a>;
+}
+
+/// A cursor over the rest of a [`PublishDynStack`], ending in the surrounding static pipeline.
+///
+/// Mirrors [`PublishNext`] for the dynamic list: [`run`](Self::run) advances to the next
+/// [`DynPublishMiddleware`], or hands control back to the static chain once the list is exhausted.
+pub struct PublishDynNext<'a> {
+    rest: &'a [Arc<dyn DynPublishMiddleware>],
+    // The surrounding static `PublishNext::run`, erased so this cursor need not carry its type. A
+    // one-shot continuation: `run` is called exactly once per published message.
+    tail: Box<dyn FnOnce(&'a mut Outgoing<'a>) -> PublishFut<'a> + Send + 'a>,
+}
+
+impl<'a> PublishDynNext<'a> {
+    /// Runs the next dynamic middleware, or the surrounding static pipeline if the list is done.
+    #[must_use]
+    pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
+        match self.rest.split_first() {
+            Some((middleware, rest)) => middleware.on_publish(
+                out,
+                PublishDynNext {
+                    rest,
+                    tail: self.tail,
+                },
+            ),
+            None => (self.tail)(out),
+        }
+    }
+}
+
+impl std::fmt::Debug for PublishDynNext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PublishDynNext")
+            .field("remaining", &self.rest.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A single static [`PublishMiddleware`] wrapping a runtime-built, frozen list of
+/// [`DynPublishMiddleware`].
+///
+/// The publish-side counterpart of the consume-side [`DynStack`](super::DynStack): the opt-in
+/// escape hatch for a middleware set decided at runtime (from config, a loop, feature flags) that
+/// therefore cannot be a compile-time [`publish_layer`](super::RustStream::publish_layer) chain.
+/// Add it like any other middleware; only the middleware inside it pay one boxed future per layer.
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # {
+/// use std::sync::Arc;
+/// use ruststream::runtime::{DynPublishMiddleware, PublishDynStack};
+///
+/// fn stack(
+///     middleware: Vec<Arc<dyn DynPublishMiddleware>>,
+/// ) -> PublishDynStack {
+///     PublishDynStack::new(middleware)
+/// }
+/// # }
+/// ```
+pub struct PublishDynStack(Arc<[Arc<dyn DynPublishMiddleware>]>);
+
+// Manual `Clone`: the field is an `Arc`, so a clone is a refcount bump regardless of the contents.
+impl Clone for PublishDynStack {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl PublishDynStack {
+    /// Builds a stack from a list of middleware, applied in iteration order (first runs outermost).
+    #[must_use]
+    pub fn new(middleware: impl IntoIterator<Item = Arc<dyn DynPublishMiddleware>>) -> Self {
+        Self(middleware.into_iter().collect())
+    }
+}
+
+impl std::fmt::Debug for PublishDynStack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PublishDynStack")
+            .field("middleware", &self.0.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PublishMiddleware for PublishDynStack {
+    fn on_publish<'a, N: PublishPipeline>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: PublishNext<'a, N>,
+    ) -> PublishFut<'a> {
+        // Erase the static continuation into a one-shot closure so the object-safe walker can end
+        // by handing control back to the surrounding static pipeline.
+        PublishDynNext {
+            rest: &self.0,
+            tail: Box::new(move |out| next.run(out)),
+        }
+        .run(out)
+    }
+}
+
 /// A read-only view of the originating delivery, handed to a [`PublishLayer`].
 ///
 /// A reply is published from inside a handler, so the static publish transform can read the
