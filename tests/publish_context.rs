@@ -1,4 +1,4 @@
-//! The typed per-delivery context reaches the publish path: a static `PublishLayer` reads the
+//! The typed per-delivery context reaches the publish path: a static `PublishTransform` reads the
 //! originating delivery (issue #103) and stamps the reply, propagating a correlation id.
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
-    AppInfo, DynPublishMiddleware, Outgoing, PublishContext, PublishDynNext, PublishDynStack,
-    PublishLayer, RustStream, TypedPublisher, for_batch,
+    AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
+    PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream, TypedPublisher,
+    for_batch,
 };
 use ruststream::{
     BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
@@ -58,7 +59,7 @@ impl Field<TraceCtx> for Correlation {
 /// reply, read off the typed context through [`PublishContext`].
 struct PropagateCorrelation;
 
-impl PublishLayer<TraceCtx> for PropagateCorrelation {
+impl PublishTransform<TraceCtx> for PropagateCorrelation {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
         if let Some(id) = cx.context(Correlation) {
             out.headers_mut()
@@ -86,7 +87,7 @@ async fn delivery_context_propagates_to_the_reply() {
     let ingress = MemoryBroker::new();
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
-    let egress_pub = TypedPublisher::new(egress.publisher()).layer(PropagateCorrelation);
+    let egress_pub = TypedPublisher::new(egress.publisher()).transform(PropagateCorrelation);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(ingress, |b| {
@@ -135,7 +136,7 @@ async fn delivery_context_propagates_to_the_reply() {
 /// A batch-only transform: marks every batched reply, never a single-message one.
 struct MarkBatched;
 
-impl<C> PublishLayer<C> for MarkBatched {
+impl<C> PublishTransform<C> for MarkBatched {
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
         out.headers_mut().insert("x-batched", b"1".to_vec());
     }
@@ -161,7 +162,7 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let ingress_pub = broker.publisher();
     // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
     // single-message mounts would reject a publisher carrying it.
-    let reply_pub = TypedPublisher::new(broker.publisher()).batch_layer(for_batch(MarkBatched));
+    let reply_pub = TypedPublisher::new(broker.publisher()).batch_transform(for_batch(MarkBatched));
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         b.include_batch_publishing(batch_echo, reply_pub);
@@ -203,7 +204,7 @@ async fn batch_layer_runs_only_on_batched_replies() {
 /// A dynamic, runtime-built publish middleware: stamps a header, then continues.
 struct StampDyn;
 
-impl DynPublishMiddleware for StampDyn {
+impl PublishDynLayer for StampDyn {
     fn on_publish<'a>(
         &'a self,
         out: &'a mut Outgoing<'a>,
@@ -237,7 +238,7 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
     let broker = MemoryBroker::new();
     let ingress_pub = broker.publisher();
     // The middleware set is decided at runtime and inserted as one static layer.
-    let stack = PublishDynStack::new([Arc::new(StampDyn) as Arc<dyn DynPublishMiddleware>]);
+    let stack = PublishDynStack::new([Arc::new(StampDyn) as Arc<dyn PublishDynLayer>]);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(stack)
@@ -273,6 +274,109 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
         *DYN_SEEN.lock().expect("poisoned"),
         Some(true),
         "the dynamic stack middleware should run and stamp the reply"
+    );
+
+    shutdown.notify_one();
+    run.await.expect("join").expect("run");
+}
+
+// Two app-wide publish middleware, each appending its letter to an "order" header, pin the
+// documented composition: the LAST `publish_layer` added runs OUTERMOST (so it appends first).
+type PubFut<'a> =
+    Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
+
+fn append_order(out: &mut Outgoing<'_>, letter: &str) {
+    let mut order = out
+        .headers()
+        .get_str("order")
+        .unwrap_or_default()
+        .to_owned();
+    order.push_str(letter);
+    out.headers_mut().insert("order", order.into_bytes());
+}
+
+#[derive(Clone)]
+struct AppendA;
+
+impl PublishLayer for AppendA {
+    fn on_publish<'a, N: PublishPipeline>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: PublishNext<'a, N>,
+    ) -> PubFut<'a> {
+        append_order(out, "A");
+        next.run(out)
+    }
+}
+
+#[derive(Clone)]
+struct AppendB;
+
+impl PublishLayer for AppendB {
+    fn on_publish<'a, N: PublishPipeline>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: PublishNext<'a, N>,
+    ) -> PubFut<'a> {
+        append_order(out, "B");
+        next.run(out)
+    }
+}
+
+#[subscriber("ord-in", publish("ord-out"))]
+async fn ord_echo(req: &Req) -> Resp {
+    Resp { n: req.n }
+}
+
+static ORDER: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+static ORDER_GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber("ord-out")]
+async fn ord_capture(_resp: &Resp, ctx: &mut Context<'_>) {
+    *ORDER.lock().expect("poisoned") = ctx.headers().get_str("order").map(str::to_owned);
+    ORDER_GOT.notify_one();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publish_layer_last_added_runs_outermost() {
+    let broker = MemoryBroker::new();
+    let ingress_pub = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .publish_layer(AppendA)
+        .publish_layer(AppendB)
+        .with_broker(broker, |b| {
+            b.include_publishing(ord_echo, TypedPublisher::new(b.broker().publisher()));
+            b.include(ord_capture);
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+
+    let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
+    let got = tokio::time::timeout(Duration::from_secs(2), async {
+        let notified = ORDER_GOT.notified();
+        tokio::pin!(notified);
+        loop {
+            ingress_pub
+                .publish(OutgoingMessage::new("ord-in", &payload))
+                .await
+                .expect("publish");
+            tokio::select! {
+                () = &mut notified => break,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(got.is_ok(), "reply never captured");
+
+    // B was added last, so it wraps A and appends first: "BA".
+    assert_eq!(
+        ORDER.lock().expect("poisoned").as_deref(),
+        Some("BA"),
+        "the last publish_layer added must run outermost"
     );
 
     shutdown.notify_one();

@@ -5,7 +5,7 @@
 //! [`TypedPublisher`] (the broker connection + reply codec). The destination name comes from the
 //! macro; the publisher and codec come from wiring.
 
-use std::{future::Future, sync::Arc};
+use std::future::Future;
 
 use serde::{Serialize, de::DeserializeOwned};
 use tracing::warn;
@@ -18,7 +18,9 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishContext, PublishLayer, PublishPipeline, TypedPublisher};
+use super::publish::{
+    PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
+};
 
 /// A subscriber definition that produces a reply to publish.
 ///
@@ -35,7 +37,7 @@ pub trait PublishingDef: Send + Sync {
     /// The broker's typed per-delivery context the handler reads by key, mirroring
     /// [`SubscriberDef::Context`](super::SubscriberDef::Context) (`()` when the handler names
     /// none). It is threaded onto the reply's static
-    /// [`PublishLayer`](super::PublishLayer) so a publish transform can stamp the delivery's trace
+    /// [`PublishTransform`](super::PublishTransform) so a publish transform can stamp the delivery's trace
     /// or correlation id on the reply.
     type Context;
 
@@ -120,19 +122,19 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, encode the reply, publish, ack.
 ///
 /// `C` decodes the incoming message; the reply is encoded by the [`TypedPublisher`] (with its static
-/// [`PublishLayer`] stack `PL`) and sent to the definition's
+/// [`PublishTransform`] stack `PL`) and sent to the definition's
 /// [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)` skips the publish;
 /// a failed reply publish nacks the incoming message with `requeue = true`, so the broker
 /// redelivers it instead of silently losing the reply.
-pub struct PublishingHandler<D, C, P, PC, PL> {
+pub struct PublishingHandler<D, C, P, PC, PL, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: TypedPublisher<P, PC, PL>,
-    pub(crate) pipeline: Arc<dyn PublishPipeline>,
+    pub(crate) pipeline: PP,
     pub(crate) decode: FailurePolicy,
 }
 
-impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
+impl<D, C, P, PC, PL, PP> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL, PP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PublishingHandler")
             .field("publisher", &self.publisher)
@@ -140,7 +142,7 @@ impl<D, C, P, PC, PL> std::fmt::Debug for PublishingHandler<D, C, P, PC, PL> {
     }
 }
 
-impl<M, D, C, P, PC, PL, S> Handler<M, D::Context, S> for PublishingHandler<D, C, P, PC, PL>
+impl<M, D, C, P, PC, PL, PP, S> Handler<M, D::Context, S> for PublishingHandler<D, C, P, PC, PL, PP>
 where
     M: IncomingMessage,
     D: PublishingCall<S>,
@@ -150,7 +152,8 @@ where
     C: Codec,
     P: Publisher,
     PC: Codec,
-    PL: PublishLayer<D::Context>,
+    PL: PublishTransform<D::Context>,
+    PP: PublishPipeline,
     S: Send + Sync,
 {
     async fn handle(&self, msg: &M, ctx: &mut Context<'_, D::Context, S>) -> Settle {
@@ -184,9 +187,7 @@ where
         };
         let name = self.def.reply_name();
         let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
-        let publish = self
-            .publisher
-            .publish(name, &reply, &*self.pipeline, &pubcx);
+        let publish = self.publisher.publish(name, &reply, &self.pipeline, &pubcx);
         if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",

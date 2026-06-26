@@ -11,14 +11,14 @@ use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::middleware::Layer;
-use crate::runtime::publish::{PublishLayer, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
 use super::scope::BrokerScope;
 
-impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
+impl<B: Broker + 'static, L, St, PP> BrokerScope<B, L, (), St, PP> {
     /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
     /// [`DefaultCodec`](crate::codec::DefaultCodec) and wrapping the handler with the global stack.
     ///
@@ -150,6 +150,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
         RP::Codec: Clone + 'static,
         St: Send + Sync + 'static,
     {
@@ -168,6 +169,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
         RP::Codec: Clone + 'static,
         St: Send + Sync + 'static,
     {
@@ -195,9 +197,10 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
             + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
-        L: Layer<PublishingHandler<D, PC, P, PC, PL>>,
+        L: Layer<PublishingHandler<D, PC, P, PC, PL, PP>>,
         L::Handler: Handler<
                 <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
                 D::Context,
@@ -227,9 +230,10 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
             crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
-        L: Layer<PublishingHandler<D, PC, P, PC, PL>>,
+        L: Layer<PublishingHandler<D, PC, P, PC, PL, PP>>,
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let codec = publisher.codec().clone();
@@ -237,7 +241,7 @@ impl<B: Broker + 'static, L, St> BrokerScope<B, L, (), St> {
     }
 }
 
-impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C, St> {
+impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St, PP> BrokerScope<B, L, C, St, PP> {
     /// Mounts a `#[subscriber]`-generated definition on its own source, decoding its input with the
     /// scope's default codec (set by
     /// [`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)).
@@ -335,6 +339,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
@@ -352,6 +357,7 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
     {
         let codec = self.codec.clone();
@@ -375,9 +381,10 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
             + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
-        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
+        L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,
         L::Handler: Handler<
                 <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
                 D::Context,
@@ -407,9 +414,10 @@ impl<B: Broker + 'static, L, C: Codec + Clone + 'static, St> BrokerScope<B, L, C
             crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer<D::Context> + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        PP: PublishPipeline + Clone + 'static,
         St: Send + Sync + 'static,
-        L: Layer<PublishingHandler<D, C, P, PC, PL>>,
+        L: Layer<PublishingHandler<D, C, P, PC, PL, PP>>,
         L::Handler: Handler<<S::Subscriber as Subscriber>::Message, D::Context, St> + 'static,
     {
         let codec = self.codec.clone();

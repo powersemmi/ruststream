@@ -15,9 +15,14 @@ use std::{
 
 use common::handler_signal;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
-use ruststream::{Name, OutgoingMessage, Publisher, subscriber};
+use ruststream::memory::{MemoryBroker, MemoryMessage};
+use ruststream::runtime::{
+    AppInfo, HandlerResult, Outgoing, PublishContext, PublishTransform, Router, RustStream,
+    TypedPublisher,
+};
+use ruststream::{
+    BuildContext, Field, Headers, IncomingMessage, Name, OutgoingMessage, Publisher, subscriber,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -317,6 +322,256 @@ async fn chain_codec_router_batch_publishing_replies() {
         &BPC_NOTIFY,
     )
     .await;
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+// A static, app-wide publish middleware that stamps a header onto every reply. Used to prove the
+// app's `publish_layer` chain reaches a router-mounted publishing handler (it previously did not -
+// router publishing handlers were built with an empty pipeline).
+#[derive(Clone)]
+struct StampApp;
+
+impl ruststream::runtime::PublishLayer for StampApp {
+    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        next: ruststream::runtime::PublishNext<'a, N>,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
+    > {
+        out.headers_mut().insert("x-app", b"1".to_vec());
+        next.run(out)
+    }
+}
+
+#[subscriber("rl-in", publish("rl-out"))]
+async fn rl_relay(o: &Order) -> Receipt {
+    Receipt { id: o.id }
+}
+
+static RL_STAMPED: LazyLock<std::sync::Mutex<Option<bool>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+static RL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber("rl-out")]
+async fn rl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+    *RL_STAMPED.lock().unwrap() = Some(ctx.headers().get("x-app").is_some());
+    RL_NOTIFY.notify_one();
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn app_publish_layer_reaches_router_publishing_handlers() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let router = Router::<MemoryBroker>::new()
+        .include_publishing(rl_relay, TypedPublisher::new(broker.publisher()));
+
+    let app = RustStream::new(AppInfo::new("rl", "0.1.0"))
+        .publish_layer(StampApp)
+        .with_broker(broker, |b| {
+            b.include_router(router);
+            b.include(rl_check);
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    // Re-publish until the reply lands (subscriptions open inside run()).
+    let payload = order_bytes(1);
+    let driven = tokio::time::timeout(Duration::from_secs(5), async {
+        let notified = RL_NOTIFY.notified();
+        tokio::pin!(notified);
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("rl-in", &payload))
+                .await;
+            tokio::select! {
+                () = &mut notified => break,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(driven.is_ok(), "router publishing handler never replied");
+
+    assert_eq!(
+        *RL_STAMPED.lock().unwrap(),
+        Some(true),
+        "the app-wide publish_layer must reach a router-mounted publishing handler"
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+// The same fix on the BATCH router-publishing path: the app's publish_layer must reach a
+// router-mounted batch publishing handler (previously built with an empty pipeline).
+#[subscriber(batch("bl-in"), publish("bl-out"))]
+async fn bl_relay(orders: &[Order]) -> Vec<Receipt> {
+    orders.iter().map(|o| Receipt { id: o.id }).collect()
+}
+
+static BL_STAMPED: LazyLock<std::sync::Mutex<Option<bool>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+static BL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber("bl-out")]
+async fn bl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+    *BL_STAMPED.lock().unwrap() = Some(ctx.headers().get("x-app").is_some());
+    BL_NOTIFY.notify_one();
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let router = Router::<MemoryBroker>::new()
+        .include_batch_publishing(bl_relay, TypedPublisher::new(broker.publisher()));
+
+    let app = RustStream::new(AppInfo::new("bl", "0.1.0"))
+        .publish_layer(StampApp)
+        .with_broker(broker, |b| {
+            b.include_router(router);
+            b.include(bl_check);
+        });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let payload = order_bytes(1);
+    let driven = tokio::time::timeout(Duration::from_secs(5), async {
+        let notified = BL_NOTIFY.notified();
+        tokio::pin!(notified);
+        loop {
+            let _ = publisher
+                .publish(OutgoingMessage::new("bl-in", &payload))
+                .await;
+            tokio::select! {
+                () = &mut notified => break,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(
+        driven.is_ok(),
+        "router batch publishing handler never replied"
+    );
+
+    assert_eq!(
+        *BL_STAMPED.lock().unwrap(),
+        Some(true),
+        "the app-wide publish_layer must reach a router-mounted batch publishing handler"
+    );
+
+    shutdown.notify_one();
+    run.await.unwrap().unwrap();
+}
+
+// A typed delivery context on a ROUTER-mounted publishing handler. The old SubscribeRoute-based
+// router path forced the context to `()`; the deferred PublishingRoute threads `D::Context`, so a
+// publish layer can read the delivery by key. This would not compile on the pre-#113 router.
+#[derive(Default)]
+struct TraceCtx {
+    correlation: Option<String>,
+}
+
+impl BuildContext<MemoryMessage> for TraceCtx {
+    fn build(msg: &MemoryMessage) -> Self {
+        Self {
+            correlation: msg.headers().correlation_id().map(str::to_owned),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Correlation;
+
+impl Field<TraceCtx> for Correlation {
+    type Value<'a> = Option<&'a str>;
+    fn get(self, c: &TraceCtx) -> Option<&str> {
+        c.correlation.as_deref()
+    }
+}
+
+struct PropagateCorrelation;
+
+impl PublishTransform<TraceCtx> for PropagateCorrelation {
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
+        if let Some(id) = cx.context(Correlation) {
+            out.headers_mut()
+                .insert("correlation-id", id.as_bytes().to_vec());
+        }
+    }
+}
+
+#[subscriber("tc-in", publish("tc-out"))]
+async fn tc_relay(o: &Order, _ctx: &mut ruststream::runtime::Context<'_, TraceCtx>) -> Receipt {
+    Receipt { id: o.id }
+}
+
+static TC_CORR: LazyLock<std::sync::Mutex<Option<String>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+static TC_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+#[subscriber("tc-out")]
+async fn tc_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+    *TC_CORR.lock().unwrap() = ctx.headers().correlation_id().map(str::to_owned);
+    TC_NOTIFY.notify_one();
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn router_publishing_threads_typed_delivery_context() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let router = Router::<MemoryBroker>::new().include_publishing(
+        tc_relay,
+        TypedPublisher::new(broker.publisher()).transform(PropagateCorrelation),
+    );
+
+    let app = RustStream::new(AppInfo::new("tc", "0.1.0")).with_broker(broker, |b| {
+        b.include_router(router);
+        b.include(tc_check);
+    });
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = Arc::clone(&shutdown);
+    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+
+    let payload = order_bytes(1);
+    let driven = tokio::time::timeout(Duration::from_secs(5), async {
+        let notified = TC_NOTIFY.notified();
+        tokio::pin!(notified);
+        loop {
+            let mut headers = Headers::new();
+            headers.insert("correlation-id", "trace-xyz");
+            let _ = publisher
+                .publish(OutgoingMessage::new("tc-in", &payload).with_headers(headers))
+                .await;
+            tokio::select! {
+                () = &mut notified => break,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(driven.is_ok(), "typed-context router relay never replied");
+
+    assert_eq!(
+        TC_CORR.lock().unwrap().as_deref(),
+        Some("trace-xyz"),
+        "a router publishing handler must thread its typed delivery context to the publish layer"
+    );
 
     shutdown.notify_one();
     run.await.unwrap().unwrap();

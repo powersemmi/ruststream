@@ -105,7 +105,7 @@ Two boundaries to keep in mind:
   untouched.
 - Outgoing messages do not inherit the copy. Replies and manual publishes start from fresh
   headers; attach outgoing metadata in the [publish pipeline](publishing.md#the-publish-pipeline)
-  (a `PublishLayer` or `PublishMiddleware`) instead.
+  (a `PublishTransform` or `PublishLayer`) instead.
 
 ## Publishing from a handler
 

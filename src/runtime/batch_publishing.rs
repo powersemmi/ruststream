@@ -7,7 +7,7 @@
 //! [`TypedPublisher::transactional`](super::TypedPublisher::transactional)) makes the whole
 //! batch's replies visible atomically - the consume-transform-produce pattern.
 
-use std::{future::Future, sync::Arc};
+use std::future::Future;
 
 use serde::{Serialize, de::DeserializeOwned};
 use tracing::warn;
@@ -21,7 +21,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::metadata::HandlerMetadata;
-use super::publish::{PublishContext, PublishPipeline, ReplyPublisher};
+use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -126,22 +126,22 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
 /// with a plain publisher a mid-batch failure can therefore re-publish the earlier replies on
 /// redelivery (at-least-once), while a [`Transactional`](super::Transactional) publisher never
 /// leaves them half-visible.
-pub struct BatchPublishingHandler<D, C, R> {
+pub struct BatchPublishingHandler<D, C, R, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: R,
-    pub(crate) pipeline: Arc<dyn PublishPipeline>,
+    pub(crate) pipeline: PP,
     pub(crate) decode: FailurePolicy,
 }
 
-impl<D, C, R> std::fmt::Debug for BatchPublishingHandler<D, C, R> {
+impl<D, C, R, PP> std::fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BatchPublishingHandler")
             .finish_non_exhaustive()
     }
 }
 
-impl<M, D, C, R, S> BatchHandler<M, S> for BatchPublishingHandler<D, C, R>
+impl<M, D, C, R, PP, S> BatchHandler<M, S> for BatchPublishingHandler<D, C, R, PP>
 where
     M: IncomingMessage,
     D: BatchPublishingCall<S>,
@@ -149,6 +149,7 @@ where
     D::Reply: Serialize + Send + Sync,
     C: Codec,
     R: ReplyPublisher,
+    PP: PublishPipeline,
     S: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
@@ -164,7 +165,7 @@ where
                 let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
                 match self
                     .publisher
-                    .publish_batch(name, &replies, &*self.pipeline, &pubcx)
+                    .publish_batch(name, &replies, &self.pipeline, &pubcx)
                     .await
                 {
                     Ok(()) => HandlerResult::Ack,
@@ -261,7 +262,7 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: Arc::new(crate::runtime::PublishEnd),
+            pipeline: PublishIdentity,
             decode: FailurePolicy::Drop,
         };
 
@@ -299,7 +300,7 @@ mod tests {
             },
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: Arc::new(crate::runtime::PublishEnd),
+            pipeline: PublishIdentity,
             decode: FailurePolicy::Drop,
         };
 

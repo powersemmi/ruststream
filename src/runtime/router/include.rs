@@ -10,7 +10,7 @@ use crate::{BatchSubscriber, Broker, Publisher, SubscriptionSource};
 use crate::runtime::batch::{BatchDef, SliceHandler};
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::publish::{PublishLayer, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishTransform, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::subscriber_def::SubscriberDef;
 
@@ -137,7 +137,7 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
     ///
     /// `publisher` is either a plain [`TypedPublisher`] (each reply published independently) or
     /// a [`Transactional`](crate::runtime::Transactional) one (the batch's replies inside one
-    /// transaction). Router handlers run with an empty dynamic publish pipeline, like
+    /// transaction). The mounted handler joins the app's publish pipeline at mount time, like
     /// [`include_publishing`](Self::include_publishing).
     pub fn include_batch_publishing<D, RP>(
         self,
@@ -182,9 +182,9 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
     /// decoding its input with the `publisher`'s own codec and sending the reply through it.
     ///
-    /// Router handlers run with an empty dynamic publish pipeline - the app's
-    /// [`publish_layer`](crate::runtime::RustStream::publish_layer)s do not apply; the publisher's
-    /// own static [`PublishLayer`] stack still does.
+    /// The mounted handler joins the app's publish pipeline at mount time: the app-wide
+    /// [`publish_layer`](crate::runtime::RustStream::publish_layer)s wrap each reply, and the
+    /// publisher's own static [`PublishTransform`] stack runs closest to the value.
     pub fn include_publishing<D, P, PC, PL>(
         self,
         def: D,
@@ -198,7 +198,7 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         D::Reply: Serialize + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer + 'static,
+        PL: PublishTransform<D::Context> + 'static,
     {
         let codec = publisher.codec().clone();
         let source = def.source();
@@ -221,7 +221,7 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         D::Reply: Serialize + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + Clone + 'static,
-        PL: PublishLayer + 'static,
+        PL: PublishTransform<D::Context> + 'static,
     {
         let codec = publisher.codec().clone();
         self.mount_publishing(source, def, codec, publisher)
@@ -368,7 +368,7 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
         D::Reply: Serialize + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer + 'static,
+        PL: PublishTransform<D::Context> + 'static,
     {
         let codec = self.codec.clone();
         let source = def.source();
@@ -391,7 +391,7 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
         D::Reply: Serialize + Send + Sync + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,
-        PL: PublishLayer + 'static,
+        PL: PublishTransform<D::Context> + 'static,
     {
         let codec = self.codec.clone();
         self.mount_publishing(source, def, codec, publisher)

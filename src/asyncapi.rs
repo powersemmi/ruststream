@@ -1,4 +1,4 @@
-//! `AsyncAPI` 3.0 document generation from a [`RustStream`] service.
+//! `AsyncAPI` 3.0 document generation from a [`RustStream`](crate::runtime::RustStream) service.
 //!
 //! [`build_spec`] turns a service's registered handlers and metadata into a [`Spec`] that
 //! serializes to an `AsyncAPI` 3.0 document ([`to_json`](Spec::to_json) / [`to_yaml`](Spec::to_yaml)).
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::runtime::RustStream;
+use crate::runtime::App;
 
 /// An `AsyncAPI` 3.0 document.
 #[derive(Debug, Clone, Serialize)]
@@ -183,7 +183,7 @@ impl Reference {
 /// # }
 /// ```
 #[must_use]
-pub fn build_spec<L, St>(app: &RustStream<L, St>) -> Spec {
+pub fn build_spec<A: App>(app: &A) -> Spec {
     let info = Info {
         title: app.info().title.clone(),
         version: app.info().version.clone(),

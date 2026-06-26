@@ -34,7 +34,7 @@ pub(crate) fn orders(
     broker: &MemoryBroker,
     metrics: &Metrics,
 ) -> impl RouterDef<MemoryBroker, Repository> + use<> {
-    let confirmations = TypedPublisher::new(broker.publisher()).layer(StampSource);
+    let confirmations = TypedPublisher::new(broker.publisher()).transform(StampSource);
 
     Router::new()
         .layer(metrics.consume_layer())

@@ -19,7 +19,7 @@ mod router;
 mod subscriber_def;
 mod typed;
 
-pub use app::{AppInfo, BrokerScope, RustStream, RustStreamError};
+pub use app::{App, AppInfo, BrokerScope, RustStream, RustStreamError};
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
@@ -36,10 +36,11 @@ pub(crate) use lifecycle::BrokerLifecycle;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
-    BatchIdentity, BatchPublishLayer, BatchPublishStack, DynPublishMiddleware, ForBatch, Outgoing,
-    PublishCons, PublishContext, PublishDynNext, PublishDynStack, PublishEnd, PublishIdentity,
-    PublishLayer, PublishMiddleware, PublishNext, PublishPipeline, PublishStack, ReplyPublisher,
-    Transactional, TypedPublisher, for_batch,
+    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
+    PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
+    PublishLayer, PublishNext, PublishPipeline, PublishStack, PublishTransform,
+    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, Transactional, TypedPublisher,
+    for_batch,
 };
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};

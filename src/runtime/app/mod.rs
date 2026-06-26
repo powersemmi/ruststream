@@ -1,11 +1,13 @@
 //! The [`RustStream`] application object: binds brokers, handlers and lifecycle into one runnable
 //! service.
 
+mod app_trait;
 mod include;
 mod run;
 mod scope;
 mod service;
 
+pub use app_trait::App;
 pub use scope::BrokerScope;
 pub use service::RustStream;
 #[cfg(feature = "testing")]

@@ -13,7 +13,7 @@ use crate::runtime::dispatch::Delivery;
 use crate::runtime::lifecycle::{BoxError, BrokerLifecycle};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
-use crate::runtime::publish::{PublishCons, PublishEnd, PublishMiddleware, PublishPipeline};
+use crate::runtime::publish::{PublishIdentity, PublishLayer, PublishStack};
 use crate::runtime::router::RouterSink;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
@@ -60,13 +60,13 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// app.run().await
 /// # }
 /// ```
-pub struct RustStream<L = Identity, St = ()> {
+pub struct RustStream<L = Identity, St = (), PP = PublishIdentity> {
     pub(super) info: AppInfo,
     pub(super) brokers: Vec<RegisteredBroker>,
     pub(super) starters: Vec<Starter<St>>,
     pub(super) handlers: Vec<HandlerMetadata>,
     pub(super) servers: BTreeMap<String, ServerSpec>,
-    pub(super) publish_pipeline: Arc<dyn PublishPipeline>,
+    pub(super) publish_pipeline: PP,
     pub(super) state_init: StateInit<St>,
     pub(super) after_startup: Vec<LifecycleHook<St>>,
     pub(super) on_shutdown: Vec<LifecycleHook<St>>,
@@ -108,7 +108,7 @@ pub(crate) struct TestParts<St> {
     pub(crate) test_hooks: Arc<TestHooks>,
 }
 
-impl<L, St> std::fmt::Debug for RustStream<L, St> {
+impl<L, St, PP> std::fmt::Debug for RustStream<L, St, PP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RustStream")
             .field("info", &self.info)
@@ -118,7 +118,7 @@ impl<L, St> std::fmt::Debug for RustStream<L, St> {
     }
 }
 
-impl RustStream<Identity, ()> {
+impl RustStream<Identity, (), PublishIdentity> {
     /// Creates an empty service with the given metadata, no global middleware, and the unit
     /// application state `()`. Produce a typed state with [`on_startup`](Self::on_startup).
     #[must_use]
@@ -129,7 +129,7 @@ impl RustStream<Identity, ()> {
             starters: Vec::new(),
             handlers: Vec::new(),
             servers: BTreeMap::new(),
-            publish_pipeline: Arc::new(PublishEnd),
+            publish_pipeline: PublishIdentity,
             state_init: Box::new(|| Box::pin(async { Ok(()) })),
             after_startup: Vec::new(),
             on_shutdown: Vec::new(),
@@ -143,12 +143,12 @@ impl RustStream<Identity, ()> {
     }
 }
 
-impl<L, St> RustStream<L, St> {
+impl<L, St, PP> RustStream<L, St, PP> {
     /// Adds a global middleware layer, applied to every handler registered after it.
     ///
     /// The first layer added runs outermost. Call before [`with_broker`](Self::with_broker).
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, L>, St> {
+    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, L>, St, PP> {
         RustStream {
             info: self.info,
             brokers: self.brokers,
@@ -180,7 +180,7 @@ impl<L, St> RustStream<L, St> {
     /// Call this BEFORE registering handlers or read-only hooks: it fixes the app's state type, and
     /// registrations made earlier (which saw a different state type) are not carried across.
     #[must_use]
-    pub fn on_startup<F, Fut, St2, E>(self, hook: F) -> RustStream<L, St2>
+    pub fn on_startup<F, Fut, St2, E>(self, hook: F) -> RustStream<L, St2, PP>
     where
         F: FnOnce(St) -> Fut + Send + 'static,
         Fut: Future<Output = Result<St2, E>> + Send,
@@ -281,19 +281,35 @@ impl<L, St> RustStream<L, St> {
     }
 
     /// Adds an outgoing publish middleware, run on every published reply before it reaches the
-    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). The first one added runs
-    /// outermost. Call before [`with_broker`](Self::with_broker).
+    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). It composes into the
+    /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the
+    /// consume-side [`layer`](Self::layer), where the first added is outermost); the middleware must
+    /// be [`Clone`] (the pipeline is cloned into each publishing handler). Call before
+    /// [`with_broker`](Self::with_broker).
     #[must_use]
-    pub fn publish_layer<M>(mut self, middleware: M) -> Self
+    pub fn publish_layer<M>(self, middleware: M) -> RustStream<L, St, PublishStack<M, PP>>
     where
-        M: PublishMiddleware + 'static,
+        M: PublishLayer + Clone + 'static,
     {
-        // Prepend `middleware` to the boxed tail: the chain stays statically composed inside the
-        // single `Arc<dyn PublishPipeline>` (no per-layer `dyn` dispatch), the first added runs
-        // outermost.
-        let tail = self.publish_pipeline;
-        self.publish_pipeline = Arc::new(PublishCons::new(middleware, tail));
-        self
+        // Prepend `middleware` as the new outermost wrapper: the publish pipeline stays a statically
+        // composed type (no `dyn` dispatch), and the last one added runs outermost.
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            starters: self.starters,
+            handlers: self.handlers,
+            servers: self.servers,
+            publish_pipeline: PublishStack::new(middleware, self.publish_pipeline),
+            state_init: self.state_init,
+            after_startup: self.after_startup,
+            on_shutdown: self.on_shutdown,
+            after_shutdown: self.after_shutdown,
+            shutdown_timeout: self.shutdown_timeout,
+            continuations: self.continuations,
+            #[cfg(feature = "testing")]
+            test_hooks: self.test_hooks,
+            global: self.global,
+        }
     }
 
     /// Registers a broker for lifecycle management only (connect / shutdown), without attaching
@@ -339,8 +355,9 @@ impl<L, St> RustStream<L, St> {
     where
         B: Broker + 'static,
         L: Clone,
+        PP: Clone,
         St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, (), St>),
+        F: FnOnce(&mut BrokerScope<B, L, (), St, PP>),
     {
         let broker = Arc::new(broker);
         let mut scope = self.new_scope(&broker, ());
@@ -361,8 +378,9 @@ impl<L, St> RustStream<L, St> {
         B: Broker + 'static,
         C: Codec + Clone + 'static,
         L: Clone,
+        PP: Clone,
         St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, C, St>),
+        F: FnOnce(&mut BrokerScope<B, L, C, St, PP>),
     {
         let broker = Arc::new(broker);
         let mut scope = self.new_scope(&broker, codec);
@@ -416,8 +434,9 @@ impl<L, St> RustStream<L, St> {
     where
         B: DescribeServer + 'static,
         L: Clone,
+        PP: Clone,
         St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, (), St>),
+        F: FnOnce(&mut BrokerScope<B, L, (), St, PP>),
     {
         let label = self.record_server(label, &broker);
         let broker = Arc::new(broker);
@@ -445,8 +464,9 @@ impl<L, St> RustStream<L, St> {
         B: DescribeServer + 'static,
         C: Codec + Clone + 'static,
         L: Clone,
+        PP: Clone,
         St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, C, St>),
+        F: FnOnce(&mut BrokerScope<B, L, C, St, PP>),
     {
         let label = self.record_server(label, &broker);
         let broker = Arc::new(broker);
@@ -467,10 +487,11 @@ impl<L, St> RustStream<L, St> {
     }
 
     /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
-    fn new_scope<B, C>(&self, broker: &Arc<B>, codec: C) -> BrokerScope<B, L, C, St>
+    fn new_scope<B, C>(&self, broker: &Arc<B>, codec: C) -> BrokerScope<B, L, C, St, PP>
     where
         B: Broker + 'static,
         L: Clone,
+        PP: Clone,
         St: Send + Sync + 'static,
     {
         BrokerScope {
@@ -488,7 +509,7 @@ impl<L, St> RustStream<L, St> {
     fn collect_scope<B, C>(
         &mut self,
         broker: &Arc<B>,
-        scope: BrokerScope<B, L, C, St>,
+        scope: BrokerScope<B, L, C, St, PP>,
         label: Option<String>,
     ) where
         B: Broker + 'static,

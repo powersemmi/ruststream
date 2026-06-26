@@ -33,18 +33,19 @@ use std::time::Duration;
 use ruststream::ServerSpec;
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{AppInfo, Identity, RustStream, Stack};
+use ruststream::runtime::{App, AppInfo, RustStream};
 
 use std::sync::Arc;
 
 use crate::domain::{Repository, ServiceError};
 use crate::observability::Observe;
 
-/// Builds the service. The layer stack and the typed application state are both named in the return
-/// type: `Observe` wraps every handler, including the router-mounted ones (it is a `BlanketLayer`),
-/// with `Identity` as the base; `Repository` is the shared state `on_startup` produces.
+/// Builds the service. The return type is `impl App`, so the composed middleware stack, the typed
+/// application state, and the publish pipeline stay hidden: `Observe` wraps every handler, including
+/// the router-mounted ones (it is a `BlanketLayer`), and `Repository` is the shared state
+/// `on_startup` produces - none of which the caller needs to name.
 #[ruststream::app]
-fn app() -> RustStream<Stack<Observe, Identity>, Repository> {
+fn app() -> impl App {
     let metrics = Metrics::new().expect("create metrics registry");
     // A second handle for the shutdown dump; `Metrics` is cheap to clone (shared registry).
     let metrics_dump = metrics.clone();

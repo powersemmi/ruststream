@@ -79,14 +79,15 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Generates a `main` entry point for a `RustStream` service.
 ///
-/// Place it on a synchronous, argument-free function that builds and returns a `RustStream`
-/// application. The expansion keeps the function and adds a `main` that hands it to
+/// Place it on a synchronous, argument-free function that builds and returns an application -
+/// `impl App` (the recommended form, hiding the composed type parameters) or a concrete
+/// `RustStream<_>`. The expansion keeps the function and adds a `main` that hands it to
 /// `ruststream::runtime::cli::run_main`, producing a binary that understands the `run` and
 /// `asyncapi gen` commands with no hand-written runtime boilerplate.
 ///
 /// ```ignore
 /// #[ruststream::app]
-/// fn app() -> RustStream {
+/// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
 /// }
 /// ```
@@ -106,7 +107,7 @@ fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
     if let Some(asyncness) = func.sig.asyncness {
         return Err(syn::Error::new_spanned(
             asyncness,
-            "#[ruststream::app] requires a synchronous builder returning `RustStream`",
+            "#[ruststream::app] requires a synchronous builder returning `impl App` or `RustStream`",
         ));
     }
     if !func.sig.inputs.is_empty() {
