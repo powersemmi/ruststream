@@ -34,6 +34,36 @@ shared value must change at runtime. See [Lifespan](lifespan.md) for the startup
 --8<-- "examples/context.rs:state"
 ```
 
+## Injecting dependencies: extractor parameters
+
+Reaching for a dependency through `ctx.state().field` always works, but a handler can also take it
+as a parameter directly. Any handler parameter after the message (and the optional `&mut Context`)
+whose type implements `FromContext` is an **extractor**: the runtime resolves it from the delivery
+before the body runs, and a failed extraction settles the message by the rejection's `HandlerResult`
+without running the body.
+
+You rarely implement `FromContext` by hand. Derive `FromState` on the application state, and every
+field becomes injectable by its type:
+
+```rust
+--8<-- "examples/from_context.rs:state"
+```
+
+A handler then takes the field's type as an argument, with no `ctx.state()` reach-through:
+
+```rust
+--8<-- "examples/from_context.rs:handler"
+```
+
+A field whose type is foreign (the orphan rule forbids the generated impl) or that is plain
+configuration opts out with `#[from_state(skip)]`; two fields may not share a type, since extraction
+by type would be ambiguous. For a custom extractor that does more than clone a field out of the
+state - an auth guard that rejects, a request-scoped resolver - implement `FromContext` directly: it
+borrows the `&mut Context`, so it can read headers, broker fields, or a scratch value a middleware
+left, and return a `Rejection` to settle the delivery. A fully implicit "any state field injects
+with no annotation" is not possible in Rust (the coherence and orphan rules), which is why the
+derive is the zero-boilerplate path.
+
 ## Delivery level: `Context`
 
 A `#[subscriber]` handler opts in by declaring a second parameter after the payload; omit it when

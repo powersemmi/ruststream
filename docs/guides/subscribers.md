@@ -32,6 +32,15 @@ The macro resolves the context type itself, so the `Context` name needs no impor
 only in `#[subscriber]` signatures. The full context surface - the headers working copy, state
 access, broker per-delivery fields - is covered in [Context and state](context.md).
 
+### Extractor parameters
+
+Any further parameter, after the message and the optional `&mut Context`, whose type implements
+`FromContext` is resolved from the delivery before the body runs, so a handler takes its
+dependencies as arguments instead of reaching through `ctx.state()`. Derive `FromState` on the
+application state to make its fields injectable by type, or implement `FromContext` for a custom
+extractor; a failed extraction settles the delivery without running the body. See
+[Injecting dependencies](context.md#injecting-dependencies-extractor-parameters).
+
 ### Acking
 
 The return type is anything that converts into a [`Settle`] (the settlement unit: an outcome plus

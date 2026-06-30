@@ -15,7 +15,7 @@ use super::handler::HandlerResult;
 /// A value resolved from the per-delivery [`Context`] and shared state, ready to be passed to a
 /// handler as a parameter.
 ///
-/// Implement it for a type to let `#[subscriber]` handlers take that type as an argument: the
+/// When a type implements it, `#[subscriber]` handlers can take that type as an argument: the
 /// generated handler calls [`from_context`](Self::from_context) for each such parameter, in
 /// declaration order, before the body runs. Resolution is async so it may do work (a lookup, a
 /// scoped allocation) and fallible so it may reject the delivery; the [`Rejection`](Self::Rejection)
@@ -24,29 +24,24 @@ use super::handler::HandlerResult;
 /// The first handler parameter (the message `&M`) and the optional `&mut Context` are not
 /// extractors; every other by-value parameter is.
 ///
+/// Usually you do not implement this trait by hand. Deriving `FromState` on the application state
+/// generates an impl for each of its fields, so handlers take the field types as arguments directly.
+/// Implement it yourself only for a custom extractor (an auth guard, a request-scoped resolver) that
+/// does more than clone a field out of the state.
+///
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{Context, FromContext, HandlerResult};
+/// use ruststream::FromState;
 ///
-/// // A cheaply cloned service we want handlers to receive directly.
+/// // A cheaply cloned dependency handlers should receive directly.
 /// #[derive(Clone)]
-/// struct Service;
+/// struct Orders;
 ///
-/// // The extractor that produces it. Implemented for any context `C` and state `S`.
-/// struct UseService(Service);
-///
-/// impl<C: Send, S: Sync> FromContext<C, S> for UseService {
-///     type Rejection = HandlerResult;
-///     async fn from_context(_ctx: &mut Context<'_, C, S>) -> Result<Self, HandlerResult> {
-///         Ok(UseService(Service))
-///     }
-/// }
-///
-/// // The generated handler resolves it from the delivery context before running the body.
-/// async fn resolve<C: Send, S: Sync>(ctx: &mut Context<'_, C, S>) -> Result<(), HandlerResult> {
-///     let UseService(_service) = UseService::from_context(ctx).await?;
-///     Ok(())
+/// // Deriving `FromState` makes each field an extractor: a handler can now take `orders: Orders`.
+/// #[derive(FromState)]
+/// struct AppState {
+///     orders: Orders,
 /// }
 /// ```
 pub trait FromContext<C = (), S = ()>: Sized {

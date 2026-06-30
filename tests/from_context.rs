@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, Context, FromContext, HandlerResult, RustStream};
-use ruststream::subscriber;
 use ruststream::testing::TestApp;
+use ruststream::{FromState, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -121,7 +121,7 @@ async fn extractor_rejection_short_circuits() {
 #[derive(Clone)]
 struct Tally(Arc<AtomicU32>);
 
-#[derive(ruststream::FromState)]
+#[derive(FromState)]
 struct DerivedState {
     tally: Tally,
     #[from_state(skip)]

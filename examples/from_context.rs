@@ -35,17 +35,21 @@ impl CreateOrder {
 
 // The application state wires the interactors once at startup. `#[derive(FromState)]` makes each
 // field extractable by its type, so no `FromContext` impl is written by hand.
+// --8<-- [start:state]
 #[derive(FromState)]
 struct AppState {
     create_order: CreateOrder,
 }
+// --8<-- [end:state]
 
 // The interactor arrives as a handler argument; no `ctx.state().create_order` reach-through.
+// --8<-- [start:handler]
 #[subscriber("orders")]
 async fn handle(order: &Order, create_order: CreateOrder) -> HandlerResult {
     create_order.execute(order);
     HandlerResult::Ack
 }
+// --8<-- [end:handler]
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
