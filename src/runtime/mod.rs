@@ -7,6 +7,7 @@ pub mod cli;
 mod context;
 mod dispatch;
 mod dynstack;
+mod extract;
 mod failure;
 mod handler;
 mod lifecycle;
@@ -27,6 +28,7 @@ pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublish
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
+pub use extract::FromContext;
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};

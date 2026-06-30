@@ -69,7 +69,18 @@ use parse::{SubscriberArgs, doc_description};
 /// (single-message forms only). The default is the sequential loop.
 ///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
-/// `&mut Context`, to read app state or publish manually.
+/// `&mut Context`, to read app state or publish manually. Any further parameter is an extractor: its
+/// type must implement
+/// [`FromContext`](../ruststream/runtime/trait.FromContext.html), and the generated handler resolves
+/// it from the delivery context (in declaration order) before the body runs, so dependencies arrive
+/// as arguments. A failed extraction settles the delivery by the rejection's `HandlerResult` without
+/// running the body.
+///
+/// ```ignore
+/// // `db` is resolved through `FromContext` before the body runs.
+/// #[subscriber("orders")]
+/// async fn handle(order: &Order, db: Db) -> HandlerResult { /* ... */ }
+/// ```
 #[proc_macro_attribute]
 pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as SubscriberArgs);

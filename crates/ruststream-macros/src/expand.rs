@@ -38,6 +38,7 @@ struct HandlerParts<'a> {
     ctx_param: TokenStream2,
     ctx_ty: TokenStream2,
     state_ty: Option<TokenStream2>,
+    extractors: Vec<(&'a syn::Pat, &'a Type)>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
 }
@@ -49,6 +50,11 @@ fn context_type(func: &ItemFn) -> TokenStream2 {
     let Some(FnArg::Typed(PatType { ty, .. })) = func.sig.inputs.get(1) else {
         return quote!(());
     };
+    // The second parameter is the context only when it is `&mut Context<..>`; otherwise it is an
+    // extractor, so the handler named no context type.
+    if !is_context_param(ty) {
+        return quote!(());
+    }
     // Dig the second generic argument (after the lifetime) out of `&mut Context<'_, C>`.
     if let Type::Reference(reference) = &**ty
         && let Type::Path(path) = &*reference.elem
@@ -73,6 +79,11 @@ fn state_type(func: &ItemFn) -> Option<TokenStream2> {
     let FnArg::Typed(PatType { ty, .. }) = func.sig.inputs.get(1)? else {
         return None;
     };
+    // Only a `&mut Context<..>` second parameter names a state; a second extractor parameter does
+    // not.
+    if !is_context_param(ty) {
+        return None;
+    }
     // Collect the type arguments of `&mut Context<'_, C, St>` (skipping the lifetime); the second is
     // the state type.
     if let Type::Reference(reference) = &**ty
@@ -90,6 +101,85 @@ fn state_type(func: &ItemFn) -> Option<TokenStream2> {
         }
     }
     None
+}
+
+/// True when a handler parameter is the optional per-delivery `&mut Context<..>` (matched by the
+/// path's last segment being `Context`), as opposed to an extractor parameter.
+fn is_context_param(ty: &Type) -> bool {
+    if let Type::Reference(reference) = ty
+        && reference.mutability.is_some()
+        && let Type::Path(path) = &*reference.elem
+        && let Some(segment) = path.path.segments.last()
+    {
+        return segment.ident == "Context";
+    }
+    false
+}
+
+/// The handler's extractor parameters: every parameter after the message that is not the optional
+/// `&mut Context`. Each is resolved through [`FromContext`] before the body runs. `ctx_present`
+/// reports whether the second parameter is the context (and so is skipped here).
+fn collect_extractors(func: &ItemFn, ctx_present: bool) -> syn::Result<Vec<(&syn::Pat, &Type)>> {
+    let start = if ctx_present { 2 } else { 1 };
+    let mut extractors = Vec::new();
+    for arg in func.sig.inputs.iter().skip(start) {
+        let FnArg::Typed(PatType { pat, ty, .. }) = arg else {
+            return Err(syn::Error::new_spanned(
+                arg,
+                "a #[subscriber] handler cannot take `self`",
+            ));
+        };
+        if is_context_param(ty) {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "the `&mut Context` parameter must come immediately after the message, before any \
+                 extractor parameters",
+            ));
+        }
+        extractors.push((&**pat, &**ty));
+    }
+    Ok(extractors)
+}
+
+/// The `where` predicates binding each extractor type to [`FromContext`] for the handler's context
+/// `C` and state `S`, or nothing when there are no extractors. Added to the generated call impl so a
+/// state-specific extractor compiles without forcing the handler to name a `&mut Context`.
+fn extractor_where(
+    extractors: &[(&syn::Pat, &Type)],
+    ctx_ty: &TokenStream2,
+    state: &TokenStream2,
+) -> TokenStream2 {
+    if extractors.is_empty() {
+        return quote!();
+    }
+    let preds = extractors
+        .iter()
+        .map(|(_, ty)| quote!(#ty: ::ruststream::runtime::FromContext<#ctx_ty, #state>));
+    quote!(where #(#preds),*)
+}
+
+/// The `let` bindings that resolve each extractor from the context before the body runs. A failed
+/// extraction runs `reject` (a `return` settling the delivery by the rejection's `HandlerResult`).
+fn extractor_prelude(
+    extractors: &[(&syn::Pat, &Type)],
+    ctx_param: &TokenStream2,
+    ctx_ty: &TokenStream2,
+    state: &TokenStream2,
+    reject: &TokenStream2,
+) -> TokenStream2 {
+    let binds = extractors.iter().map(|(pat, ty)| {
+        quote! {
+            let #pat = match <#ty as ::ruststream::runtime::FromContext<#ctx_ty, #state>>::from_context(
+                &mut *#ctx_param,
+            )
+            .await
+            {
+                ::core::result::Result::Ok(__rs_value) => __rs_value,
+                ::core::result::Result::Err(__rs_err) => { #reject; }
+            };
+        }
+    });
+    quote!(#(#binds)*)
 }
 
 /// Renders the `on_failure(..)` clause as an override of the def's defaulted `failure_policies`
@@ -233,12 +323,19 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     };
 
     // Optional second handler parameter: the per-delivery `&mut Context`. If the user declares it,
-    // bind it to their name; otherwise generate an ignored binding.
-    let ctx_param = if let Some(FnArg::Typed(PatType { pat, .. })) = func.sig.inputs.get(1) {
+    // bind it to their name; otherwise generate an ignored binding. Any later by-value parameter is
+    // an extractor, resolved through `FromContext` before the body.
+    let ctx_arg = func
+        .sig
+        .inputs
+        .get(1)
+        .filter(|arg| matches!(arg, FnArg::Typed(pt) if is_context_param(&pt.ty)));
+    let ctx_param = if let Some(FnArg::Typed(PatType { pat, .. })) = ctx_arg {
         quote!(#pat)
     } else {
         quote!(_ctx)
     };
+    let extractors = collect_extractors(func, ctx_arg.is_some())?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
@@ -259,9 +356,41 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         ctx_param,
         ctx_ty,
         state_ty,
+        extractors,
         workers_method,
         failure_method,
     })
+}
+
+/// Splits a batch publishing handler's declared return type into the reply element type and the
+/// body that yields `Result<Vec<Reply>, HandlerResult>`. `-> Result<Vec<Reply>, HandlerResult>` is
+/// passed through; a plain `-> Vec<Reply>` is wrapped in `Ok`. Both checks are syntactic, like the
+/// single-message publish form: a type alias is not seen through.
+fn batch_reply_body<'a>(
+    declared_ty: &'a Type,
+    block: &syn::Block,
+) -> syn::Result<(&'a Type, TokenStream2)> {
+    if let Some(ok_ty) = publish_result_reply(declared_ty) {
+        let Some(elem) = vec_element(ok_ty) else {
+            return Err(syn::Error::new_spanned(
+                ok_ty,
+                "a batch publishing handler replies with a Vec: Result<Vec<Reply>, HandlerResult>",
+            ));
+        };
+        Ok((elem, quote!((async move #block).await)))
+    } else {
+        let Some(elem) = vec_element(declared_ty) else {
+            return Err(syn::Error::new_spanned(
+                declared_ty,
+                "a batch publishing handler returns the replies: Vec<Reply>, or \
+                 Result<Vec<Reply>, HandlerResult>",
+            ));
+        };
+        Ok((
+            elem,
+            quote!(::core::result::Result::Ok((async move #block).await)),
+        ))
+    }
 }
 
 fn expand_batch_publishing(
@@ -283,6 +412,7 @@ fn expand_batch_publishing(
         ctx_param,
         ctx_ty: _,
         state_ty,
+        extractors,
         workers_method,
         failure_method,
     } = parts;
@@ -297,31 +427,7 @@ fn expand_batch_publishing(
             ));
         }
     };
-    // `-> Result<Vec<Reply>, HandlerResult>` lets the handler skip the publish; a plain
-    // `-> Vec<Reply>` is wrapped in `Ok` here. Both checks are syntactic, like the
-    // single-message publish form: a type alias is not seen through.
-    let (reply_elem, call_body) = if let Some(ok_ty) = publish_result_reply(declared_ty) {
-        let Some(elem) = vec_element(ok_ty) else {
-            return Err(syn::Error::new_spanned(
-                ok_ty,
-                "a batch publishing handler replies with a Vec: \
-                 Result<Vec<Reply>, HandlerResult>",
-            ));
-        };
-        (elem, quote!((async move #block).await))
-    } else {
-        let Some(elem) = vec_element(declared_ty) else {
-            return Err(syn::Error::new_spanned(
-                declared_ty,
-                "a batch publishing handler returns the replies: Vec<Reply>, or \
-                 Result<Vec<Reply>, HandlerResult>",
-            ));
-        };
-        (
-            elem,
-            quote!(::core::result::Result::Ok((async move #block).await)),
-        )
-    };
+    let (reply_elem, call_body) = batch_reply_body(declared_ty, block)?;
 
     // Like the single-message publishing form: the handler implements `BatchPublishingCall` only
     // for its named state (mounts on a matching app), or generically when it names none (mounts on
@@ -333,6 +439,20 @@ fn expand_batch_publishing(
             quote!(__RsState),
         ),
     };
+    // The batch context is always `()`; extractors resolve against it.
+    let unit_ctx = quote!(());
+    let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        &unit_ctx,
+        &state_in_ctx,
+        &quote!(
+            return ::core::result::Result::Err(::core::convert::Into::<
+                ::ruststream::runtime::HandlerResult,
+            >::into(__rs_err),)
+        ),
+    );
     Ok(quote! {
         #[allow(non_camel_case_types)]
         #vis struct #name;
@@ -360,6 +480,7 @@ fn expand_batch_publishing(
 
         impl #impl_generics
             ::ruststream::runtime::BatchPublishingCall<#state_in_ctx> for #name
+            #where_clause
         {
             async fn call(
                 &self,
@@ -369,6 +490,7 @@ fn expand_batch_publishing(
                 ::std::vec::Vec<#reply_elem>,
                 ::ruststream::runtime::HandlerResult,
             > {
+                #prelude
                 #call_body
             }
         }
@@ -390,6 +512,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ctx_param,
         ctx_ty: _,
         state_ty,
+        extractors,
         workers_method,
         failure_method,
     } = parts;
@@ -411,6 +534,20 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
             quote!(__RsState),
         ),
     };
+    // The batch context is always `()`; extractors resolve against it.
+    let unit_ctx = quote!(());
+    let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        &unit_ctx,
+        &state_in_ctx,
+        &quote!(
+            return ::ruststream::runtime::IntoBatchResult::into_batch_result(
+                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+            )
+        ),
+    );
 
     quote! {
             #[derive(Clone, Copy)]
@@ -419,12 +556,14 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
 
             impl #impl_generics
                 ::ruststream::runtime::SliceHandler<#input_ty, #state_in_ctx> for #name
+                #where_clause
             {
                 async fn handle_slice(
                     &self,
                     #pat: &[#input_ty],
                     #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
                 ) -> ::ruststream::runtime::BatchResult {
+                    #prelude
                     let outcome: #outcome_ty = (async move #block).await;
                     ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)
                 }
@@ -473,6 +612,7 @@ fn expand_publishing(
         ctx_param,
         ctx_ty,
         state_ty,
+        extractors,
         workers_method,
         failure_method,
     } = parts;
@@ -507,6 +647,18 @@ fn expand_publishing(
             quote!(__RsState),
         ),
     };
+    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        ctx_ty,
+        &state_in_ctx,
+        &quote!(
+            return ::core::result::Result::Err(::core::convert::Into::<
+                ::ruststream::runtime::HandlerResult,
+            >::into(__rs_err),)
+        ),
+    );
     Ok(quote! {
         #[allow(non_camel_case_types)]
         #vis struct #name;
@@ -535,12 +687,14 @@ fn expand_publishing(
 
         impl #impl_generics
             ::ruststream::runtime::PublishingCall<#state_in_ctx> for #name
+            #where_clause
         {
             async fn call(
                 &self,
                 #pat: &#input_ty,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
+                #prelude
                 #call_body
             }
         }
@@ -562,6 +716,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         ctx_param,
         ctx_ty,
         state_ty,
+        extractors,
         workers_method,
         failure_method,
     } = parts;
@@ -576,15 +731,29 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
             quote!(__RsState),
         ),
     };
+    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        ctx_ty,
+        &state_in_ctx,
+        &quote!(
+            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
+                ::ruststream::runtime::HandlerResult,
+            >::into(__rs_err),)
+        ),
+    );
     let handler_impl = quote! {
         impl #impl_generics
             ::ruststream::runtime::Handler<#input_ty, #ctx_ty, #state_in_ctx> for #name
+            #where_clause
         {
             async fn handle(
                 &self,
                 #pat: &#input_ty,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::ruststream::runtime::Settle {
+                #prelude
                 ::ruststream::runtime::IntoSettle::into_settle(
                     (async move #block).await,
                 )
