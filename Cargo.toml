@@ -6,7 +6,7 @@ members = ["crates/ruststream-macros"]
 exclude = ["templates"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -83,6 +83,10 @@ required-features = ["macros", "memory", "json"]
 name = "context_field"
 
 [[example]]
+name = "from_context"
+required-features = ["testing", "macros", "memory", "json"]
+
+[[example]]
 name = "lifespan"
 required-features = ["macros", "memory", "json"]
 
@@ -137,6 +141,10 @@ required-features = ["memory", "macros", "json", "testing"]
 [[test]]
 name = "failure_policy"
 required-features = ["macros", "memory", "json"]
+
+[[test]]
+name = "from_context"
+required-features = ["macros", "memory", "json", "testing"]
 
 [[test]]
 name = "macro_subscriber"

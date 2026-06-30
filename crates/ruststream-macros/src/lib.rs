@@ -4,6 +4,7 @@
 //! on this crate directly.
 
 mod expand;
+mod from_ref;
 mod parse;
 
 use proc_macro::TokenStream;
@@ -69,7 +70,18 @@ use parse::{SubscriberArgs, doc_description};
 /// (single-message forms only). The default is the sequential loop.
 ///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
-/// `&mut Context`, to read app state or publish manually.
+/// `&mut Context`, to read app state or publish manually. Any further parameter is an extractor: its
+/// type must implement
+/// [`FromContext`](../ruststream/runtime/trait.FromContext.html), and the generated handler resolves
+/// it from the delivery context (in declaration order) before the body runs, so dependencies arrive
+/// as arguments. A failed extraction settles the delivery by the rejection's `HandlerResult` without
+/// running the body.
+///
+/// ```ignore
+/// // `State<Db>` is resolved from the application state before the body runs.
+/// #[subscriber("orders")]
+/// async fn handle(order: &Order, State(db): State<Db>) -> HandlerResult { /* ... */ }
+/// ```
 #[proc_macro_attribute]
 pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as SubscriberArgs);
@@ -151,4 +163,30 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+/// Derives [`FromRef`](../ruststream/runtime/trait.FromRef.html) for each field of an
+/// application-state struct, so `#[subscriber]` handlers can inject any field with
+/// `State<FieldType>` without a hand-written impl.
+///
+/// Each field gets a `FromRef` impl that clones it out of the state. Because the generated impl
+/// carries no generic parameter, it is legal even for fields whose type comes from another crate (a
+/// broker publisher, a client pool). A field that another field's type already claims, or that
+/// should not be injectable, opts out with `#[from_ref(skip)]`; two fields may not share a type
+/// (injection by type would be ambiguous).
+///
+/// ```ignore
+/// #[derive(FromRef)]
+/// struct AppState {
+///     orders: OrderService, // handlers can now take `State<OrderService>`
+///     #[from_ref(skip)]
+///     config: Config,
+/// }
+/// ```
+#[proc_macro_derive(FromRef, attributes(from_ref))]
+pub fn derive_from_ref(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    from_ref::expand(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }

@@ -22,6 +22,7 @@ cargo doc --all-features --open
 |---|---|---|
 | `RustStream` | `ruststream::runtime` | the application object |
 | `Router` | `ruststream::runtime` | a lazily-bound group of handlers |
+| `FromContext`, `State`, `FromRef` | `ruststream::runtime` / `ruststream` | handler extractor parameters and the state-injection derive |
 | `Broker`, `Subscribe`, `Subscriber`, `Publisher`, `IncomingMessage` | `ruststream` | the broker contract |
 | `SubscriptionSource`, `Name` | `ruststream` | subscription descriptors |
 | `JsonCodec`, `MsgpackCodec`, `CborCodec` | `ruststream::codec` | wire codecs |

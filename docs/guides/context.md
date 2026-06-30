@@ -34,6 +34,35 @@ shared value must change at runtime. See [Lifespan](lifespan.md) for the startup
 --8<-- "examples/context.rs:state"
 ```
 
+## Injecting dependencies: extractor parameters
+
+Reaching for a dependency through `ctx.state().field` always works, but a handler can also take it
+as a parameter. Any handler parameter after the message (and the optional `&mut Context`) whose type
+implements `FromContext` is an **extractor**: the runtime resolves it from the delivery before the
+body runs, and a failed extraction settles the message by the rejection's `HandlerResult` without
+running the body.
+
+To inject a piece of the state, derive `FromRef` on the state and take `State<T>` in the handler -
+no extractor impl by hand. `State<T>` resolves for any field type (`T: FromRef<S>`), including types
+from other crates (a broker publisher, a client pool) that a bare per-field impl could not cover
+under the orphan rule:
+
+```rust
+--8<-- "examples/from_context.rs:state"
+```
+
+The handler takes `State<FieldType>`, with no `ctx.state()` reach-through:
+
+```rust
+--8<-- "examples/from_context.rs:handler"
+```
+
+A field that should not be injectable, or whose type another field already claims, opts out with
+`#[from_ref(skip)]`; two fields may not share a type, since injection by type would be ambiguous. For
+a custom extractor that does more than read the state - an auth guard that rejects, a request-scoped
+resolver - implement `FromContext` directly: it borrows the `&mut Context`, so it can read headers,
+broker fields, or a scratch value a middleware left, and return a `Rejection` to settle the delivery.
+
 ## Delivery level: `Context`
 
 A `#[subscriber]` handler opts in by declaring a second parameter after the payload; omit it when
