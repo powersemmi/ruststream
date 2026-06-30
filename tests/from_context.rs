@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, Context, FromContext, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, Context, FromContext, HandlerResult, RustStream, State};
 use ruststream::testing::TestApp;
-use ruststream::{FromState, subscriber};
+use ruststream::{FromRef, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -116,26 +116,26 @@ async fn extractor_rejection_short_circuits() {
     );
 }
 
-// --- derive: FromState makes each state field injectable with no hand-written extractor ---
+// --- derive: FromRef makes each state field injectable via State<T>, no hand-written extractor ---
 
 #[derive(Clone)]
 struct Tally(Arc<AtomicU32>);
 
-#[derive(FromState)]
+#[derive(FromRef)]
 struct DerivedState {
     tally: Tally,
-    #[from_state(skip)]
+    #[from_ref(skip)]
     _label: &'static str,
 }
 
 #[subscriber("derived")]
-async fn derived(_order: &Order, tally: Tally) -> HandlerResult {
+async fn derived(_order: &Order, State(tally): State<Tally>) -> HandlerResult {
     tally.0.fetch_add(1, Ordering::Relaxed);
     HandlerResult::Ack
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn derive_from_state_injects_fields() {
+async fn derive_from_ref_injects_fields() {
     let count = Arc::new(AtomicU32::new(0));
     let tally = Tally(count.clone());
     let app = RustStream::new(AppInfo::new("derived", "0.1.0"))

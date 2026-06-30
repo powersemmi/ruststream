@@ -1,7 +1,7 @@
 //! Handler abstraction, the [`HandlerResult`] decision enum, and the [`Settle`] settlement unit
 //! returned to the router.
 
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use super::context::Context;
 
@@ -30,6 +30,12 @@ pub enum HandlerResult {
         /// How long the broker should wait before redelivering.
         delay: Duration,
     },
+}
+
+impl From<Infallible> for HandlerResult {
+    fn from(never: Infallible) -> Self {
+        match never {}
+    }
 }
 
 impl HandlerResult {

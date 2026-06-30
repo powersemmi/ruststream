@@ -1,7 +1,7 @@
 //! Extractor parameters: a handler declares a dependency as an argument and the runtime resolves it
 //! from the per-delivery context, instead of reaching for it through `ctx.state()`. The state
-//! derives `FromState`, so the interactor is injectable by its type with no hand-written extractor.
-//! Driven through the real dispatch path with the in-process `TestApp` harness.
+//! derives `FromRef`, so any field is injectable with `State<FieldType>` and no hand-written
+//! extractor. Driven through the real dispatch path with the in-process `TestApp` harness.
 //!
 //! ```text
 //! cargo run --example from_context --features testing,macros,memory,json
@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream, State};
 use ruststream::testing::TestApp;
-use ruststream::{FromState, subscriber};
+use ruststream::{FromRef, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -33,10 +33,10 @@ impl CreateOrder {
     }
 }
 
-// The application state wires the interactors once at startup. `#[derive(FromState)]` makes each
-// field extractable by its type, so no `FromContext` impl is written by hand.
+// The application state wires the interactors once at startup. `#[derive(FromRef)]` makes each
+// field injectable with `State<FieldType>`, so no extractor impl is written by hand.
 // --8<-- [start:state]
-#[derive(FromState)]
+#[derive(FromRef)]
 struct AppState {
     create_order: CreateOrder,
 }
@@ -45,7 +45,7 @@ struct AppState {
 // The interactor arrives as a handler argument; no `ctx.state().create_order` reach-through.
 // --8<-- [start:handler]
 #[subscriber("orders")]
-async fn handle(order: &Order, create_order: CreateOrder) -> HandlerResult {
+async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerResult {
     create_order.execute(order);
     HandlerResult::Ack
 }

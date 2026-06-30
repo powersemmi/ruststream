@@ -36,8 +36,8 @@ access, broker per-delivery fields - is covered in [Context and state](context.m
 
 Any further parameter, after the message and the optional `&mut Context`, whose type implements
 `FromContext` is resolved from the delivery before the body runs, so a handler takes its
-dependencies as arguments instead of reaching through `ctx.state()`. Derive `FromState` on the
-application state to make its fields injectable by type, or implement `FromContext` for a custom
+dependencies as arguments instead of reaching through `ctx.state()`. Derive `FromRef` on the
+application state to inject its fields with `State<T>`, or implement `FromContext` for a custom
 extractor; a failed extraction settles the delivery without running the body. See
 [Injecting dependencies](context.md#injecting-dependencies-extractor-parameters).
 
