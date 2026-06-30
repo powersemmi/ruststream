@@ -92,6 +92,13 @@ pub use ruststream_macros::app;
 #[cfg(feature = "macros")]
 pub use ruststream_macros::Message;
 
+/// Derive macro that makes an application state's fields injectable into handlers as
+/// [`FromContext`](runtime::FromContext) extractor arguments.
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::FromState;
+
 #[cfg(feature = "conformance")]
 pub mod conformance;
 

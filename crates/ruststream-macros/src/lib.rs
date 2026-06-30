@@ -4,6 +4,7 @@
 //! on this crate directly.
 
 mod expand;
+mod from_state;
 mod parse;
 
 use proc_macro::TokenStream;
@@ -162,4 +163,29 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+/// Derives an extractor for each field of an application-state struct, so `#[subscriber]` handlers
+/// can take the field types as arguments (resolved through
+/// [`FromContext`](../ruststream/runtime/trait.FromContext.html)) without a hand-written impl.
+///
+/// Each field's type gets a `FromContext` impl that clones the field out of the state. A field whose
+/// type is foreign (the orphan rule forbids the generated impl) or that is plain configuration can
+/// opt out with `#[from_state(skip)]`. Two fields may not share a type (extraction by type would be
+/// ambiguous).
+///
+/// ```ignore
+/// #[derive(FromState)]
+/// struct AppState {
+///     orders: OrderService, // handlers can now take `orders: OrderService`
+///     #[from_state(skip)]
+///     config: Config,
+/// }
+/// ```
+#[proc_macro_derive(FromState, attributes(from_state))]
+pub fn derive_from_state(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    from_state::expand(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }

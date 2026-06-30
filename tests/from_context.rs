@@ -115,3 +115,52 @@ async fn extractor_rejection_short_circuits() {
         "the handler body must not run when an extractor rejects"
     );
 }
+
+// --- derive: FromState makes each state field injectable with no hand-written extractor ---
+
+#[derive(Clone)]
+struct Tally(Arc<AtomicU32>);
+
+#[derive(ruststream::FromState)]
+struct DerivedState {
+    tally: Tally,
+    #[from_state(skip)]
+    _label: &'static str,
+}
+
+#[subscriber("derived")]
+async fn derived(_order: &Order, tally: Tally) -> HandlerResult {
+    tally.0.fetch_add(1, Ordering::Relaxed);
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn derive_from_state_injects_fields() {
+    let count = Arc::new(AtomicU32::new(0));
+    let tally = Tally(count.clone());
+    let app = RustStream::new(AppInfo::new("derived", "0.1.0"))
+        .on_startup(move |()| async move {
+            Ok::<_, Infallible>(DerivedState {
+                tally,
+                _label: "svc",
+            })
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(derived));
+
+    let tb = TestApp::start(app).await.expect("start");
+    tb.broker::<MemoryBroker>()
+        .publish("derived", &Order { id: 3 })
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("derived")
+        .assert_called_once()
+        .with(&Order { id: 3 })
+        .settled(HandlerResult::Ack);
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        1,
+        "derived extractor handed the field to the handler"
+    );
+}

@@ -1,6 +1,7 @@
 //! Extractor parameters: a handler declares a dependency as an argument and the runtime resolves it
-//! from the per-delivery context with [`FromContext`], instead of reaching for it through
-//! `ctx.state()`. Driven through the real dispatch path with the in-process `TestApp` harness.
+//! from the per-delivery context, instead of reaching for it through `ctx.state()`. The state
+//! derives `FromState`, so the interactor is injectable by its type with no hand-written extractor.
+//! Driven through the real dispatch path with the in-process `TestApp` harness.
 //!
 //! ```text
 //! cargo run --example from_context --features testing,macros,memory,json
@@ -10,9 +11,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, Context, FromContext, HandlerResult, RustStream};
-use ruststream::subscriber;
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::testing::TestApp;
+use ruststream::{FromState, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -32,17 +33,11 @@ impl CreateOrder {
     }
 }
 
-// The application state wires the interactors once at startup.
+// The application state wires the interactors once at startup. `#[derive(FromState)]` makes each
+// field extractable by its type, so no `FromContext` impl is written by hand.
+#[derive(FromState)]
 struct AppState {
     create_order: CreateOrder,
-}
-
-// The extractor: clone the interactor out of the state so the handler can take it by value.
-impl<C: Send> FromContext<C, AppState> for CreateOrder {
-    type Rejection = HandlerResult;
-    async fn from_context(ctx: &mut Context<'_, C, AppState>) -> Result<Self, HandlerResult> {
-        Ok(ctx.state().create_order.clone())
-    }
 }
 
 // The interactor arrives as a handler argument; no `ctx.state().create_order` reach-through.
