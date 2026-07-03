@@ -100,8 +100,10 @@ nav:
   - Brokers:
       - brokers/index.md
       - brokers/memory.md
-      - brokers/nats.md
-      - brokers/redis.md
+      # Each broker crate is documented on its own site; the nav links straight there.
+      - NATS: https://powersemmi.github.io/ruststream-nats/
+      - Redis: https://powersemmi.github.io/ruststream-fred/
+      - RabbitMQ: https://powersemmi.github.io/ruststream-lapin/
   - Broker authors:
       - broker-authors/index.md
       - broker-authors/example-nats.md

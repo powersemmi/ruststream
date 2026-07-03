@@ -6,11 +6,14 @@ development and tests; production brokers are separate crates you add as a depen
 Handlers, routers, codecs, and middleware are broker-agnostic, so moving between brokers is a
 one-line change at `with_broker`.
 
-| Broker | Crate | Transport |
-|---|---|---|
-| [Memory](memory.md) | `ruststream` (feature `memory`) | in-process, for development and tests |
-| [NATS](nats.md) | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS and JetStream |
-| [Redis](redis.md) | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, cluster, sentinel) |
+Each broker crate has its own documentation site, linked below and from the **Brokers** menu.
+
+| Broker | Crate | Transport | Docs |
+|---|---|---|---|
+| [Memory](memory.md) | `ruststream` (feature `memory`) | in-process, for development and tests | this site |
+| NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS and JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
+| Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, cluster, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
+| RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (queues, exchanges, publisher confirms, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
 
 To implement a broker for another transport, see [Broker authors](../broker-authors/index.md).
 
@@ -61,6 +64,22 @@ differs by one line inside `with_broker`.
     fn app() -> RustStream {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .with_broker(RedisBroker::standalone("redis://localhost:6379"), |b| {
+                b.include_router(routes::orders())
+            })
+    }
+    ```
+
+=== "RabbitMQ"
+
+    <!-- inline-rust: RabbitMQ half of the broker-switch comparison; depends on the external ruststream-lapin crate, no in-repo compiled home -->
+    ```rust
+    use ruststream::runtime::{AppInfo, RustStream};
+    use ruststream_lapin::LapinBroker;
+
+    #[ruststream::app]
+    fn app() -> RustStream {
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(LapinBroker::new("amqp://localhost:5672"), |b| {
                 b.include_router(routes::orders())
             })
     }
