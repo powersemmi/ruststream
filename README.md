@@ -90,6 +90,30 @@ fn app() -> RustStream {
 
 `#[ruststream::app]` generates `main`, so there is no runtime boilerplate.
 
+## Injecting dependencies
+
+Declare app state, derive `FromRef`, and take a dependency as a `State<T>` handler argument instead of
+reaching through `ctx.state()`. The state is built once in `on_startup`; `#[derive(FromRef)]` makes
+each field injectable, so no extractor is written by hand.
+
+```rust
+use ruststream::runtime::State;
+use ruststream::FromRef;
+
+#[derive(FromRef)]
+struct AppState {
+    create_order: CreateOrder,
+}
+
+#[subscriber("orders")]
+async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerResult {
+    create_order.execute(order);
+    HandlerResult::Ack
+}
+```
+
+Full compiling example: `examples/from_context.rs`.
+
 ## Run it
 
 ```bash
@@ -101,13 +125,55 @@ Scaffold a fresh project with `cargo generate --git https://github.com/powersemm
 templates/memory --name my-service` (each broker crate ships its own template). See the
 [quick start](https://powersemmi.github.io/ruststream/getting-started/quickstart/).
 
-## Test it
+## Testing the service
 
-Unit-test handlers against the in-memory broker, with no external service. It does core routing
-only, so you assert on handler behaviour, middleware, and decoding exactly as in production. See the
+Unit-test a built service against the in-memory broker, with no external service. `MemoryBroker` is a
+real broker here, not a test double: the `TestApp` harness drives it through the same dispatch path
+the production runtime uses, so you assert on handler behaviour, middleware, and decoding exactly as
+in production.
+
+```rust
+use ruststream::testing::TestApp;
+
+let tb = TestApp::start(service()).await?;
+
+// Inject an order; the harness drives the handler to completion before returning.
+tb.broker::<MemoryBroker>()
+    .publish("orders", &Order { id: 42 })
+    .await?;
+
+// The handler ran once, decoded the order, and acked.
+tb.broker::<MemoryBroker>()
+    .subscriber("orders")
+    .assert_called_once()
+    .with(&Order { id: 42 })
+    .settled(HandlerResult::Ack);
+
+// It published the matching receipt downstream.
+tb.broker::<MemoryBroker>()
+    .published::<Receipt>("receipts")
+    .assert_called_once()
+    .with(&Receipt { order_id: 42 });
+```
+
+Full compiling example: `examples/testing.rs`. See the
 [testing guide](https://powersemmi.github.io/ruststream/guides/testing/).
 
-## Documentation
+## Project documentation
+
+Build the AsyncAPI spec and the interactive viewer HTML programmatically from a built service, then
+serve them from your own HTTP stack. The CLI `ruststream asyncapi gen` (see `Run it` above) prints the
+same document to stdout; this is the in-process path.
+
+```rust
+use ruststream::asyncapi::{build_spec, render_viewer_html, ViewerOptions};
+
+let spec = build_spec(&service()).to_json()?;
+let viewer = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
+// serve `viewer` at `/` and `spec` at `/asyncapi.json` from your own HTTP stack
+```
+
+Full compiling example: `examples/asyncapi_http.rs`.
 
 - Guide and tutorials: <https://powersemmi.github.io/ruststream/latest>
 - API reference: <https://docs.rs/ruststream>
@@ -119,7 +185,6 @@ only, so you assert on handler behaviour, middleware, and decoding exactly as in
   JetStream).
 - [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred): the Redis broker (Redis Streams
   with consumer groups; standalone, cluster, and sentinel topologies) via the `fred` client.
-- [`ruststream-py`](https://github.com/powersemmi/ruststream-py): Python bindings.
 
 Concrete brokers live in their own crates and pull `ruststream` from crates.io.
 
