@@ -3,6 +3,8 @@
 //! Re-exported from the `ruststream` crate under the `macros` feature; depend on that rather than
 //! on this crate directly.
 
+#![forbid(unsafe_code)]
+
 mod expand;
 mod from_ref;
 mod parse;

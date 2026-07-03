@@ -10,6 +10,7 @@
   <a href="https://docs.rs/ruststream"><img src="https://img.shields.io/docsrs/ruststream" alt="docs.rs"></a>
   <img src="https://img.shields.io/badge/MSRV-1.85-blue.svg" alt="MSRV 1.85">
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
+  <img src="https://img.shields.io/badge/unsafe-none-success.svg" alt="100% safe Rust">
   <a href="https://t.me/ruststream_community"><img src="https://img.shields.io/badge/-Telegram-blue?logo=telegram&label=News" alt="Telegram news channel"></a>
   <a href="https://t.me/ruststream_communuty_ru_chat"><img src="https://img.shields.io/badge/-Telegram-blue?logo=telegram&label=RU" alt="Telegram RU chat"></a>
   <a href="https://context7.com/powersemmi/ruststream"><img src="https://img.shields.io/badge/Context7-Ask_AI-ff5722" alt="Ask AI"></a>
@@ -25,6 +26,9 @@ RustStream connects your service to a message broker through a small set of gene
 gives you a router, middleware, codecs, and tooling on top. The core depends on no broker, so each
 broker is an independent crate held to one contract; broker-specific configuration never leaks into
 the framework.
+
+The core is 100% safe Rust: every crate carries `#![forbid(unsafe_code)]` and CI rejects any `unsafe`
+block, so the guarantee cannot regress.
 
 ## Features
 
