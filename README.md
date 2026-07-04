@@ -185,6 +185,9 @@ Full compiling example: `examples/asyncapi_http.rs`.
   JetStream).
 - [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred): the Redis broker (Redis Streams
   with consumer groups; standalone, cluster, and sentinel topologies) via the `fred` client.
+- [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin): the RabbitMQ broker (AMQP
+  0.9.1: topology descriptors, native dead-letter and delayed retry, keyed worker lanes, publisher
+  confirms and server-side transactions) via the `lapin` client.
 
 Concrete brokers live in their own crates and pull `ruststream` from crates.io.
 
