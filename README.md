@@ -188,6 +188,9 @@ Full compiling example: `examples/asyncapi_http.rs`.
 - [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin): the RabbitMQ broker (AMQP
   0.9.1: topology descriptors, native dead-letter and delayed retry, keyed worker lanes, publisher
   confirms and server-side transactions) via the `lapin` client.
+- [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka): the Apache Kafka broker
+  (consumer groups, tracked and transactional commits, retry and dead-letter topics, partition-scoped
+  transactions and exactly-once pipelines, a service template) via the `rdkafka` client.
 
 Concrete brokers live in their own crates and pull `ruststream` from crates.io.
 

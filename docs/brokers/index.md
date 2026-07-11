@@ -14,6 +14,7 @@ Each broker crate has its own documentation site, linked below and from the **Br
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS and JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, cluster, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (queues, exchanges, publisher confirms, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
+| Kafka | [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka) | Apache Kafka (consumer groups, tracked commits, transactions, exactly-once pipelines) | [powersemmi.github.io/ruststream-rdkafka](https://powersemmi.github.io/ruststream-rdkafka/) |
 
 To implement a broker for another transport, see [Broker authors](../broker-authors/index.md).
 
@@ -82,6 +83,25 @@ differs by one line inside `with_broker`.
             .with_broker(LapinBroker::new("amqp://localhost:5672"), |b| {
                 b.include_router(routes::orders())
             })
+    }
+    ```
+
+=== "Kafka"
+
+    <!-- inline-rust: Kafka half of the broker-switch comparison; depends on the external ruststream-rdkafka crate, no in-repo compiled home -->
+    ```rust
+    use ruststream::runtime::{AppInfo, RustStream};
+    use ruststream_rdkafka::KafkaBroker;
+
+    #[ruststream::app]
+    fn app() -> RustStream {
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(
+                KafkaBroker::new(["localhost:9092"]).default_group("orders"),
+                |b| {
+                    b.include_router(routes::orders())
+                },
+            )
     }
     ```
 
