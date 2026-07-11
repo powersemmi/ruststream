@@ -104,6 +104,7 @@ nav:
       - NATS: https://powersemmi.github.io/ruststream-nats/
       - Redis: https://powersemmi.github.io/ruststream-fred/
       - RabbitMQ: https://powersemmi.github.io/ruststream-lapin/
+      - Kafka: https://powersemmi.github.io/ruststream-rdkafka/
   - Broker authors:
       - broker-authors/index.md
       - broker-authors/example-nats.md
