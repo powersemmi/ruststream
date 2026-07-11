@@ -104,11 +104,38 @@ carry its field, so an inapplicable key is a compile error rather than a runtime
 
 The context type is built from the message by `BuildContext`, which the runtime calls once per
 delivery; a broker with no per-delivery fields uses `()`, the default (so a `#[subscriber]` handler
-that names no context type sees `Context<'_>`). Middleware can also carry a typed scratch value to a
+that names no context type - and takes no [`Ctx` extractor](#context-fields-as-parameters) - sees
+`Context<'_>`). Middleware can also carry a typed scratch value to a
 downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value)` and the handler
 `ctx.context(KEY)` it back - a correlation id, an authenticated user a layer resolved - without
 serializing it into the headers. The context is built fresh per delivery, so one delivery's values
 never leak into the next.
+
+## Context fields as parameters
+
+A field can also arrive as a handler argument, the way `State<T>` injects a state component: the
+`Ctx<K>` extractor binds the value the key `K` reads. The key implements `ContextField` - a
+`Field`-style trait that additionally names the context type it reads from and yields an owned
+value - so the handler needs no `&mut Context` parameter at all: the `#[subscriber]` macro projects
+the subscription's context type from the first `Ctx` key in the signature.
+
+```rust
+--8<-- "examples/ctx_extractor.rs:key"
+```
+
+```rust
+--8<-- "examples/ctx_extractor.rs:handler"
+```
+
+Three things to know:
+
+- Values are owned (`ContextField::Value` is `'static`): extractor values bind before the handler
+  body runs, so borrowing from the context is not an option. Keys yielding borrowed values (a name
+  as `&str`) stay readable through `ctx.context(KEY)` with a declared ctx parameter.
+- With a `&mut Context<'_, C>` parameter also present, every `Ctx` key must read that same `C`;
+  the compiler enforces it through the extractor bounds.
+- The projection is syntactic: the macro recognizes the literal `Ctx<K>` shape (any path ending in
+  `Ctx` with one type argument). A type alias hides it, and the context type falls back to `()`.
 
 ## The headers working copy
 

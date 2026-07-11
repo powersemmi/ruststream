@@ -56,7 +56,7 @@ pub use capability::{
     TransactionalPublisher,
 };
 pub use error::AckError;
-pub use field::{BuildContext, Field, FieldMut};
+pub use field::{BuildContext, ContextField, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::Publisher;

@@ -45,6 +45,53 @@ pub trait Field<Src: ?Sized> {
     fn get(self, src: &Src) -> Self::Value<'_>;
 }
 
+/// A [`Field`]-style key that also names its context type and yields an owned value.
+///
+/// It powers the [`Ctx`](crate::runtime::Ctx) extractor: because the key carries its context
+/// as an associated type, a handler taking `Ctx(value): Ctx<Key>` needs no `&mut Context`
+/// parameter at all - the `#[subscriber]` macro projects the subscription's context type from
+/// the first `Ctx` key it sees. The value is owned (`'static`) on purpose: extractor values
+/// bind before the handler body runs, so borrowing from the context is not an option. Borrowed
+/// keys keep working through [`Field`] and `ctx.context(KEY)`.
+///
+/// Broker crates implement it next to [`Field`] on the same zero-sized keys; a key typically
+/// implements both, so it works as a context read and as an extractor.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::ContextField;
+///
+/// struct Delivery {
+///     sequence: u64,
+/// }
+///
+/// #[derive(Clone, Copy, Default)]
+/// struct Sequence;
+///
+/// impl ContextField for Sequence {
+///     type Context = Delivery;
+///     type Value = u64;
+///     fn read(self, src: &Delivery) -> u64 {
+///         src.sequence
+///     }
+/// }
+///
+/// let delivery = Delivery { sequence: 7 };
+/// assert_eq!(Sequence.read(&delivery), 7);
+/// ```
+pub trait ContextField: Default {
+    /// The per-delivery context type this key reads from.
+    type Context;
+
+    /// The owned value the key yields.
+    type Value: Send + 'static;
+
+    /// Reads this key's field out of `src`. Named apart from [`Field::get`] so a key
+    /// implementing both traits stays unambiguous to call.
+    fn read(self, src: &Self::Context) -> Self::Value;
+}
+
 /// A [`Field`] key middleware can also write, for per-delivery scratch values.
 ///
 /// The read side ([`Field::get`]) is typically `Option<&T>` (the value may not have been set yet),
