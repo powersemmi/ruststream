@@ -43,17 +43,18 @@ struct HandlerParts<'a> {
     failure_method: TokenStream2,
 }
 
-/// The per-delivery context type the handler named in its `ctx: &mut Context<'_, C>` parameter, or
-/// `()` when it named none. Threaded into the single-subscriber `SubscriberDef::Context` so a
-/// macro handler can read broker fields by key.
+/// The per-delivery context type the handler named in its `ctx: &mut Context<'_, C>` parameter,
+/// projected from the first `Ctx<K>` extractor's key when there is no ctx parameter, or `()`
+/// when neither names one. Threaded into the single-subscriber `SubscriberDef::Context` so a
+/// macro handler can read broker fields by key or take them as parameters.
 fn context_type(func: &ItemFn) -> TokenStream2 {
     let Some(FnArg::Typed(PatType { ty, .. })) = func.sig.inputs.get(1) else {
         return quote!(());
     };
     // The second parameter is the context only when it is `&mut Context<..>`; otherwise it is an
-    // extractor, so the handler named no context type.
+    // extractor, so the handler named no context type explicitly.
     if !is_context_param(ty) {
-        return quote!(());
+        return inferred_context_type(func);
     }
     // Dig the second generic argument (after the lifetime) out of `&mut Context<'_, C>`.
     if let Type::Reference(reference) = &**ty
@@ -68,6 +69,45 @@ fn context_type(func: &ItemFn) -> TokenStream2 {
         }
     }
     quote!(())
+}
+
+/// The context type projected from the first `Ctx<K>` extractor parameter's key, for handlers
+/// without a `&mut Context` parameter. Emitted as `<K as ContextField>::Context`, so the
+/// compiler resolves the type; further `Ctx` keys are checked against it by the extractor
+/// bounds. Purely syntactic (the last path segment `Ctx` with exactly one type argument): a
+/// type alias hides the shape and falls back to `()`.
+fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
+    for arg in func.sig.inputs.iter().skip(1) {
+        if let FnArg::Typed(PatType { ty, .. }) = arg
+            && let Some(key) = ctx_extractor_key(ty)
+        {
+            return quote!(<#key as ::ruststream::ContextField>::Context);
+        }
+    }
+    quote!(())
+}
+
+/// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
+fn ctx_extractor_key(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Ctx" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let key = types.next()?;
+    if types.next().is_some() {
+        return None;
+    }
+    Some(key)
 }
 
 /// The application-state type the handler named as the third generic of its

@@ -9,7 +9,10 @@
 //! extraction short-circuits the delivery with the rejection's [`HandlerResult`].
 
 use std::convert::Infallible;
+use std::fmt;
 use std::future::Future;
+
+use crate::ContextField;
 
 use super::context::Context;
 use super::handler::HandlerResult;
@@ -136,6 +139,71 @@ where
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Result<Self, Infallible>> + Send {
         let value = T::from_ref(ctx.state());
+        async move { Ok(Self(value)) }
+    }
+}
+
+/// Extractor that injects one broker context field into a handler, by its key.
+///
+/// Where [`State<T>`](State) pulls a value out of the shared application state, `Ctx<K>` pulls
+/// one field out of the broker's per-delivery context: `Ctx(offset): Ctx<Offset>` binds the
+/// value the key `Offset` reads. The key implements [`ContextField`], which names the context
+/// type it reads from - so a handler using only `Ctx` extractors needs no `&mut Context`
+/// parameter at all: the `#[subscriber]` macro projects the subscription's context type from
+/// the first `Ctx` key in the signature. With a `&mut Context<'_, C>` parameter also present,
+/// the keys must read that same `C` (the compiler enforces it).
+///
+/// Values are owned ([`ContextField::Value`] is `'static`): extractors bind before the handler
+/// body runs, so borrowing from the context is not an option. Keys yielding borrowed values
+/// stay readable through `ctx.context(KEY)`.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::ContextField;
+/// use ruststream::runtime::Ctx;
+///
+/// struct Delivery {
+///     offset: u64,
+/// }
+///
+/// #[derive(Clone, Copy, Default)]
+/// struct Offset;
+///
+/// impl ContextField for Offset {
+///     type Context = Delivery;
+///     type Value = u64;
+///     fn read(self, src: &Delivery) -> u64 {
+///         src.offset
+///     }
+/// }
+///
+/// // In a handler: `async fn handle(msg: &M, Ctx(offset): Ctx<Offset>) -> HandlerResult`.
+/// let extracted = Ctx::<Offset>(42);
+/// assert_eq!(extracted.0, 42);
+/// ```
+pub struct Ctx<K: ContextField>(pub K::Value);
+
+impl<K: ContextField> fmt::Debug for Ctx<K>
+where
+    K::Value: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Ctx").field(&self.0).finish()
+    }
+}
+
+impl<S, K> FromContext<K::Context, S> for Ctx<K>
+where
+    K: ContextField,
+    K::Context: Send,
+    S: Sync,
+{
+    type Rejection = Infallible;
+    fn from_context(
+        ctx: &mut Context<'_, K::Context, S>,
+    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
+        let value = K::default().read(ctx.cx_ref());
         async move { Ok(Self(value)) }
     }
 }
