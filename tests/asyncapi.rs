@@ -1,10 +1,10 @@
 //! Integration test for `AsyncAPI` document generation.
 #![cfg(all(feature = "asyncapi", feature = "memory"))]
 
-use ruststream::ServerSpec;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
+use ruststream::{SecurityScheme, ServerSpec};
 
 #[test]
 fn build_spec_describes_handlers() {
@@ -308,4 +308,49 @@ fn schema_doc_comment_feeds_message_metadata() {
         spec.operations["receive_shipments"].description.as_deref(),
         Some("Receives shipments."),
     );
+}
+
+#[test]
+fn server_security_lands_in_components_and_refs() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .server(
+            "kafka",
+            ServerSpec::new("kafka.example.com:9093", "kafka")
+                .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS"))
+                .with_security(SecurityScheme::custom(
+                    serde_json::json!({ "type": "gssapi" }),
+                )),
+        )
+        .server("nats", ServerSpec::new("nats.example.com:4222", "nats"));
+
+    let spec = build_spec(&app);
+
+    // Each scheme becomes a components entry named after the server (suffixed past the first),
+    // and the server references them in order.
+    let kafka = &spec.servers["kafka"];
+    assert_eq!(
+        kafka.security[0].reference,
+        "#/components/securitySchemes/kafka"
+    );
+    assert_eq!(
+        kafka.security[1].reference,
+        "#/components/securitySchemes/kafka-1"
+    );
+    let schemes = &spec.components.security_schemes;
+    assert_eq!(schemes["kafka"]["type"], "scramSha512");
+    assert_eq!(schemes["kafka"]["description"], "SASL over TLS");
+    assert_eq!(schemes["kafka-1"]["type"], "gssapi");
+
+    // A server without schemes emits no `security` key; the untouched default document stays
+    // security-free entirely.
+    let json = spec.to_json().unwrap();
+    assert!(json.contains("\"securitySchemes\""));
+    let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(doc["servers"]["nats"].get("security").is_none());
+
+    let bare = build_spec(
+        &RustStream::new(AppInfo::new("svc", "1.0.0"))
+            .server("nats", ServerSpec::new("nats.example.com:4222", "nats")),
+    );
+    assert!(!bare.to_json().unwrap().contains("security"));
 }

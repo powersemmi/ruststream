@@ -69,6 +69,11 @@ pub struct Server {
     /// Optional human description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// References into `components.securitySchemes` describing how clients authenticate. Empty
+    /// (and absent from the document) unless the service author attached schemes with
+    /// [`ServerSpec::with_security`](crate::ServerSpec::with_security).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub security: Vec<Reference>,
 }
 
 /// `AsyncAPI` `Info` object: service title, version, and optional description.
@@ -116,6 +121,10 @@ pub struct Components {
     /// Message definitions, keyed by message name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub messages: BTreeMap<String, MessageObject>,
+    /// Security scheme definitions the servers reference, keyed by scheme name (the server's
+    /// name, `-N`-suffixed when a server declares several).
+    #[serde(rename = "securitySchemes", skip_serializing_if = "BTreeMap::is_empty")]
+    pub security_schemes: BTreeMap<String, Value>,
 }
 
 /// An `AsyncAPI` message definition.
@@ -190,16 +199,32 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
         description: app.info().description.clone(),
     };
 
+    let mut security_schemes = BTreeMap::new();
     let servers = app
         .servers()
         .iter()
         .map(|(name, spec)| {
+            let security = spec
+                .security
+                .iter()
+                .enumerate()
+                .map(|(index, scheme)| {
+                    let key = if index == 0 {
+                        name.clone()
+                    } else {
+                        format!("{name}-{index}")
+                    };
+                    security_schemes.insert(key.clone(), security_scheme_object(scheme));
+                    Reference::new(format!("#/components/securitySchemes/{key}"))
+                })
+                .collect();
             (
                 name.clone(),
                 Server {
                     host: spec.host.clone(),
                     protocol: spec.protocol.clone(),
                     description: spec.description.clone(),
+                    security,
                 },
             )
         })
@@ -277,8 +302,47 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
         servers,
         channels,
         operations,
-        components: Components { messages },
+        components: Components {
+            messages,
+            security_schemes,
+        },
     }
+}
+
+/// Renders a [`SecurityScheme`](crate::SecurityScheme) as its `AsyncAPI` security scheme object.
+fn security_scheme_object(scheme: &crate::SecurityScheme) -> Value {
+    use crate::capability::SecuritySchemeKind as Kind;
+
+    // Raw payloads round-trip through the string the constructor serialized, so parsing them
+    // back cannot fail; Null is the unreachable fallback, not an error path.
+    let parse = |raw: &str| serde_json::from_str::<Value>(raw).unwrap_or(Value::Null);
+    let mut object = match &scheme.kind {
+        Kind::UserPassword => serde_json::json!({ "type": "userPassword" }),
+        Kind::ApiKey { location } => {
+            serde_json::json!({ "type": "apiKey", "in": location.as_api() })
+        }
+        Kind::X509 => serde_json::json!({ "type": "X509" }),
+        Kind::Plain => serde_json::json!({ "type": "plain" }),
+        Kind::ScramSha256 => serde_json::json!({ "type": "scramSha256" }),
+        Kind::ScramSha512 => serde_json::json!({ "type": "scramSha512" }),
+        Kind::Gssapi => serde_json::json!({ "type": "gssapi" }),
+        Kind::Http { scheme } => serde_json::json!({ "type": "http", "scheme": scheme }),
+        Kind::HttpApiKey { name, location } => serde_json::json!({
+            "type": "httpApiKey",
+            "name": name,
+            "in": location.as_api(),
+        }),
+        Kind::OpenIdConnect { url } => serde_json::json!({
+            "type": "openIdConnect",
+            "openIdConnectUrl": url,
+        }),
+        Kind::Oauth2 { flows } => serde_json::json!({ "type": "oauth2", "flows": parse(flows) }),
+        Kind::Custom { object } => parse(object),
+    };
+    if let (Some(description), Some(fields)) = (&scheme.description, object.as_object_mut()) {
+        fields.insert("description".to_owned(), Value::String(description.clone()));
+    }
+    object
 }
 
 /// Renders a self-contained HTML page that displays `spec_url` using the `AsyncAPI` React component.

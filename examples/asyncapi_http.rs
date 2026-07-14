@@ -17,12 +17,13 @@ use axum::routing::get;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::subscriber;
+use ruststream::schemars::JsonSchema;
+use ruststream::{Message, SecurityScheme, ServerSpec, subscriber};
 use serde::Deserialize;
 
 // --8<-- [start:payload]
 /// An order placed by a customer.
-#[derive(Debug, Deserialize, ruststream::Message, ruststream::schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Message, JsonSchema)]
 struct Order {
     id: u64,
     item: String,
@@ -42,11 +43,18 @@ fn service() -> RustStream {
     // spec - here the in-memory broker, which describes itself as an in-process "memory" server
     // with no host. A broker without a `DescribeServer` impl is instead declared explicitly with
     // `.server(name, spec)` alongside a plain `with_broker`.
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_labeled(
-        "in-process",
-        MemoryBroker::new(),
-        |b| b.include(handle),
-    )
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        // --8<-- [start:security]
+        // A described external server. Security is the author's statement, not the broker's:
+        // the same broker is deployed publicly and internally with different authentication,
+        // so the scheme is attached to the spec at registration and brokers never set it.
+        .server(
+            "kafka",
+            ServerSpec::new("kafka.example.com:9093", "kafka")
+                .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS")),
+        )
+        // --8<-- [end:security]
+        .with_broker_labeled("in-process", MemoryBroker::new(), |b| b.include(handle))
 }
 // --8<-- [end:server]
 
