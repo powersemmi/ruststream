@@ -193,6 +193,16 @@ jobs:
           name: coverage-lcov
           path: lcov.info
 
+      # Feeds the README coverage badge. Coveralls accepts the default GITHUB_TOKEN for public
+      # repositories, so no extra secret is required; uploaded even when the gate fails so the
+      # badge reflects reality rather than the last green run.
+      - name: Upload to Coveralls
+        if: always()
+        uses: coverallsapp/github-action@v2
+        with:
+          file: lcov.info
+          format: lcov
+
   package:
     name: Package (publish dry-run)
     needs: changes
