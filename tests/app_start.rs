@@ -60,6 +60,7 @@ async fn start_resolves_running_and_shutdown_completes() {
         .shutdown_timeout(Duration::from_secs(5))
         .with_broker(broker, |b| b.include(observe));
 
+    // --8<-- [start:handle]
     // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.
     let running = app.start().await.expect("startup failed");
     publisher
@@ -71,6 +72,7 @@ async fn start_resolves_running_and_shutdown_completes() {
         .expect("handler never saw the message");
 
     running.shutdown().await.expect("graceful shutdown failed");
+    // --8<-- [end:handle]
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

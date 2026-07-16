@@ -76,6 +76,31 @@ the one shared instance through `ctx.state()` - no per-message connection setup.
 program is
 [`examples/lifespan.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/lifespan.rs).
 
+## Running beside another server
+
+`run` owns the whole process: it installs the signal handlers and returns only when the service
+has stopped. A service that shares its process with another foreground server (an HTTP framework,
+typically) brings the messaging side up with `start` instead. It performs the same startup
+sequence and resolves once subscriptions are open - so a startup failure surfaces before the host
+starts accepting traffic - and installs no signal handlers: the host decides what stops the
+service. The returned `RunningApp` handle drives the rest of the lifecycle:
+
+```rust
+--8<-- "tests/app_start.rs:handle"
+```
+
+- `stopping()` returns an owned future that resolves when the service tears itself down on a
+  fail-fast failure; plug it into the host's graceful shutdown (axum's `with_graceful_shutdown`)
+  so the process stops serving when the messaging side dies.
+- `shutdown()` is the explicit graceful teardown: the `on_shutdown` hooks, a drain of in-flight
+  handlers and post-settle continuations (bounded by the [shutdown timeout](#shutdown-timeout)),
+  broker shutdown in reverse registration order, then the `after_shutdown` hooks. A fail-fast
+  reason surfaces here as an error.
+
+The handle is `#[must_use]`: dropping it without calling `shutdown` detaches the service, with no
+graceful teardown. `run` and `run_until` are built on the same start/shutdown path, so all three
+forms share one startup and teardown sequence.
+
 ## Shutdown timeout
 
 By default `run` waits indefinitely for in-flight handlers to finish after shutdown is triggered.
