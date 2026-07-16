@@ -2,7 +2,10 @@
 //! by the per-subscriber `on_failure(panic = .., decode = ..)` policy. Driven over `MemoryBroker`.
 #![cfg(feature = "macros")]
 
-use std::sync::Arc;
+mod common;
+
+use common::wait_for;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -12,7 +15,6 @@ use ruststream::runtime::{
 };
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Order {
@@ -98,54 +100,34 @@ async fn run_until_torn_down(
     topic: &str,
     payload: Vec<u8>,
 ) -> Result<(), RustStreamError> {
-    let run = tokio::spawn(app.run_until(std::future::pending::<()>()));
-    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new(topic, &payload))
-                .await;
-            if run.is_finished() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        run.await
-    })
-    .await;
-    outcome
-        .expect("service did not tear down within the deadline")
-        .expect("run task panicked")
+    let running = app.start().await.expect("startup failed");
+    // `start` resolves with the subscription open, so one poison message is enough.
+    let _ = publisher
+        .publish(OutgoingMessage::new(topic, &payload))
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), running.stopping())
+        .await
+        .expect("service did not tear down within the deadline");
+    running.shutdown().await
 }
 
-/// Republishes `payload` to `topic` until `counter` advances once, proving the subscription is live
-/// and the handler ran.
+/// Publishes `payload` to `topic` once (`start` resolves with subscriptions open) and waits until
+/// `counter` advances, proving the handler ran.
 async fn drive_until_seen(
     publisher: &impl Publisher,
     topic: &str,
     payload: &[u8],
     counter: &AtomicUsize,
 ) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        let start = counter.load(Ordering::SeqCst);
-        while counter.load(Ordering::SeqCst) == start {
-            let _ = publisher
-                .publish(OutgoingMessage::new(topic, payload))
-                .await;
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("subscription never went live");
-}
-
-async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        while !cond() {
-            tokio::task::yield_now().await;
-        }
-    })
+    let start = counter.load(Ordering::SeqCst);
+    let _ = publisher
+        .publish(OutgoingMessage::new(topic, payload))
+        .await;
+    wait_for(
+        || counter.load(Ordering::SeqCst) > start,
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(result.is_ok(), "condition not met within {timeout:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -171,9 +153,7 @@ async fn panic_drop_keeps_the_subscriber_consuming() {
         b.include(dropping);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     drive_until_seen(&publisher, "dropping", &order_bytes(7), &DROP_DONE).await;
     let before = DROP_DONE.load(Ordering::SeqCst);
@@ -194,11 +174,9 @@ async fn panic_drop_keeps_the_subscriber_consuming() {
     )
     .await;
 
-    shutdown.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(5), run)
+    let result = tokio::time::timeout(Duration::from_secs(5), running.shutdown())
         .await
-        .expect("run did not stop")
-        .expect("run task panicked");
+        .expect("shutdown did not finish");
     assert!(
         result.is_ok(),
         "a dropped panic must not error the run: {result:?}"
@@ -228,9 +206,7 @@ async fn decode_skip_acks_past_bad_input_and_continues() {
         b.include(skipping);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     drive_until_seen(&publisher, "skipping", &order_bytes(1), &SKIP_DONE).await;
     let before = SKIP_DONE.load(Ordering::SeqCst);
@@ -251,11 +227,9 @@ async fn decode_skip_acks_past_bad_input_and_continues() {
     )
     .await;
 
-    shutdown.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(5), run)
+    let result = tokio::time::timeout(Duration::from_secs(5), running.shutdown())
         .await
-        .expect("run did not stop")
-        .expect("run task panicked");
+        .expect("shutdown did not finish");
     assert!(
         result.is_ok(),
         "a skipped decode failure must not error the run: {result:?}"
@@ -271,9 +245,7 @@ async fn publishing_decode_failure_is_dropped_and_continues() {
     let app = RustStream::new(AppInfo::new("rpcd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     drive_until_seen(&publisher, "rpcd", &order_bytes(1), &RPC_DONE).await;
     let before = RPC_DONE.load(Ordering::SeqCst);
@@ -291,11 +263,9 @@ async fn publishing_decode_failure_is_dropped_and_continues() {
     )
     .await;
 
-    shutdown.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(5), run)
+    let result = tokio::time::timeout(Duration::from_secs(5), running.shutdown())
         .await
-        .expect("run did not stop")
-        .expect("run task panicked");
+        .expect("shutdown did not finish");
     assert!(
         result.is_ok(),
         "a dropped decode failure must not error the run: {result:?}"
@@ -310,9 +280,7 @@ async fn batch_decode_failure_drops_the_bad_element() {
         b.include_batch(bd);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     drive_until_seen(&publisher, "bd", &order_bytes(1), &BATCH_DONE).await;
     let before = BATCH_DONE.load(Ordering::SeqCst);
@@ -330,11 +298,9 @@ async fn batch_decode_failure_drops_the_bad_element() {
     )
     .await;
 
-    shutdown.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(5), run)
+    let result = tokio::time::timeout(Duration::from_secs(5), running.shutdown())
         .await
-        .expect("run did not stop")
-        .expect("run task panicked");
+        .expect("shutdown did not finish");
     assert!(
         result.is_ok(),
         "a dropped batch element must not error the run: {result:?}"
@@ -350,9 +316,7 @@ async fn batch_publishing_decode_failure_is_dropped() {
     let app = RustStream::new(AppInfo::new("bpd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     drive_until_seen(&publisher, "bpd", &order_bytes(1), &BATCH_REPLY_DONE).await;
     let before = BATCH_REPLY_DONE.load(Ordering::SeqCst);
@@ -370,11 +334,9 @@ async fn batch_publishing_decode_failure_is_dropped() {
     )
     .await;
 
-    shutdown.notify_one();
-    let result = tokio::time::timeout(Duration::from_secs(5), run)
+    let result = tokio::time::timeout(Duration::from_secs(5), running.shutdown())
         .await
-        .expect("run did not stop")
-        .expect("run task panicked");
+        .expect("shutdown did not finish");
     assert!(
         result.is_ok(),
         "a dropped batch reply element must not error the run: {result:?}"

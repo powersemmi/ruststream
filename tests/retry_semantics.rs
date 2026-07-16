@@ -1,19 +1,21 @@
 //! Integration tests for retry semantics at the dispatcher level: the `retry_after` delay is
 //! honored (not merely "redelivery happens"), retries complete inside worker pools and keyed
 //! lanes, and batch pools genuinely overlap batches.
+//!
+//! Apps come up through `start()`, which resolves only after subscriptions are open, so every
+//! message is published exactly once; any further delivery is a genuine redelivery.
 #![cfg(feature = "macros")]
 
 mod common;
 
 use std::{
     sync::{
-        Arc, LazyLock, Mutex,
+        LazyLock, Mutex,
         atomic::{AtomicU32, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
-use common::handler_signal;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::{OutgoingMessage, Publisher, subscriber};
@@ -64,24 +66,17 @@ async fn retry_after_delay_is_honored_by_the_dispatcher() {
     let app = RustStream::new(AppInfo::new("delayed", "0.1.0"))
         .with_broker(broker, |b| b.include(deferred));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
-    let payload = order_bytes(1);
+    // One publish is enough: the second attempt must come from the delayed redelivery.
+    publisher
+        .publish(OutgoingMessage::new("delayed", &order_bytes(1)))
+        .await
+        .expect("publish");
+
     let result = tokio::time::timeout(Duration::from_secs(60), async {
-        loop {
-            // One delivery is enough once the subscription is live: the second attempt must
-            // come from the delayed redelivery, never from this loop.
-            if DELAY_ATTEMPTS.lock().unwrap().is_empty() {
-                let _ = publisher
-                    .publish(OutgoingMessage::new("delayed", &payload))
-                    .await;
-            }
-            handler_signal(&DELAY_NOTIFY).await;
-            if DELAY_ATTEMPTS.lock().unwrap().len() >= 2 {
-                break;
-            }
+        while DELAY_ATTEMPTS.lock().unwrap().len() < 2 {
+            DELAY_NOTIFY.notified().await;
         }
     })
     .await;
@@ -96,8 +91,7 @@ async fn retry_after_delay_is_honored_by_the_dispatcher() {
         "redelivery arrived after {between:?}, before the requested {RETRY_DELAY:?}",
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static POOL_ACKED: AtomicU32 = AtomicU32::new(0);
@@ -137,35 +131,18 @@ async fn retry_completes_inside_a_worker_pool() {
     let app = RustStream::new(AppInfo::new("pool-retry", "0.1.0"))
         .with_broker(broker, |b| b.include(pool_retry));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
-
-    // Warm up with id 0 until the subscription is live, then submit ids 1-4 exactly once.
-    let warmup = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("pool-retry", &order_bytes(0)))
-                .await;
-            handler_signal(&POOL_NOTIFY).await;
-            if POOL_RETRIED.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(warmup.is_ok(), "subscription did not come up");
+    let running = app.start().await.expect("startup failed");
 
     for id in 1..=4u32 {
         publisher
             .publish(OutgoingMessage::new("pool-retry", &order_bytes(id)))
             .await
-            .unwrap();
+            .expect("publish");
     }
 
-    // 5 distinct ids (warmup included), each retried once then acked.
+    // 4 distinct ids, each retried once then acked.
     let result = tokio::time::timeout(Duration::from_secs(5), async {
-        while POOL_ACKED.load(Ordering::SeqCst) < 5 {
+        while POOL_ACKED.load(Ordering::SeqCst) < 4 {
             POOL_NOTIFY.notified().await;
         }
     })
@@ -177,8 +154,7 @@ async fn retry_completes_inside_a_worker_pool() {
         POOL_RETRIED.load(Ordering::SeqCst),
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static LANE_ACKED: AtomicU32 = AtomicU32::new(0);
@@ -216,9 +192,7 @@ async fn retry_completes_inside_keyed_lanes() {
     let app = RustStream::new(AppInfo::new("lane-retry", "0.1.0"))
         .with_broker(broker, |b| b.include(lane_retry));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let keyed_publish = |key: &'static str, id: u32| {
         let publisher = publisher.clone();
@@ -231,25 +205,12 @@ async fn retry_completes_inside_keyed_lanes() {
         }
     };
 
-    // Warm up with id 0 until the subscription is live (its retry also completes), then two
-    // keyed messages, each retried once.
-    let warmup = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = keyed_publish("warmup", 0).await;
-            handler_signal(&LANE_NOTIFY).await;
-            if LANE_ACKED.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(warmup.is_ok(), "subscription did not come up");
-
-    keyed_publish("alpha", 1).await.unwrap();
-    keyed_publish("beta", 2).await.unwrap();
+    // Two keyed messages, each retried once then acked.
+    keyed_publish("alpha", 1).await.expect("publish");
+    keyed_publish("beta", 2).await.expect("publish");
 
     let result = tokio::time::timeout(Duration::from_secs(5), async {
-        while LANE_ACKED.load(Ordering::SeqCst) < 3 {
+        while LANE_ACKED.load(Ordering::SeqCst) < 2 {
             LANE_NOTIFY.notified().await;
         }
     })
@@ -260,25 +221,18 @@ async fn retry_completes_inside_keyed_lanes() {
         LANE_ACKED.load(Ordering::SeqCst),
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static BATCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
-static OVERLAP_WARMED: AtomicUsize = AtomicUsize::new(0);
 static OVERLAP_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 /// Flipping this to `true` releases every held and future batch, so no handler task can outlive
 /// the test and hang the graceful drain (a barrier would strand a third, unpaired batch).
 static RELEASE: LazyLock<watch::Sender<bool>> = LazyLock::new(|| watch::Sender::new(false));
 
-/// Holds every non-warmup batch until the test observes two of them in flight at once.
+/// Holds every batch until the test observes two of them in flight at once.
 #[subscriber(batch("overlap"), workers(2))]
-async fn overlap(orders: &[Order]) -> HandlerResult {
-    if orders.iter().any(|o| o.id == 0) {
-        OVERLAP_WARMED.fetch_add(1, Ordering::SeqCst);
-        OVERLAP_NOTIFY.notify_one();
-        return HandlerResult::Ack;
-    }
+async fn overlap(_orders: &[Order]) -> HandlerResult {
     BATCHES_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
     OVERLAP_NOTIFY.notify_one();
     let mut release = RELEASE.subscribe();
@@ -298,38 +252,30 @@ async fn batch_pool_overlaps_batches() {
     let app = RustStream::new(AppInfo::new("overlap", "0.1.0"))
         .with_broker(broker, |b| b.include_batch(overlap));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
-    // Warm up until the subscription is live.
-    let warmup = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("overlap", &order_bytes(0)))
-                .await;
-            handler_signal(&OVERLAP_NOTIFY).await;
-            if OVERLAP_WARMED.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
+    // Publish the second message only after the first batch is held on the latch, so the two
+    // messages arrive in distinct batches - which a sequential batch loop could never hold in
+    // flight simultaneously.
+    publisher
+        .publish(OutgoingMessage::new("overlap", &order_bytes(1)))
+        .await
+        .expect("publish");
+    let first_held = tokio::time::timeout(Duration::from_secs(5), async {
+        while BATCHES_IN_FLIGHT.load(Ordering::SeqCst) < 1 {
+            OVERLAP_NOTIFY.notified().await;
         }
     })
     .await;
-    assert!(warmup.is_ok(), "subscription did not come up");
+    assert!(first_held.is_ok(), "the first batch never reached the pool");
 
-    // Keep publishing single messages; held batches accumulate on the latch until two are in
-    // flight simultaneously - which a sequential batch loop can never reach.
+    publisher
+        .publish(OutgoingMessage::new("overlap", &order_bytes(2)))
+        .await
+        .expect("publish");
     let result = tokio::time::timeout(Duration::from_secs(5), async {
-        let mut id = 1u32;
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("overlap", &order_bytes(id)))
-                .await;
-            id += 1;
-            handler_signal(&OVERLAP_NOTIFY).await;
-            if BATCHES_IN_FLIGHT.load(Ordering::SeqCst) >= 2 {
-                break;
-            }
+        while BATCHES_IN_FLIGHT.load(Ordering::SeqCst) < 2 {
+            OVERLAP_NOTIFY.notified().await;
         }
     })
     .await;
@@ -340,6 +286,5 @@ async fn batch_pool_overlaps_batches() {
 
     // Release every held (and any late) batch so the graceful drain can finish.
     RELEASE.send_replace(true);
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }

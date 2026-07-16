@@ -1,14 +1,20 @@
 //! Integration test for the Prometheus metrics layer (consume + publish paths).
+//!
+//! Apps come up through `start()`, which resolves only after subscriptions are open, so each test
+//! publishes exactly once; the metric itself is recorded when the reaction settles, moments after
+//! the handler returns, so the exported text is polled without sleeping.
 #![cfg(all(feature = "metrics", feature = "memory", feature = "json"))]
 
-use std::sync::Arc;
+mod common;
+
+use common::wait_for;
+
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, Router, RustStream};
 use ruststream::{Name, OutgoingMessage, Publisher};
-use tokio::sync::Notify;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consume_metrics_are_recorded() {
@@ -26,34 +32,27 @@ async fn consume_metrics_are_recorded() {
             );
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
-
-    let recorded = tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("pings", b"{}"))
-                .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            if metrics
+    let running = app.start().await.expect("startup failed");
+    publisher
+        .publish(OutgoingMessage::new("pings", b"{}"))
+        .await
+        .expect("publish failed");
+    wait_for(
+        || {
+            metrics
                 .export()
                 .unwrap()
                 .contains("ruststream_messages_consumed_total")
-            {
-                break;
-            }
-        }
-    })
+        },
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(recorded.is_ok(), "consume metric was never recorded");
 
     let text = metrics.export().unwrap();
     assert!(text.contains(r#"ruststream_messages_consumed_total{name="pings",status="ack"}"#));
     assert!(text.contains("ruststream_consume_duration_seconds"));
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -73,41 +72,31 @@ async fn consume_metrics_are_recorded_through_a_router() {
         ));
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
-
-    let recorded = tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("pings", b"{}"))
-                .await;
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            if metrics
+    let running = app.start().await.expect("startup failed");
+    publisher
+        .publish(OutgoingMessage::new("pings", b"{}"))
+        .await
+        .expect("publish failed");
+    wait_for(
+        || {
+            metrics
                 .export()
                 .unwrap()
                 .contains("ruststream_messages_consumed_total")
-            {
-                break;
-            }
-        }
-    })
+        },
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(
-        recorded.is_ok(),
-        "consume metric was never recorded for a router handler"
-    );
 
     let text = metrics.export().unwrap();
     assert!(text.contains(r#"ruststream_messages_consumed_total{name="pings",status="ack"}"#));
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.unwrap();
 }
 
 #[cfg(feature = "macros")]
 mod publish {
-    use super::{Arc, Duration, Notify};
+    use super::{Duration, wait_for};
     use ruststream::memory::MemoryBroker;
     use ruststream::metrics::Metrics;
     use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
@@ -143,35 +132,28 @@ mod publish {
                 b.include_publishing(reply, egress_pub);
             });
 
-        let shutdown = Arc::new(Notify::new());
-        let signal = Arc::clone(&shutdown);
-        let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
-
+        let running = app.start().await.expect("startup failed");
         let payload = serde_json::to_vec(&Req { n: 7 }).unwrap();
-        let recorded = tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                let _ = ingress_pub
-                    .publish(OutgoingMessage::new("requests", &payload))
-                    .await;
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                if metrics
+        ingress_pub
+            .publish(OutgoingMessage::new("requests", &payload))
+            .await
+            .expect("publish failed");
+        wait_for(
+            || {
+                metrics
                     .export()
                     .unwrap()
                     .contains("ruststream_messages_published_total")
-                {
-                    break;
-                }
-            }
-        })
+            },
+            Duration::from_secs(5),
+        )
         .await;
-        assert!(recorded.is_ok(), "publish metric was never recorded");
 
         let text = metrics.export().unwrap();
         assert!(
             text.contains(r#"ruststream_messages_published_total{name="responses",status="ok"}"#)
         );
 
-        shutdown.notify_one();
-        run.await.unwrap().unwrap();
+        running.shutdown().await.unwrap();
     }
 }

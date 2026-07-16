@@ -97,31 +97,18 @@ async fn delivery_context_propagates_to_the_reply() {
             b.include(capture);
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Req { n: 7 }).expect("encode");
-    // Re-publish until the reaction lands: the first sends can race subscription startup, and the
-    // in-memory broker drops a message with no subscriber yet (see the metrics publish test).
-    let captured = tokio::time::timeout(Duration::from_secs(2), async {
-        let notified = GOT.notified();
-        tokio::pin!(notified);
-        loop {
-            let mut headers = Headers::new();
-            headers.insert("correlation-id", "trace-abc");
-            ingress_pub
-                .publish(OutgoingMessage::new("in", &payload).with_headers(headers))
-                .await
-                .expect("publish");
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(captured.is_ok(), "reply never captured");
+    let mut headers = Headers::new();
+    headers.insert("correlation-id", "trace-abc");
+    ingress_pub
+        .publish(OutgoingMessage::new("in", &payload).with_headers(headers))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), GOT.notified())
+        .await
+        .expect("reply never captured");
 
     assert_eq!(
         CAPTURED.lock().expect("poisoned").as_deref(),
@@ -129,8 +116,7 @@ async fn delivery_context_propagates_to_the_reply() {
         "the reply should carry the delivery's correlation id, stamped by the publish layer"
     );
 
-    shutdown.notify_one();
-    run.await.expect("join").expect("run");
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 /// A batch-only transform: marks every batched reply, never a single-message one.
@@ -169,27 +155,16 @@ async fn batch_layer_runs_only_on_batched_replies() {
         b.include(batch_capture);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
-    let captured = tokio::time::timeout(Duration::from_secs(2), async {
-        let notified = BATCH_GOT.notified();
-        tokio::pin!(notified);
-        loop {
-            ingress_pub
-                .publish(OutgoingMessage::new("batch-in", &payload))
-                .await
-                .expect("publish");
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(captured.is_ok(), "batched reply never captured");
+    ingress_pub
+        .publish(OutgoingMessage::new("batch-in", &payload))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), BATCH_GOT.notified())
+        .await
+        .expect("batched reply never captured");
 
     assert_eq!(
         *BATCHED.lock().expect("poisoned"),
@@ -197,8 +172,7 @@ async fn batch_layer_runs_only_on_batched_replies() {
         "the batch layer should stamp every batched reply"
     );
 
-    shutdown.notify_one();
-    run.await.expect("join").expect("run");
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 /// A dynamic, runtime-built publish middleware: stamps a header, then continues.
@@ -248,27 +222,16 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
             b.include(dyn_capture);
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Req { n: 3 }).expect("encode");
-    let captured = tokio::time::timeout(Duration::from_secs(2), async {
-        let notified = DYN_GOT.notified();
-        tokio::pin!(notified);
-        loop {
-            ingress_pub
-                .publish(OutgoingMessage::new("dyn-in", &payload))
-                .await
-                .expect("publish");
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(captured.is_ok(), "reply never captured");
+    ingress_pub
+        .publish(OutgoingMessage::new("dyn-in", &payload))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), DYN_GOT.notified())
+        .await
+        .expect("reply never captured");
 
     assert_eq!(
         *DYN_SEEN.lock().expect("poisoned"),
@@ -276,8 +239,7 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
         "the dynamic stack middleware should run and stamp the reply"
     );
 
-    shutdown.notify_one();
-    run.await.expect("join").expect("run");
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 // Two app-wide publish middleware, each appending its letter to an "order" header, pin the
@@ -350,27 +312,16 @@ async fn publish_layer_last_added_runs_outermost() {
             b.include(ord_capture);
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
-    let got = tokio::time::timeout(Duration::from_secs(2), async {
-        let notified = ORDER_GOT.notified();
-        tokio::pin!(notified);
-        loop {
-            ingress_pub
-                .publish(OutgoingMessage::new("ord-in", &payload))
-                .await
-                .expect("publish");
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(got.is_ok(), "reply never captured");
+    ingress_pub
+        .publish(OutgoingMessage::new("ord-in", &payload))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), ORDER_GOT.notified())
+        .await
+        .expect("reply never captured");
 
     // B was added last, so it wraps A and appends first: "BA".
     assert_eq!(
@@ -379,6 +330,5 @@ async fn publish_layer_last_added_runs_outermost() {
         "the last publish_layer added must run outermost"
     );
 
-    shutdown.notify_one();
-    run.await.expect("join").expect("run");
+    running.shutdown().await.expect("graceful shutdown failed");
 }

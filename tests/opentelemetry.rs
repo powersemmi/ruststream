@@ -7,7 +7,7 @@
     feature = "json"
 ))]
 
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
@@ -45,8 +45,8 @@ async fn capture(_resp: &Resp, ctx: &mut Context<'_>) {
 /// must not run concurrently (cargo runs a file's tests in parallel by default).
 static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-/// Drives the app until the reply lands, re-publishing to defeat the startup race, and returns the
-/// captured reply `traceparent`.
+/// Drives one request through the app (`start()` resolves with subscriptions already open, so a
+/// single publish lands) and returns the captured reply `traceparent`.
 async fn run_and_capture(incoming: Option<&'static str>) -> TraceContext {
     let _serial = SERIAL.lock().await;
     *CAPTURED.lock().expect("poisoned") = None;
@@ -66,34 +66,22 @@ async fn run_and_capture(incoming: Option<&'static str>) -> TraceContext {
         });
     // --8<-- [end:wiring]
 
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
-    let captured = tokio::time::timeout(Duration::from_secs(2), async {
-        let notified = GOT.notified();
-        tokio::pin!(notified);
-        loop {
-            let mut headers = Headers::new();
-            if let Some(tp) = incoming {
-                headers.insert("traceparent", tp);
-            }
-            ingress
-                .publish(OutgoingMessage::new("in", &payload).with_headers(headers))
-                .await
-                .expect("publish");
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(captured.is_ok(), "reply never captured");
+    let mut headers = Headers::new();
+    if let Some(tp) = incoming {
+        headers.insert("traceparent", tp);
+    }
+    ingress
+        .publish(OutgoingMessage::new("in", &payload).with_headers(headers))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), GOT.notified())
+        .await
+        .expect("reply never captured");
 
-    shutdown.notify_one();
-    run.await.expect("join").expect("run");
+    running.shutdown().await.expect("graceful shutdown failed");
 
     let header = CAPTURED
         .lock()

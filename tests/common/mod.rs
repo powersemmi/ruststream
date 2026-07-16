@@ -2,13 +2,18 @@
 
 use std::time::Duration;
 
-use tokio::sync::Notify;
-
-/// Waits until a handler signals `notify`, but no longer than one retry interval.
+/// Waits until `cond` holds, yielding between checks, but no longer than `timeout`.
 ///
-/// Used in publish-retry loops: subscriptions open inside `run()`, so a message published too
-/// early is lost and the signal never comes. The bounded wait lets the caller publish again
-/// instead of deadlocking, while still waking immediately on the happy path.
-pub(crate) async fn handler_signal(notify: &Notify) {
-    let _ = tokio::time::timeout(Duration::from_millis(10), notify.notified()).await;
+/// The yield loop is the sanctioned no-sleep wait: in multi-thread mode the handler runs on
+/// another worker and flips the observed state independently, so yielding is enough to let it
+/// progress.
+#[allow(dead_code)] // each test binary compiles its own copy and uses what it needs
+pub(crate) async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
+    let result = tokio::time::timeout(timeout, async {
+        while !cond() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "condition not met within {timeout:?}");
 }
