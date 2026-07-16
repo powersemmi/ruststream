@@ -5,22 +5,16 @@
 //! the handler returns, so the exported text is polled without sleeping.
 #![cfg(all(feature = "metrics", feature = "memory", feature = "json"))]
 
+mod common;
+
+use common::wait_for;
+
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, Router, RustStream};
 use ruststream::{Name, OutgoingMessage, Publisher};
-
-async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        while !cond() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "condition not met within {timeout:?}");
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consume_metrics_are_recorded() {

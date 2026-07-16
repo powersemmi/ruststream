@@ -8,21 +8,15 @@
 
 mod common;
 
-use std::{
-    sync::{
-        Arc, LazyLock,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
-use common::handler_signal;
+use common::wait_for;
 use ruststream::codec::{CborCodec, Codec, MsgpackCodec};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream};
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Order {
@@ -31,13 +25,11 @@ struct Order {
 
 static CBOR_SEEN: AtomicUsize = AtomicUsize::new(0);
 static MSGPACK_SEEN: AtomicUsize = AtomicUsize::new(0);
-static NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("orders-cbor")]
 async fn cbor_order(order: &Order) -> HandlerResult {
     assert_eq!(order.id, 7);
     CBOR_SEEN.fetch_add(1, Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -45,7 +37,6 @@ async fn cbor_order(order: &Order) -> HandlerResult {
 async fn msgpack_order(order: &Order) -> HandlerResult {
     assert_eq!(order.id, 7);
     MSGPACK_SEEN.fetch_add(1, Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -68,33 +59,25 @@ async fn non_default_codecs_dispatch_through_the_router() {
         b.include_router(msgpack_router);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    // `start` resolves only once subscriptions are open, so one publish per codec suffices.
+    let running = app.start().await.expect("startup failed");
 
     let cbor_bytes = CborCodec.encode(&Order { id: 7 }).unwrap();
     let msgpack_bytes = MsgpackCodec.encode(&Order { id: 7 }).unwrap();
+    publisher
+        .publish(OutgoingMessage::new("orders-cbor", &cbor_bytes))
+        .await
+        .expect("publish");
+    publisher
+        .publish(OutgoingMessage::new("orders-msgpack", &msgpack_bytes))
+        .await
+        .expect("publish");
 
-    let driven = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("orders-cbor", &cbor_bytes))
-                .await;
-            let _ = publisher
-                .publish(OutgoingMessage::new("orders-msgpack", &msgpack_bytes))
-                .await;
-            handler_signal(&NOTIFY).await;
-            if CBOR_SEEN.load(Ordering::SeqCst) >= 1 && MSGPACK_SEEN.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
-        }
-    })
+    wait_for(
+        || CBOR_SEEN.load(Ordering::SeqCst) >= 1 && MSGPACK_SEEN.load(Ordering::SeqCst) >= 1,
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(
-        driven.is_ok(),
-        "a non-default codec handler never dispatched"
-    );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }

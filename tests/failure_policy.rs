@@ -2,6 +2,10 @@
 //! by the per-subscriber `on_failure(panic = .., decode = ..)` policy. Driven over `MemoryBroker`.
 #![cfg(feature = "macros")]
 
+mod common;
+
+use common::wait_for;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -124,16 +128,6 @@ async fn drive_until_seen(
         Duration::from_secs(5),
     )
     .await;
-}
-
-async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        while !cond() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "condition not met within {timeout:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

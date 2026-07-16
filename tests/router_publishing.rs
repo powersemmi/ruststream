@@ -7,13 +7,13 @@ mod common;
 
 use std::{
     sync::{
-        Arc, LazyLock,
+        LazyLock,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
-use common::handler_signal;
+use common::wait_for;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
@@ -40,35 +40,30 @@ fn order_bytes(id: u32) -> Vec<u8> {
     serde_json::to_vec(&Order { id }).unwrap()
 }
 
-/// Publishes orders to each ingress topic until every reply counter is non-zero (subscriptions
-/// open inside `run()`, so early publishes are lost), bounded by a hang guard.
-async fn drive_until_replied(
+/// Publishes an order once to each ingress topic (the app is already started, so the
+/// subscriptions are open and every publish lands), then waits until every reply counter is
+/// non-zero.
+async fn publish_and_await_replies(
     publisher: &impl Publisher<Error = std::convert::Infallible>,
     topics: &[&str],
     counters: &[&AtomicUsize],
-    signal: &Notify,
 ) {
     let payload = order_bytes(1);
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            for topic in topics {
-                let _ = publisher
-                    .publish(OutgoingMessage::new(topic, &payload))
-                    .await;
-            }
-            handler_signal(signal).await;
-            if counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1) {
-                break;
-            }
-        }
-    })
+    for topic in topics {
+        publisher
+            .publish(OutgoingMessage::new(topic, &payload))
+            .await
+            .expect("publish");
+    }
+    wait_for(
+        || counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1),
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(result.is_ok(), "not every publishing form replied");
 }
 
 static RP_OUT: AtomicUsize = AtomicUsize::new(0);
 static RP_OUT_ON: AtomicUsize = AtomicUsize::new(0);
-static RP_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("rp-in", publish("rp-out"))]
 async fn rp_relay(o: &Order) -> Receipt {
@@ -83,14 +78,12 @@ async fn rp_relay_on(o: &Order) -> Receipt {
 #[subscriber("rp-out")]
 async fn rp_check(_r: &Receipt) -> HandlerResult {
     RP_OUT.fetch_add(1, Ordering::SeqCst);
-    RP_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("rp-out-on")]
 async fn rp_check_on(_r: &Receipt) -> HandlerResult {
     RP_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    RP_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -114,25 +107,15 @@ async fn default_codec_router_publishing_replies() {
         b.include(rp_check_on);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
-    drive_until_replied(
-        &publisher,
-        &["rp-in", "rp-in-on"],
-        &[&RP_OUT, &RP_OUT_ON],
-        &RP_NOTIFY,
-    )
-    .await;
+    publish_and_await_replies(&publisher, &["rp-in", "rp-in-on"], &[&RP_OUT, &RP_OUT_ON]).await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static RPC_OUT: AtomicUsize = AtomicUsize::new(0);
 static RPC_OUT_ON: AtomicUsize = AtomicUsize::new(0);
-static RPC_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("rpc-in", publish("rpc-out"))]
 async fn rpc_relay(o: &Order) -> Receipt {
@@ -147,14 +130,12 @@ async fn rpc_relay_on(o: &Order) -> Receipt {
 #[subscriber("rpc-out")]
 async fn rpc_check(_r: &Receipt) -> HandlerResult {
     RPC_OUT.fetch_add(1, Ordering::SeqCst);
-    RPC_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("rpc-out-on")]
 async fn rpc_check_on(_r: &Receipt) -> HandlerResult {
     RPC_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    RPC_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -180,25 +161,20 @@ async fn chain_codec_router_publishing_replies() {
         b.include(rpc_check_on);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
-    drive_until_replied(
+    publish_and_await_replies(
         &publisher,
         &["rpc-in", "rpc-in-on"],
         &[&RPC_OUT, &RPC_OUT_ON],
-        &RPC_NOTIFY,
     )
     .await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static BP_OUT: AtomicUsize = AtomicUsize::new(0);
 static BP_OUT_ON: AtomicUsize = AtomicUsize::new(0);
-static BP_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber(batch("bp-in"), publish("bp-out"))]
 async fn bp_relay(orders: &[Order]) -> Vec<Receipt> {
@@ -213,14 +189,12 @@ async fn bp_relay_on(orders: &[Order]) -> Vec<Receipt> {
 #[subscriber("bp-out")]
 async fn bp_check(_r: &Receipt) -> HandlerResult {
     BP_OUT.fetch_add(1, Ordering::SeqCst);
-    BP_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("bp-out-on")]
 async fn bp_check_on(_r: &Receipt) -> HandlerResult {
     BP_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    BP_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -245,25 +219,15 @@ async fn default_codec_router_batch_publishing_replies() {
         b.include(bp_check_on);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
-    drive_until_replied(
-        &publisher,
-        &["bp-in", "bp-in-on"],
-        &[&BP_OUT, &BP_OUT_ON],
-        &BP_NOTIFY,
-    )
-    .await;
+    publish_and_await_replies(&publisher, &["bp-in", "bp-in-on"], &[&BP_OUT, &BP_OUT_ON]).await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static BPC_OUT: AtomicUsize = AtomicUsize::new(0);
 static BPC_OUT_ON: AtomicUsize = AtomicUsize::new(0);
-static BPC_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber(batch("bpc-in"), publish("bpc-out"))]
 async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
@@ -278,14 +242,12 @@ async fn bpc_relay_on(orders: &[Order]) -> Vec<Receipt> {
 #[subscriber("bpc-out")]
 async fn bpc_check(_r: &Receipt) -> HandlerResult {
     BPC_OUT.fetch_add(1, Ordering::SeqCst);
-    BPC_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("bpc-out-on")]
 async fn bpc_check_on(_r: &Receipt) -> HandlerResult {
     BPC_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    BPC_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -311,20 +273,16 @@ async fn chain_codec_router_batch_publishing_replies() {
         b.include(bpc_check_on);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
-    drive_until_replied(
+    publish_and_await_replies(
         &publisher,
         &["bpc-in", "bpc-in-on"],
         &[&BPC_OUT, &BPC_OUT_ON],
-        &BPC_NOTIFY,
     )
     .await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 // A static, app-wide publish middleware that stamps a header onto every reply. Used to prove the

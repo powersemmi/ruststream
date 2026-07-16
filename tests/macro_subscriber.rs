@@ -1,17 +1,18 @@
 //! Integration test for the `#[subscriber]` attribute macro.
+//!
+//! Apps come up through `start()`, which resolves only after subscriptions are open, so each
+//! distinct message is published exactly once - no republish loops.
 #![cfg(feature = "macros")]
 
 mod common;
 
-use std::{
-    sync::{
-        LazyLock,
-        atomic::{AtomicU32, Ordering},
-    },
-    time::Duration,
-};
+use std::convert::Infallible;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
-use common::handler_signal;
+use common::wait_for;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
@@ -20,10 +21,6 @@ use ruststream::runtime::{
 };
 use ruststream::{Message, OutgoingMessage, Publisher, SubscriptionSource, subscriber};
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
 use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +30,7 @@ struct Order {
 }
 
 static HANDLED: AtomicU32 = AtomicU32::new(0);
-static HANDLED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static HANDLED_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("orders")]
 async fn handle(order: &Order) -> HandlerResult {
@@ -76,7 +73,7 @@ impl SubscriptionSource<MemoryBroker> for StreamSource {
 }
 
 static HANDLED_ON_STREAM: AtomicU32 = AtomicU32::new(0);
-static HANDLED_ON_STREAM_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static HANDLED_ON_STREAM_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("ignored-on-the-include_on-path")]
 async fn on_stream(order: &Order) -> HandlerResult {
@@ -99,32 +96,24 @@ async fn macro_def_mounts_on_arbitrary_source() {
         );
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
+    // The source subscribed to "events.stream", not the macro's name.
     let payload = serde_json::to_vec(&Order { id: 4, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            // The source subscribed to "events.stream", not the macro's name.
-            let _ = publisher
-                .publish(OutgoingMessage::new("events.stream", &payload))
-                .await;
-            handler_signal(&HANDLED_ON_STREAM_NOTIFY).await;
-            if HANDLED_ON_STREAM.load(Ordering::SeqCst) >= 4 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "include_on handler did not run");
+    publisher
+        .publish(OutgoingMessage::new("events.stream", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), HANDLED_ON_STREAM_NOTIFY.notified())
+        .await
+        .expect("include_on handler did not run");
+    assert_eq!(HANDLED_ON_STREAM.load(Ordering::SeqCst), 4);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static HANDLED_CTOR: AtomicU32 = AtomicU32::new(0);
-static HANDLED_CTOR_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static HANDLED_CTOR_NOTIFY: Notify = Notify::const_new();
 
 // The descriptor lives in the decorator: the macro pulls the `StreamSource` type out of the
 // constructor path and `include` mounts on `def.source()`, with the broker checked at compile time.
@@ -144,34 +133,23 @@ async fn macro_descriptor_in_decorator() {
     let app =
         RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(on_ctor));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("ctor.stream", &payload))
-                .await;
-            handler_signal(&HANDLED_CTOR_NOTIFY).await;
-            if HANDLED_CTOR.load(Ordering::SeqCst) >= 6 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "descriptor-in-decorator handler did not run"
-    );
+    publisher
+        .publish(OutgoingMessage::new("ctor.stream", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), HANDLED_CTOR_NOTIFY.notified())
+        .await
+        .expect("descriptor-in-decorator handler did not run");
+    assert_eq!(HANDLED_CTOR.load(Ordering::SeqCst), 6);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static HANDLED_CHAIN: AtomicU32 = AtomicU32::new(0);
-static HANDLED_CHAIN_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static HANDLED_CHAIN_NOTIFY: Notify = Notify::const_new();
 
 // A builder chain in the decorator: the macro follows the receivers down to `StreamSource::new`
 // for the type, and emits the whole chain as the source constructor.
@@ -190,31 +168,20 @@ async fn macro_builder_chain_in_decorator() {
     let app =
         RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(on_chain));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
+    // The `at(..)` option won: the subscription binds to "chain.stream".
     let payload = serde_json::to_vec(&Order { id: 7, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            // The `at(..)` option won: the subscription binds to "chain.stream".
-            let _ = publisher
-                .publish(OutgoingMessage::new("chain.stream", &payload))
-                .await;
-            handler_signal(&HANDLED_CHAIN_NOTIFY).await;
-            if HANDLED_CHAIN.load(Ordering::SeqCst) >= 7 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "builder-chain-in-decorator handler did not run"
-    );
+    publisher
+        .publish(OutgoingMessage::new("chain.stream", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), HANDLED_CHAIN_NOTIFY.notified())
+        .await
+        .expect("builder-chain-in-decorator handler did not run");
+    assert_eq!(HANDLED_CHAIN.load(Ordering::SeqCst), 7);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 /// An order placed by a customer.
@@ -241,32 +208,23 @@ async fn macro_subscriber_dispatches() {
     let app =
         RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(handle));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
-    // include subscribes inside run() (after connect); retry until the subscription is live.
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("orders", &payload))
-                .await;
-            handler_signal(&HANDLED_NOTIFY).await;
-            if HANDLED.load(Ordering::SeqCst) >= 5 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "macro handler did not run");
+    publisher
+        .publish(OutgoingMessage::new("orders", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), HANDLED_NOTIFY.notified())
+        .await
+        .expect("macro handler did not run");
+    assert_eq!(HANDLED.load(Ordering::SeqCst), 5);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static HANDLED_DEFAULT: AtomicU32 = AtomicU32::new(0);
-static HANDLED_DEFAULT_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static HANDLED_DEFAULT_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("orders-default")]
 async fn handle_default(order: &Order) -> HandlerResult {
@@ -285,27 +243,19 @@ async fn scope_default_codec_drops_per_call_codec() {
         RustStream::new(AppInfo::new("svc", "0.1.0"))
             .with_broker_codec(broker, JsonCodec, |b| b.include(handle_default));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Order { id: 9, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("orders-default", &payload))
-                .await;
-            handler_signal(&HANDLED_DEFAULT_NOTIFY).await;
-            if HANDLED_DEFAULT.load(Ordering::SeqCst) >= 9 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "scope-default-codec handler did not run");
+    publisher
+        .publish(OutgoingMessage::new("orders-default", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), HANDLED_DEFAULT_NOTIFY.notified())
+        .await
+        .expect("scope-default-codec handler did not run");
+    assert_eq!(HANDLED_DEFAULT.load(Ordering::SeqCst), 9);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 /// A static (zero-cost) publish transform baked onto the `TypedPublisher`.
@@ -323,7 +273,7 @@ struct Ping {
 }
 
 static STATIC_SEEN: AtomicU32 = AtomicU32::new(0);
-static STATIC_SEEN_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static STATIC_SEEN_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("ping-in", publish("ping-out"))]
 async fn relay(p: &Ping) -> Ping {
@@ -354,30 +304,23 @@ async fn static_publish_layer_transforms_reply() {
         })
         .with_broker(egress, |b| b.include(check));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Ping { n: 7 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = ingress_pub
-                .publish(OutgoingMessage::new("ping-in", &payload))
-                .await;
-            handler_signal(&STATIC_SEEN_NOTIFY).await;
-            if STATIC_SEEN.load(Ordering::SeqCst) == 7 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
+    ingress_pub
+        .publish(OutgoingMessage::new("ping-in", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), STATIC_SEEN_NOTIFY.notified())
+        .await
+        .expect("the reply never reached the consumer");
+    assert_eq!(
+        STATIC_SEEN.load(Ordering::SeqCst),
+        7,
         "static publish layer header did not reach the consumer",
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 #[derive(Serialize, Deserialize)]
@@ -391,7 +334,7 @@ struct Response {
 }
 
 static REPLY_DOUBLED: AtomicU32 = AtomicU32::new(0);
-static REPLY_DOUBLED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static REPLY_DOUBLED_NOTIFY: Notify = Notify::const_new();
 static REPLY_TAGGED: AtomicU32 = AtomicU32::new(0);
 
 /// A publish middleware that tags every outgoing reply with a header (envelope-style).
@@ -444,32 +387,24 @@ async fn macro_publisher_replies_cross_broker() {
         })
         .with_broker(egress, |b| b.include(capture));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Request { n: 21 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = ingress_pub
-                .publish(OutgoingMessage::new("requests", &payload))
-                .await;
-            handler_signal(&REPLY_DOUBLED_NOTIFY).await;
-            if REPLY_DOUBLED.load(Ordering::SeqCst) == 42 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "reply was not published to egress");
+    ingress_pub
+        .publish(OutgoingMessage::new("requests", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), REPLY_DOUBLED_NOTIFY.notified())
+        .await
+        .expect("reply was not published to egress");
+    assert_eq!(REPLY_DOUBLED.load(Ordering::SeqCst), 42);
     assert_eq!(
         REPLY_TAGGED.load(Ordering::SeqCst),
         1,
         "publish middleware header did not reach the consumer",
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 #[derive(Serialize, Deserialize)]
@@ -479,9 +414,9 @@ struct Confirmation {
 }
 
 static CONFIRM_REJECTED: AtomicU32 = AtomicU32::new(0);
-static CONFIRM_REJECTED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static CONFIRM_REJECTED_NOTIFY: Notify = Notify::const_new();
 static CONFIRM_ACCEPTED: AtomicU32 = AtomicU32::new(0);
-static CONFIRM_ACCEPTED_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static CONFIRM_ACCEPTED_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("confirm-in", publish("confirm-out"))]
 async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
@@ -516,28 +451,18 @@ async fn publishing_result_form_controls_ack_and_publish() {
         b.include(confirm_sink);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     // Err(HandlerResult) skips the publish entirely.
     let rejected = serde_json::to_vec(&Order { id: 0, total: 0.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = ingress
-                .publish(OutgoingMessage::new("confirm-in", &rejected))
-                .await;
-            handler_signal(&CONFIRM_REJECTED_NOTIFY).await;
-            if CONFIRM_REJECTED.load(Ordering::SeqCst) >= 3 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "Err branch of the publishing handler did not run",
-    );
+    ingress
+        .publish(OutgoingMessage::new("confirm-in", &rejected))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), CONFIRM_REJECTED_NOTIFY.notified())
+        .await
+        .expect("Err branch of the publishing handler did not run");
+    assert_eq!(CONFIRM_REJECTED.load(Ordering::SeqCst), 1);
     assert_eq!(
         CONFIRM_ACCEPTED.load(Ordering::SeqCst),
         0,
@@ -546,22 +471,16 @@ async fn publishing_result_form_controls_ack_and_publish() {
 
     // Ok(reply) publishes and acks.
     let accepted = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = ingress
-                .publish(OutgoingMessage::new("confirm-in", &accepted))
-                .await;
-            handler_signal(&CONFIRM_ACCEPTED_NOTIFY).await;
-            if CONFIRM_ACCEPTED.load(Ordering::SeqCst) == 6 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "Ok branch did not publish the reply");
+    ingress
+        .publish(OutgoingMessage::new("confirm-in", &accepted))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), CONFIRM_ACCEPTED_NOTIFY.notified())
+        .await
+        .expect("Ok branch did not publish the reply");
+    assert_eq!(CONFIRM_ACCEPTED.load(Ordering::SeqCst), 6);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 /// App state read from the publishing handler's optional `&mut Context` parameter.
@@ -569,7 +488,7 @@ async fn publishing_result_form_controls_ack_and_publish() {
 struct Bump(u32);
 
 static CTX_REPLY: AtomicU32 = AtomicU32::new(0);
-static CTX_REPLY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static CTX_REPLY_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("ctx-in", publish("ctx-out"))]
 async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
@@ -599,41 +518,32 @@ async fn publishing_handler_reads_context_state() {
             b.include(ctx_sink);
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Request { n: 1 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = ingress
-                .publish(OutgoingMessage::new("ctx-in", &payload))
-                .await;
-            handler_signal(&CTX_REPLY_NOTIFY).await;
-            if CTX_REPLY.load(Ordering::SeqCst) == 101 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
+    ingress
+        .publish(OutgoingMessage::new("ctx-in", &payload))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), CTX_REPLY_NOTIFY.notified())
+        .await
+        .expect("the reply never reached the sink");
+    assert_eq!(
+        CTX_REPLY.load(Ordering::SeqCst),
+        101,
         "publishing handler did not read app state from the context",
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
-static ATTEMPTS_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Asks for a delayed redelivery on first sight, then acks: the not-ready-yet pattern.
 #[subscriber("deferred")]
 async fn eventually(order: &Order) -> HandlerResult {
     let _ = order;
     let prev = ATTEMPTS.fetch_add(1, Ordering::SeqCst);
-    ATTEMPTS_NOTIFY.notify_one();
     if prev == 0 {
         return HandlerResult::retry_after(Duration::from_millis(10));
     }
@@ -648,31 +558,19 @@ async fn retry_after_redelivers_through_the_dispatcher() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(broker, |b| b.include(eventually));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
     let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if ATTEMPTS.load(Ordering::SeqCst) == 0 {
-                let _ = publisher
-                    .publish(OutgoingMessage::new("deferred", &payload))
-                    .await;
-            }
-            handler_signal(&ATTEMPTS_NOTIFY).await;
-            if ATTEMPTS.load(Ordering::SeqCst) >= 2 {
-                break;
-            }
-        }
-    })
+    publisher
+        .publish(OutgoingMessage::new("deferred", &payload))
+        .await
+        .expect("publish failed");
+    wait_for(
+        || ATTEMPTS.load(Ordering::SeqCst) >= 2,
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(
-        result.is_ok(),
-        "the delayed nack never came back through the dispatcher",
-    );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }

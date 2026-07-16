@@ -3,6 +3,9 @@
 //! `#[subscriber]` macro over `MemoryBroker`.
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
+mod common;
+
+use common::wait_for;
 use std::{
     sync::{
         Arc,
@@ -24,16 +27,6 @@ struct Order {
 
 fn order_bytes(id: u32) -> Vec<u8> {
     serde_json::to_vec(&Order { id }).unwrap()
-}
-
-async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        while !cond() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "condition not met within {timeout:?}");
 }
 
 // Shared counters keyed by a static so the macro handler (a free fn) can reach them.
