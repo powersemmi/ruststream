@@ -91,6 +91,8 @@ nav:
       - guides/lifespan.md
       - guides/middleware.md
       - guides/failure-policy.md
+  - Integrations:
+      - guides/http.md
   - Observability:
       - guides/logging.md
       - guides/metrics.md

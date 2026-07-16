@@ -13,7 +13,6 @@
 //! ```
 
 use std::collections::VecDeque;
-use std::future::pending;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -104,10 +103,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app =
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| b.include(fulfil));
 
-    // The messaging side runs in the background; the HTTP server owns the foreground.
-    tokio::spawn(async move {
-        let _ = app.run_until(pending::<()>()).await;
-    });
+    // The messaging side starts in the background; a startup failure (a broker refusing to
+    // connect, a subscription failing to open) surfaces here, before HTTP accepts traffic.
+    let running = app.start().await?;
 
     let store = Arc::new(Mutex::new(Store::default()));
     tokio::spawn(relay_outbox(store.clone(), egress));
@@ -115,10 +113,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = Router::new()
         .route("/orders", post(place_order))
         .with_state(store);
-    // --8<-- [end:wiring]
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
     println!("orders API on http://127.0.0.1:8080/orders");
-    axum::serve(listener, router).await?;
+    // The host owns the signals. HTTP stops on Ctrl+C, or when the messaging side tears itself
+    // down (fail-fast) so the process does not keep serving with a dead consumer; either way the
+    // messaging side then drains gracefully.
+    let stopping = running.stopping();
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                () = stopping => {}
+            }
+        })
+        .await?;
+    running.shutdown().await?;
+    // --8<-- [end:wiring]
     Ok(())
 }
