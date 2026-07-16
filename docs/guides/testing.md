@@ -146,27 +146,8 @@ This mirrors faststream's `with_real=True` split: handler logic on the in-memory
 semantics on the real one. Keep both suites over the same handler modules so the production code has
 a single source of truth.
 
-## For broker authors
-
-A broker crate ships an in-process transport - a normal `Broker` that routes in memory, emulating
-the broker's Core routing (subjects, wildcards, groups) - and implements the one
-[`TestableBroker`](../broker-authors/conformance.md) contract on it:
-
-The reference is `MemoryBroker`'s own implementation:
-
-```rust
---8<-- "src/memory/mod.rs:testable"
-```
-
-The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and
-`Coordinator::consumed` when a delivery is settled or dropped (so the harness can tell when the
-reaction has settled), and routes delayed redeliveries through `Coordinator::schedule_redelivery`.
-That one type then works with both `TestApp` (above) and the conformance suite. Prove its routing
-with `conformance::harness::run_suite`:
-
-```rust
---8<-- "tests/conformance_self.rs:run_suite"
-```
-
-See [Conformance](../broker-authors/conformance.md) for the full contract and the lazy-startup
-`lifecycle` check.
+!!! note "Writing a broker crate?"
+    The machinery that makes `TestApp` work against a broker - the in-process transport and the
+    `TestableBroker` contract - is the broker author's side of this story. It lives in
+    [Broker authors: test support](../broker-authors/index.md#test-support) and
+    [Conformance](../broker-authors/conformance.md).

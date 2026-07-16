@@ -42,7 +42,9 @@ The policy values are:
 | `skip`                | Acknowledge the failed message to move past it. Not success: the message is gone, unprocessed. |
 
 `skip` is the deliberate poison-message escape hatch: it advances past a message that cannot be
-processed rather than dropping or retrying it.
+processed rather than dropping or retrying it. Pick `retry` for decode failures with care: a
+payload that can never decode will redeliver forever unless the broker has a dead-letter or
+max-deliveries policy.
 
 ```rust
 --8<-- "examples/failure_policy.rs:skip"
@@ -55,8 +57,9 @@ processed rather than dropping or retrying it.
   restart; under the other policies it is settled and the subscriber keeps consuming. Catching only
   applies under an unwinding panic profile; with `panic = "abort"` the process is already gone.
 - A decode failure surfaces as a `Result`, so no unwinding is involved; the `decode` policy settles
-  the message directly. The same `on_decode_failure` policy can also be set when building a handler
-  by hand through the typed adapter (see [Codecs](codecs.md)).
+  the message directly. The same policy can also be set when building a handler by hand: the typed
+  adapter `typed(codec, handler)` returns a `Typed` wrapper whose `on_decode_failure` accepts a
+  `FailurePolicy` (see [Codecs](codecs.md#decode-failures)).
 - On the batch path the policy applies per batch decode (each element decodes independently) and to
   a panic in the batch handler. Per-element panic handling is out of scope.
 

@@ -2,7 +2,7 @@
 
 How a crate ships a [`cargo generate`](https://github.com/cargo-generate/cargo-generate) scaffold
 that stays in sync with its API. The contract is the scaffolding parallel of the
-[conformance harness](../broker-authors/conformance.md): a template is a CI-compiled artifact owned by the
+[conformance harness](conformance.md): a template is a CI-compiled artifact owned by the
 crate whose broker it wires, not hand-maintained strings in the core CLI. Core ships only the
 in-memory `templates/memory`; each broker crate owns the templates for its transports.
 

@@ -34,12 +34,18 @@ access, broker per-delivery fields - is covered in [Context and state](context.m
 
 ### Extractor parameters
 
-Any further parameter, after the message and the optional `&mut Context`, whose type implements
-`FromContext` is resolved from the delivery before the body runs, so a handler takes its
-dependencies as arguments instead of reaching through `ctx.state()`. Derive `FromRef` on the
-application state to inject its fields with `State<T>`, or implement `FromContext` for a custom
-extractor; a failed extraction settles the delivery without running the body. See
-[Injecting dependencies](context.md#injecting-dependencies-extractor-parameters).
+Any further parameter, after the message and the optional `&mut Context`, is an **extractor**:
+the runtime resolves it from the delivery before the body runs, and a failed extraction settles
+the delivery without running the body. Three kinds can appear:
+
+- `State<T>` - a field of the application state (derive `FromRef` on the state type).
+- `Ctx<K>` - a broker per-delivery field, read by its key.
+- any type implementing `FromContext` - a custom extractor (an auth guard, a request-scoped
+  resolver).
+
+The mechanics live in
+[Injecting dependencies](context.md#injecting-dependencies-extractor-parameters) and
+[Context fields as parameters](context.md#context-fields-as-parameters).
 
 ### Acking
 
@@ -61,19 +67,17 @@ On the message itself, ack consumes `self`, so the type system prevents acking t
 
 ### Post-settle continuations
 
-`HandlerResult::ack().and_after(fut)` attaches a continuation that runs *after* the message is
-settled, without gating the ack decision or affecting redelivery - a non-critical notification,
-slow follow-up work, a cache warm-up. Any outcome works (`drop().and_after(..)` is valid; the
-neutral reading is "after settle"):
+`HandlerResult::ack().and_after(fut)` attaches a continuation to the returned outcome - a
+non-critical notification, slow follow-up work, a cache warm-up. Any outcome works
+(`drop().and_after(..)` is valid; the neutral reading is "after settle"):
 
 ```rust
 --8<-- "examples/post_settle.rs:single"
 ```
 
-The continuation runs on a tracked task set that a graceful shutdown drains (bounded by
-`shutdown_timeout` when set). It is at-most-once: the message is already settled, so a continuation
-that panics or is lost on a crash never redelivers it. Do not put work whose loss must redeliver the
-message in here; settle by outcome and let the broker retry instead.
+The continuation follows the shared post-settle semantics (at-most-once, runs only after the
+ack or nack settles, drained on graceful shutdown); see
+[Post-settle hooks](context.md#post-settle-hooks).
 
 In a batch each element settles individually, so the continuation rides per element - a capability
 the per-message context hook cannot offer:

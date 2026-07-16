@@ -6,30 +6,12 @@ value plus lifecycle hooks that run at fixed points around the run loop.
 
 ## Shared state
 
-The application state is a single typed value of your own choosing (a struct, or `()` when the
-service needs none). It is produced by the `on_startup` hook - the value the hook returns becomes
-the state and fixes the app's state type:
-
-```rust
---8<-- "examples/lifespan.rs:hooks"
-```
-
-Read it from any handler or middleware through the `Context`, which borrows it directly:
-
-```rust
---8<-- "examples/lifespan.rs:handler"
-```
-
-`ctx.state()` returns `&S`, the typed state itself - no lookup, no `Option`, no downcast. (For data
-scoped to one message rather than the whole service, use the typed
-[per-delivery context](context.md#per-delivery-context) instead.)
-
-A `#[subscriber]` handler that reads state names it as the third `Context` generic
-(`ctx: &mut Context<'_, (), S>`); the runtime only lets that handler mount on an app whose state
-type matches, checked at compile time. A plain handler that names no state type is generic over it
-and mounts on any app; a `publish(..)` handler instead pins its state to `()` when none is named, so
-name the app's state explicitly to mount one on a stateful app. Everything else the context carries
-(the headers working copy, broker per-delivery fields) is covered in [Context and state](context.md).
+The application state is a single typed value produced by the `on_startup` hook: the value the hook
+returns becomes the state and fixes the app's state type. Any handler or middleware borrows it
+through `ctx.state()`. The full state story - the compile-time mount rules, `State<T>` injection,
+and the per-delivery context for message-scoped data - lives in
+[Context and state](context.md#application-level-typed-state); this page covers the hooks that
+produce and tear the state down.
 
 ## Lifecycle hooks
 
@@ -72,8 +54,13 @@ slots in the same way, only its `connect` / `close` calls differ:
 
 The hook's error type is inferred from the returned `Result`; it only needs to implement
 `std::error::Error + Send + Sync`. The resource is `Send + Sync`, so every concurrent handler borrows
-the one shared instance through `ctx.state()` - no per-message connection setup. The runnable
-program is
+the one shared instance through `ctx.state()` - no per-message connection setup:
+
+```rust
+--8<-- "examples/lifespan.rs:handler"
+```
+
+The runnable program is
 [`examples/lifespan.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/lifespan.rs).
 
 ## Running beside another server

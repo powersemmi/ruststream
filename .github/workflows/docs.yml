@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths: &docs-paths
       - docs/**
-      - mkdocs.yml
+      - properdocs.yml
       - overrides/**
       - examples/**
       # the testing and conformance guides embed their snippets from these test files
@@ -45,4 +45,4 @@ jobs:
         run: python3 scripts/lint_doc_fences.py
 
       - name: Build site (strict)
-        run: mkdocs build --strict
+        run: properdocs build --strict

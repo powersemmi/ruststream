@@ -1,5 +1,11 @@
 # Documentation toolchain. Install with `pip install -r docs/requirements.txt`,
-# then serve locally with `mkdocs serve`.
+# then serve locally with `properdocs serve`.
+#
+# The site builds with properdocs, the maintained continuation of MkDocs 1.x (the mkdocs
+# package itself is frozen ahead of an incompatible 2.0). mkdocs-material still declares a
+# dependency on mkdocs, so pip installs both; only the `properdocs` command is used.
+properdocs>=1.6
 mkdocs-material>=9.5
 pymdown-extensions>=10.7
-mike>=2.1
+mike>=2.2
+mkdocs-redirects>=1.2.3
