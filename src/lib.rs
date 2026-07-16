@@ -52,8 +52,8 @@ pub use inventory;
 pub use broker::Broker;
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
-    BatchSubscriber, DescribeServer, Partitioned, RequestReply, ServerSpec, Subscribe,
-    TransactionalPublisher,
+    ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, Partitioned, RequestReply,
+    SecurityScheme, ServerSpec, Subscribe, TransactionalPublisher,
 };
 pub use error::AckError;
 pub use field::{BuildContext, ContextField, Field, FieldMut};

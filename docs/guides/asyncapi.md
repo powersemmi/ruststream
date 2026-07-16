@@ -77,7 +77,29 @@ Build a `ServerSpec` directly:
 ```
 
 A broker crate may also implement the `DescribeServer` capability, in which case
-`broker.describe_server()` produces the spec for you (none of the shipped brokers do yet).
+`broker.describe_server()` produces the spec for you (the shipped brokers all do), and
+`with_broker_labeled` records it automatically under the broker's label.
+
+## Server security
+
+Declare how clients authenticate with `ServerSpec::with_security`; each scheme lands in
+`components.securitySchemes` and is referenced from the server's `security` list:
+
+```rust
+--8<-- "examples/asyncapi_http.rs:security"
+```
+
+`SecurityScheme` has constructors for the AsyncAPI 3.0 scheme kinds - `user_password`, `plain`,
+`scram_sha256` / `scram_sha512`, `gssapi`, `api_key`, `x509`, `http`, `http_api_key`,
+`open_id_connect`, and `oauth2` (which takes the flows object as raw JSON) - plus
+`SecurityScheme::custom(json)` as the escape hatch for anything they do not model. Without
+`with_security` the document carries no security sections at all.
+
+Security is deliberately the service author's statement, not the broker's: the same broker is
+deployed publicly and internally with different authentication, so `DescribeServer` never reports
+it. To secure a server a broker registered automatically (`with_broker_labeled`), declare it
+explicitly instead: `.server(label, broker.describe_server().with_security(..))` with the same
+label.
 
 ## Serving the document
 
