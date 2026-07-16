@@ -1,0 +1,24 @@
+# Daily dependency updates. Version bumps arrive as PRs (minor and patch bumps grouped into
+# one PR to keep the queue small); vulnerability reports come from Dependabot security alerts,
+# which are a repository setting (Settings -> Advanced Security), not part of this file.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: daily
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: daily
+    groups:
+      actions:
+        patterns:
+          - "*"
