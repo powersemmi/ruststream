@@ -1,9 +1,13 @@
 //! Integration tests for the background-start handle: `RustStream::start` -> `RunningApp`.
 //! Driven over `MemoryBroker`.
+//!
+//! These tests exercise the run machinery itself (startup, readiness, fail-fast, teardown), which
+//! is exactly what the `TestApp` harness bypasses by design - hence the raw broker + publisher
+//! wiring. `start()` resolves only after subscriptions are open, so a single publish suffices;
+//! no republish loops.
 #![cfg(feature = "macros")]
 
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,6 +15,7 @@ use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream, RustStreamError};
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Order {
@@ -21,20 +26,20 @@ fn order_bytes(id: u32) -> Vec<u8> {
     serde_json::to_vec(&Order { id }).unwrap()
 }
 
-// Counters keyed per handler so the parallel tests do not interfere; each handler is used by one
-// test only.
-static SEEN: AtomicUsize = AtomicUsize::new(0);
-static TRAIT_SEEN: AtomicUsize = AtomicUsize::new(0);
+// Notifies keyed per handler so the parallel tests do not interfere; each handler is used by one
+// test only. `notify_one` stores a permit, so the handler may fire before the test awaits.
+static SEEN: Notify = Notify::const_new();
+static TRAIT_SEEN: Notify = Notify::const_new();
 
 #[subscriber("started.orders")]
 async fn observe(_order: &Order) -> HandlerResult {
-    SEEN.fetch_add(1, Ordering::SeqCst);
+    SEEN.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("started.trait")]
 async fn observe_trait(_order: &Order) -> HandlerResult {
-    TRAIT_SEEN.fetch_add(1, Ordering::SeqCst);
+    TRAIT_SEEN.notify_one();
     HandlerResult::Ack
 }
 
@@ -47,27 +52,6 @@ async fn boom(order: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Republishes `payload` to `topic` until `counter` advances once, proving the subscription is live
-/// and the handler ran.
-async fn drive_until_seen(
-    publisher: &impl Publisher,
-    topic: &str,
-    payload: &[u8],
-    counter: &AtomicUsize,
-) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        let start = counter.load(Ordering::SeqCst);
-        while counter.load(Ordering::SeqCst) == start {
-            let _ = publisher
-                .publish(OutgoingMessage::new(topic, payload))
-                .await;
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("subscription never went live");
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_resolves_running_and_shutdown_completes() {
     let broker = MemoryBroker::new();
@@ -76,9 +60,15 @@ async fn start_resolves_running_and_shutdown_completes() {
         .shutdown_timeout(Duration::from_secs(5))
         .with_broker(broker, |b| b.include(observe));
 
-    // `start` resolves only once subscriptions are open, so the first publish can already land.
+    // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.
     let running = app.start().await.expect("startup failed");
-    drive_until_seen(&publisher, "started.orders", &order_bytes(1), &SEEN).await;
+    publisher
+        .publish(OutgoingMessage::new("started.orders", &order_bytes(1)))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), SEEN.notified())
+        .await
+        .expect("handler never saw the message");
 
     running.shutdown().await.expect("graceful shutdown failed");
 }
@@ -93,25 +83,15 @@ async fn stopping_resolves_on_fail_fast_and_shutdown_surfaces_it() {
 
     let running = app.start().await.expect("startup failed");
 
-    // `stopping()` is an owned future: it stays pending while the service is healthy and
-    // resolves when the panicking handler triggers the fail-fast teardown.
-    tokio::time::timeout(Duration::from_secs(5), async {
-        let stopping = running.stopping();
-        tokio::pin!(stopping);
-        loop {
-            tokio::select! {
-                () = &mut stopping => break,
-                () = async {
-                    let _ = publisher
-                        .publish(OutgoingMessage::new("started.boom", &order_bytes(1)))
-                        .await;
-                    tokio::task::yield_now().await;
-                } => {}
-            }
-        }
-    })
-    .await
-    .expect("fail-fast never triggered");
+    // `stopping()` stays pending while the service is healthy and resolves when the panicking
+    // handler triggers the fail-fast teardown.
+    publisher
+        .publish(OutgoingMessage::new("started.boom", &order_bytes(1)))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), running.stopping())
+        .await
+        .expect("fail-fast never triggered");
 
     // The teardown reason survives until shutdown, where it surfaces as a dispatch error.
     let err = running
@@ -180,6 +160,12 @@ async fn start_is_reachable_through_the_app_trait() {
     let publisher = broker.publisher();
 
     let running = service(broker).start().await.expect("startup failed");
-    drive_until_seen(&publisher, "started.trait", &order_bytes(7), &TRAIT_SEEN).await;
+    publisher
+        .publish(OutgoingMessage::new("started.trait", &order_bytes(7)))
+        .await
+        .expect("publish failed");
+    tokio::time::timeout(Duration::from_secs(5), TRAIT_SEEN.notified())
+        .await
+        .expect("handler never saw the message");
     running.shutdown().await.expect("graceful shutdown failed");
 }
