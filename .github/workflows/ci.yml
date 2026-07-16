@@ -195,13 +195,16 @@ jobs:
 
       # Feeds the README coverage badge. Coveralls accepts the default GITHUB_TOKEN for public
       # repositories, so no extra secret is required; uploaded even when the gate fails so the
-      # badge reflects reality rather than the last green run.
+      # badge reflects reality rather than the last green run. The upload is advisory: a
+      # Coveralls outage must not fail the pipeline (the enforced coverage gate is the
+      # fail-under step above).
       - name: Upload to Coveralls
         if: always()
         uses: coverallsapp/github-action@v2
         with:
           file: lcov.info
           format: lcov
+          fail-on-error: false
 
   package:
     name: Package (publish dry-run)
