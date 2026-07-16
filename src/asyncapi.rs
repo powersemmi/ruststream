@@ -439,3 +439,76 @@ fn operation_id(name: &str) -> String {
         .collect();
     format!("receive_{sanitized}")
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{ApiKeyLocation, HttpApiKeyLocation, SecurityScheme};
+
+    use super::security_scheme_object;
+
+    #[test]
+    fn every_scheme_kind_renders_its_document_object() {
+        let cases = [
+            (
+                SecurityScheme::user_password(),
+                serde_json::json!({ "type": "userPassword" }),
+            ),
+            (
+                SecurityScheme::api_key(ApiKeyLocation::Password),
+                serde_json::json!({ "type": "apiKey", "in": "password" }),
+            ),
+            (
+                SecurityScheme::x509(),
+                serde_json::json!({ "type": "X509" }),
+            ),
+            (
+                SecurityScheme::plain(),
+                serde_json::json!({ "type": "plain" }),
+            ),
+            (
+                SecurityScheme::scram_sha256(),
+                serde_json::json!({ "type": "scramSha256" }),
+            ),
+            (
+                SecurityScheme::scram_sha512(),
+                serde_json::json!({ "type": "scramSha512" }),
+            ),
+            (
+                SecurityScheme::gssapi(),
+                serde_json::json!({ "type": "gssapi" }),
+            ),
+            (
+                SecurityScheme::http("bearer"),
+                serde_json::json!({ "type": "http", "scheme": "bearer" }),
+            ),
+            (
+                SecurityScheme::http_api_key("X-Api-Key", HttpApiKeyLocation::Header),
+                serde_json::json!({ "type": "httpApiKey", "name": "X-Api-Key", "in": "header" }),
+            ),
+            (
+                SecurityScheme::open_id_connect("https://idp.example.com/.well-known"),
+                serde_json::json!({
+                    "type": "openIdConnect",
+                    "openIdConnectUrl": "https://idp.example.com/.well-known",
+                }),
+            ),
+            (
+                SecurityScheme::oauth2(serde_json::json!({ "clientCredentials": {} })),
+                serde_json::json!({ "type": "oauth2", "flows": { "clientCredentials": {} } }),
+            ),
+            (
+                SecurityScheme::custom(serde_json::json!({ "type": "symmetricEncryption" })),
+                serde_json::json!({ "type": "symmetricEncryption" }),
+            ),
+        ];
+        for (scheme, expected) in cases {
+            assert_eq!(security_scheme_object(&scheme), expected);
+        }
+    }
+
+    #[test]
+    fn description_lands_in_the_rendered_object() {
+        let object = security_scheme_object(&SecurityScheme::plain().with_description("over TLS"));
+        assert_eq!(object["description"], "over TLS");
+    }
+}
