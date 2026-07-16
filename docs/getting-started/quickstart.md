@@ -10,9 +10,10 @@ cargo generate --git https://github.com/powersemmi/ruststream templates/memory -
 cd my-service
 ```
 
-`templates/memory` is the in-memory starter (no external broker); each broker crate ships its own
-template (for example `--git https://github.com/powersemmi/ruststream-nats templates/nats`). This
-writes an idiomatic, multi-file project:
+Scaffolding needs only `cargo generate`, not the `ruststream` CLI. `templates/memory` is the
+in-memory starter (no external broker); each broker crate ships its own template (for example
+`--git https://github.com/powersemmi/ruststream-nats templates/nats`). This writes an idiomatic,
+multi-file project:
 
 ```
 my-service/
@@ -38,10 +39,11 @@ so it runs with no external dependencies.
 ## Generate the AsyncAPI document
 
 ```bash
-cargo run -- asyncapi gen                 # prints JSON to stdout
-cargo run -- asyncapi gen -o asyncapi.json
-cargo run -- asyncapi gen --yaml
+cargo run -- asyncapi gen
 ```
+
+This prints the AsyncAPI document as JSON; the output flags (`-o`, `--yaml`) and the document
+itself are covered in the [AsyncAPI guide](../guides/asyncapi.md).
 
 ## What the entry point looks like
 

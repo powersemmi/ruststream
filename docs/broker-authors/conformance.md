@@ -4,7 +4,7 @@ The conformance harness proves a broker honours the core contract. It has two en
 which panic with a descriptive message on the first failure:
 
 - `harness::run_suite` checks the **routing surface** against your in-process transport (the
-  [`TestableBroker`](../guides/testing.md#for-broker-authors) you ship).
+  [`TestableBroker`](index.md#test-support) you ship).
 - `harness::lifecycle` checks the **lazy-startup contract** end to end against a connected broker.
 
 Run both: `run_suite` for the dispatch guarantees, `lifecycle` to prove `new` -> `connect` ->

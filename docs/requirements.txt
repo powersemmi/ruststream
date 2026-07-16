@@ -2,4 +2,7 @@
 # then serve locally with `mkdocs serve`.
 mkdocs-material>=9.5
 pymdown-extensions>=10.7
-mike>=2.1
+# mike 2.2 and mkdocs-redirects 1.2.3 moved from mkdocs to the properdocs fork; this site
+# builds with mkdocs + mkdocs-material, so both stay pinned to their last mkdocs-based release.
+mike>=2.1,<2.2
+mkdocs-redirects==1.2.2

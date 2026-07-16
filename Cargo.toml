@@ -103,6 +103,10 @@ name = "metrics_http"
 required-features = ["macros", "memory", "metrics"]
 
 [[example]]
+name = "http_outbox"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
 name = "logging"
 required-features = ["macros", "memory", "json", "logging"]
 

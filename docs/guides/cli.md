@@ -45,31 +45,8 @@ crate and forwards the command to `cargo`.
 ## Scaffolding
 
 New projects are generated with [`cargo generate`](https://github.com/cargo-generate/cargo-generate)
-from a template. Templates are owned by the crate whose broker they wire: the in-memory starter lives
-in this repo, and each broker crate ships its own.
-
-```bash
-cargo install cargo-generate
-
-# in-memory starter (no external broker)
-cargo generate --git https://github.com/powersemmi/ruststream templates/memory --name my-service
-
-# a broker template (owned by the broker repo)
-cargo generate --git https://github.com/powersemmi/ruststream-nats templates/nats --name my-service
-```
-
-Each template writes a multi-file project so a fresh service starts idiomatic rather than as a single
-dumping-ground file:
-
-```
-my-service/
-├── Cargo.toml
-└── src/
-    ├── main.rs      # #[ruststream::app], mounts the router
-    ├── orders.rs    # #[subscriber] handlers, one with a reply
-    └── routes.rs    # a Router collecting the handlers
-```
-
-A broker repo typically ships one template per transport or topology (for example `nats` vs
-`nats-js`). See the [quick start](../getting-started/quickstart.md) to scaffold and run one;
-authoring a template for a new broker follows the [template contract](templates.md).
+from a template, not by this tool; the command and the project it writes are in the
+[quick start](../getting-started/quickstart.md). Templates are owned by the crate whose broker they
+wire: the in-memory starter lives in this repo, and each broker repo ships its own, typically one
+per transport or topology (for example `nats` vs `nats-js`). Authoring a template for a new broker
+follows the [template contract](../broker-authors/templates.md).

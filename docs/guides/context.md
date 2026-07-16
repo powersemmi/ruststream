@@ -25,10 +25,17 @@ fixing the app's state type:
 The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
 the third `Context` generic (`Context<'_, C, S>`), and the runtime only lets that handler mount on
 an app whose state type matches. A handler that names no state type is generic over it, so it mounts
-on any app - this holds for `publish(..)` handlers too: one that ignores the state omits the
-`Context` parameter entirely and still mounts on a stateful app. The state is shared behind an `Arc` once the service runs, so handlers get cheap shared
-references, not copies; interior mutability (an `AtomicU64`, a mutex-guarded map) is the tool when a
-shared value must change at runtime. See [Lifespan](lifespan.md) for the startup-hook contract.
+on any app. `publish(..)` handlers follow the same rule with one twist: one that ignores the state
+omits the `Context` parameter entirely and still mounts on a stateful app, but one that declares a
+`Context` without naming a state type pins the state to `()`, so name the app's state type
+explicitly to mount such a handler on a stateful app.
+
+Handlers borrow the state with `ctx.state()`, which returns `&S`, the typed state itself - no
+lookup, no `Option`, no downcast. The state is shared behind an `Arc` once the service runs, so
+handlers get cheap shared references, not copies; interior mutability (an `AtomicU64`, a
+mutex-guarded map) is the tool when a shared value must change at runtime. For data scoped to one
+message rather than the whole service, use the [per-delivery context](#per-delivery-context)
+instead. See [Lifespan](lifespan.md) for the startup-hook contract.
 
 ```rust
 --8<-- "examples/context.rs:state"
@@ -167,21 +174,16 @@ Two boundaries to keep in mind:
 
 To publish from inside a handler (beyond the `publish(..)` reply form), put the publisher in the
 typed application state and reach it with `ctx.state()` - it stays typed, so the handler uses its
-own API directly:
-
-```rust
---8<-- "examples/publishing.rs:forward"
-```
-
-A closure handler cannot return a future that borrows the context across `.await`; publish from a
-`#[subscriber]` handler or a struct handler with `async fn handle`, both of which own the borrow.
-See [Publishing](publishing.md#publishing-from-inside-a-handler).
+own API directly. A closure handler cannot return a future that borrows the context across
+`.await`; publish from a `#[subscriber]` handler or a struct handler with `async fn handle`, both
+of which own the borrow. The full pattern and its snippet live in
+[Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ## Post-settle hooks
 
 Sometimes a handler needs a side effect to fire *after* the message has been settled - a
-non-critical notification, slow follow-up work - without it gating the ack decision or affecting
-redelivery. Register one on the context:
+non-critical notification, slow follow-up work, a cache warm-up - without it gating the ack
+decision or affecting redelivery. Register one on the context:
 
 ```rust
 --8<-- "examples/context.rs:handler"
@@ -199,10 +201,17 @@ Three forms, all additive:
 - `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerResult::Ack).then(fut)`.
 - `ctx.after_settle(fut)` - runs after the message settles, whatever the outcome.
 
-Multiple registrations accumulate and every matching one runs. The semantics are **at-most-once**:
-the message is already settled before any hook runs, so a hook that panics, or that is lost when the
-process crashes, never causes a redelivery. A graceful shutdown drains in-flight hooks (bounded by
-`shutdown_timeout`); an aborted shutdown may drop them.
+A handler can also attach a continuation through its return value: any outcome converts into a
+`Settle` with `.and_after(fut)`, which is how a batch handler gets per-element continuations. See
+[Post-settle continuations](subscribers.md#post-settle-continuations) for that form; the semantics
+below apply to both.
+
+Multiple registrations accumulate and every matching one runs, on a tracked task set off the
+delivery path. The semantics are **at-most-once**: the message is already settled before any hook
+runs, so a hook that panics, or that is lost when the process crashes, never causes a redelivery.
+Do not put work whose loss must redeliver the message in a hook; settle by outcome and let the
+broker retry instead. A graceful shutdown drains in-flight hooks (bounded by `shutdown_timeout`);
+an aborted shutdown may drop them.
 
 On the batch path a `Context` is one per *batch*, so a hook runs after the whole batch has settled.
 Because a batch has per-element outcomes, the outcome gate is ill-defined there: only

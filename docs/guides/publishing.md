@@ -55,9 +55,10 @@ Make publishing handlers idempotent under redelivery.
 ## Publishing from inside a handler
 
 To publish to a destination other than a single reply (fan-out, side effects, routing to a different
-broker), put the publisher in the [typed application state](lifespan.md) and reach it from the
-handler with `ctx.state()`. A publisher is a value like any other shared resource; in the state it
-stays typed, so the handler uses its own API directly, with no registry and no runtime lookup.
+broker), put the publisher in the
+[typed application state](context.md#application-level-typed-state) and reach it from the handler
+with `ctx.state()`. A publisher is a value like any other shared resource; in the state it stays
+typed, so the handler uses its own API directly, with no registry and no runtime lookup.
 
 ```rust
 use ruststream::codec::{Codec, JsonCodec};

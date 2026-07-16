@@ -64,6 +64,10 @@ markdown_extensions:
 plugins:
   - search
   # Versioned docs are published with `mike` (see the Docs workflow and the version switcher).
+  # Pages that moved keep their old URLs alive; extend the map on any future move.
+  - redirects:
+      redirect_maps:
+        guides/templates.md: broker-authors/templates.md
 
 extra:
   version:
@@ -83,10 +87,10 @@ nav:
       - guides/publishing.md
       - guides/routing.md
       - guides/codecs.md
-      - guides/failure-policy.md
-      - guides/middleware.md
       - guides/context.md
       - guides/lifespan.md
+      - guides/middleware.md
+      - guides/failure-policy.md
   - Observability:
       - guides/logging.md
       - guides/metrics.md
@@ -96,7 +100,6 @@ nav:
       - guides/testing.md
   - CLI:
       - guides/cli.md
-      - guides/templates.md
   - Brokers:
       - brokers/index.md
       - brokers/memory.md
@@ -109,4 +112,5 @@ nav:
       - broker-authors/index.md
       - broker-authors/example-nats.md
       - broker-authors/conformance.md
+      - broker-authors/templates.md
   - API reference: reference.md

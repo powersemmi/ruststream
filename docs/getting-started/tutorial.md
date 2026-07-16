@@ -104,46 +104,20 @@ As handlers grow, keep them in their own module and collect them into a
 ## 6. Inspect the AsyncAPI document
 
 ```bash
-cargo run -- asyncapi gen --yaml
+cargo run -- asyncapi gen
 ```
 
 Every subscriber becomes a channel and a `receive` operation; payload types that derive
-`schemars::JsonSchema` also contribute schemas. See [AsyncAPI](../guides/asyncapi.md).
+`schemars::JsonSchema` also contribute schemas. The output flags (`-o`, `--yaml`) and the document
+itself are covered in [AsyncAPI](../guides/asyncapi.md).
 
 ## 7. Swap in a real broker
 
-Nothing above is tied to the in-memory broker. The handlers, router, and codecs are unchanged; only
-the broker construction differs. Add the broker crate as a dependency and swap the `with_broker`
-line:
-
-=== "Memory"
-
-    <!-- inline-rust: side-by-side broker-swap comparison; the NATS half depends on the external ruststream-nats crate and has no in-repo compiled home, so both halves stay inline to read in parallel -->
-    ```rust
-    use ruststream::memory::MemoryBroker;
-
-    .with_broker(MemoryBroker::new(), |b| {
-        let router = routes::orders(b.broker());
-        b.include_router(router);
-    })
-    ```
-
-=== "NATS"
-
-    <!-- inline-rust: NATS half of the broker-swap comparison; depends on the external ruststream-nats crate, no in-repo compiled home -->
-    ```rust
-    use ruststream_nats::NatsBroker;
-
-    .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-        let router = routes::orders(b.broker());
-        b.include_router(router);
-    })
-    ```
-
-Each broker crate documents its own `Config`. Subscriptions that need broker-specific options
-(consumer groups, durable names) use that broker's descriptor in the decorator, see
-[broker-specific descriptors](../guides/subscribers.md#broker-specific-descriptors). The available
-brokers are listed under [Brokers](../brokers/index.md).
+Nothing above is tied to the in-memory broker. The broker is chosen at `with_broker`, so swapping
+is a one-line change: add the broker crate as a dependency and construct it there (for example
+`NatsBroker::new("nats://localhost:4222")` instead of `MemoryBroker::new()`); the handlers, router,
+and codecs are unchanged. The available brokers and the side-by-side swap for each of them are in
+[Brokers](../brokers/index.md#switching-brokers).
 
 !!! info "The complete service is a compiled example"
     Every snippet on this page is embedded from

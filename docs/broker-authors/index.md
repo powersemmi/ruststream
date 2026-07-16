@@ -154,5 +154,17 @@ Ship an in-process transport implementing `TestableBroker` under a `testing` fea
 harness. The transport does **core routing only**: it dispatches published messages to matching
 subscribers and treats ack/nack as effectively a no-op. Do not simulate broker-specific semantics
 (durable cursors, redelivery timers, offsets, dead-letter routing) in it; those are verified end to
-end against a real server. See [Testing](../guides/testing.md) for the user-facing side, and
-[Conformance](conformance.md) to prove the implementation.
+end against a real server.
+
+The reference is `MemoryBroker`'s own implementation:
+
+```rust
+--8<-- "src/memory/mod.rs:testable"
+```
+
+The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and
+`Coordinator::consumed` when a delivery is settled or dropped (so the harness can tell when the
+reaction has settled), and routes delayed redeliveries through `Coordinator::schedule_redelivery`.
+That one type then works with both `TestApp` and the conformance suite. See
+[Testing](../guides/testing.md) for the user-facing side, and [Conformance](conformance.md) to
+prove the implementation with `run_suite` and the lazy-startup `lifecycle` check.
