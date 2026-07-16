@@ -44,5 +44,17 @@ jobs:
       - name: Deploy with mike
         run: |
           version="$(sed -nE 's/^version = "([0-9]+)\.([0-9]+).*/\1.\2/p' Cargo.toml | head -1)"
-          mike deploy --push --update-aliases "$version" latest
-          mike set-default --push latest
+          mike deploy --update-aliases "$version" latest
+          mike set-default latest
+
+      # mike records every deploy as a new commit on gh-pages, and each commit carries a full
+      # copy of the rendered site, so the branch grows without bound (GitHub keeps the whole
+      # history). Serving only needs the latest tree: rewrite the branch to a single commit
+      # holding the current site and force-push, the same fix faststream applies to its docs
+      # pipeline. mike itself only reads the branch tree (all deployed versions live side by
+      # side in it), never the history, so squashing is invisible to the next deploy.
+      - name: Squash gh-pages history and push
+        run: |
+          git checkout gh-pages
+          git reset --hard "$(git commit-tree -m 'docs: deploy' 'HEAD^{tree}')"
+          git push --force origin gh-pages
