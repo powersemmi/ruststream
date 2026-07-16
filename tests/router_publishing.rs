@@ -377,27 +377,16 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
             b.include(rl_check);
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
-    // Re-publish until the reply lands (subscriptions open inside run()).
     let payload = order_bytes(1);
-    let driven = tokio::time::timeout(Duration::from_secs(5), async {
-        let notified = RL_NOTIFY.notified();
-        tokio::pin!(notified);
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("rl-in", &payload))
-                .await;
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(driven.is_ok(), "router publishing handler never replied");
+    publisher
+        .publish(OutgoingMessage::new("rl-in", &payload))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), RL_NOTIFY.notified())
+        .await
+        .expect("router publishing handler never replied");
 
     assert_eq!(
         *RL_STAMPED.lock().unwrap(),
@@ -405,8 +394,7 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
         "the app-wide publish_layer must reach a router-mounted publishing handler"
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 // The same fix on the BATCH router-publishing path: the app's publish_layer must reach a
@@ -442,29 +430,16 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
             b.include(bl_check);
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = order_bytes(1);
-    let driven = tokio::time::timeout(Duration::from_secs(5), async {
-        let notified = BL_NOTIFY.notified();
-        tokio::pin!(notified);
-        loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("bl-in", &payload))
-                .await;
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(
-        driven.is_ok(),
-        "router batch publishing handler never replied"
-    );
+    publisher
+        .publish(OutgoingMessage::new("bl-in", &payload))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), BL_NOTIFY.notified())
+        .await
+        .expect("router batch publishing handler never replied");
 
     assert_eq!(
         *BL_STAMPED.lock().unwrap(),
@@ -472,8 +447,7 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
         "the app-wide publish_layer must reach a router-mounted batch publishing handler"
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 // A typed delivery context on a ROUTER-mounted publishing handler. The old SubscribeRoute-based
@@ -544,28 +518,18 @@ async fn router_publishing_threads_typed_delivery_context() {
         b.include(tc_check);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let running = app.start().await.expect("startup failed");
 
     let payload = order_bytes(1);
-    let driven = tokio::time::timeout(Duration::from_secs(5), async {
-        let notified = TC_NOTIFY.notified();
-        tokio::pin!(notified);
-        loop {
-            let mut headers = Headers::new();
-            headers.insert("correlation-id", "trace-xyz");
-            let _ = publisher
-                .publish(OutgoingMessage::new("tc-in", &payload).with_headers(headers))
-                .await;
-            tokio::select! {
-                () = &mut notified => break,
-                () = tokio::time::sleep(Duration::from_millis(10)) => {}
-            }
-        }
-    })
-    .await;
-    assert!(driven.is_ok(), "typed-context router relay never replied");
+    let mut headers = Headers::new();
+    headers.insert("correlation-id", "trace-xyz");
+    publisher
+        .publish(OutgoingMessage::new("tc-in", &payload).with_headers(headers))
+        .await
+        .expect("publish");
+    tokio::time::timeout(Duration::from_secs(5), TC_NOTIFY.notified())
+        .await
+        .expect("typed-context router relay never replied");
 
     assert_eq!(
         TC_CORR.lock().unwrap().as_deref(),
@@ -573,6 +537,5 @@ async fn router_publishing_threads_typed_delivery_context() {
         "a router publishing handler must thread its typed delivery context to the publish layer"
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
