@@ -33,25 +33,17 @@ Handlers that publish a reply register on the router the same way as on the scop
 
 ## Router middleware
 
-The application's global middleware (added with `RustStream::layer`) wraps router handlers too:
-`include_router` applies the app stack around each handler when the router is mounted. A layer used
-this way must be a `BlanketLayer` - the router hides its handlers' concrete types, so the wrap
-happens through one generic method; every bundled layer qualifies.
+A router can carry its own layer stack: `Router::layer` wraps every handler in that router when it
+is mounted. The application's global stack (added with `RustStream::layer`) wraps around it at
+`include_router` - scopes nest, app outermost:
 
 ```rust title="main.rs"
 --8<-- "examples/logging_middleware.rs:layered_router"
 ```
 
-A router can also carry its own stack: `Router::layer` wraps every handler in that router when it
-is mounted, inside the app's global stack (scopes nest, app outermost):
-
-```rust title="routes.rs"
---8<-- "examples/middleware_router_scope.rs:router_scope"
-```
-
-See [Middleware](middleware.md) for what a layer is and how to write one, and
-[`examples/logging_middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/logging_middleware.rs)
-for the app-scope side in a running service.
+Because a router hides its handlers' concrete types, a layer reaching them must be a
+`BlanketLayer`. Both scopes, the `BlanketLayer` requirement, and writing your own layer are covered
+in [Middleware](middleware.md#middleware-scopes).
 
 ## Composing and mounting
 

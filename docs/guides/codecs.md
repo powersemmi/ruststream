@@ -72,11 +72,10 @@ property of the mounting, not of the type.
 
 ## Decode failures
 
-When decoding fails, the message is dropped by default (a nack without requeue). The policy is
-configurable on the typed adapter when you build handlers by hand: `typed(codec, handler)` returns
-a `Typed` wrapper whose `on_decode_failure` accepts a `FailurePolicy` (`Drop`, `Retry`,
-`RetryAfter(..)`, `Skip`, or `FailFast`). On a macro handler the same policy is set with the
-`on_failure(decode = ..)` clause (see the failure-policy guide).
+When decoding fails, the failure policy decides what happens to the message; by default it is
+dropped (a nack without requeue). On a macro handler the policy is set with the
+`on_failure(decode = ..)` clause; when building handlers by hand, the `Typed` wrapper returned by
+`typed(codec, handler)` takes the same policy through `on_decode_failure`:
 
 ```rust
 use ruststream::runtime::{FailurePolicy, typed};
@@ -85,8 +84,8 @@ use ruststream::runtime::{FailurePolicy, typed};
 --8<-- "examples/codecs.rs:decode_failure"
 ```
 
-Retry with care: a payload that can never decode will redeliver forever unless the broker has a
-dead-letter or max-deliveries policy. The codec examples above are
+The policy values (`Drop`, `Retry`, `RetryAfter(..)`, `Skip`, `FailFast`), the defaults, and the
+retry caveats live in [Failure policy](failure-policy.md). The codec examples above are
 [`examples/codecs.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/codecs.rs).
 
 ## Custom codecs

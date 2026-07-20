@@ -4,6 +4,9 @@
 //! app state. All use the in-memory broker with hand-written handlers (which can name a context
 //! type; macro handlers use the default `()` context).
 
+mod common;
+
+use common::wait_for;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -87,16 +90,6 @@ impl ruststream::Subscriber for TaggedSubscriber {
             })
         })
     }
-}
-
-async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        while !cond() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "condition not met within {timeout:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

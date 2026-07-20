@@ -7,7 +7,7 @@ use std::future::Future;
 use crate::ServerSpec;
 use crate::runtime::metadata::HandlerMetadata;
 
-use super::{AppInfo, RustStream, RustStreamError};
+use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
 mod sealed {
     pub trait Sealed {}
@@ -57,6 +57,16 @@ pub trait App: sealed::Sealed + Sized {
     where
         F: Future<Output = ()> + Send;
 
+    /// Starts the service in the background and hands back a [`RunningApp`] handle: the
+    /// side-by-side form for hosting the service next to another foreground server. See
+    /// [`RustStream::start`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RustStreamError`] if the state producer or an `after_startup` hook fails, a
+    /// broker fails to connect, or a subscription fails to open.
+    fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>> + Send;
+
     /// The service metadata (title, version, description): the `AsyncAPI` `info` object.
     fn info(&self) -> &AppInfo;
 
@@ -75,8 +85,10 @@ pub trait App: sealed::Sealed + Sized {
 // Each method names `RustStream` explicitly rather than `Self`: the inherent methods share these
 // names with the trait, so spelling the type makes clear the call delegates to the inherent method
 // (which wins by priority) and does not recurse into the trait method.
+// `St: 'static` mirrors the inherent impl in run.rs: every constructible app already satisfies
+// it, and `start` needs it to bind the state into the shutdown hooks.
 #[allow(clippy::use_self)]
-impl<L: Send, St: Send + Sync, PP: Send> App for RustStream<L, St, PP> {
+impl<L: Send, St: Send + Sync + 'static, PP: Send> App for RustStream<L, St, PP> {
     fn run(self) -> impl Future<Output = Result<(), RustStreamError>> + Send {
         RustStream::run(self)
     }
@@ -86,6 +98,10 @@ impl<L: Send, St: Send + Sync, PP: Send> App for RustStream<L, St, PP> {
         F: Future<Output = ()> + Send,
     {
         RustStream::run_until(self, shutdown)
+    }
+
+    fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>> + Send {
+        RustStream::start(self)
     }
 
     fn info(&self) -> &AppInfo {

@@ -105,6 +105,7 @@ differs by one line inside `with_broker`.
     }
     ```
 
-Subscriptions that need broker-specific options (consumer groups, durable names) use that broker's
-descriptor in the `#[subscriber(..)]` decorator; see
+Each broker crate documents its own `Config` and connection options. Subscriptions that need
+broker-specific options (consumer groups, durable names) use that broker's descriptor in the
+`#[subscriber(..)]` decorator; see
 [broker-specific descriptors](../guides/subscribers.md#broker-specific-descriptors).

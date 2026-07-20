@@ -1,5 +1,6 @@
 //! Running the service: startup sequence, signal handling and graceful shutdown.
 
+use std::fmt;
 use std::{future::Future, sync::Arc, time::Duration};
 
 #[cfg(unix)]
@@ -11,13 +12,35 @@ use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
 use crate::runtime::failure::ErrorShutdown;
+use crate::runtime::lifecycle::{BoxError, BoxFuture};
 
-use super::{RustStream, RustStreamError};
+use super::service::RegisteredBroker;
+use super::{LifecycleHook, RustStream, RustStreamError};
+
+/// A lifecycle hook with the state already bound, so [`RunningApp`] stays non-generic.
+type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
+
+/// Binds the shared state into each hook, erasing the state type from the hook list.
+fn bind_hooks<St: Send + Sync + 'static>(
+    hooks: Vec<LifecycleHook<St>>,
+    state: &Arc<St>,
+) -> Vec<BoundHook> {
+    hooks
+        .into_iter()
+        .map(|hook| {
+            let state = Arc::clone(state);
+            Box::new(move || hook(state)) as BoundHook
+        })
+        .collect()
+}
 
 // `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
 // `block_on`), so their futures must be `Send`: the shared state is held as `Arc<St>` across the
 // startup awaits (needs `St: Sync`) and the global stack `L` is carried in `self` (needs `L: Send`).
-impl<L: Send, St: Send + Sync, PP> RustStream<L, St, PP> {
+// `St: 'static` is what every constructible app already satisfies (the `on_startup` producer
+// returns the state from a `'static` boxed future); naming it here lets `start` box the shutdown
+// hooks with the state bound in.
+impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///
@@ -42,6 +65,48 @@ impl<L: Send, St: Send + Sync, PP> RustStream<L, St, PP> {
     where
         F: Future<Output = ()> + Send,
     {
+        let running = self.start().await?;
+        tokio::select! {
+            () = shutdown => info!(target: "ruststream::lifecycle", "shutdown signal received"),
+            () = running.stopping() => {
+                info!(target: "ruststream::lifecycle", "fail-fast shutdown triggered");
+            }
+        }
+        running.shutdown().await
+    }
+
+    /// Starts the service in the background and hands back a [`RunningApp`] handle.
+    ///
+    /// Performs the same startup sequence as [`run`](Self::run) - the `on_startup` state
+    /// producer, broker connects, subscription opens, `after_startup` hooks - and resolves once
+    /// the service is running, so a startup failure surfaces here, before the caller starts
+    /// accepting its own traffic. Installs no signal handlers: the caller decides what stops the
+    /// service, by calling [`RunningApp::shutdown`].
+    ///
+    /// Use this to run the service beside another foreground server (an HTTP framework) in the
+    /// same process; when the service is the whole process, [`run`](Self::run) /
+    /// [`run_until`](Self::run_until) stay the simpler form.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RustStreamError`] if the state producer or an `after_startup` hook fails, a
+    /// broker fails to connect, or a subscription fails to open.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "memory")]
+    /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new());
+    /// let running = app.start().await?;
+    /// // ... serve HTTP in the foreground ...
+    /// running.shutdown().await
+    /// # }
+    /// ```
+    pub async fn start(self) -> Result<RunningApp, RustStreamError> {
         let Self {
             info,
             brokers,
@@ -84,7 +149,7 @@ impl<L: Send, St: Send + Sync, PP> RustStream<L, St, PP> {
 
         let token = CancellationToken::new();
         // Shared with every dispatch task: a fail-fast failure records its reason here and cancels
-        // the token, which both stops the loops and wakes the shutdown wait below.
+        // the token, which both stops the loops and resolves `stopping()`.
         let error_shutdown = ErrorShutdown::new(token.clone());
         let mut handles = Vec::with_capacity(starters.len());
         for (starter, meta) in starters.into_iter().zip(handlers) {
@@ -111,17 +176,103 @@ impl<L: Send, St: Send + Sync, PP> RustStream<L, St, PP> {
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
 
-        // Wake on either the caller's shutdown signal or a fail-fast cancellation from a dispatch
-        // task, then tear the service down the same way for both.
-        tokio::select! {
-            () = shutdown => info!(target: "ruststream::lifecycle", "shutdown signal received"),
-            () = token.cancelled() => {
-                info!(target: "ruststream::lifecycle", "fail-fast shutdown triggered");
-            }
-        }
+        Ok(RunningApp {
+            token,
+            error_shutdown,
+            handles,
+            on_shutdown: bind_hooks(on_shutdown, &state),
+            after_shutdown: bind_hooks(after_shutdown, &state),
+            brokers,
+            shutdown_timeout,
+            continuations,
+        })
+    }
+}
+
+/// A started service, handed out by [`RustStream::start`].
+///
+/// The handle owns the graceful teardown: dropping it without calling
+/// [`shutdown`](Self::shutdown) detaches the service (dispatch tasks keep running, nothing is
+/// drained), per the crate rule that destructors never block. The intended shape when running
+/// beside a foreground server:
+///
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::runtime::{AppInfo, RustStream};
+///
+/// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new());
+/// let running = app.start().await?;
+/// // e.g. axum::serve(listener, router)
+/// //     .with_graceful_shutdown(running.stopping())
+/// //     .await?;
+/// running.shutdown().await
+/// # }
+/// ```
+#[must_use = "dropping the handle detaches the service without graceful shutdown"]
+pub struct RunningApp {
+    token: CancellationToken,
+    error_shutdown: ErrorShutdown,
+    handles: Vec<JoinHandle<()>>,
+    on_shutdown: Vec<BoundHook>,
+    after_shutdown: Vec<BoundHook>,
+    brokers: Vec<RegisteredBroker>,
+    shutdown_timeout: Option<Duration>,
+    continuations: TaskTracker,
+}
+
+impl fmt::Debug for RunningApp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunningApp")
+            .field("subscribers", &self.handles.len())
+            .field("brokers", &self.brokers.len())
+            .field("shutdown_timeout", &self.shutdown_timeout)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RunningApp {
+    /// Resolves when the service begins stopping on its own: a subscriber hit a fail-fast
+    /// failure and tore the service down.
+    ///
+    /// The future is owned (`'static`), so it plugs directly into another server's graceful
+    /// shutdown (for example axum's `with_graceful_shutdown`), stopping the host when the
+    /// messaging side dies. It does not resolve on an orderly [`shutdown`](Self::shutdown) call -
+    /// the caller drives that path itself.
+    ///
+    /// # Cancel safety
+    ///
+    /// Cancel-safe: dropping the future loses nothing; a fresh call observes the same state.
+    pub fn stopping(&self) -> impl Future<Output = ()> + Send + 'static {
+        self.token.clone().cancelled_owned()
+    }
+
+    /// Shuts the service down gracefully.
+    ///
+    /// Runs the `on_shutdown` hooks, stops the dispatch loops, drains in-flight handlers and
+    /// post-settle continuations (bounded by the configured shutdown timeout), shuts the brokers
+    /// down in reverse registration order, then runs the `after_shutdown` hooks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RustStreamError`] if a dispatch task panicked, a broker failed to shut down, or
+    /// the service had already torn itself down on a fail-fast failure (surfaced as
+    /// [`RustStreamError::Dispatch`] so the operator sees a non-zero exit, not a silent stop).
+    pub async fn shutdown(self) -> Result<(), RustStreamError> {
+        let Self {
+            token,
+            error_shutdown,
+            handles,
+            on_shutdown,
+            after_shutdown,
+            brokers,
+            shutdown_timeout,
+            continuations,
+        } = self;
 
         for hook in on_shutdown {
-            if let Err(err) = hook(Arc::clone(&state)).await {
+            if let Err(err) = hook().await {
                 warn!(target: "ruststream::lifecycle", error = %err, "on_shutdown hook failed");
             }
         }
@@ -149,7 +300,7 @@ impl<L: Send, St: Send + Sync, PP> RustStream<L, St, PP> {
         }
 
         for hook in after_shutdown {
-            if let Err(err) = hook(Arc::clone(&state)).await {
+            if let Err(err) = hook().await {
                 warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
             }
         }

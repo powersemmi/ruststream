@@ -1,5 +1,8 @@
 //! Integration tests for `RustStream` lifecycle and dispatch, using `MemoryBroker`.
 
+mod common;
+
+use common::wait_for;
 use std::{
     sync::{
         Arc, Mutex,
@@ -605,18 +608,6 @@ fn app_records_handler_metadata() {
     );
     assert_eq!(app.handlers()[1].input_type, "bytes");
     assert_eq!(app.info().title, "svc");
-}
-
-async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        while !cond() {
-            // Yield to the scheduler; in multi-thread mode the handler runs in a different
-            // thread and updates the atomic independently - no sleep needed for correctness.
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "condition not met within {timeout:?}");
 }
 
 async fn wait_for_published(publisher: &impl Publisher, seen: &AtomicU32, timeout: Duration) {

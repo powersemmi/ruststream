@@ -48,22 +48,10 @@ ruststream = { version = "0.4", default-features = false }
 
 ## The CLI
 
-The `ruststream` binary ships with the crate behind the `cli` feature. Install it to drive `cargo`
-with the framework's subcommands (`run`, `asyncapi gen`):
-
-```bash
-cargo install ruststream --features cli
-```
-
-Scaffolding a new project is `cargo generate` against a template (no `ruststream` install required):
-
-```bash
-cargo install cargo-generate
-cargo generate --git https://github.com/powersemmi/ruststream templates/memory --name my-service
-```
-
-See the [CLI guide](../guides/cli.md) and the [template contract](../guides/templates.md), or jump
-straight to the [quick start](quickstart.md).
+The optional `ruststream` binary ships with the crate behind the `cli` cargo feature and drives
+`cargo` with the framework's subcommands (`run`, `asyncapi gen`); installation and commands are in
+the [CLI guide](../guides/cli.md). Scaffolding a new project does not need it - that is `cargo
+generate` against a template, covered in the [quick start](quickstart.md).
 
 ## Concrete brokers
 

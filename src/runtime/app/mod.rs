@@ -8,6 +8,7 @@ mod scope;
 mod service;
 
 pub use app_trait::App;
+pub use run::RunningApp;
 pub use scope::BrokerScope;
 pub use service::RustStream;
 #[cfg(feature = "testing")]

@@ -9,21 +9,15 @@
 
 mod common;
 
-use std::{
-    sync::{
-        Arc, LazyLock,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
-use common::handler_signal;
+use common::wait_for;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::{Name, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Order {
@@ -42,26 +36,22 @@ static POUT: AtomicUsize = AtomicUsize::new(0);
 static POUT_ON: AtomicUsize = AtomicUsize::new(0);
 static BPOUT: AtomicUsize = AtomicUsize::new(0);
 static BPOUT_ON: AtomicUsize = AtomicUsize::new(0);
-static NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("sc-plain-on")]
 async fn plain_on(_o: &Order) -> HandlerResult {
     PLAIN_ON.fetch_add(1, Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber(batch("sc-batch"))]
 async fn batch(orders: &[Order]) -> HandlerResult {
     BATCH.fetch_add(orders.len(), Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber(batch("sc-batch-ignored"))]
 async fn batch_on(orders: &[Order]) -> HandlerResult {
     BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -88,28 +78,24 @@ async fn batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
 #[subscriber("sc-pout")]
 async fn pout_check(_r: &Receipt) -> HandlerResult {
     POUT.fetch_add(1, Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("sc-pout-on")]
 async fn pout_on_check(_r: &Receipt) -> HandlerResult {
     POUT_ON.fetch_add(1, Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("sc-bpout")]
 async fn bpout_check(_r: &Receipt) -> HandlerResult {
     BPOUT.fetch_add(1, Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("sc-bpout-on")]
 async fn bpout_on_check(_r: &Receipt) -> HandlerResult {
     BPOUT_ON.fetch_add(1, Ordering::SeqCst);
-    NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -145,9 +131,8 @@ async fn scope_codec_include_family_dispatches() {
             b.include(bpout_on_check);
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    // `start` resolves only once subscriptions are open, so one publish per topic suffices.
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Order { id: 1 }).unwrap();
     let topics = [
@@ -163,44 +148,35 @@ async fn scope_codec_include_family_dispatches() {
         &PLAIN_ON, &BATCH, &BATCH_ON, &POUT, &POUT_ON, &BPOUT, &BPOUT_ON,
     ];
 
-    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            for topic in topics {
-                let _ = driver.publish(OutgoingMessage::new(topic, &payload)).await;
-            }
-            handler_signal(&NOTIFY).await;
-            if counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1) {
-                break;
-            }
-        }
-    })
+    for topic in topics {
+        driver
+            .publish(OutgoingMessage::new(topic, &payload))
+            .await
+            .expect("publish");
+    }
+    wait_for(
+        || counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1),
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(
-        outcome.is_ok(),
-        "a scope-codec include variant never dispatched"
-    );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static D_PLAIN_ON: AtomicUsize = AtomicUsize::new(0);
 static D_BATCH_ON: AtomicUsize = AtomicUsize::new(0);
 static D_POUT_ON: AtomicUsize = AtomicUsize::new(0);
 static D_BPOUT_ON: AtomicUsize = AtomicUsize::new(0);
-static D_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("d-plain-on")]
 async fn d_plain_on(_o: &Order) -> HandlerResult {
     D_PLAIN_ON.fetch_add(1, Ordering::SeqCst);
-    D_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber(batch("d-batch-ignored"))]
 async fn d_batch_on(orders: &[Order]) -> HandlerResult {
     D_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
-    D_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -217,14 +193,12 @@ async fn d_batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
 #[subscriber("d-pout-on")]
 async fn d_pout_on_check(_r: &Receipt) -> HandlerResult {
     D_POUT_ON.fetch_add(1, Ordering::SeqCst);
-    D_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
 #[subscriber("d-bpout-on")]
 async fn d_bpout_on_check(_r: &Receipt) -> HandlerResult {
     D_BPOUT_ON.fetch_add(1, Ordering::SeqCst);
-    D_NOTIFY.notify_one();
     HandlerResult::Ack
 }
 
@@ -254,31 +228,24 @@ async fn default_codec_include_on_family_dispatches() {
         b.include(d_bpout_on_check);
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    // `start` resolves only once subscriptions are open, so one publish per topic suffices.
+    let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Order { id: 1 }).unwrap();
     let topics = ["d-plain-on", "d-batch-on", "d-pin-on", "d-bpin-on"];
     let counters: [&AtomicUsize; 4] = [&D_PLAIN_ON, &D_BATCH_ON, &D_POUT_ON, &D_BPOUT_ON];
 
-    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            for topic in topics {
-                let _ = driver.publish(OutgoingMessage::new(topic, &payload)).await;
-            }
-            handler_signal(&D_NOTIFY).await;
-            if counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1) {
-                break;
-            }
-        }
-    })
+    for topic in topics {
+        driver
+            .publish(OutgoingMessage::new(topic, &payload))
+            .await
+            .expect("publish");
+    }
+    wait_for(
+        || counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1),
+        Duration::from_secs(5),
+    )
     .await;
-    assert!(
-        outcome.is_ok(),
-        "a default-codec include_on variant never dispatched"
-    );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    running.shutdown().await.expect("graceful shutdown failed");
 }
