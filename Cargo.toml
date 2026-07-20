@@ -232,7 +232,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 
-ruststream-macros = { version = "0.5", path = "crates/ruststream-macros", optional = true }
+# Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
+# release for release (a loose range let a partial `cargo update` pair a new core with an old
+# macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
+ruststream-macros = { version = "=0.5.3", path = "crates/ruststream-macros", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
