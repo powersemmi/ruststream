@@ -6,7 +6,7 @@ any other broker:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.4", default-features = false }
+ruststream = { version = "0.5", default-features = false }
 ```
 
 This page is the contract. Implement the required traits, expose your own `Config`, add capability
@@ -31,6 +31,14 @@ pub trait Broker: Send + Sync {
 ```
 
 `shutdown` must never block or panic; do all fallible teardown here and return a `Result`.
+
+Construction is **synchronous and I/O-free**: `new(addrs)` only records configuration, all network
+work happens in `connect` (idempotent, called once at startup by the runtime). Keep the live
+connection behind interior mutability (for example `Arc<tokio::sync::OnceCell<_>>`) so a publisher
+handed out before `connect` resolves the connection on first use; operations that need it earlier
+return a clear "not connected" error. This lazy-startup contract is what lets a service compose
+with the synchronous `#[ruststream::app]` builder; the
+[conformance harness](conformance.md) proves it end to end.
 
 ### `Subscribe`
 
@@ -134,6 +142,47 @@ Implement only the capabilities your broker supports; none are part of the manda
 | `RequestReply` | native request-reply (NATS yes, Kafka no) |
 | `Partitioned` | a partition key on outgoing messages |
 | `DescribeServer` | reporting a `ServerSpec` for AsyncAPI |
+
+## Per-delivery context and `Ctx` keys
+
+A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it as a
+typed per-delivery context: a `#[non_exhaustive]` struct the subscriber names, plus `ContextField`
+key types so handlers can bind single fields as parameters with the
+[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs; values are
+owned. No type-map and no heap on the delivery path.
+
+<!-- inline-rust: sketch; the real trait lives in src/field.rs -->
+```rust
+/// Per-delivery context of this broker.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct MyContext {
+    pub partition: i32,
+}
+
+/// `Ctx<Partition>` in a handler binds the delivery's partition.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Partition;
+
+impl ContextField for Partition {
+    type Context = MyContext;
+    type Value = i32;
+    fn read(self, src: &MyContext) -> i32 {
+        src.partition
+    }
+}
+```
+
+A broker with no per-delivery fields uses `()` and skips all of this.
+
+## Middleware on the async edges
+
+Integrations that need async I/O around encode and decode (a schema registry, a wire-format
+envelope) do not belong in a `Codec`: the core codec is synchronous and handlers should stay on the
+default one. Put them on the async edges instead - transcode incoming payloads on the
+subscription's delivery path (before the codec sees them), and frame outgoing ones with a core
+`PublishLayer` added app-wide via `RustStream::publish_layer`. The publish layer is async and
+fallible, and `Outgoing::payload_mut` exists exactly for envelope wrapping.
 
 ## Config and defaults
 

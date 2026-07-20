@@ -5,17 +5,23 @@ alwaysApply: false
 ---
 
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
-  decoded payload by reference (`&T`, where `T: serde::Deserialize`); an optional second parameter is
-  `ctx: &mut ruststream::runtime::Context`.
+  decoded payload by reference (`&T`, where `T: serde::Deserialize`). Further parameters are
+  extractors: `State<T>` injects a component of the application state, `Ctx<K>` injects one broker
+  context field (partition, offset, ...). An explicit `ctx: &mut Context` parameter is optional and
+  last; omit it unless you use it.
 - The return type drives acknowledgement: `HandlerResult`, `()` (always acks), or `Result<_, E>` (an
   `Err` nacks). For a reply handler, add a `publish("subject")` clause and return the reply value,
   or `Result<Reply, HandlerResult>` for explicit ack control.
-- Build the service with `#[ruststream::app]` on a synchronous `fn app() -> RustStream`. Do not write
-  your own `main` or `#[tokio::main]`.
+- Build the service with `#[ruststream::app]` on a synchronous `fn app() -> RustStream` (or
+  `impl App` when layers/state change the type). Do not write your own `main` or `#[tokio::main]`.
+- Application state is built once in `on_startup` (async closures: `async move |()| ...`) and
+  injected with `State<T>` via `#[derive(FromRef)]` on the state struct. There is no runtime
+  type-map; everything is typed and zero-cost.
 - Construct brokers synchronously (`MemoryBroker::new()`, `NatsBroker::new(url)`); the runtime
   connects them at startup. Never connect inside the builder.
 - The codec defaults to `codec::DefaultCodec` (`json` > `cbor` > `msgpack`), so `include` needs no
-  codec argument. Log with `tracing`, never `println!`. In tests use `MemoryBroker` or a `TestClient`.
+  codec argument. Log with `tracing`, never `println!`. In tests use `MemoryBroker` driven by the
+  `TestApp` harness (`testing` feature).
 
 ## Subscriber and app
 
@@ -95,15 +101,72 @@ Return `Result<Reply, HandlerResult>` to control acknowledgement: `Ok(reply)` pu
 `Result` out in the signature (a type alias is treated as a plain reply type). A failed reply
 publish nacks the incoming message with `requeue = true`.
 
+Note the `publish(..)` clause takes a string literal; runtime-computed destinations are not
+supported there.
+
+## State injection (dependency injection)
+
+Build the state once in `on_startup`; `#[derive(FromRef)]` makes every field injectable with
+`State<FieldType>` - no extractor impls, no type-map.
+
 ```rust
-#[subscriber("orders", publish("confirmations"))]
-async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
-    if order.id == 0 {
-        return Err(HandlerResult::drop());
-    }
-    Ok(Confirmation { id: order.id, accepted: true })
+use std::convert::Infallible;
+
+use ruststream::FromRef;
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream, State};
+use ruststream::subscriber;
+
+#[derive(Clone)]
+struct Database; // connection pool, etc.
+
+#[derive(FromRef)]
+struct AppState {
+    db: Database,
+}
+
+#[subscriber("orders")]
+async fn handle(order: &Order, State(db): State<Database>) -> HandlerResult {
+    // db.store(order).await;
+    let _ = db;
+    HandlerResult::Ack
+}
+
+#[ruststream::app]
+fn app() -> impl ruststream::runtime::App {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(AppState { db: Database }))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 ```
+
+## Broker context fields (`Ctx<K>`)
+
+`Ctx<K>` injects one field of the broker's per-delivery context, the way `State<T>` injects a
+state component. The key `K` is a broker-provided `ContextField` type; a handler using only `Ctx`
+extractors needs no `&mut Context` parameter at all.
+
+```rust
+use ruststream::runtime::Ctx;
+// Keys come from the broker crate, e.g. ruststream_rdkafka::context::{Partition, Offset}.
+
+#[subscriber("orders")]
+async fn handle(order: &Order, Ctx(partition): Ctx<Partition>) -> HandlerResult {
+    tracing::info!(partition, "delivery");
+    HandlerResult::Ack
+}
+```
+
+## Context (optional explicit parameter)
+
+When you need the raw delivery objects, take `ctx: &mut Context<'_, C, S>` as the last parameter
+(`C` = broker context type, `S` = application state):
+
+- `ctx.name()` - the subject/channel the message arrived on.
+- `ctx.headers()` / `ctx.headers_mut()` - the working copy of the message headers.
+- `ctx.state()` - the shared application state built by `on_startup`.
+
+There is no `ctx.get::<T>()` and no named-publisher registry; state is typed (`State<T>` /
+`ctx.state()`), and publishing goes through `publish(..)` replies or a `TypedPublisher` in state.
 
 ## Choosing a codec
 
@@ -128,7 +191,8 @@ Collect handlers in their own module, then mount the group. A `Router` is a cons
 (each call returns a new type), so the calls chain and the function returns `impl RouterDef<B>`.
 The app's global `.layer(..)` reaches router handlers, so cross-cutting middleware (logging,
 metrics) goes on the app and applies everywhere; that global layer must be a `BlanketLayer`
-(every bundled layer is).
+(every bundled layer is). Publish-side middleware (tracing propagation, broker envelopes such as
+Kafka's Schema Registry framing) is added app-wide with `.publish_layer(..)` before `with_broker`.
 
 ```rust
 use ruststream::runtime::{Router, RouterDef};
@@ -147,9 +211,9 @@ fn orders(broker: &MemoryBroker) -> impl RouterDef<MemoryBroker> + use<> {
 
 ## Broker-specific subscriptions
 
-For options the by-name form can't express (NATS JetStream, consumer groups), override the source
-with `include_on`. The codec resolves the same way as for `include` (the default, or the scope /
-chain codec).
+For options the by-name form can't express (NATS JetStream, Kafka consumer groups / start offsets),
+pass the broker's descriptor directly in the attribute, or override the source with `include_on`.
+The codec resolves the same way as for `include`.
 
 ```rust
 use ruststream_nats::SubscribeOptions;
@@ -158,45 +222,6 @@ b.include_on(
     SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"),
     handle,
 );
-```
-
-## Context (optional handler argument)
-
-`ctx: &mut Context` is an **optional** second handler parameter. Omit it when you do not use it - do
-not add it just in case. When present it exposes the delivery's runtime objects:
-
-- `ctx.name()` - the subject/channel the message arrived on.
-- `ctx.headers()` / `ctx.headers_mut()` - the working copy of the message headers.
-- `ctx.get::<T>()` - shared application state registered with `RustStream::insert_state`.
-- `ctx.publisher(name)` - a named publisher (registered with `RustStream::publisher`) for a manual
-  publish through the same middleware pipeline as a macro reply.
-
-```rust
-use ruststream::runtime::{Context, HandlerResult, Outgoing};
-
-struct Database; // connection pool, etc.
-
-#[subscriber("orders")]
-async fn handle(order: &Order, ctx: &mut Context) -> HandlerResult {
-    let subject = ctx.name();                  // "orders"
-    if let Some(db) = ctx.get::<Database>() {   // application state
-        // db.store(order).await;
-        let _ = db;
-    }
-    if let Some(audit) = ctx.publisher("audit") {
-        let _ = audit.publish(Outgoing::new("audit", b"stored".to_vec())).await;
-    }
-    HandlerResult::Ack
-}
-```
-
-Register state and named publishers on the app builder:
-
-```rust
-RustStream::new(AppInfo::new("orders", "0.1.0"))
-    .insert_state(Database)
-    .publisher("audit", broker.publisher())
-    .with_broker(broker, |b| b.include(handle))
 ```
 
 ## AsyncAPI metadata
@@ -224,17 +249,31 @@ struct Order {
 
 ## Testing
 
-Use the in-memory broker (or a broker's `TestClient` under the `testing` feature); no real server.
+Use the `TestApp` harness (`testing` feature): it drives the built application with no network and
+no server, injects input through the broker bus, and exposes per-broker assertions. `MemoryBroker`
+is a real broker here, driven through the same dispatch path as production.
 
 ```rust
-use std::time::Duration;
 use ruststream::memory::MemoryBroker;
-use ruststream::testing::TestClient;
+use ruststream::testing::TestApp;
 
-let client = MemoryBroker::start().await?;
-client.publish("orders", br#"{"id":1}"#).await?;
-let published = client
-    .expect_published("confirmations", 1, Duration::from_secs(1))
+let tb = TestApp::start(service()).await?;
+
+tb.broker::<MemoryBroker>()
+    .publish("orders", &Order { id: 42 })
     .await?;
-client.shutdown().await?;
+
+tb.broker::<MemoryBroker>()
+    .subscriber("orders")
+    .assert_called_once()
+    .with(&Order { id: 42 })
+    .settled(HandlerResult::Ack);
+
+tb.broker::<MemoryBroker>()
+    .published::<Receipt>("receipts")
+    .assert_called_once()
+    .with(&Receipt { order_id: 42 });
 ```
+
+Broker crates ship their own in-process test broker under their `testing` feature; `TestApp` drives
+those the same way.
