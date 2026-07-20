@@ -61,6 +61,9 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+hooks:
+  - docs/hooks/snippet_titles.py
+
 plugins:
   - search
   # Versioned docs are published with `mike` (see the Docs workflow and the version switcher).
