@@ -43,7 +43,7 @@ Codec features are mutually compatible; enable as many as you need (see
 
 ```toml
 [dependencies]
-ruststream = { version = "0.4", default-features = false }
+ruststream = { version = "0.5", default-features = false }
 ```
 
 ## The CLI
