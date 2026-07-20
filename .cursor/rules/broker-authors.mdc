@@ -5,19 +5,36 @@ alwaysApply: false
 ---
 
 - A broker is its own crate that depends on `ruststream` (broker clients never go into core).
-  Implement `Broker`: associated `Error`, async `connect`, async `shutdown`.
+  Implement `Broker`: associated `Error`, async `connect`, async `shutdown`. Pre-1.0 the broker
+  crate's version tracks the core minor line (core 0.5.x -> broker 0.5.x); breaking broker changes
+  ship as a patch within the line.
 - Lazy-startup contract (so the broker works with `#[ruststream::app]`): a synchronous, I/O-free
   `new(addrs)` that only records config; all network work happens in `connect`, which is idempotent
   and runs once at startup. Keep the connection behind interior mutability so publishers handed out
   before `connect` resolve on first use.
 - Implement `Subscribe` for the by-name `#[subscriber("topic")]` form, and ship a
-  `SubscriptionSource<YourBroker>` descriptor for broker-specific options. Implement capability traits
-  (`RequestReply`, `BatchSubscriber`, `TransactionalPublisher`, `Partitioned`, `DescribeServer`) only
-  for what the broker natively supports.
-- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`.
-- Ship a `TestClient` (handler-stub, Core routing only) under a `testing` feature. Verify with the
-  conformance harness; run `lifecycle` against a real server (env-gated). No simulation of
-  broker-specific semantics (durable cursors, offsets, DLX) - those are tested only against a server.
+  `SubscriptionSource<YourBroker>` descriptor for broker-specific options (even a parameter-less
+  broker ships one). Implement capability traits (`RequestReply`, `BatchSubscriber`,
+  `TransactionalPublisher`, `Partitioned`, `DescribeServer`) only for what the broker natively
+  supports - never emulate.
+- Expose the per-delivery context as a `#[non_exhaustive]` typed struct plus `ContextField` key
+  types (unit structs with an associated `Context` and owned `Value`), so handlers can take
+  `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path.
+- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`. Errors and
+  logs are self-explanatory: name the subscription and the type involved, not just the raw error.
+- Integrations that need async I/O around encode/decode (schema registries, wire-format envelopes)
+  are middleware on the async edges: transcode on the subscription's delivery path for consuming,
+  and a core `PublishLayer` (`RustStream::publish_layer`) for publishing. Never a custom sync
+  `Codec` and never hooks threaded through the publisher - handlers stay on the default codec.
+- Raw librdkafka-style client options go through a passthrough builder (`config(key, value)`), not
+  one wrapper method per option. Auth (TLS, SASL) rides that passthrough; surface only the cargo
+  features that build hermetically everywhere, and let users enable exotic client features by
+  depending on the client crate directly (cargo features are additive).
+- Testing: implement `TestableBroker` for the broker's in-process transport and register it with
+  `register_testable_broker!` (under a `testing` feature), so `TestApp` and `run_suite` can drive
+  it. Verify with the conformance harness; run `lifecycle` against a real server (env-gated). No
+  simulation of broker-specific semantics (durable cursors, offsets, DLX) - those are tested only
+  against a server.
 
 ## Lazy broker
 
@@ -115,17 +132,50 @@ impl SubscriptionSource<MyBroker> for MySubscribeOptions {
 }
 ```
 
+## Typed context and `Ctx` keys
+
+The broker names its context type on the subscriber; `ContextField` keys make individual fields
+injectable as handler parameters.
+
+```rust
+use ruststream::ContextField;
+
+/// Per-delivery context of this broker.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct MyContext {
+    pub partition: i32,
+}
+
+/// `Ctx<Partition>` in a handler binds the delivery's partition.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Partition;
+
+impl ContextField for Partition {
+    type Context = MyContext;
+    type Value = i32;
+    fn read(self, src: &MyContext) -> i32 {
+        src.partition
+    }
+}
+```
+
 ## Conformance
 
-Run both, the lifecycle against a real server behind an env gate.
+Routing runs against the broker's in-process transport (a `TestableBroker` with a synchronous
+factory); the full lazy lifecycle runs against a real server behind an env gate.
 
 ```rust
 use ruststream::conformance::harness;
 
-// routing, via your TestClient (testing feature)
-harness::run_suite(|| async { MyTestClient::start().await }).await;
+// routing contract: ordering, ack/nack, headers, ... (testing feature)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn routing_conformance() {
+    harness::run_suite(MyTestBroker::new).await; // sync Fn() -> B, B: TestableBroker + Subscribe
+}
 
-// full lazy lifecycle against a real broker
+// full lazy lifecycle: sync new -> connect -> subscribe via SubscriptionSource -> publish ->
+// receive -> ack -> shutdown, against a real broker
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lazy_lifecycle_conformance() {
     let Ok(url) = std::env::var("MY_BROKER_TEST_URL") else { return };
@@ -137,3 +187,6 @@ async fn lazy_lifecycle_conformance() {
     .await;
 }
 ```
+
+When changing anything on the broker contract, run the conformance suite against the real broker
+before releasing - an in-process pass is not enough.
