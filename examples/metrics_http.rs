@@ -14,7 +14,6 @@
 //! Each published order is consumed (incrementing the consume counter) and replied to on
 //! `confirmations` through the metrics publish layer (incrementing the publish counter).
 
-use std::future::pending;
 use std::sync::Arc;
 
 use axum::Router;
@@ -81,10 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     // --8<-- [end:wiring]
 
-    // Run the service in the background; it shares the metric collectors with the HTTP state.
-    tokio::spawn(async move {
-        let _ = app.run_until(pending::<()>()).await;
-    });
+    // The messaging side starts in the background and shares the metric collectors with the
+    // HTTP state; a startup failure surfaces here, before HTTP accepts traffic.
+    let running = app.start().await?;
 
     let state = Arc::new(AppState { metrics, ingest });
     let router = Router::new()
@@ -94,6 +92,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
     println!("metrics on http://127.0.0.1:8080/metrics");
-    axum::serve(listener, router).await?;
+    // The host owns the signals. HTTP stops on Ctrl+C, or when the messaging side tears itself
+    // down (fail-fast); either way the messaging side then drains gracefully.
+    let stopping = running.stopping();
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                () = stopping => {}
+            }
+        })
+        .await?;
+    running.shutdown().await?;
     Ok(())
 }
