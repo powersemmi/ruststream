@@ -19,6 +19,10 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/84257" target="_blank"><img src="https://trendshift.io/api/badge/repositories/84257" alt="powersemmi%2Fruststream | Trendshift" width="250" height="55"/></a>
+</p>
+
+<p align="center">
   <b><a href="https://powersemmi.github.io/ruststream/">Documentation</a></b>
 </p>
 
