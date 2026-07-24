@@ -25,6 +25,13 @@ allow = [
 # clippy::cargo warns on duplicates; this is the enforcing counterpart. Known
 # unavoidable duplicates get a targeted skip with the chain that pulls them in.
 multiple-versions = "deny"
+skip = [
+    # The proc-macro ecosystem is migrating from syn 2 to syn 3: serde_derive,
+    # clap_derive, and thiserror-impl are already on 3, while schemars_derive,
+    # tokio-macros, tracing-attributes, and zerocopy-derive still pull 2. Drop
+    # this skip once the tail of derive crates has moved.
+    { crate = "syn@2", reason = "syn 2 -> 3 ecosystem migration in progress" },
+]
 
 [sources]
 unknown-registry = "deny"

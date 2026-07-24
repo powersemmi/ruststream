@@ -229,6 +229,7 @@ fn source_type(expr: &Expr) -> syn::Result<Type> {
             _ => Err(unsupported_source(expr)),
         },
         Expr::Struct(ExprStruct { path, .. }) => Ok(Type::Path(TypePath {
+            attrs: Vec::new(),
             qself: None,
             path: path.clone(),
         })),
@@ -248,6 +249,7 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
     }
     let segments = path.segments.iter().take(n - 1).cloned().collect();
     Ok(Type::Path(TypePath {
+        attrs: Vec::new(),
         qself: None,
         path: Path {
             leading_colon: path.leading_colon,
@@ -262,7 +264,10 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
 /// The check is token-based: a type alias hiding the `Result` is not recognized and is treated as
 /// a plain reply type, which then fails to compile with a `Serialize` error the user can act on.
 pub(crate) fn publish_result_reply(ty: &Type) -> Option<&Type> {
-    let Type::Path(TypePath { qself: None, path }) = ty else {
+    let Type::Path(TypePath {
+        qself: None, path, ..
+    }) = ty
+    else {
         return None;
     };
     let last = path.segments.last()?;
@@ -281,6 +286,7 @@ pub(crate) fn publish_result_reply(ty: &Type) -> Option<&Type> {
     let Type::Path(TypePath {
         qself: None,
         path: err_path,
+        ..
     }) = err
     else {
         return None;
@@ -290,7 +296,10 @@ pub(crate) fn publish_result_reply(ty: &Type) -> Option<&Type> {
 
 /// If `ty` is syntactically `Vec<Reply>` (under any path prefix), returns the element type.
 pub(crate) fn vec_element(ty: &Type) -> Option<&Type> {
-    let Type::Path(TypePath { qself: None, path }) = ty else {
+    let Type::Path(TypePath {
+        qself: None, path, ..
+    }) = ty
+    else {
         return None;
     };
     let last = path.segments.last()?;
