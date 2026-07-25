@@ -6,7 +6,9 @@
 //! cargo run --example publishing --features macros,memory,json -- run
 //! ```
 
+use std::error::Error;
 use std::future::Future;
+use std::io;
 use std::pin::Pin;
 
 use ruststream::codec::{Codec, JsonCodec};
@@ -15,7 +17,7 @@ use ruststream::runtime::{
     App, AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
     TypedPublisher,
 };
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 // A publisher shared with handlers as a typed field of the application state.
@@ -95,9 +97,7 @@ impl PublishLayer for AuditPublish {
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N>,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'a>> {
         Box::pin(async move {
             println!("publishing to {}", out.name());
             next.run(out).await
@@ -117,18 +117,39 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 }
 // --8<-- [end:batch_publishing]
 
+// --8<-- [start:manual_transaction]
+/// Seeds the reference events inside one broker transaction: both records become visible
+/// together on commit, or not at all. The scope owns the transaction, so a commit without a
+/// begin, a second commit, or a publish after settling do not compile.
+async fn seed_events<P>(publisher: P) -> Result<(), Box<dyn Error + Send + Sync>>
+where
+    P: TransactionalPublisher,
+{
+    let seeder = TypedPublisher::new(publisher).transactional();
+    let mut scope = seeder.begin().await?;
+    scope.publish("events", &Event { id: 1 }).await?;
+    scope.publish("events", &Event { id: 2 }).await?;
+    scope.commit().await?;
+    Ok(())
+}
+// --8<-- [end:manual_transaction]
+
 // `impl App` hides the composed pipeline type: the app-wide `publish_layer` would otherwise surface
 // in the return type as `RustStream<_, AppState, PublishStack<AuditPublish, PublishIdentity>>`.
 #[ruststream::app]
 fn app() -> impl App {
     let broker = MemoryBroker::new();
     let egress = broker.publisher();
+    let seed = broker.publisher();
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
         // app-wide layer: wraps every published reply
         .publish_layer(AuditPublish)
         // a publisher shared with handlers as typed state, reached via `ctx.state().egress`
-        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(AppState { egress }) })
+        .on_startup(async move |()| {
+            seed_events(seed).await.map_err(io::Error::other)?;
+            Ok::<_, io::Error>(AppState { egress })
+        })
         .with_broker(broker, |b| {
             // static, per-publisher: composed onto this TypedPublisher at compile time
             let replies = TypedPublisher::new(b.broker().publisher()).transform(EnvelopeTransform);

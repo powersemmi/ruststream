@@ -10,17 +10,18 @@ use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};
 
 use bytes::BytesMut;
 use serde::Serialize;
+use thiserror::Error;
 use tracing::warn;
 
 use super::lifecycle::BoxError;
 use super::publisher_registry::ErasedPublisher;
-use crate::codec::Codec;
+use crate::codec::{Codec, CodecError};
 // `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
 // way, so an ungated import would break `--no-default-features`.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
-use crate::{Headers, Publisher, TransactionalPublisher};
+use crate::{Headers, OutgoingMessage, Publisher, TransactionalPublisher};
 
 type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
 
@@ -802,6 +803,167 @@ async fn abort_quietly<P: TransactionalPublisher>(publisher: &P) {
     if let Err(err) = publisher.abort().await {
         warn!(target: "ruststream::dispatch", error = %err, "transaction abort failed");
     }
+}
+
+impl<P, C, PL, BL> Transactional<P, C, PL, BL>
+where
+    P: TransactionalPublisher,
+    C: Sync,
+    PL: Sync,
+    BL: Sync,
+{
+    /// Opens a broker transaction and returns the [`TransactionScope`] that owns it.
+    ///
+    /// The scope is the only handle on the transaction: publishes go through it, and it is
+    /// consumed by [`commit`](TransactionScope::commit) or [`abort`](TransactionScope::abort).
+    /// A second `begin` on this wrapper, a commit without a begin, or a publish after the commit
+    /// are not expressible - the methods do not exist on the types those states leave behind.
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::TypedPublisher;
+    ///
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let broker = MemoryBroker::new();
+    /// let publisher = TypedPublisher::new(broker.publisher()).transactional();
+    ///
+    /// let mut scope = publisher.begin().await?;
+    /// scope.publish("orders.settled", &42_u32).await?;
+    /// scope.commit().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to start a transaction.
+    pub async fn begin(&self) -> Result<TransactionScope<'_, P, C>, P::Error> {
+        self.inner.publisher.begin_transaction().await?;
+        Ok(TransactionScope {
+            publisher: &self.inner.publisher,
+            codec: &self.inner.codec,
+            open: true,
+        })
+    }
+}
+
+/// A live broker transaction, opened by [`Transactional::begin`].
+///
+/// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
+/// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
+/// publish after settling is a compile error. This is the manual counterpart of the per-batch
+/// transaction the runtime drives for `include_batch_publishing` mounts.
+///
+/// The scope encodes values with the wrapper's codec and sends them directly: the reply
+/// [`PublishTransform`] stack and the app-wide [`publish_layer`](super::RustStream::publish_layer)
+/// middleware do not run here - both belong to the dispatch path, where a delivery context
+/// exists.
+///
+/// Dropping an unsettled scope logs a warning and leaves the broker transaction open (destructors
+/// cannot run async work); always settle explicitly.
+#[must_use = "a transaction scope must be settled with commit() or abort()"]
+pub struct TransactionScope<'a, P, C> {
+    publisher: &'a P,
+    codec: &'a C,
+    open: bool,
+}
+
+impl<P, C> TransactionScope<'_, P, C>
+where
+    P: TransactionalPublisher,
+    C: Codec,
+{
+    /// Encodes `value` with the wrapper's codec and publishes it to `name` inside the
+    /// transaction.
+    ///
+    /// A failed publish does not settle the scope: the caller decides between retrying and
+    /// [`abort`](Self::abort). Aborting is the safe default - after an error the broker-side
+    /// transaction state is implementation-defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
+    /// [`TransactionPublishError::Publish`] when the broker rejects the message.
+    ///
+    /// # Cancel safety
+    ///
+    /// As with [`Publisher::publish`], cancel safety is broker-defined: dropping the future
+    /// mid-flight may leave the message in an indeterminate state inside the transaction.
+    pub async fn publish<T: Serialize + Sync>(
+        &mut self,
+        name: &str,
+        value: &T,
+    ) -> Result<(), TransactionPublishError<P::Error>> {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(TransactionPublishError::Encode)?;
+        self.publisher
+            .publish(OutgoingMessage::new(name, &payload))
+            .await
+            .map_err(TransactionPublishError::Publish)
+    }
+
+    /// Commits the transaction: every publish issued through the scope becomes visible at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker rejects the commit. The scope aborts the
+    /// transaction on a best-effort basis first (an abort failure is logged, not propagated), so
+    /// the handle does not stay wedged on a transaction that can no longer complete.
+    pub async fn commit(mut self) -> Result<(), P::Error> {
+        self.open = false;
+        if let Err(err) = self.publisher.commit().await {
+            abort_quietly(self.publisher).await;
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    /// Aborts the transaction: nothing published through the scope becomes visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker fails to abort.
+    pub async fn abort(mut self) -> Result<(), P::Error> {
+        self.open = false;
+        self.publisher.abort().await
+    }
+}
+
+impl<P, C> Drop for TransactionScope<'_, P, C> {
+    fn drop(&mut self) {
+        if self.open {
+            warn!(
+                target: "ruststream::dispatch",
+                "transaction scope dropped without commit or abort; the broker transaction stays \
+                 open on this publisher handle until it is settled or the handle is dropped"
+            );
+        }
+    }
+}
+
+impl<P, C> std::fmt::Debug for TransactionScope<'_, P, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransactionScope")
+            .field("open", &self.open)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Error returned by [`TransactionScope::publish`].
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TransactionPublishError<E> {
+    /// The codec rejected the value.
+    #[error("failed to encode the value for a transactional publish")]
+    Encode(#[source] CodecError),
+    /// The broker rejected the message.
+    #[error("failed to publish inside the transaction")]
+    Publish(#[source] E),
 }
 
 #[cfg(test)]
