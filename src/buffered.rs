@@ -26,13 +26,12 @@ const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 /// # Examples
 ///
 /// ```
-/// use std::num::NonZeroUsize;
 /// use std::time::Duration;
 ///
-/// use ruststream::{Buffered, Name};
+/// use ruststream::{Buffered, Name, nonzero};
 ///
 /// let source = Buffered::new(Name::new("orders"))
-///     .max_size(NonZeroUsize::new(128).unwrap())
+///     .max_size(nonzero!(128))
 ///     .max_wait(Duration::from_millis(20));
 /// # let _ = source;
 /// ```

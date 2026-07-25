@@ -10,7 +10,6 @@
 mod common;
 
 use std::{
-    num::NonZeroUsize,
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
@@ -19,7 +18,7 @@ use common::wait_for;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Buffered, Name, OutgoingMessage, Publisher, subscriber};
+use ruststream::{Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,7 +88,7 @@ static BUF_BATCHES: AtomicUsize = AtomicUsize::new(0);
 
 /// Client-side batching under a pool: the size cap or deadline (not the pool) closes a batch.
 #[subscriber(batch(Buffered::<Name>::new(Name::new("buf-in"))
-    .max_size(NonZeroUsize::new(2).unwrap())
+    .max_size(nonzero!(2))
     .max_wait(Duration::from_millis(10))), workers(2))]
 async fn buffered_drain(orders: &[Order]) -> HandlerResult {
     BUF_SEEN.fetch_add(orders.len(), Ordering::SeqCst);

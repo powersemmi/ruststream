@@ -5,14 +5,13 @@
 //! cargo run --example subscribers --features macros,memory,json -- run
 //! ```
 
-use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream, typed};
 use ruststream::subscriber;
-use ruststream::{Buffered, Name};
+use ruststream::{Buffered, Name, nonzero};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -87,7 +86,7 @@ async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
 // 20 ms after its first one. The macro recovers the source type from the constructor path, so
 // the generic parameter is spelled out.
 #[subscriber(batch(Buffered::<Name>::new(Name::new("orders"))
-    .max_size(NonZeroUsize::new(128).unwrap())
+    .max_size(nonzero!(128))
     .max_wait(Duration::from_millis(20))))]
 async fn drain(orders: &[Order]) -> HandlerResult {
     println!("draining {} orders", orders.len());
