@@ -281,13 +281,27 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
         }
         return Ok(quote! {
             fn workers(&self) -> ::ruststream::runtime::Workers {
-                ::ruststream::runtime::Workers::keyed(#count)
+                // The macro rejects workers(0) at expansion, so the None arm is unreachable;
+                // MIN keeps the lowering panic-free.
+                ::ruststream::runtime::Workers::keyed(
+                    match ::core::num::NonZeroUsize::new(#count) {
+                        ::core::option::Option::Some(count) => count,
+                        ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
+                    },
+                )
             }
         });
     }
     Ok(quote! {
         fn workers(&self) -> ::ruststream::runtime::Workers {
-            ::ruststream::runtime::Workers::pool(#count)
+            // The macro rejects workers(0) at expansion, so the None arm is unreachable;
+            // MIN keeps the lowering panic-free.
+            ::ruststream::runtime::Workers::pool(
+                match ::core::num::NonZeroUsize::new(#count) {
+                    ::core::option::Option::Some(count) => count,
+                    ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
+                },
+            )
         }
     })
 }

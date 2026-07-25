@@ -424,6 +424,8 @@ impl<B, S, H, R, RC, RL> Router<B, (SubscribeRoute<S, H>, R), RC, RL> {
     /// ```no_run
     /// # #[cfg(feature = "memory")]
     /// # fn build() {
+    /// use std::num::NonZeroUsize;
+    ///
     /// use ruststream::Name;
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router, Workers};
@@ -434,7 +436,7 @@ impl<B, S, H, R, RC, RL> Router<B, (SubscribeRoute<S, H>, R), RC, RL> {
     ///         |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
     ///         HandlerMetadata::raw("jobs"),
     ///     )
-    ///     .workers(Workers::pool(4));
+    ///     .workers(Workers::pool(NonZeroUsize::new(4).unwrap()));
     /// # }
     /// ```
     #[must_use]

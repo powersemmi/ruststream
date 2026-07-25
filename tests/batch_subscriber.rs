@@ -8,6 +8,7 @@
 mod common;
 
 use std::{
+    num::NonZeroUsize,
     sync::{
         Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -135,7 +136,7 @@ static BUFFERED_SEEN: AtomicUsize = AtomicUsize::new(0);
 /// A handler mounted on a `Buffered`-wrapped source directly in the macro. The macro recovers
 /// the source type from the constructor path, so a generic source spells its parameter
 /// (turbofish).
-#[subscriber(batch(Buffered::<Name>::new(Name::new("events")).max_size(2)))]
+#[subscriber(batch(Buffered::<Name>::new(Name::new("events")).max_size(NonZeroUsize::new(2).unwrap())))]
 async fn drain(events: &[Order]) -> HandlerResult {
     BUFFERED_SEEN.fetch_add(events.len(), Ordering::SeqCst);
     HandlerResult::Ack

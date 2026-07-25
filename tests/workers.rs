@@ -8,6 +8,7 @@
 mod common;
 
 use std::{
+    num::NonZeroUsize,
     sync::{
         Arc, LazyLock, Mutex,
         atomic::{AtomicU32, AtomicUsize, Ordering},
@@ -170,7 +171,7 @@ async fn batch_pool_dispatches_batches() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// The functional-path pool: a `Router::subscribe` closure with `.workers(Workers::pool(3))`.
+/// The functional-path pool: a `Router::subscribe` closure with `.workers(Workers::pool(NonZeroUsize::new(3).unwrap()))`.
 /// Three deliveries must be in flight at once to pass the barrier; the default sequential loop
 /// would deadlock on the first one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -201,7 +202,7 @@ async fn closure_subscription_pool_runs_concurrently() {
             handler,
             HandlerMetadata::raw("fn-jobs"),
         )
-        .workers(Workers::pool(3));
+        .workers(Workers::pool(NonZeroUsize::new(3).unwrap()));
 
     let app = RustStream::new(AppInfo::new("fn-jobs", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -253,7 +254,7 @@ async fn closure_batch_subscription_receives_batches() {
             handler,
             HandlerMetadata::raw("fn-pages"),
         )
-        .workers(Workers::pool(2));
+        .workers(Workers::pool(NonZeroUsize::new(2).unwrap()));
 
     let app = RustStream::new(AppInfo::new("fn-pages", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
