@@ -92,12 +92,16 @@ impl<C> PublishTransform<C> for EnvelopeTransform {
 #[derive(Clone)]
 struct AuditPublish;
 
+// The boxed future every publish layer returns; named once so the impl signature stays readable.
+type PublishFut<'a> =
+    Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'a>>;
+
 impl PublishLayer for AuditPublish {
     fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'a>> {
+    ) -> PublishFut<'a> {
         Box::pin(async move {
             println!("publishing to {}", out.name());
             next.run(out).await
