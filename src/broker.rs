@@ -24,7 +24,20 @@ use std::{error::Error as StdError, future::Future};
 /// and return the handle" constructor) does not satisfy this contract. Each broker also ships a
 /// [`SubscriptionSource`](crate::SubscriptionSource) for its subjects, resolved after `connect`.
 /// [`conformance::harness::lifecycle`](crate::conformance::harness::lifecycle) checks the whole
-/// path: synchronous construction, `connect`, subscribe through the source, deliver, ack, shutdown.
+/// path: synchronous construction, `connect`, subscribe through the source, deliver, ack,
+/// shutdown, and the post-shutdown behaviour below.
+///
+/// # Shutdown is a state, not an event
+///
+/// The lifecycle has three states - unconnected, connected, shut down - and the third must be
+/// representable, not just documented: a single "connection present?" cell encodes only two.
+/// After [`shutdown`]:
+///
+/// * publish / subscribe / other broker operations return an error (the broker's "not connected"
+///   variant, or a dedicated one), never a silent success against a dead connection;
+/// * a subsequent [`connect`] either re-establishes a working connection or returns an error - it
+///   must not report `Ok` while leaving the broker dead (the idempotency of `connect` applies to
+///   the *connected* state, not to the shut-down one).
 ///
 /// # Examples
 ///
@@ -54,7 +67,10 @@ pub trait Broker: Send + Sync {
 
     /// Closes the broker connection, flushing in-flight publishes and stopping background tasks.
     ///
-    /// After a successful `shutdown` the broker handle must not be used again.
+    /// Shutdown is a terminal state, not advice: afterwards, operations on this broker's handles
+    /// error instead of silently succeeding, and a later [`connect`](Self::connect) either
+    /// re-establishes a working connection or errors (see the trait-level contract). `shutdown`
+    /// itself is idempotent.
     ///
     /// # Errors
     ///

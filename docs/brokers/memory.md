@@ -49,6 +49,9 @@ in-process semantics, not a simulation of another broker's:
   share its transaction.
 - **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
   well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).
+- **Shutdown.** `Broker::shutdown` is a terminal state: subscribers are dropped, and publish or
+  subscribe afterwards error with `MemoryError::ShutDown`. A later `connect` revives the broker
+  (the contract's reconnect option); callers re-subscribe, as the runtime does on a fresh start.
 
 `DescribeServer` stays deliberately unimplemented: the in-memory broker has no network
 coordinates, and that asymmetry is part of the contract documentation.

@@ -22,7 +22,10 @@ pub use capability::{MemoryRequester, PARTITION_KEY_HEADER, RequestError};
 use std::{
     collections::HashMap,
     convert::Infallible,
-    sync::{Arc, Mutex, OnceLock, atomic::AtomicU64},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -49,6 +52,9 @@ struct MemoryDelivery {
 #[derive(Default)]
 struct MemoryState {
     subscribers: Mutex<HashMap<String, Vec<Sender>>>,
+    /// Set by `Broker::shutdown`, cleared by `Broker::connect`: the shut-down state is
+    /// representable, so operations against a dead bus error instead of silently succeeding.
+    shut_down: AtomicBool,
     published: Mutex<HashMap<String, Vec<RawMessage>>>,
     notify: Notify,
     inbox_seq: AtomicU64,
@@ -59,6 +65,10 @@ struct MemoryState {
 }
 
 impl MemoryState {
+    fn is_shut_down(&self) -> bool {
+        self.shut_down.load(Ordering::SeqCst)
+    }
+
     fn register(&self, name: String, tx: Sender) {
         let mut subs = self
             .subscribers
@@ -179,13 +189,21 @@ impl std::fmt::Debug for MemoryBroker {
 }
 
 impl Broker for MemoryBroker {
-    type Error = Infallible;
+    type Error = MemoryError;
 
+    /// Connecting is free for an in-process bus; after a shutdown it revives the broker (the
+    /// contract's "reconnect or error" choice), so subscribers opened before the shutdown stay
+    /// gone and the caller re-subscribes, exactly as the runtime does on a fresh start.
     async fn connect(&self) -> Result<(), Self::Error> {
+        self.state.shut_down.store(false, Ordering::SeqCst);
         Ok(())
     }
 
+    /// Enters the terminal shut-down state: subscribers are dropped, and publish / subscribe
+    /// error with [`MemoryError::ShutDown`] until a reviving [`connect`](Broker::connect).
+    /// Idempotent.
     async fn shutdown(&self) -> Result<(), Self::Error> {
+        self.state.shut_down.store(true, Ordering::SeqCst);
         self.state
             .subscribers
             .lock()
@@ -243,6 +261,9 @@ impl Subscribe for MemoryBroker {
     type Subscriber = MemorySubscriber;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
+        if self.state.is_shut_down() {
+            return Err(MemoryError::ShutDown);
+        }
         Ok(MemoryBroker::subscribe(self, name))
     }
 }
@@ -274,7 +295,10 @@ impl SubscriptionSource<MemoryBroker> for MemorySource {
         &self.name
     }
 
-    async fn subscribe(self, broker: &MemoryBroker) -> Result<Self::Subscriber, Infallible> {
+    async fn subscribe(self, broker: &MemoryBroker) -> Result<Self::Subscriber, MemoryError> {
+        if broker.state.is_shut_down() {
+            return Err(MemoryError::ShutDown);
+        }
         Ok(broker.subscribe(self.name))
     }
 }
@@ -384,12 +408,19 @@ pub enum MemoryError {
     /// `commit` or `abort` was called with no open transaction on this handle.
     #[error("no transaction is open on this publisher handle")]
     NoTransaction,
+    /// The operation ran after [`Broker::shutdown`] and before a reviving
+    /// [`Broker::connect`](crate::Broker::connect).
+    #[error("the memory broker is shut down")]
+    ShutDown,
 }
 
 impl Publisher for MemoryPublisher {
     type Error = MemoryError;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        if self.state.is_shut_down() {
+            return Err(MemoryError::ShutDown);
+        }
         let delivery = MemoryDelivery {
             name: msg.name().to_owned(),
             payload: Bytes::copy_from_slice(msg.payload()),

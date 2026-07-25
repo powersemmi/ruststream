@@ -67,7 +67,10 @@ impl SubscriptionSource<MemoryBroker> for StreamSource {
         &self.name
     }
 
-    async fn subscribe(self, broker: &MemoryBroker) -> Result<MemorySubscriber, Infallible> {
+    async fn subscribe(
+        self,
+        broker: &MemoryBroker,
+    ) -> Result<MemorySubscriber, ruststream::memory::MemoryError> {
         Ok(broker.subscribe(&self.name))
     }
 }

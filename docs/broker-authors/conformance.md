@@ -52,8 +52,11 @@ not part of the contract and are verified in your own end-to-end suite against a
 `run_suite` exercises routing through the in-process transport; `harness::lifecycle` exercises the
 **lazy-startup contract** through the real `Broker`: synchronous construction with no I/O, then
 `connect`, a subscription opened through the broker's own `SubscriptionSource`, a publish the
-subscription receives and acks, and finally `shutdown`. It takes three factories that keep it
-broker-agnostic:
+subscription receives and acks, and `shutdown` - followed by the **post-shutdown contract**:
+publish and subscribe must error against the shut-down broker, a second `shutdown` stays `Ok`,
+and a later `connect` either revives the broker (the check then proves a full
+subscribe / publish / deliver round trip) or returns a clear error. Reporting `Ok` while staying
+dead is the one forbidden outcome. It takes three factories that keep it broker-agnostic:
 
 <!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust

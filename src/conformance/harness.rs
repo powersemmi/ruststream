@@ -57,8 +57,11 @@ where
 ///
 /// The steps are: synchronous construction (no I/O in the constructor), then `connect`, a
 /// subscription opened through the broker's own [`SubscriptionSource`], a publish the subscription
-/// receives and acks (or reports [`AckError::Unsupported`] for a broker with no ack semantics), and
-/// finally `shutdown`.
+/// receives and acks (or reports [`AckError::Unsupported`] for a broker with no ack semantics),
+/// then `shutdown` - and the post-shutdown contract: publish and subscribe must error against the
+/// shut-down broker, a second `shutdown` stays `Ok`, and a later `connect` either revives the
+/// broker (proved by a working subscribe / publish / deliver round trip) or returns an error;
+/// reporting `Ok` while staying dead is the one forbidden outcome.
 ///
 /// The three factories keep the check broker-agnostic:
 /// * `make_broker` is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
@@ -139,6 +142,52 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Broker::shutdown(&broker)
         .await
         .expect("broker must shut down cleanly");
+
+    // Shutdown is a state, not an event: operations against the shut-down broker must error
+    // rather than silently succeed against a dead connection.
+    assert!(
+        publisher
+            .publish(OutgoingMessage::new(SUBJECT, b"post-shutdown".as_slice()))
+            .await
+            .is_err(),
+        "publish after shutdown must error",
+    );
+    assert!(
+        make_source(SUBJECT).subscribe(&broker).await.is_err(),
+        "subscribing after shutdown must error",
+    );
+    Broker::shutdown(&broker)
+        .await
+        .expect("shutdown must stay idempotent");
+
+    // A post-shutdown connect either revives the broker or errors; Ok-but-dead is forbidden.
+    // (An Err here is fine: reconnect-after-shutdown is not required, a clear error satisfies
+    // the contract.)
+    if Broker::connect(&broker).await.is_ok() {
+        let mut subscriber = make_source(SUBJECT)
+            .subscribe(&broker)
+            .await
+            .expect("subscribe must work after a reconnect that reported Ok");
+        let publisher = make_publisher(&broker);
+        publisher
+            .publish(OutgoingMessage::new(SUBJECT, b"revived".as_slice()))
+            .await
+            .expect("publish must work after a reconnect that reported Ok");
+        let mut stream = std::pin::pin!(subscriber.stream());
+        let msg = expect_next(&mut stream, "lifecycle: after reconnect").await;
+        assert_eq!(
+            msg.payload(),
+            b"revived",
+            "a reconnect that reports Ok must actually deliver",
+        );
+        match msg.ack().await {
+            Ok(()) | Err(AckError::Unsupported) => {}
+            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+        }
+        Broker::shutdown(&broker)
+            .await
+            .expect("broker must shut down cleanly");
+    }
 }
 
 async fn ordering<B: TestableBroker + Subscribe>(broker: B) {
