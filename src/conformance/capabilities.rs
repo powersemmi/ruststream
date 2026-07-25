@@ -227,7 +227,10 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 /// Verifies the [`TransactionalPublisher`] contract.
 ///
 /// Nothing published inside a transaction is visible before `commit`, a commit makes every
-/// buffered message visible in publish order, and an abort discards the buffer.
+/// buffered message visible in publish order, and an abort discards the buffer. Misuse must
+/// error rather than silently succeed: `commit` / `abort` with no open transaction, and a
+/// second `begin_transaction` while one is open (which must also leave the open transaction
+/// untouched).
 ///
 /// # Examples
 ///
@@ -316,6 +319,43 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .expect("publish inside transaction failed");
     publisher.abort().await.expect("abort failed");
     expect_no_more(&mut stream, "transactions: after abort").await;
+
+    // Misuse must surface as errors, never as silent success.
+    assert!(
+        publisher.commit().await.is_err(),
+        "commit with no open transaction must error",
+    );
+    assert!(
+        publisher.abort().await.is_err(),
+        "abort with no open transaction must error",
+    );
+    publisher
+        .begin_transaction()
+        .await
+        .expect("begin_transaction failed");
+    assert!(
+        publisher.begin_transaction().await.is_err(),
+        "begin_transaction while a transaction is open must error",
+    );
+    // The rejected second begin must not have disturbed the open transaction.
+    publisher
+        .publish(OutgoingMessage::new(SUBJECT, b"third".as_slice()))
+        .await
+        .expect("publish inside transaction failed");
+    publisher
+        .commit()
+        .await
+        .expect("commit after a rejected double begin failed");
+    let third = expect_next(&mut stream, "transactions: after rejected double begin").await;
+    assert_eq!(
+        third.payload(),
+        b"third",
+        "a rejected double begin must leave the open transaction intact",
+    );
+    match third.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
 
     Broker::shutdown(&broker)
         .await

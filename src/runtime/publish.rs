@@ -789,11 +789,12 @@ where
                 return Err(err);
             }
         }
-        if let Err(err) = publisher.commit().await {
-            abort_quietly(publisher).await;
-            return Err(Box::new(err) as BoxError);
-        }
-        Ok(())
+        // Per the TransactionalPublisher contract a failed commit closes the transaction, so
+        // there is nothing left to abort here; the error alone settles the batch as failed.
+        publisher
+            .commit()
+            .await
+            .map_err(|err| Box::new(err) as BoxError)
     }
 }
 
@@ -911,16 +912,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns the publisher's error when the broker rejects the commit. The scope aborts the
-    /// transaction on a best-effort basis first (an abort failure is logged, not propagated), so
-    /// the handle does not stay wedged on a transaction that can no longer complete.
+    /// Returns the publisher's error when the broker rejects the commit. Per the
+    /// [`TransactionalPublisher`] contract a failed commit closes the transaction, so the spent
+    /// scope leaves the handle free for a fresh [`begin`](Transactional::begin).
     pub async fn commit(mut self) -> Result<(), P::Error> {
         self.open = false;
-        if let Err(err) = self.publisher.commit().await {
-            abort_quietly(self.publisher).await;
-            return Err(err);
-        }
-        Ok(())
+        self.publisher.commit().await
     }
 
     /// Aborts the transaction: nothing published through the scope becomes visible.
