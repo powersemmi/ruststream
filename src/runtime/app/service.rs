@@ -29,7 +29,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// hands a scope bound to that broker; nothing connects or subscribes until [`run`]. Brokers are
 /// held type-erased (only their lifecycle), so a single service can mix broker types.
 ///
-/// The type parameter `L` is the global middleware stack applied to every handler registered
+/// The type parameter `Layers` is the global middleware stack applied to every handler registered
 /// directly on a broker scope; it defaults to the no-op [`Identity`] and grows as [`layer`] is
 /// called. Add all layers before [`with_broker`], since a layer only applies to handlers
 /// registered after it (and not to handlers brought in via
@@ -71,17 +71,17 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// app.run().await
 /// # }
 /// ```
-pub struct RustStream<L = Identity, St = (), PP = PublishIdentity, Phase = Wired> {
+pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity, Phase = Wired> {
     pub(super) info: AppInfo,
     pub(super) brokers: Vec<RegisteredBroker>,
-    pub(super) starters: Vec<Starter<St>>,
+    pub(super) starters: Vec<Starter<State>>,
     pub(super) handlers: Vec<HandlerMetadata>,
     pub(super) servers: BTreeMap<String, ServerSpec>,
-    pub(super) publish_pipeline: PP,
-    pub(super) state_init: StateInit<St>,
-    pub(super) after_startup: Vec<LifecycleHook<St>>,
-    pub(super) on_shutdown: Vec<LifecycleHook<St>>,
-    pub(super) after_shutdown: Vec<LifecycleHook<St>>,
+    pub(super) publish_pipeline: Pipeline,
+    pub(super) state_init: StateInit<State>,
+    pub(super) after_startup: Vec<LifecycleHook<State>>,
+    pub(super) on_shutdown: Vec<LifecycleHook<State>>,
+    pub(super) after_shutdown: Vec<LifecycleHook<State>>,
     pub(super) shutdown_timeout: Option<Duration>,
     /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
@@ -92,7 +92,7 @@ pub struct RustStream<L = Identity, St = (), PP = PublishIdentity, Phase = Wired
     /// non-harness run with the `testing` feature enabled stays inert.
     #[cfg(feature = "testing")]
     pub(super) test_hooks: Arc<TestHooks>,
-    pub(super) global: L,
+    pub(super) global: Layers,
     // `fn() -> Phase` keeps the marker out of auto-trait and variance considerations, matching
     // the router builder's broker marker.
     pub(super) phase: PhantomData<fn() -> Phase>,
@@ -122,17 +122,19 @@ pub(crate) struct RegisteredBroker {
 /// connecting: the brokers (to recover and instrument), the deferred starters, the lifecycle hooks,
 /// and the shared test hooks slot. Produced by [`RustStream::into_test_parts`].
 #[cfg(feature = "testing")]
-pub(crate) struct TestParts<St> {
+pub(crate) struct TestParts<State> {
     pub(crate) brokers: Vec<RegisteredBroker>,
-    pub(crate) starters: Vec<Starter<St>>,
-    pub(crate) state_init: StateInit<St>,
-    pub(crate) after_startup: Vec<LifecycleHook<St>>,
+    pub(crate) starters: Vec<Starter<State>>,
+    pub(crate) state_init: StateInit<State>,
+    pub(crate) after_startup: Vec<LifecycleHook<State>>,
     pub(crate) shutdown_timeout: Option<Duration>,
     pub(crate) continuations: TaskTracker,
     pub(crate) test_hooks: Arc<TestHooks>,
 }
 
-impl<L, St, PP, Phase> std::fmt::Debug for RustStream<L, St, PP, Phase> {
+impl<Layers, State, Pipeline, Phase> std::fmt::Debug
+    for RustStream<Layers, State, Pipeline, Phase>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RustStream")
             .field("info", &self.info)
@@ -168,14 +170,14 @@ impl RustStream<Identity, (), PublishIdentity, Setup> {
     }
 }
 
-impl<L, St, PP> RustStream<L, St, PP, Setup> {
+impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     /// Adds a global middleware layer, applied to every handler registered later.
     ///
     /// The first layer added runs outermost. Only available before the first
     /// [`with_broker`](Self::with_broker): a layer added later could not wrap the handlers
     /// already registered, so that ordering does not compile.
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, L>, St, PP, Setup> {
+    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, Layers>, State, Pipeline, Setup> {
         RustStream {
             info: self.info,
             brokers: self.brokers,
@@ -197,10 +199,10 @@ impl<L, St, PP> RustStream<L, St, PP, Setup> {
     }
 
     /// Produces the typed application state at startup, transitioning the app's state type from the
-    /// previous `St` to `St2`.
+    /// previous `State` to `State2`.
     ///
     /// The hook runs once before brokers connect; its future can `await` (open a database pool,
-    /// connect a client), and the produced `St2` is shared with every handler (read via
+    /// connect a client), and the produced `State2` is shared with every handler (read via
     /// [`Context::state`](crate::runtime::Context::state)) and the read-only lifecycle hooks. A
     /// failing hook aborts startup. The initial state is `()` (from [`new`](Self::new)), so the
     /// first call's hook receives `()`.
@@ -216,12 +218,15 @@ impl<L, St, PP> RustStream<L, St, PP, Setup> {
     /// registered first: hooks close over the state type and cannot be carried across the state
     /// change. Register hooks after `on_startup`.
     #[must_use]
-    pub fn on_startup<F, Fut, St2, E>(self, hook: F) -> RustStream<L, St2, PP, Setup>
+    pub fn on_startup<F, Fut, State2, E>(
+        self,
+        hook: F,
+    ) -> RustStream<Layers, State2, Pipeline, Setup>
     where
-        F: FnOnce(St) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<St2, E>> + Send,
-        St: Send + 'static,
-        St2: Send + Sync + 'static,
+        F: FnOnce(State) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<State2, E>> + Send,
+        State: Send + 'static,
+        State2: Send + Sync + 'static,
         E: StdError + Send + Sync + 'static,
     {
         assert!(
@@ -266,7 +271,10 @@ impl<L, St, PP> RustStream<L, St, PP, Setup> {
     /// the first [`with_broker`](Self::with_broker): a middleware added later could not wrap the
     /// publishers already handed out, so that ordering does not compile.
     #[must_use]
-    pub fn publish_layer<M>(self, middleware: M) -> RustStream<L, St, PublishStack<M, PP>, Setup>
+    pub fn publish_layer<M>(
+        self,
+        middleware: M,
+    ) -> RustStream<Layers, State, PublishStack<M, Pipeline>, Setup>
     where
         M: PublishLayer + Clone + 'static,
     {
@@ -293,9 +301,9 @@ impl<L, St, PP> RustStream<L, St, PP, Setup> {
     }
 }
 
-impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
+impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> {
     /// Rebuilds the app under a different phase marker; the fields move as they are.
-    fn into_phase<Q>(self) -> RustStream<L, St, PP, Q> {
+    fn into_phase<Q>(self) -> RustStream<Layers, State, Pipeline, Q> {
         RustStream {
             info: self.info,
             brokers: self.brokers,
@@ -321,8 +329,8 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
     #[must_use]
     pub fn after_startup<F, Fut, E>(self, hook: F) -> Self
     where
-        St: Send + Sync + 'static,
-        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
@@ -333,8 +341,8 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
     #[must_use]
     pub fn on_shutdown<F, Fut, E>(self, hook: F) -> Self
     where
-        St: Send + Sync + 'static,
-        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
@@ -346,8 +354,8 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
     #[must_use]
     pub fn after_shutdown<F, Fut, E>(self, hook: F) -> Self
     where
-        St: Send + Sync + 'static,
-        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
@@ -356,12 +364,12 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
 
     fn push_lifecycle_hook<F, Fut, E>(mut self, phase: LifecyclePhase, hook: F) -> Self
     where
-        St: Send + Sync + 'static,
-        F: FnOnce(Arc<St>) -> Fut + Send + 'static,
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send,
         E: StdError + Send + Sync + 'static,
     {
-        let boxed: LifecycleHook<St> = Box::new(move |state| {
+        let boxed: LifecycleHook<State> = Box::new(move |state| {
             Box::pin(async move { hook(state).await.map_err(|e| Box::new(e) as BoxError) })
         });
         match phase {
@@ -426,13 +434,17 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
     /// and the publish pipeline are fixed from here on, so a configuration call that could not
     /// apply to this broker's handlers does not compile.
     #[must_use]
-    pub fn with_broker<B, F>(self, broker: B, build: F) -> RustStream<L, St, PP, Wired>
+    pub fn with_broker<B, F>(
+        self,
+        broker: B,
+        build: F,
+    ) -> RustStream<Layers, State, Pipeline, Wired>
     where
         B: Broker + 'static,
-        L: Clone,
-        PP: Clone,
-        St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, (), St, PP>),
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, Layers, (), State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
         let broker = Arc::new(broker);
@@ -454,14 +466,14 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
         broker: B,
         codec: C,
         build: F,
-    ) -> RustStream<L, St, PP, Wired>
+    ) -> RustStream<Layers, State, Pipeline, Wired>
     where
         B: Broker + 'static,
         C: Codec + Clone + 'static,
-        L: Clone,
-        PP: Clone,
-        St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, C, St, PP>),
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, Layers, C, State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
         let broker = Arc::new(broker);
@@ -512,13 +524,13 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
         label: impl Into<String>,
         broker: B,
         build: F,
-    ) -> RustStream<L, St, PP, Wired>
+    ) -> RustStream<Layers, State, Pipeline, Wired>
     where
         B: DescribeServer + 'static,
-        L: Clone,
-        PP: Clone,
-        St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, (), St, PP>),
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, Layers, (), State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
         let label = this.record_server(label, &broker);
@@ -542,14 +554,14 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
         broker: B,
         codec: C,
         build: F,
-    ) -> RustStream<L, St, PP, Wired>
+    ) -> RustStream<Layers, State, Pipeline, Wired>
     where
         B: DescribeServer + 'static,
         C: Codec + Clone + 'static,
-        L: Clone,
-        PP: Clone,
-        St: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, L, C, St, PP>),
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(&mut BrokerScope<B, Layers, C, State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
         let label = this.record_server(label, &broker);
@@ -571,12 +583,16 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
     }
 
     /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
-    fn new_scope<B, C>(&self, broker: &Arc<B>, codec: C) -> BrokerScope<B, L, C, St, PP>
+    fn new_scope<B, C>(
+        &self,
+        broker: &Arc<B>,
+        codec: C,
+    ) -> BrokerScope<B, Layers, C, State, Pipeline>
     where
         B: Broker + 'static,
-        L: Clone,
-        PP: Clone,
-        St: Send + Sync + 'static,
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
     {
         BrokerScope {
             broker: broker.clone(),
@@ -593,11 +609,11 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
     fn collect_scope<B, C>(
         &mut self,
         broker: &Arc<B>,
-        scope: BrokerScope<B, L, C, St, PP>,
+        scope: BrokerScope<B, Layers, C, State, Pipeline>,
         label: Option<String>,
     ) where
         B: Broker + 'static,
-        St: Send + Sync + 'static,
+        State: Send + Sync + 'static,
     {
         let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
         // The scope id is the index this broker will occupy once pushed below; the harness uses it
@@ -649,7 +665,7 @@ impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
     /// the brokers, the deferred starters, the lifecycle hooks, and the shared test-hooks slot.
     /// Handlers metadata and `AsyncAPI` servers are dropped (the harness does not need them).
     #[cfg(feature = "testing")]
-    pub(crate) fn into_test_parts(self) -> TestParts<St> {
+    pub(crate) fn into_test_parts(self) -> TestParts<State> {
         TestParts {
             brokers: self.brokers,
             starters: self.starters,

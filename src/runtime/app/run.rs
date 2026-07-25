@@ -21,9 +21,9 @@ use super::{LifecycleHook, RustStream, RustStreamError};
 type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// Binds the shared state into each hook, erasing the state type from the hook list.
-fn bind_hooks<St: Send + Sync + 'static>(
-    hooks: Vec<LifecycleHook<St>>,
-    state: &Arc<St>,
+fn bind_hooks<State: Send + Sync + 'static>(
+    hooks: Vec<LifecycleHook<State>>,
+    state: &Arc<State>,
 ) -> Vec<BoundHook> {
     hooks
         .into_iter()
@@ -35,12 +35,14 @@ fn bind_hooks<St: Send + Sync + 'static>(
 }
 
 // `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
-// `block_on`), so their futures must be `Send`: the shared state is held as `Arc<St>` across the
-// startup awaits (needs `St: Sync`) and the global stack `L` is carried in `self` (needs `L: Send`).
-// `St: 'static` is what every constructible app already satisfies (the `on_startup` producer
+// `block_on`), so their futures must be `Send`: the shared state is held as `Arc<State>` across the
+// startup awaits (needs `State: Sync`) and the global stack `Layers` is carried in `self` (needs `Layers: Send`).
+// `State: 'static` is what every constructible app already satisfies (the `on_startup` producer
 // returns the state from a `'static` boxed future); naming it here lets `start` box the shutdown
 // hooks with the state bound in.
-impl<L: Send, St: Send + Sync + 'static, PP, Phase> RustStream<L, St, PP, Phase> {
+impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
+    RustStream<Layers, State, Pipeline, Phase>
+{
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///
