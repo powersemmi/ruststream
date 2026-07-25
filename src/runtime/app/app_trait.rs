@@ -11,7 +11,7 @@ use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
 mod sealed {
     pub trait Sealed {}
-    impl<L, St, PP> Sealed for super::RustStream<L, St, PP> {}
+    impl<L, St, PP, Phase> Sealed for super::RustStream<L, St, PP, Phase> {}
 }
 
 /// The functional surface of a built [`RustStream`] service: run it, and read the metadata the
@@ -88,7 +88,7 @@ pub trait App: sealed::Sealed + Sized {
 // `St: 'static` mirrors the inherent impl in run.rs: every constructible app already satisfies
 // it, and `start` needs it to bind the state into the shutdown hooks.
 #[allow(clippy::use_self)]
-impl<L: Send, St: Send + Sync + 'static, PP: Send> App for RustStream<L, St, PP> {
+impl<L: Send, St: Send + Sync + 'static, PP: Send, Phase> App for RustStream<L, St, PP, Phase> {
     fn run(self) -> impl Future<Output = Result<(), RustStreamError>> + Send {
         RustStream::run(self)
     }

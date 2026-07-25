@@ -40,7 +40,7 @@ fn bind_hooks<St: Send + Sync + 'static>(
 // `St: 'static` is what every constructible app already satisfies (the `on_startup` producer
 // returns the state from a `'static` boxed future); naming it here lets `start` box the shutdown
 // hooks with the state bound in.
-impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
+impl<L: Send, St: Send + Sync + 'static, PP, Phase> RustStream<L, St, PP, Phase> {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///

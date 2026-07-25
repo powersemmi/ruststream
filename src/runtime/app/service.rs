@@ -1,7 +1,8 @@
 //! The [`RustStream`] builder: construction, configuration and handler registration.
 
 use std::{
-    collections::BTreeMap, error::Error as StdError, future::Future, sync::Arc, time::Duration,
+    collections::BTreeMap, error::Error as StdError, future::Future, marker::PhantomData,
+    sync::Arc, time::Duration,
 };
 
 use crate::codec::Codec;
@@ -34,8 +35,18 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// registered after it (and not to handlers brought in via
 /// [`include_router`](BrokerScope::include_router)).
 ///
+/// The type parameter `Phase` tracks the builder phase at compile time: [`new`](Self::new)
+/// starts in [`Setup`], where the state ([`on_startup`]), the middleware stack ([`layer`]) and
+/// the publish pipeline ([`publish_layer`](Self::publish_layer)) are still configurable; the
+/// first [`with_broker`] moves it to [`Wired`], where those methods no longer exist - so a
+/// configuration call that would silently not apply to already-registered handlers does not
+/// compile. `Phase` defaults to [`Wired`] because a signature that names `RustStream` almost
+/// always means the built service; the `Setup` state lives inside a builder chain and is rarely
+/// written out.
+///
 /// [`with_broker`]: Self::with_broker
 /// [`layer`]: Self::layer
+/// [`on_startup`]: Self::on_startup
 /// [`run`]: Self::run
 ///
 /// # Examples
@@ -60,7 +71,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// app.run().await
 /// # }
 /// ```
-pub struct RustStream<L = Identity, St = (), PP = PublishIdentity> {
+pub struct RustStream<L = Identity, St = (), PP = PublishIdentity, Phase = Wired> {
     pub(super) info: AppInfo,
     pub(super) brokers: Vec<RegisteredBroker>,
     pub(super) starters: Vec<Starter<St>>,
@@ -82,7 +93,20 @@ pub struct RustStream<L = Identity, St = (), PP = PublishIdentity> {
     #[cfg(feature = "testing")]
     pub(super) test_hooks: Arc<TestHooks>,
     pub(super) global: L,
+    // `fn() -> Phase` keeps the marker out of auto-trait and variance considerations, matching
+    // the router builder's broker marker.
+    pub(super) phase: PhantomData<fn() -> Phase>,
 }
+
+/// [`RustStream`] phase marker: the builder is still being configured - the state type, the
+/// middleware stack, and the publish pipeline may change, and no broker is registered yet.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Setup;
+
+/// [`RustStream`] phase marker: at least one broker (with its handlers) is registered, so the
+/// state type, the middleware stack, and the publish pipeline are fixed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Wired;
 
 /// A broker held by the app for lifecycle management, paired with its optional label.
 ///
@@ -108,7 +132,7 @@ pub(crate) struct TestParts<St> {
     pub(crate) test_hooks: Arc<TestHooks>,
 }
 
-impl<L, St, PP> std::fmt::Debug for RustStream<L, St, PP> {
+impl<L, St, PP, Phase> std::fmt::Debug for RustStream<L, St, PP, Phase> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RustStream")
             .field("info", &self.info)
@@ -118,7 +142,7 @@ impl<L, St, PP> std::fmt::Debug for RustStream<L, St, PP> {
     }
 }
 
-impl RustStream<Identity, (), PublishIdentity> {
+impl RustStream<Identity, (), PublishIdentity, Setup> {
     /// Creates an empty service with the given metadata, no global middleware, and the unit
     /// application state `()`. Produce a typed state with [`on_startup`](Self::on_startup).
     #[must_use]
@@ -139,16 +163,19 @@ impl RustStream<Identity, (), PublishIdentity> {
             #[cfg(feature = "testing")]
             test_hooks: Arc::new(TestHooks::detached()),
             global: Identity,
+            phase: PhantomData,
         }
     }
 }
 
-impl<L, St, PP> RustStream<L, St, PP> {
-    /// Adds a global middleware layer, applied to every handler registered after it.
+impl<L, St, PP> RustStream<L, St, PP, Setup> {
+    /// Adds a global middleware layer, applied to every handler registered later.
     ///
-    /// The first layer added runs outermost. Call before [`with_broker`](Self::with_broker).
+    /// The first layer added runs outermost. Only available before the first
+    /// [`with_broker`](Self::with_broker): a layer added later could not wrap the handlers
+    /// already registered, so that ordering does not compile.
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, L>, St, PP> {
+    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, L>, St, PP, Setup> {
         RustStream {
             info: self.info,
             brokers: self.brokers,
@@ -165,6 +192,7 @@ impl<L, St, PP> RustStream<L, St, PP> {
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
             global: Stack::new(layer, self.global),
+            phase: PhantomData,
         }
     }
 
@@ -177,10 +205,18 @@ impl<L, St, PP> RustStream<L, St, PP> {
     /// failing hook aborts startup. The initial state is `()` (from [`new`](Self::new)), so the
     /// first call's hook receives `()`.
     ///
-    /// Call this BEFORE registering handlers or read-only hooks: it fixes the app's state type, and
-    /// registrations made earlier (which saw a different state type) are not carried across.
+    /// Only available before the first [`with_broker`](Self::with_broker): the call fixes the
+    /// app's state type, and handlers registered against a different state type could not be
+    /// carried across - so that ordering does not compile.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a lifecycle hook ([`after_startup`](Self::after_startup),
+    /// [`on_shutdown`](Self::on_shutdown), [`after_shutdown`](Self::after_shutdown)) was
+    /// registered first: hooks close over the state type and cannot be carried across the state
+    /// change. Register hooks after `on_startup`.
     #[must_use]
-    pub fn on_startup<F, Fut, St2, E>(self, hook: F) -> RustStream<L, St2, PP>
+    pub fn on_startup<F, Fut, St2, E>(self, hook: F) -> RustStream<L, St2, PP, Setup>
     where
         F: FnOnce(St) -> Fut + Send + 'static,
         Fut: Future<Output = Result<St2, E>> + Send,
@@ -188,10 +224,18 @@ impl<L, St, PP> RustStream<L, St, PP> {
         St2: Send + Sync + 'static,
         E: StdError + Send + Sync + 'static,
     {
+        assert!(
+            self.after_startup.is_empty()
+                && self.on_shutdown.is_empty()
+                && self.after_shutdown.is_empty(),
+            "on_startup must be called before lifecycle hooks are registered: hooks close over \
+             the state type and cannot be carried across the state change"
+        );
         let prev = self.state_init;
         RustStream {
             info: self.info,
             brokers: self.brokers,
+            // Provably empty: with_broker (the only way to add starters) leaves Setup.
             starters: Vec::new(),
             handlers: self.handlers,
             servers: self.servers,
@@ -210,6 +254,65 @@ impl<L, St, PP> RustStream<L, St, PP> {
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
             global: self.global,
+            phase: PhantomData,
+        }
+    }
+
+    /// Adds an outgoing publish middleware, run on every published reply before it reaches the
+    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). It composes into the
+    /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the
+    /// consume-side [`layer`](Self::layer), where the first added is outermost); the middleware must
+    /// be [`Clone`] (the pipeline is cloned into each publishing handler). Only available before
+    /// the first [`with_broker`](Self::with_broker): a middleware added later could not wrap the
+    /// publishers already handed out, so that ordering does not compile.
+    #[must_use]
+    pub fn publish_layer<M>(self, middleware: M) -> RustStream<L, St, PublishStack<M, PP>, Setup>
+    where
+        M: PublishLayer + Clone + 'static,
+    {
+        // Prepend `middleware` as the new outermost wrapper: the publish pipeline stays a statically
+        // composed type (no `dyn` dispatch), and the last one added runs outermost.
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            starters: self.starters,
+            handlers: self.handlers,
+            servers: self.servers,
+            publish_pipeline: PublishStack::new(middleware, self.publish_pipeline),
+            state_init: self.state_init,
+            after_startup: self.after_startup,
+            on_shutdown: self.on_shutdown,
+            after_shutdown: self.after_shutdown,
+            shutdown_timeout: self.shutdown_timeout,
+            continuations: self.continuations,
+            #[cfg(feature = "testing")]
+            test_hooks: self.test_hooks,
+            global: self.global,
+            phase: PhantomData,
+        }
+    }
+}
+
+impl<L, St, PP, Phase> RustStream<L, St, PP, Phase> {
+    /// Rebuilds the app under a different phase marker; the fields move as they are.
+    fn into_phase<Q>(self) -> RustStream<L, St, PP, Q> {
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            starters: self.starters,
+            handlers: self.handlers,
+            servers: self.servers,
+            publish_pipeline: self.publish_pipeline,
+            state_init: self.state_init,
+            after_startup: self.after_startup,
+            on_shutdown: self.on_shutdown,
+            after_shutdown: self.after_shutdown,
+            shutdown_timeout: self.shutdown_timeout,
+            continuations: self.continuations,
+            #[cfg(feature = "testing")]
+            test_hooks: self.test_hooks,
+            global: self.global,
+            phase: PhantomData,
         }
     }
 
@@ -280,38 +383,6 @@ impl<L, St, PP> RustStream<L, St, PP> {
         self
     }
 
-    /// Adds an outgoing publish middleware, run on every published reply before it reaches the
-    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). It composes into the
-    /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the
-    /// consume-side [`layer`](Self::layer), where the first added is outermost); the middleware must
-    /// be [`Clone`] (the pipeline is cloned into each publishing handler). Call before
-    /// [`with_broker`](Self::with_broker).
-    #[must_use]
-    pub fn publish_layer<M>(self, middleware: M) -> RustStream<L, St, PublishStack<M, PP>>
-    where
-        M: PublishLayer + Clone + 'static,
-    {
-        // Prepend `middleware` as the new outermost wrapper: the publish pipeline stays a statically
-        // composed type (no `dyn` dispatch), and the last one added runs outermost.
-        RustStream {
-            info: self.info,
-            brokers: self.brokers,
-            starters: self.starters,
-            handlers: self.handlers,
-            servers: self.servers,
-            publish_pipeline: PublishStack::new(middleware, self.publish_pipeline),
-            state_init: self.state_init,
-            after_startup: self.after_startup,
-            on_shutdown: self.on_shutdown,
-            after_shutdown: self.after_shutdown,
-            shutdown_timeout: self.shutdown_timeout,
-            continuations: self.continuations,
-            #[cfg(feature = "testing")]
-            test_hooks: self.test_hooks,
-            global: self.global,
-        }
-    }
-
     /// Registers a broker for lifecycle management only (connect / shutdown), without attaching
     /// subscribers. Use for publish-only brokers.
     #[must_use]
@@ -350,8 +421,12 @@ impl<L, St, PP> RustStream<L, St, PP> {
     /// The scope has no default codec, so macro handlers are mounted with an explicit one
     /// (`b.include(handle, JsonCodec)`). To set a scope default and drop the per-call codec, use
     /// [`with_broker_codec`](Self::with_broker_codec).
+    ///
+    /// The first call moves the builder to the [`Wired`] phase: the state, the middleware stack,
+    /// and the publish pipeline are fixed from here on, so a configuration call that could not
+    /// apply to this broker's handlers does not compile.
     #[must_use]
-    pub fn with_broker<B, F>(mut self, broker: B, build: F) -> Self
+    pub fn with_broker<B, F>(self, broker: B, build: F) -> RustStream<L, St, PP, Wired>
     where
         B: Broker + 'static,
         L: Clone,
@@ -359,11 +434,12 @@ impl<L, St, PP> RustStream<L, St, PP> {
         St: Send + Sync + 'static,
         F: FnOnce(&mut BrokerScope<B, L, (), St, PP>),
     {
+        let mut this = self.into_phase::<Wired>();
         let broker = Arc::new(broker);
-        let mut scope = self.new_scope(&broker, ());
+        let mut scope = this.new_scope(&broker, ());
         build(&mut scope);
-        self.collect_scope(&broker, scope, None);
-        self
+        this.collect_scope(&broker, scope, None);
+        this
     }
 
     /// Registers a broker with a default `codec`, so its macro handlers are mounted without
@@ -373,7 +449,12 @@ impl<L, St, PP> RustStream<L, St, PP> {
     /// [`include_publishing`](BrokerScope::include_publishing) take just the definition and decode
     /// it with `codec`.
     #[must_use]
-    pub fn with_broker_codec<B, C, F>(mut self, broker: B, codec: C, build: F) -> Self
+    pub fn with_broker_codec<B, C, F>(
+        self,
+        broker: B,
+        codec: C,
+        build: F,
+    ) -> RustStream<L, St, PP, Wired>
     where
         B: Broker + 'static,
         C: Codec + Clone + 'static,
@@ -382,11 +463,12 @@ impl<L, St, PP> RustStream<L, St, PP> {
         St: Send + Sync + 'static,
         F: FnOnce(&mut BrokerScope<B, L, C, St, PP>),
     {
+        let mut this = self.into_phase::<Wired>();
         let broker = Arc::new(broker);
-        let mut scope = self.new_scope(&broker, codec);
+        let mut scope = this.new_scope(&broker, codec);
         build(&mut scope);
-        self.collect_scope(&broker, scope, None);
-        self
+        this.collect_scope(&broker, scope, None);
+        this
     }
 
     /// Registers a self-describing broker under `label`, along with the handlers attached to it.
@@ -426,11 +508,11 @@ impl<L, St, PP> RustStream<L, St, PP> {
     /// ```
     #[must_use]
     pub fn with_broker_labeled<B, F>(
-        mut self,
+        self,
         label: impl Into<String>,
         broker: B,
         build: F,
-    ) -> Self
+    ) -> RustStream<L, St, PP, Wired>
     where
         B: DescribeServer + 'static,
         L: Clone,
@@ -438,12 +520,13 @@ impl<L, St, PP> RustStream<L, St, PP> {
         St: Send + Sync + 'static,
         F: FnOnce(&mut BrokerScope<B, L, (), St, PP>),
     {
-        let label = self.record_server(label, &broker);
+        let mut this = self.into_phase::<Wired>();
+        let label = this.record_server(label, &broker);
         let broker = Arc::new(broker);
-        let mut scope = self.new_scope(&broker, ());
+        let mut scope = this.new_scope(&broker, ());
         build(&mut scope);
-        self.collect_scope(&broker, scope, Some(label));
-        self
+        this.collect_scope(&broker, scope, Some(label));
+        this
     }
 
     /// Registers a self-describing broker under `label` with a default `codec`.
@@ -454,12 +537,12 @@ impl<L, St, PP> RustStream<L, St, PP> {
     /// codec).
     #[must_use]
     pub fn with_broker_labeled_codec<B, C, F>(
-        mut self,
+        self,
         label: impl Into<String>,
         broker: B,
         codec: C,
         build: F,
-    ) -> Self
+    ) -> RustStream<L, St, PP, Wired>
     where
         B: DescribeServer + 'static,
         C: Codec + Clone + 'static,
@@ -468,12 +551,13 @@ impl<L, St, PP> RustStream<L, St, PP> {
         St: Send + Sync + 'static,
         F: FnOnce(&mut BrokerScope<B, L, C, St, PP>),
     {
-        let label = self.record_server(label, &broker);
+        let mut this = self.into_phase::<Wired>();
+        let label = this.record_server(label, &broker);
         let broker = Arc::new(broker);
-        let mut scope = self.new_scope(&broker, codec);
+        let mut scope = this.new_scope(&broker, codec);
         build(&mut scope);
-        self.collect_scope(&broker, scope, Some(label));
-        self
+        this.collect_scope(&broker, scope, Some(label));
+        this
     }
 
     /// Records `broker`'s server coordinates under `label` (keeping an explicit

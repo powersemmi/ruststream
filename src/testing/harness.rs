@@ -11,8 +11,8 @@ use tokio_util::task::TaskTracker;
 
 use crate::OutgoingMessage;
 use crate::runtime::{
-    BrokerLifecycle, ErrorShutdown, LifecycleHook, RegisteredBroker, RustStream, RustStreamError,
-    Starter, TestParts,
+    BrokerLifecycle, ErrorShutdown, LifecycleHook, PublishIdentity, RegisteredBroker, RustStream,
+    RustStreamError, Starter, TestParts,
 };
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
@@ -210,7 +210,9 @@ impl<St: Send + Sync + 'static> TestApp<St> {
     ///
     /// Returns [`TestError::Startup`] if a lifecycle hook fails, or [`TestError::Subscribe`] if a
     /// subscription fails to open.
-    pub async fn start<L>(app: RustStream<L, St>) -> Result<Self, TestError> {
+    pub async fn start<L, Phase>(
+        app: RustStream<L, St, PublishIdentity, Phase>,
+    ) -> Result<Self, TestError> {
         let (coordinator, entries, parts) = Self::setup(app);
         let TestParts {
             starters,
@@ -241,7 +243,10 @@ impl<St: Send + Sync + 'static> TestApp<St> {
     /// # Errors
     ///
     /// Returns [`TestError::Subscribe`] if a subscription fails to open.
-    pub async fn with_state<L, F>(app: RustStream<L, St>, build: F) -> Result<Self, TestError>
+    pub async fn with_state<L, F, Phase>(
+        app: RustStream<L, St, PublishIdentity, Phase>,
+        build: F,
+    ) -> Result<Self, TestError>
     where
         F: FnOnce(&TestBrokers<'_>) -> St,
     {
@@ -269,7 +274,9 @@ impl<St: Send + Sync + 'static> TestApp<St> {
     /// Installs a fresh coordinator into the app's hooks slot and each broker's bus, and recovers
     /// the per-broker transports. Returns the coordinator, the broker entries, and the remaining
     /// parts (the brokers field is now consumed and empty).
-    fn setup<L>(app: RustStream<L, St>) -> (Coordinator, Vec<BrokerEntry>, TestParts<St>) {
+    fn setup<L, Phase>(
+        app: RustStream<L, St, PublishIdentity, Phase>,
+    ) -> (Coordinator, Vec<BrokerEntry>, TestParts<St>) {
         let mut parts = app.into_test_parts();
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
         parts.test_hooks.install(coordinator.clone());
