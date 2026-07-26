@@ -11,7 +11,7 @@ use crate::{Broker, DescribeServer, ServerSpec};
 use tokio_util::task::TaskTracker;
 
 use crate::runtime::dispatch::Delivery;
-use crate::runtime::lifecycle::{BoxError, BrokerLifecycle};
+use crate::runtime::lifecycle::{BoxError, BrokerCell, BrokerLifecycle, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
 use crate::runtime::publish::{PublishIdentity, PublishLayer, PublishStack};
@@ -114,7 +114,7 @@ pub struct Wired;
 /// for a broker registered through [`with_broker_labeled`](RustStream::with_broker_labeled) (or its
 /// codec variant) and `None` otherwise.
 pub(crate) struct RegisteredBroker {
-    pub(crate) lifecycle: Arc<dyn BrokerLifecycle>,
+    pub(crate) lifecycle: Box<dyn BrokerLifecycle>,
     pub(crate) label: Option<String>,
 }
 
@@ -398,8 +398,10 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     where
         B: Broker + 'static,
     {
+        // No subscriptions read this slot; it only satisfies the cell's shape.
+        let slot: ConnectedSlot<B> = Arc::new(std::sync::Mutex::new(None));
         self.brokers.push(RegisteredBroker {
-            lifecycle: Arc::new(broker),
+            lifecycle: Box::new(BrokerCell { broker, slot }),
             label: None,
         });
         self
@@ -447,10 +449,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         F: FnOnce(&mut BrokerScope<B, Layers, (), State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
-        let broker = Arc::new(broker);
-        let mut scope = this.new_scope(&broker, ());
+        let mut scope = this.new_scope(broker, ());
         build(&mut scope);
-        this.collect_scope(&broker, scope, None);
+        this.collect_scope(scope, None);
         this
     }
 
@@ -476,10 +477,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         F: FnOnce(&mut BrokerScope<B, Layers, C, State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
-        let broker = Arc::new(broker);
-        let mut scope = this.new_scope(&broker, codec);
+        let mut scope = this.new_scope(broker, codec);
         build(&mut scope);
-        this.collect_scope(&broker, scope, None);
+        this.collect_scope(scope, None);
         this
     }
 
@@ -503,11 +503,17 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// use ruststream::{Broker, DescribeServer, ServerSpec};
     ///
     /// # struct NatsBroker;
+    /// # struct ConnectedNats;
     /// # impl NatsBroker { fn new(_: &str) -> Self { Self } }
     /// # impl Broker for NatsBroker {
     /// #     type Error = std::io::Error;
-    /// #     async fn connect(&self) -> Result<(), Self::Error> { Ok(()) }
-    /// #     async fn shutdown(&self) -> Result<(), Self::Error> { Ok(()) }
+    /// #     type Connected = ConnectedNats;
+    /// #     async fn connect(self) -> Result<ConnectedNats, Self::Error> { Ok(ConnectedNats) }
+    /// # }
+    /// # impl ruststream::ConnectedBroker for ConnectedNats {
+    /// #     type Error = std::io::Error;
+    /// #     type Closed = ();
+    /// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
     /// # }
     /// # impl DescribeServer for NatsBroker {
     /// #     fn describe_server(&self) -> ServerSpec { ServerSpec::new("nats:4222", "nats") }
@@ -534,10 +540,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     {
         let mut this = self.into_phase::<Wired>();
         let label = this.record_server(label, &broker);
-        let broker = Arc::new(broker);
-        let mut scope = this.new_scope(&broker, ());
+        let mut scope = this.new_scope(broker, ());
         build(&mut scope);
-        this.collect_scope(&broker, scope, Some(label));
+        this.collect_scope(scope, Some(label));
         this
     }
 
@@ -565,10 +570,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     {
         let mut this = self.into_phase::<Wired>();
         let label = this.record_server(label, &broker);
-        let broker = Arc::new(broker);
-        let mut scope = this.new_scope(&broker, codec);
+        let mut scope = this.new_scope(broker, codec);
         build(&mut scope);
-        this.collect_scope(&broker, scope, Some(label));
+        this.collect_scope(scope, Some(label));
         this
     }
 
@@ -583,11 +587,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     }
 
     /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
-    fn new_scope<B, C>(
-        &self,
-        broker: &Arc<B>,
-        codec: C,
-    ) -> BrokerScope<B, Layers, C, State, Pipeline>
+    fn new_scope<B, C>(&self, broker: B, codec: C) -> BrokerScope<B, Layers, C, State, Pipeline>
     where
         B: Broker + 'static,
         Layers: Clone,
@@ -595,7 +595,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         State: Send + Sync + 'static,
     {
         BrokerScope {
-            broker: broker.clone(),
+            broker,
             sink: RouterSink::new(),
             pipeline: self.publish_pipeline.clone(),
             retry_publisher: None,
@@ -606,40 +606,57 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
 
     /// Drains a built scope's registrations into the app and holds the broker for lifecycle,
     /// recording `label` as the broker's stable runtime identity (`None` when unlabeled).
+    ///
+    /// The broker itself is boxed into a [`BrokerCell`] whose consuming `connect` publishes the
+    /// typed connected form into a shared slot; each starter reads the slot at startup, after
+    /// every broker connected and before any subscription opens.
     fn collect_scope<B, C>(
         &mut self,
-        broker: &Arc<B>,
         scope: BrokerScope<B, Layers, C, State, Pipeline>,
         label: Option<String>,
     ) where
         B: Broker + 'static,
         State: Send + Sync + 'static,
     {
-        let lifecycle: Arc<dyn BrokerLifecycle> = broker.clone();
+        let BrokerScope {
+            broker,
+            sink,
+            retry_publisher,
+            ..
+        } = scope;
+        let slot: ConnectedSlot<B> = Arc::new(std::sync::Mutex::new(None));
         // The scope id is the index this broker will occupy once pushed below; the harness uses it
         // to scope recorded deliveries per broker.
         #[cfg(feature = "testing")]
         let delivery = Arc::new(Delivery::instrumented(
-            scope.retry_publisher.clone(),
+            retry_publisher,
             self.continuations.clone(),
             self.test_hooks.clone(),
             self.brokers.len(),
         ));
         #[cfg(not(feature = "testing"))]
         let delivery = Arc::new(Delivery::detached(
-            scope.retry_publisher.clone(),
+            retry_publisher,
             self.continuations.clone(),
         ));
-        let (starters, handlers) = scope.sink.into_parts();
+        let (starters, handlers) = sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {
-            let broker = broker.clone();
+            let slot = Arc::clone(&slot);
             let delivery = delivery.clone();
             self.starters.push(Box::new(move |state, shutdown, token| {
-                bound(broker, state, delivery, shutdown, token)
+                let connected = slot
+                    .lock()
+                    .expect("connected slot mutex poisoned")
+                    .clone()
+                    .expect("brokers connect before subscriptions open");
+                bound(connected, state, delivery, shutdown, token)
             }));
             self.handlers.push(meta);
         }
-        self.brokers.push(RegisteredBroker { lifecycle, label });
+        self.brokers.push(RegisteredBroker {
+            lifecycle: Box::new(BrokerCell { broker, slot }),
+            label,
+        });
     }
 
     /// Returns metadata for every registered handler, in registration order. Input to the

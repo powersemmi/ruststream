@@ -19,6 +19,13 @@ use super::health::{self, HealthProbe, HealthState};
 use super::service::RegisteredBroker;
 use super::{LifecycleHook, RustStream, RustStreamError};
 
+/// A broker that finished [`Broker::connect`](crate::Broker::connect), held erased for the
+/// consuming teardown, paired with its optional label.
+pub(crate) struct ConnectedEntry {
+    pub(crate) lifecycle: Box<dyn crate::runtime::lifecycle::ConnectedLifecycle>,
+    pub(crate) label: Option<String>,
+}
+
 /// A lifecycle hook with the state already bound, so [`RunningApp`] stays non-generic.
 type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
@@ -138,17 +145,18 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         let state = state_init().await.map_err(RustStreamError::Startup)?;
         let state = Arc::new(state);
 
-        for broker in &brokers {
-            broker
-                .lifecycle
+        let mut connected = Vec::with_capacity(brokers.len());
+        for RegisteredBroker { lifecycle, label } in brokers {
+            let lifecycle = lifecycle
                 .connect()
                 .await
                 .map_err(RustStreamError::Connect)?;
             info!(
                 target: "ruststream::lifecycle",
-                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+                broker = label.as_deref().unwrap_or_else(|| lifecycle.name()),
                 "broker connected",
             );
+            connected.push(ConnectedEntry { lifecycle, label });
         }
 
         let token = CancellationToken::new();
@@ -202,7 +210,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             handles,
             on_shutdown: bind_hooks(on_shutdown, &state),
             after_shutdown: bind_hooks(after_shutdown, &state),
-            brokers,
+            brokers: connected,
             shutdown_timeout,
             continuations,
             health,
@@ -238,7 +246,7 @@ pub struct RunningApp {
     handles: Vec<JoinHandle<()>>,
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
-    brokers: Vec<RegisteredBroker>,
+    brokers: Vec<ConnectedEntry>,
     shutdown_timeout: Option<Duration>,
     continuations: TaskTracker,
     health: watch::Sender<HealthState>,
@@ -366,7 +374,7 @@ async fn teardown(
     handles: Vec<JoinHandle<()>>,
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
-    brokers: Vec<RegisteredBroker>,
+    brokers: Vec<ConnectedEntry>,
     shutdown_timeout: Option<Duration>,
     continuations: TaskTracker,
 ) -> Result<(), RustStreamError> {
@@ -385,15 +393,15 @@ async fn teardown(
     // at-most-once, so timing one out only abandons follow-up work, never a settlement.
     drain_continuations(continuations, shutdown_timeout).await;
 
-    for broker in brokers.iter().rev() {
-        broker
-            .lifecycle
+    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+        let name = lifecycle.name();
+        lifecycle
             .shutdown()
             .await
             .map_err(RustStreamError::Shutdown)?;
         debug!(
             target: "ruststream::lifecycle",
-            broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+            broker = label.as_deref().unwrap_or(name),
             "broker shut down",
         );
     }

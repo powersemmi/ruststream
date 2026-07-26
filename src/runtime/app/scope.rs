@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{
@@ -32,8 +32,9 @@ use crate::runtime::typed::{Typed, typed};
 /// stack `Layers`; registrations are collected and started later, in
 /// [`RustStream::run`](crate::runtime::RustStream::run). Each handler registered here is wrapped
 /// with `Layers` before it is stored.
-pub struct BrokerScope<B, Layers = Identity, C = (), State = (), Pipeline = PublishIdentity> {
-    pub(super) broker: Arc<B>,
+pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipeline = PublishIdentity>
+{
+    pub(super) broker: B,
     pub(super) sink: RouterSink<B, State>,
     pub(super) pipeline: Pipeline,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
@@ -111,7 +112,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// See [`Router::subscribe`](crate::runtime::Router::subscribe).
     pub fn subscribe<S, H, Cx>(&mut self, source: S, handler: H, meta: HandlerMetadata)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         State: Send + Sync + 'static,
         Cx: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
@@ -147,7 +148,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     /// `include` / `include_on` forms.
     pub(super) fn mount_subscriber<S, D, C>(&mut self, source: S, def: D, codec: C)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
         D: SubscriberDef,
@@ -175,7 +176,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     /// the global stack: per-message layers cannot wrap a whole-batch handler.
     pub(super) fn mount_batch<S, D, C>(&mut self, source: S, def: D, codec: C)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -201,7 +202,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         codec: C,
         publisher: RP,
     ) where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchPublishingCall<State> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -234,7 +235,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         codec: C,
         publisher: TypedPublisher<P, PC, PL>,
     ) where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
         D: PublishingCall<State> + 'static,
@@ -267,7 +268,9 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     }
 }
 
-impl<B, Layers, C, State, Pipeline> std::fmt::Debug for BrokerScope<B, Layers, C, State, Pipeline> {
+impl<B: Broker, Layers, C, State, Pipeline> std::fmt::Debug
+    for BrokerScope<B, Layers, C, State, Pipeline>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrokerScope")
             .field("sink", &self.sink)

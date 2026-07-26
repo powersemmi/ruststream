@@ -8,7 +8,7 @@ use std::{future::Future, time::Duration};
 
 use futures::Stream;
 
-use crate::{Broker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
+use crate::{Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
 
 /// A subscriber that natively delivers messages in batches.
 ///
@@ -116,7 +116,7 @@ pub trait Partitioned {
     fn partition_key(&self) -> Option<&[u8]>;
 }
 
-/// A broker whose subscriptions are fully determined by a name string.
+/// A connected broker whose subscriptions are fully determined by a name string.
 ///
 /// This is the common case (`NATS` core subjects, the in-memory broadcast broker, `Redis` pub/sub
 /// channels): no consumer group, partition, or durable-consumer configuration is needed to open a
@@ -125,26 +125,28 @@ pub trait Partitioned {
 /// implement `Subscribe`; callers describe those with a broker-specific
 /// [`SubscriptionSource`](crate::SubscriptionSource) instead.
 ///
+/// Implemented on the [`ConnectedBroker`](crate::ConnectedBroker) form: a subscription needs a
+/// live connection, and the ladder makes that requirement a type, not a runtime check.
+///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Broker, Subscribe};
+/// use ruststream::Subscribe;
 ///
-/// async fn open<B: Subscribe>(broker: &B) -> Result<B::Subscriber, B::Error> {
-///     broker.subscribe("orders").await
+/// async fn open<C: Subscribe>(connected: &C) -> Result<C::Subscriber, C::Error> {
+///     connected.subscribe("orders").await
 /// }
 /// ```
-pub trait Subscribe: Broker {
+pub trait Subscribe: ConnectedBroker {
     /// The subscriber type opened by a by-name subscription.
     type Subscriber: Subscriber;
 
     /// Opens a subscription to `name`, producing this broker's [`Subscriber`](Self::Subscriber).
     ///
-    /// Called after [`Broker::connect`]; implementations may assume a live connection.
-    ///
     /// # Errors
     ///
-    /// Returns [`Broker::Error`] when the broker rejects the subscription or the transport fails.
+    /// Returns [`ConnectedBroker::Error`](crate::ConnectedBroker::Error) when the broker rejects
+    /// the subscription or the transport fails.
     fn subscribe(
         &self,
         name: &str,

@@ -18,7 +18,7 @@ use common::wait_for;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
+use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,7 +50,11 @@ async fn tx_confirm(orders: &[Order]) -> Vec<Receipt> {
 async fn transactional_replies_compose_with_a_batch_pool() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker.clone();
+    // The observing side needs the TestableBroker surface, which lives on the connected form;
+    // the shared in-process bus makes this clone observe the app's broker.
+    let observer = Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible");
 
     let replies = TypedPublisher::new(broker.publisher()).transactional();
     let app = RustStream::new(AppInfo::new("tx", "0.1.0"))

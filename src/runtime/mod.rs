@@ -37,7 +37,7 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 #[cfg(feature = "testing")]
-pub(crate) use lifecycle::BrokerLifecycle;
+pub(crate) use lifecycle::ConnectedLifecycle;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{

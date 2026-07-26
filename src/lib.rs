@@ -49,7 +49,7 @@ pub mod testing;
 #[doc(hidden)]
 pub use inventory;
 
-pub use broker::Broker;
+pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, Partitioned, RequestReply,

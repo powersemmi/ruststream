@@ -234,35 +234,103 @@ impl std::fmt::Debug for MemoryBroker {
 
 impl Broker for MemoryBroker {
     type Error = MemoryError;
+    type Connected = ConnectedMemoryBroker;
 
-    /// Connecting is free for an in-process bus; after a shutdown it revives the broker (the
-    /// contract's "reconnect or error" choice) with a fresh, empty bus, so subscribers opened
-    /// before the shutdown stay gone and the caller re-subscribes, exactly as the runtime does
-    /// on a fresh start. A live bus keeps its registrations (idempotent).
-    async fn connect(&self) -> Result<(), Self::Error> {
-        let mut bus = self
-            .state
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned");
-        if matches!(*bus, Bus::ShutDown) {
-            *bus = Bus::Live(HashMap::new());
+    /// Connecting is free for an in-process bus. A shut-down bus (a clone lineage may have shut
+    /// the shared state down) is revived with a fresh, empty registration map, so the connected
+    /// form always starts live; a live bus keeps its registrations.
+    async fn connect(self) -> Result<Self::Connected, Self::Error> {
+        {
+            let mut bus = self
+                .state
+                .subscribers
+                .lock()
+                .expect("memory broker mutex poisoned");
+            if matches!(*bus, Bus::ShutDown) {
+                *bus = Bus::Live(HashMap::new());
+            }
         }
-        drop(bus);
-        Ok(())
+        Ok(ConnectedMemoryBroker { state: self.state })
+    }
+}
+
+/// The connected form of [`MemoryBroker`]: the typed witness that
+/// [`Broker::connect`](crate::Broker::connect) ran.
+///
+/// Cheap to clone: the in-memory bus is shared state by nature, so the connected form is a
+/// shareable handle on it, exactly like the unconnected broker. Subscriptions (the
+/// [`Subscribe`](crate::Subscribe) capability, [`MemorySource`]) resolve against this form.
+#[derive(Clone)]
+pub struct ConnectedMemoryBroker {
+    state: Arc<MemoryState>,
+}
+
+impl std::fmt::Debug for ConnectedMemoryBroker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectedMemoryBroker")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ConnectedMemoryBroker {
+    /// Returns a publisher bound to this broker.
+    #[must_use]
+    pub fn publisher(&self) -> MemoryPublisher {
+        MemoryPublisher {
+            state: Arc::clone(&self.state),
+            txn: Mutex::new(None),
+        }
     }
 
+    /// Returns a request / reply-capable publisher bound to this broker.
+    ///
+    /// See [`MemoryBroker::requester`] for the error semantics.
+    #[must_use]
+    pub fn requester(&self) -> MemoryRequester {
+        MemoryRequester::new(Arc::clone(&self.state))
+    }
+}
+
+impl crate::ConnectedBroker for ConnectedMemoryBroker {
+    type Error = MemoryError;
+    type Closed = ClosedMemoryBroker;
+
     /// Enters the terminal shut-down state: the bus itself becomes [`Bus::ShutDown`], so every
-    /// operation that would touch it (publish, subscribe, a transaction commit, a request)
-    /// errors with [`MemoryError::ShutDown`] until a reviving [`connect`](Broker::connect).
-    /// Idempotent.
-    async fn shutdown(&self) -> Result<(), Self::Error> {
-        *self
-            .state
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned") = Bus::ShutDown;
-        Ok(())
+    /// aliased handle that would touch it (a publisher's publish or transaction commit, a
+    /// request) errors with [`MemoryError::ShutDown`]. Consuming `self` makes any further use
+    /// of this handle a compile error; the returned witness reports how many subscriber
+    /// registrations the teardown dropped.
+    async fn shutdown(self) -> Result<Self::Closed, Self::Error> {
+        let dropped = {
+            let mut bus = self
+                .state
+                .subscribers
+                .lock()
+                .expect("memory broker mutex poisoned");
+            match std::mem::replace(&mut *bus, Bus::ShutDown) {
+                Bus::Live(subscribers) => subscribers.values().map(Vec::len).sum(),
+                Bus::ShutDown => 0,
+            }
+        };
+        Ok(ClosedMemoryBroker {
+            subscribers_dropped: dropped,
+        })
+    }
+}
+
+/// The terminal witness returned by shutting down a [`ConnectedMemoryBroker`].
+///
+/// Has no publish or subscribe surface; it carries the teardown diagnostics as plain data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClosedMemoryBroker {
+    subscribers_dropped: usize,
+}
+
+impl ClosedMemoryBroker {
+    /// How many subscriber registrations were dropped when the bus shut down.
+    #[must_use]
+    pub fn subscribers_dropped(&self) -> usize {
+        self.subscribers_dropped
     }
 }
 
@@ -278,14 +346,16 @@ impl DescribeServer for MemoryBroker {
 }
 
 // --8<-- [start:testable]
+// The harness drives the connected form: TestApp connects every registered broker before it
+// recovers the in-process transport, and run_suite scenarios receive connected brokers.
 #[cfg(feature = "testing")]
-impl crate::testing::TestableBroker for MemoryBroker {
+impl crate::testing::TestableBroker for ConnectedMemoryBroker {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.state.install_coordinator(coordinator);
     }
 
     fn inject(&self, message: OutgoingMessage<'_>) {
-        // Injecting into a shut-down broker is a harness bug (both run_suite and TestApp drive
+        // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
             .fanout(&MemoryDelivery {
@@ -308,13 +378,10 @@ impl crate::testing::TestableBroker for MemoryBroker {
 }
 
 #[cfg(feature = "testing")]
-crate::register_testable_broker!(MemoryBroker);
+crate::register_testable_broker!(ConnectedMemoryBroker);
 // --8<-- [end:testable]
 
-// `Self::subscribe` would read as a recursive call into this trait method; spell out the broker
-// type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).
-#[allow(clippy::use_self)]
-impl Subscribe for MemoryBroker {
+impl Subscribe for ConnectedMemoryBroker {
     type Subscriber = MemorySubscriber;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
@@ -336,7 +403,7 @@ impl Subscribe for MemoryBroker {
 ///
 /// The broker-owned counterpart to the generic [`Name`](crate::Name) source: it carries no extra
 /// configuration (the in-memory broker has none), but giving every broker its own
-/// [`SubscriptionSource`] keeps the macro-subscriber and lazy-startup paths uniform across brokers.
+/// [`SubscriptionSource`] keeps the macro-subscriber and startup paths uniform across brokers.
 /// Pass it to the descriptor form of the macro, `#[subscriber(MemorySource::new("orders"))]`, the
 /// way a NATS service passes `SubscribeOptions`.
 #[derive(Debug, Clone)]
@@ -352,15 +419,18 @@ impl MemorySource {
     }
 }
 
-impl SubscriptionSource<MemoryBroker> for MemorySource {
+impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
     type Subscriber = MemorySubscriber;
 
     fn name(&self) -> &str {
         &self.name
     }
 
-    async fn subscribe(self, broker: &MemoryBroker) -> Result<Self::Subscriber, MemoryError> {
-        Subscribe::subscribe(broker, &self.name).await
+    async fn subscribe(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> Result<Self::Subscriber, MemoryError> {
+        Subscribe::subscribe(connected, &self.name).await
     }
 }
 

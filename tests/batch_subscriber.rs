@@ -260,7 +260,9 @@ async fn audit(orders: &[Order]) -> Vec<Confirmation> {
 async fn batch_replies_publish_transactionally() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker.clone();
+    let observer = ruststream::Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible");
 
     let replies = TypedPublisher::new(broker.publisher()).transactional();
     let app = RustStream::new(AppInfo::new("confirmations", "0.1.0"))

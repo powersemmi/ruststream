@@ -12,12 +12,12 @@ use std::time::Duration;
 
 use common::wait_for;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryError, MemorySubscriber};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemorySubscriber};
 use ruststream::runtime::{
     AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
     TypedPublisher,
 };
-use ruststream::{Message, OutgoingMessage, Publisher, SubscriptionSource, subscriber};
+use ruststream::{Message, OutgoingMessage, Publisher, Subscribe, SubscriptionSource, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -58,15 +58,18 @@ impl StreamSource {
     }
 }
 
-impl SubscriptionSource<MemoryBroker> for StreamSource {
+impl SubscriptionSource<ConnectedMemoryBroker> for StreamSource {
     type Subscriber = MemorySubscriber;
 
     fn name(&self) -> &str {
         &self.name
     }
 
-    async fn subscribe(self, broker: &MemoryBroker) -> Result<MemorySubscriber, MemoryError> {
-        Ok(broker.subscribe(&self.name))
+    async fn subscribe(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> Result<MemorySubscriber, MemoryError> {
+        Subscribe::subscribe(connected, &self.name).await
     }
 }
 

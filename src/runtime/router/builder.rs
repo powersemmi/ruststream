@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, SliceHandler, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
@@ -194,7 +194,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         meta: HandlerMetadata,
     ) -> Router<B, (SubscribeRoute<S, H>, Routes), RouteCodec, RouteLayers>
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         H: Handler<SourceMessage<B, S>> + 'static,
     {
@@ -225,7 +225,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         meta: HandlerMetadata,
     ) -> SubscribedBatchRouter<B, S, T, C, H, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         T: DeserializeOwned + Send + Sync + 'static,
         C: Codec + 'static,
@@ -257,7 +257,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         codec: C,
     ) -> IncludedRouter<B, S, D, C, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         D: SubscriberDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -294,7 +294,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         codec: C,
     ) -> IncludedBatchRouter<B, S, D, C, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -333,7 +333,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         publisher: RP,
     ) -> BatchPublishingRouter<B, S, D, C, RP, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchPublishingDef + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -376,7 +376,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         publisher: TypedPublisher<P, PC, PL>,
     ) -> PublishingRouter<B, S, D, C, P, PC, PL, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         D: PublishingDef + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,

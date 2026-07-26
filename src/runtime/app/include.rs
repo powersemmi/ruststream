@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
@@ -36,26 +36,26 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
     pub fn include<D>(&mut self, def: D)
     where
         D: SubscriberDef,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
-        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
         D::Context: crate::BuildContext<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             > + Send
             + 'static,
         State: Send + Sync + 'static,
         Layers: Layer<
             Typed<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
                 D::Input,
                 crate::codec::DefaultCodec,
                 D::Handler,
             >,
         >,
         Layers::Handler: Handler<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
                 D::Context,
                 State,
             > + 'static,
@@ -73,7 +73,7 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn include_on<S, D>(&mut self, source: S, def: D)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
         D: SubscriberDef,
@@ -109,8 +109,9 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
     pub fn include_batch<D>(&mut self, def: D)
     where
         D: BatchDef,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+            BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: crate::runtime::SliceHandler<D::Input, State> + 'static,
         State: Send + Sync + 'static,
@@ -125,7 +126,7 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn include_batch_on<S, D>(&mut self, source: S, def: D)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -146,8 +147,9 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
         D: BatchPublishingCall<State> + 'static,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+            BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
@@ -164,7 +166,7 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
     /// subscription `source`, decoding each element with the `publisher`'s own codec.
     pub fn include_batch_publishing_on<S, D, RP>(&mut self, source: S, def: D, publisher: RP)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchPublishingCall<State> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -186,13 +188,13 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
         D: PublishingCall<State> + 'static,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
-        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         D::Context: crate::BuildContext<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             > + Send
             + Sync
             + 'static,
@@ -203,7 +205,7 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
         State: Send + Sync + 'static,
         Layers: Layer<PublishingHandler<D, PC, P, PC, PL, Pipeline>>,
         Layers::Handler: Handler<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
                 D::Context,
                 State,
             > + 'static,
@@ -221,7 +223,7 @@ impl<B: Broker + 'static, Layers, State, Pipeline> BrokerScope<B, Layers, (), St
         def: D,
         publisher: TypedPublisher<P, PC, PL>,
     ) where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
         D: PublishingCall<State> + 'static,
@@ -252,26 +254,26 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
     pub fn include<D>(&mut self, def: D)
     where
         D: SubscriberDef,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
-        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
         D::Context: crate::BuildContext<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             > + Send
             + 'static,
         State: Send + Sync + 'static,
         Layers: Layer<
             Typed<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
                 D::Input,
                 C,
                 D::Handler,
             >,
         >,
         Layers::Handler: Handler<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
                 D::Context,
                 State,
             > + 'static,
@@ -285,7 +287,7 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
     /// its input with the scope's default codec.
     pub fn include_on<S, D>(&mut self, source: S, def: D)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
         D: SubscriberDef,
@@ -307,8 +309,9 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
     pub fn include_batch<D>(&mut self, def: D)
     where
         D: BatchDef,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+            BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: crate::runtime::SliceHandler<D::Input, State> + 'static,
         State: Send + Sync + 'static,
@@ -322,7 +325,7 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
     /// `source`, decoding each element with the scope's default codec.
     pub fn include_batch_on<S, D>(&mut self, source: S, def: D)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -339,8 +342,9 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
     pub fn include_batch_publishing<D, RP>(&mut self, def: D, publisher: RP)
     where
         D: BatchPublishingCall<State> + 'static,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: BatchSubscriber + Send + 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+            BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyPublisher + 'static,
@@ -356,7 +360,7 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
     /// subscription `source`, decoding each element with the scope's default codec.
     pub fn include_batch_publishing_on<S, D, RP>(&mut self, source: S, def: D, publisher: RP)
     where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         D: BatchPublishingCall<State> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
@@ -374,13 +378,13 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
     pub fn include_publishing<D, P, PC, PL>(&mut self, def: D, publisher: TypedPublisher<P, PC, PL>)
     where
         D: PublishingCall<State> + 'static,
-        D::Source: SubscriptionSource<B> + Send + 'static,
-        <D::Source as SubscriptionSource<B>>::Subscriber: Send + 'static,
-        <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message: 'static,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+        <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         D::Context: crate::BuildContext<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             > + Send
             + Sync
             + 'static,
@@ -391,7 +395,7 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
         State: Send + Sync + 'static,
         Layers: Layer<PublishingHandler<D, C, P, PC, PL, Pipeline>>,
         Layers::Handler: Handler<
-                <<D::Source as SubscriptionSource<B>>::Subscriber as Subscriber>::Message,
+                <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
                 D::Context,
                 State,
             > + 'static,
@@ -409,7 +413,7 @@ impl<B: Broker + 'static, Layers, C: Codec + Clone + 'static, State, Pipeline>
         def: D,
         publisher: TypedPublisher<P, PC, PL>,
     ) where
-        S: SubscriptionSource<B> + Send + 'static,
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: 'static,
         D: PublishingCall<State> + 'static,

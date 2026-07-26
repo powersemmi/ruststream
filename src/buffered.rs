@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 
-use crate::{BatchSubscriber, Broker, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, ConnectedBroker, Subscriber, SubscriptionSource};
 
 const DEFAULT_MAX_SIZE: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -68,10 +68,10 @@ impl<S> Buffered<S> {
     }
 }
 
-impl<B, S> SubscriptionSource<B> for Buffered<S>
+impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
-    B: Broker,
-    S: SubscriptionSource<B> + Send,
+    C: ConnectedBroker,
+    S: SubscriptionSource<C> + Send,
     S::Subscriber: Send,
 {
     type Subscriber = BufferedSubscriber<S::Subscriber>;
@@ -80,9 +80,9 @@ where
         self.source.name()
     }
 
-    async fn subscribe(self, broker: &B) -> Result<Self::Subscriber, B::Error> {
+    async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
         Ok(BufferedSubscriber {
-            inner: self.source.subscribe(broker).await?,
+            inner: self.source.subscribe(connected).await?,
             max_size: self.max_size,
             max_wait: self.max_wait,
         })
@@ -192,10 +192,13 @@ mod tests {
         max_size: usize,
         max_wait: Duration,
     ) -> BufferedSubscriber<crate::memory::MemorySubscriber> {
+        let connected = crate::Broker::connect(broker.clone())
+            .await
+            .expect("memory connect is infallible");
         Buffered::new(Name::new("buffered"))
             .max_size(NonZeroUsize::new(max_size).expect("test sizes are nonzero"))
             .max_wait(max_wait)
-            .subscribe(broker)
+            .subscribe(&connected)
             .await
             .unwrap()
     }

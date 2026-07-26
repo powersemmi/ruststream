@@ -13,8 +13,9 @@ use futures::StreamExt;
 
 use super::harness::{expect_next, expect_no_more};
 use crate::{
-    AckError, BatchSubscriber, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher,
-    RequestReply, Subscriber, SubscriptionSource, TransactionalPublisher,
+    AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, Headers, IncomingMessage,
+    OutgoingMessage, Publisher, RequestReply, Subscriber, SubscriptionSource,
+    TransactionalPublisher,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -58,25 +59,24 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<B> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Req: RequestReply,
-    MkReq: Fn(&B) -> Req,
+    MkReq: Fn(&Connected<B>) -> Req,
     Pub: Publisher,
-    MkPub: Fn(&B) -> Pub,
+    MkPub: Fn(&Connected<B>) -> Pub,
 {
     const SUBJECT: &str = "conformance.request_reply";
 
-    let broker = make_broker();
-    Broker::connect(&broker).await.expect("broker must connect");
+    let connected = make_broker().connect().await.expect("broker must connect");
 
     let mut responder = make_source(SUBJECT)
-        .subscribe(&broker)
+        .subscribe(&connected)
         .await
         .expect("responder subscription must open after connect");
-    let publisher = make_publisher(&broker);
-    let requester = make_requester(&broker);
+    let publisher = make_publisher(&connected);
+    let requester = make_requester(&connected);
 
     let respond = async {
         let mut stream = std::pin::pin!(responder.stream());
@@ -131,7 +131,8 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
         "a request nobody answers must fail once its timeout elapses",
     );
 
-    Broker::shutdown(&broker)
+    connected
+        .shutdown()
         .await
         .expect("broker must shut down cleanly");
 }
@@ -168,23 +169,22 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<B> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
-    MkPub: Fn(&B) -> Pub,
+    MkPub: Fn(&Connected<B>) -> Pub,
 {
     const SUBJECT: &str = "conformance.batches";
     const COUNT: u32 = 10;
 
-    let broker = make_broker();
-    Broker::connect(&broker).await.expect("broker must connect");
+    let connected = make_broker().connect().await.expect("broker must connect");
 
     let mut subscriber = make_source(SUBJECT)
-        .subscribe(&broker)
+        .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
-    let publisher = make_publisher(&broker);
+    let publisher = make_publisher(&connected);
 
     for i in 0..COUNT {
         publisher
@@ -219,7 +219,8 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         "batched deliveries must preserve publish order across batches",
     );
 
-    Broker::shutdown(&broker)
+    connected
+        .shutdown()
         .await
         .expect("broker must shut down cleanly");
 }
@@ -259,22 +260,21 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<B> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: TransactionalPublisher,
-    MkPub: Fn(&B) -> Pub,
+    MkPub: Fn(&Connected<B>) -> Pub,
 {
     const SUBJECT: &str = "conformance.transactions";
 
-    let broker = make_broker();
-    Broker::connect(&broker).await.expect("broker must connect");
+    let connected = make_broker().connect().await.expect("broker must connect");
 
     let mut subscriber = make_source(SUBJECT)
-        .subscribe(&broker)
+        .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
-    let publisher = make_publisher(&broker);
+    let publisher = make_publisher(&connected);
     let mut stream = std::pin::pin!(subscriber.stream());
 
     publisher
@@ -357,7 +357,8 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
     }
 
-    Broker::shutdown(&broker)
+    connected
+        .shutdown()
         .await
         .expect("broker must shut down cleanly");
 }

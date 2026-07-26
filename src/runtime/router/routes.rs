@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchHandler;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingHandler};
@@ -57,7 +57,7 @@ pub struct BatchRoute<S, H> {
 /// One mountable registration: applies the global blanket layer to its handler and registers it.
 /// `State` is the app's shared-state type, threaded so a route only mounts on a sink whose state type
 /// its handler matches (a state-agnostic handler matches any).
-pub(super) trait MountRoute<B, State> {
+pub(super) trait MountRoute<B: Broker, State> {
     fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
         self,
         global: &G,
@@ -93,7 +93,7 @@ impl<S, H> RouteMeta for HandleRoute<S, H> {
 impl<B, S, H, State> MountRoute<B, State> for SubscribeRoute<S, H>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: Send + 'static,
     SourceMessage<B, S>: Send + Sync + 'static,
     State: Send + Sync + 'static,
@@ -113,7 +113,7 @@ where
 impl<B, S, H, State> MountRoute<B, State> for BatchRoute<S, H>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: BatchSubscriber + Send + 'static,
     SourceMessage<B, S>: Send + 'static,
     State: Send + Sync + 'static,
@@ -217,7 +217,7 @@ impl<S, D, C, R> RouteMeta for BatchPublishingRoute<S, D, C, R> {
 impl<B, S, D, C, P, PC, PL, State> MountRoute<B, State> for PublishingRoute<S, D, C, P, PC, PL>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: Send + 'static,
     SourceMessage<B, S>: Send + Sync + 'static,
     State: Send + Sync + 'static,
@@ -253,7 +253,7 @@ where
 impl<B, S, D, C, R, State> MountRoute<B, State> for BatchPublishingRoute<S, D, C, R>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: BatchSubscriber + Send + 'static,
     SourceMessage<B, S>: Send + Sync + 'static,
     State: Send + Sync + 'static,
@@ -293,7 +293,7 @@ where
 /// `State` is the app's shared-state type: a router whose handlers read typed state is
 /// `RouterDef<B, State>` only for that `State`, while a state-agnostic router is generic over it, so it
 /// mounts on any app.
-pub trait RouterDef<B, State = ()> {
+pub trait RouterDef<B: Broker, State = ()> {
     /// Applies `global` to every registration and pushes it into `sink`. Called by `include_router`.
     #[doc(hidden)]
     fn mount<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(

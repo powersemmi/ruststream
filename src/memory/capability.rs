@@ -426,7 +426,8 @@ mod tests {
             .publish(OutgoingMessage::new("txn.down", b"buffered".as_slice()))
             .await
             .unwrap();
-        crate::Broker::shutdown(&broker).await.unwrap();
+        let connected = crate::Broker::connect(broker).await.unwrap();
+        crate::ConnectedBroker::shutdown(connected).await.unwrap();
 
         // Buffering never touched the bus, so the shutdown surfaces at the visibility point.
         assert_eq!(publisher.commit().await, Err(MemoryError::ShutDown));
@@ -436,7 +437,8 @@ mod tests {
     async fn requester_errors_after_shutdown() {
         let broker = MemoryBroker::new();
         let requester = broker.requester();
-        crate::Broker::shutdown(&broker).await.unwrap();
+        let connected = crate::Broker::connect(broker).await.unwrap();
+        crate::ConnectedBroker::shutdown(connected).await.unwrap();
 
         let publish = Publisher::publish(
             &requester,

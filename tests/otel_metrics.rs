@@ -160,7 +160,9 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker.clone();
+    let observer = ruststream::Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible");
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
         .publish_layer(otel.publish_layer())
