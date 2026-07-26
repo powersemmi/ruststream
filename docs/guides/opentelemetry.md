@@ -1,12 +1,12 @@
 # OpenTelemetry
 
-The `opentelemetry` feature gives a service distributed tracing: a trace flows from an incoming
+The `otel` feature gives a service distributed tracing: a trace flows from an incoming
 message onto the replies it produces, so one trace spans the whole consume-transform-produce chain.
 It is built on the typed publish-path context - the same seam that lets a publish transform read the
 delivery that produced a reply.
 
 ```toml
-ruststream = { version = "0.5", features = ["macros", "memory", "json", "opentelemetry"] }
+ruststream = { version = "0.5", features = ["macros", "memory", "json", "otel"] }
 ```
 
 It is dependency-light: it carries the [W3C Trace Context](https://www.w3.org/TR/trace-context/) and
@@ -55,7 +55,7 @@ check whether the trace is `sampled()`.
 
 The propagation module stops at the W3C context and `tracing` spans; there are two ways to ship
 them to a collector. Assemble `tracing-opentelemetry` and an exporter yourself in the binary (the
-same split as [logging](logging.md)) - or turn on the `otel` feature and let the crate do it.
+same split as [logging](logging.md)) - or let `Otel::init` below do it for you.
 
 ## The otel feature: SDK, OTLP, and the metrics inventory
 

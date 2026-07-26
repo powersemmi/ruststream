@@ -119,7 +119,7 @@ pub mod metrics;
 #[cfg(feature = "logging")]
 pub mod logging;
 
-#[cfg(feature = "opentelemetry")]
+#[cfg(feature = "otel")]
 pub mod opentelemetry;
 #[cfg(feature = "otel")]
 pub mod otel;

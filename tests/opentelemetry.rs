@@ -1,7 +1,7 @@
 //! End-to-end W3C trace context propagation: the consume layer stamps the consumer span and the
 //! publish layer carries it onto the reply (the `opentelemetry` feature, built on #103).
 #![cfg(all(
-    feature = "opentelemetry",
+    feature = "otel",
     feature = "macros",
     feature = "memory",
     feature = "json"

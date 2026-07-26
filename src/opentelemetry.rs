@@ -1,4 +1,4 @@
-//! W3C Trace Context propagation and consumer spans (`opentelemetry` feature).
+//! W3C Trace Context propagation and consumer spans (part of the `otel` feature).
 //!
 //! Distributed tracing for a RustStream service, built on the publish-path context from the typed
 //! [`Context`](crate::runtime::Context) system: a trace / correlation id flows from an incoming
@@ -14,9 +14,10 @@
 //!   `traceparent` onto every reply. Reuse it on a batch publisher with
 //!   [`for_batch`](crate::runtime::for_batch).
 //!
-//! This module is dependency-light: it carries the W3C context and emits `tracing` spans, leaving
-//! the export to a collector to the binary's subscriber (for example `tracing-opentelemetry`),
-//! exactly as [`logging`](crate::logging) leaves the subscriber to the user. Propagation itself is
+//! This module is the propagation half of the story: it carries the W3C context and emits
+//! `tracing` spans. Export is the other half - [`Otel::init`](crate::otel::Otel::init) wires
+//! these spans into OTLP, or install your own subscriber, exactly as
+//! [`logging`](crate::logging) leaves the subscriber to the user. Propagation itself is
 //! broker-agnostic and works with no subscriber at all.
 //!
 //! # Examples

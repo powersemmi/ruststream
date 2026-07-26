@@ -1,9 +1,8 @@
 //! OpenTelemetry SDK integration (`otel` feature): OTLP export for traces and metrics, messaging
 //! semantic conventions, and per-handler dispatch metrics.
 //!
-//! The dependency-free [`opentelemetry`](crate::opentelemetry) module stays the default: it
-//! carries the W3C trace context and emits plain `tracing` spans, leaving export to the binary.
-//! This module is the opt-in next step for services standardizing on OTLP collectors:
+//! The [`opentelemetry`](crate::opentelemetry) module is the propagation half: it carries the
+//! W3C trace context and emits plain `tracing` spans. This module is the export half:
 //! [`Otel::init`] installs the OpenTelemetry tracer and meter providers as the process **globals**
 //! and bridges `tracing` spans into them, so the spans the propagation module already opens are
 //! exported without further wiring - and user-defined business metrics need no plumbing at all:
