@@ -11,7 +11,10 @@ it.
 
 **Application scope.** Add a layer to the whole application with `RustStream::layer`, before
 `with_broker`. Every handler registered after it is wrapped - both handlers registered directly on
-a broker scope and handlers a router brings in via `include_router`:
+a broker scope and handlers a router brings in via `include_router`. The order is enforced at
+compile time: the first `with_broker` moves the builder to a phase where `layer` (and
+`publish_layer`, and `on_startup`) no longer exist, so a layer that could not wrap the
+already-registered handlers is a compile error, not a silent no-op:
 
 ```rust
 --8<-- "examples/middleware_app_scope.rs:app_scope"

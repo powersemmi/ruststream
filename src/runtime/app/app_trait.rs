@@ -1,5 +1,5 @@
 //! The sealed [`App`] trait: the functional surface a built service exposes, so a builder can
-//! return `impl App` instead of spelling the full `RustStream<L, St, PP>` type.
+//! return `impl App` instead of spelling the full `RustStream<Layers, State, Pipeline>` type.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -11,7 +11,7 @@ use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
 mod sealed {
     pub trait Sealed {}
-    impl<L, St, PP> Sealed for super::RustStream<L, St, PP> {}
+    impl<Layers, State, Pipeline, Phase> Sealed for super::RustStream<Layers, State, Pipeline, Phase> {}
 }
 
 /// The functional surface of a built [`RustStream`] service: run it, and read the metadata the
@@ -19,7 +19,7 @@ mod sealed {
 ///
 /// Implemented only by [`RustStream`] (the trait is sealed), so a builder function can hide the
 /// composed middleware / state / publish-pipeline type parameters behind `impl App` instead of
-/// naming `RustStream<Stack<..>, St, PublishStack<..>>` in full:
+/// naming `RustStream<Stack<..>, State, PublishStack<..>>` in full:
 ///
 /// ```no_run
 /// # #[cfg(feature = "memory")]
@@ -78,17 +78,19 @@ pub trait App: sealed::Sealed + Sized {
     fn handlers(&self) -> &[HandlerMetadata];
 }
 
-// `PP: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the publish
+// `Pipeline: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the publish
 // pipeline. Every real pipeline is `Send` (the `PublishLayer` trait requires `Send + Sync`), so the
 // bound never gets in the way; it just lets the type system see what is already true.
 //
 // Each method names `RustStream` explicitly rather than `Self`: the inherent methods share these
 // names with the trait, so spelling the type makes clear the call delegates to the inherent method
 // (which wins by priority) and does not recurse into the trait method.
-// `St: 'static` mirrors the inherent impl in run.rs: every constructible app already satisfies
+// `State: 'static` mirrors the inherent impl in run.rs: every constructible app already satisfies
 // it, and `start` needs it to bind the state into the shutdown hooks.
 #[allow(clippy::use_self)]
-impl<L: Send, St: Send + Sync + 'static, PP: Send> App for RustStream<L, St, PP> {
+impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
+    for RustStream<Layers, State, Pipeline, Phase>
+{
     fn run(self) -> impl Future<Output = Result<(), RustStreamError>> + Send {
         RustStream::run(self)
     }

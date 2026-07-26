@@ -292,13 +292,12 @@ async fn chain_codec_router_batch_publishing_replies() {
 struct StampApp;
 
 impl ruststream::runtime::PublishLayer for StampApp {
-    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
+    fn on_publish<'a, N: ruststream::runtime::PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: ruststream::runtime::PublishNext<'a, N>,
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
-    > {
+        next: ruststream::runtime::PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
+    {
         out.headers_mut().insert("x-app", b"1".to_vec());
         next.run(out)
     }

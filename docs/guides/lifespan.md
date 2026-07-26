@@ -32,7 +32,10 @@ after_shutdown(Arc<S>)           # final teardown
 - **`on_startup`** receives the previous state **by value** (`()` on the first call) and returns the
   new state, so its future can own resources across awaits - connect a pool, build the state struct,
   return it. The returned type becomes the app's state type. A failing `on_startup` aborts startup.
-  The later hooks receive the state as a shared `Arc<S>`.
+  The later hooks receive the state as a shared `Arc<S>`. `on_startup` only exists before the first
+  `with_broker`: handlers are registered against the state type it produces, so the reverse order
+  does not compile. Register the other lifecycle hooks after it (an earlier hook would close over
+  the wrong state type; `on_startup` panics if one exists).
 - **`after_startup`** runs once subscriptions are open and handlers are live. Use it to publish an
   initial message or signal readiness (the [testing guide](testing.md) uses it as the "handlers are
   live" gate). A failure here also aborts startup.

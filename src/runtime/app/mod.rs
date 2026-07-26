@@ -10,9 +10,9 @@ mod service;
 pub use app_trait::App;
 pub use run::RunningApp;
 pub use scope::BrokerScope;
-pub use service::RustStream;
 #[cfg(feature = "testing")]
 pub(crate) use service::{RegisteredBroker, TestParts};
+pub use service::{RustStream, Setup, Wired};
 
 use std::sync::Arc;
 
