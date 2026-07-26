@@ -83,8 +83,9 @@ The two middleware carry the dispatch metrics, labeled per handler
 | `ruststream.message.payload.size` | histogram (`By`) | published payload sizes |
 | `ruststream.app.state` | observable gauge | the lifecycle state, from [`RunningApp::health`](http.md#a-healthz-endpoint) via `otel.observe_health(running.health())` |
 
-Because `init()` installs the global providers, business metrics need no plumbing at all - a
-counter built anywhere in user code rides the same OTLP pipeline:
+Because `init()` installs the global providers, business metrics need no exporter plumbing:
+build the instrument once at startup against `global::meter(..)`, share it through the typed
+state (any field is injectable with `State<..>`), and it rides the same OTLP pipeline:
 
 ```rust
 --8<-- "examples/otel_export.rs:business_metric"
