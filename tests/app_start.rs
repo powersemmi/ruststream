@@ -200,3 +200,13 @@ async fn lifecycle_hooks_run_and_shutdown_hook_errors_only_log() {
     // propagated, so the graceful path still completes under the configured timeout.
     running.shutdown().await.expect("hook errors must only log");
 }
+
+#[test]
+#[should_panic(expected = "on_startup must be called before lifecycle hooks")]
+fn on_startup_after_a_lifecycle_hook_panics() {
+    // A hook registered first closes over the previous state type and cannot be carried across
+    // the state change, so the builder refuses loudly instead of dropping it silently.
+    let _app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .after_startup(async move |_state| Ok::<_, Infallible>(()))
+        .on_startup(async move |()| Ok::<_, Infallible>(42_u32));
+}

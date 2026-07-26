@@ -50,7 +50,6 @@
 //! ```
 
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -522,13 +521,12 @@ impl std::fmt::Debug for OtelPublishLayer {
 }
 
 impl PublishLayer for OtelPublishLayer {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: crate::Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
-    > {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
+    {
         if self.stamp_publish_time {
             if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
                 out.headers_mut()
@@ -538,7 +536,7 @@ impl PublishLayer for OtelPublishLayer {
         let name = out.name().to_owned();
         #[allow(clippy::cast_possible_truncation)] // Payloads beyond u64 bytes do not exist.
         let payload_bytes = out.payload().len() as u64;
-        Box::pin(async move {
+        async move {
             let instruments = &self.instruments;
             let attrs = instruments.attrs(&name, None);
             instruments.payload_size.record(
@@ -558,7 +556,7 @@ impl PublishLayer for OtelPublishLayer {
             };
             instruments.sent.add(1, &sent_attrs);
             result
-        })
+        }
     }
 }
 

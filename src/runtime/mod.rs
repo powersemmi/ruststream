@@ -22,6 +22,7 @@ mod typed;
 
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
+    Setup, Wired,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
@@ -43,8 +44,8 @@ pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
     PublishLayer, PublishNext, PublishPipeline, PublishStack, PublishTransform,
-    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, Transactional, TypedPublisher,
-    for_batch,
+    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, TransactionPublishError,
+    TransactionScope, Transactional, TypedPublisher, for_batch,
 };
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};

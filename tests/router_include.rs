@@ -27,7 +27,7 @@ fn order_bytes(id: u32) -> Vec<u8> {
 /// Publishes `payload` once to each topic (the app is already started, so the subscriptions are
 /// open and every publish lands), then waits until every counter is non-zero.
 async fn publish_and_await_all(
-    publisher: &impl Publisher<Error = std::convert::Infallible>,
+    publisher: &impl Publisher,
     topics: &[&str],
     counters: &[&AtomicUsize],
 ) {

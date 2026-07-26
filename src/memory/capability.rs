@@ -7,7 +7,6 @@
 //! them.
 
 use std::{
-    convert::Infallible,
     sync::{Arc, atomic::Ordering},
     task::Poll,
     time::Duration,
@@ -18,7 +17,9 @@ use futures::Stream;
 use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
 
-use super::{MemoryDelivery, MemoryMessage, MemoryPublisher, MemoryState, MemorySubscriber};
+use super::{
+    MemoryDelivery, MemoryError, MemoryMessage, MemoryPublisher, MemoryState, MemorySubscriber,
+};
 use crate::{
     BatchSubscriber, IncomingMessage, OutgoingMessage, Partitioned, Publisher, RequestReply,
     Subscriber, TransactionalPublisher,
@@ -39,6 +40,10 @@ pub enum RequestError {
         /// How long the requester waited for a reply.
         timeout: Duration,
     },
+    /// The operation ran after [`Broker::shutdown`](crate::Broker::shutdown) and before a
+    /// reviving [`Broker::connect`](crate::Broker::connect).
+    #[error("the memory broker is shut down")]
+    ShutDown,
 }
 
 /// Publisher with native request / reply support, returned by
@@ -110,8 +115,9 @@ impl Publisher for MemoryRequester {
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         };
-        self.state.fanout(&delivery);
-        Ok(())
+        self.state
+            .fanout(&delivery)
+            .map_err(|_| RequestError::ShutDown)
     }
 }
 
@@ -126,7 +132,9 @@ impl RequestReply for MemoryRequester {
         let id = self.state.inbox_seq.fetch_add(1, Ordering::Relaxed);
         let inbox = format!("_inbox.{id}");
         let (tx, mut rx) = mpsc::unbounded_channel();
-        self.state.register(inbox.clone(), tx.clone());
+        self.state
+            .register(inbox.clone(), tx.clone())
+            .map_err(|_| RequestError::ShutDown)?;
 
         let mut headers = msg.headers().clone();
         headers.insert("reply-to", inbox.clone());
@@ -135,7 +143,10 @@ impl RequestReply for MemoryRequester {
             payload: Bytes::copy_from_slice(msg.payload()),
             headers,
         };
-        self.state.fanout(&delivery);
+        if self.state.fanout(&delivery).is_err() {
+            self.state.unregister(&inbox);
+            return Err(RequestError::ShutDown);
+        }
 
         let outcome = timeout(wait, rx.recv()).await;
         self.state.unregister(&inbox);
@@ -205,37 +216,41 @@ impl BatchSubscriber for MemorySubscriber {
 /// switches this handle to buffering, [`commit`](TransactionalPublisher::commit) fans out the
 /// buffer in publish order, [`abort`](TransactionalPublisher::abort) discards it.
 ///
-/// Every operation is total, matching the infallible publisher: `begin_transaction` inside an
-/// active transaction continues that transaction, and `commit` / `abort` without one are no-ops.
-/// Clones of the handle do not share the transaction (see [`MemoryPublisher`]).
+/// Misuse errors per the trait contract: a second `begin_transaction` returns
+/// [`MemoryError::TransactionBusy`] (leaving the open transaction untouched), and `commit` /
+/// `abort` without an open transaction return [`MemoryError::NoTransaction`]. Clones of the
+/// handle do not share the transaction (see [`MemoryPublisher`]).
 impl TransactionalPublisher for MemoryPublisher {
-    async fn begin_transaction(&self) -> Result<(), Infallible> {
+    async fn begin_transaction(&self) -> Result<(), MemoryError> {
         let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
-        if txn.is_none() {
-            *txn = Some(Vec::new());
+        if txn.is_some() {
+            return Err(MemoryError::TransactionBusy);
         }
+        *txn = Some(Vec::new());
         drop(txn);
         Ok(())
     }
 
-    async fn commit(&self) -> Result<(), Infallible> {
+    async fn commit(&self) -> Result<(), MemoryError> {
         let buffered = self
             .txn
             .lock()
             .expect("memory broker mutex poisoned")
-            .take();
-        for delivery in buffered.into_iter().flatten() {
-            self.state.fanout(&delivery);
+            .take()
+            .ok_or(MemoryError::NoTransaction)?;
+        for delivery in buffered {
+            self.state.fanout(&delivery)?;
         }
         Ok(())
     }
 
-    async fn abort(&self) -> Result<(), Infallible> {
+    async fn abort(&self) -> Result<(), MemoryError> {
         self.txn
             .lock()
             .expect("memory broker mutex poisoned")
-            .take();
-        Ok(())
+            .take()
+            .map(|_| ())
+            .ok_or(MemoryError::NoTransaction)
     }
 }
 
@@ -384,6 +399,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactional_misuse_errors() {
+        let broker = MemoryBroker::new();
+        let publisher = broker.publisher();
+
+        assert_eq!(publisher.commit().await, Err(MemoryError::NoTransaction));
+        assert_eq!(publisher.abort().await, Err(MemoryError::NoTransaction));
+
+        publisher.begin_transaction().await.unwrap();
+        assert_eq!(
+            publisher.begin_transaction().await,
+            Err(MemoryError::TransactionBusy),
+        );
+        // The rejected second begin left the transaction open; an abort settles it.
+        publisher.abort().await.unwrap();
+        assert_eq!(publisher.abort().await, Err(MemoryError::NoTransaction));
+    }
+
+    #[tokio::test]
+    async fn commit_after_shutdown_errors() {
+        let broker = MemoryBroker::new();
+        let publisher = broker.publisher();
+
+        publisher.begin_transaction().await.unwrap();
+        publisher
+            .publish(OutgoingMessage::new("txn.down", b"buffered".as_slice()))
+            .await
+            .unwrap();
+        crate::Broker::shutdown(&broker).await.unwrap();
+
+        // Buffering never touched the bus, so the shutdown surfaces at the visibility point.
+        assert_eq!(publisher.commit().await, Err(MemoryError::ShutDown));
+    }
+
+    #[tokio::test]
+    async fn requester_errors_after_shutdown() {
+        let broker = MemoryBroker::new();
+        let requester = broker.requester();
+        crate::Broker::shutdown(&broker).await.unwrap();
+
+        let publish = Publisher::publish(
+            &requester,
+            OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+        )
+        .await;
+        assert!(
+            matches!(publish, Err(RequestError::ShutDown)),
+            "{publish:?}"
+        );
+
+        let request = requester
+            .request(
+                OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+                Duration::from_millis(50),
+            )
+            .await;
+        assert!(
+            matches!(request, Err(RequestError::ShutDown)),
+            "a request against a dead bus must fail fast, not time out",
+        );
+    }
+
+    #[tokio::test]
     async fn request_resolves_on_reply() {
         let broker = MemoryBroker::new();
         let mut service = broker.subscribe("svc.echo");
@@ -410,13 +487,12 @@ mod tests {
         assert_eq!(reply.unwrap().payload(), b"pong");
 
         // The single-use inbox must be unregistered once the request resolves.
-        let inbox_leaked = broker
-            .state
-            .subscribers
-            .lock()
-            .unwrap()
-            .keys()
-            .any(|name| name.starts_with("_inbox."));
+        let inbox_leaked = match &*broker.state.subscribers.lock().unwrap() {
+            super::super::Bus::Live(subscribers) => {
+                subscribers.keys().any(|name| name.starts_with("_inbox."))
+            }
+            super::super::Bus::ShutDown => false,
+        };
         assert!(!inbox_leaked);
     }
 
@@ -435,13 +511,12 @@ mod tests {
             .await;
         assert!(matches!(outcome, Err(RequestError::Timeout { .. })));
 
-        let inbox_leaked = broker
-            .state
-            .subscribers
-            .lock()
-            .unwrap()
-            .keys()
-            .any(|name| name.starts_with("_inbox."));
+        let inbox_leaked = match &*broker.state.subscribers.lock().unwrap() {
+            super::super::Bus::Live(subscribers) => {
+                subscribers.keys().any(|name| name.starts_with("_inbox."))
+            }
+            super::super::Bus::ShutDown => false,
+        };
         assert!(!inbox_leaked);
     }
 

@@ -34,6 +34,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::Stream;
+use thiserror::Error;
 use tokio::sync::{Notify, mpsc};
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
@@ -45,9 +46,25 @@ struct MemoryDelivery {
     headers: Headers,
 }
 
+/// The subscriber bus: alive with its registrations, or terminally shut down.
+///
+/// One value instead of a map beside a flag, so the lifecycle state and the registrations
+/// cannot disagree: every bus operation matches on the variant and reports
+/// [`MemoryError::ShutDown`] against a dead bus instead of silently succeeding.
+enum Bus {
+    Live(HashMap<String, Vec<Sender>>),
+    ShutDown,
+}
+
+impl Default for Bus {
+    fn default() -> Self {
+        Self::Live(HashMap::new())
+    }
+}
+
 #[derive(Default)]
 struct MemoryState {
-    subscribers: Mutex<HashMap<String, Vec<Sender>>>,
+    subscribers: Mutex<Bus>,
     published: Mutex<HashMap<String, Vec<RawMessage>>>,
     notify: Notify,
     inbox_seq: AtomicU64,
@@ -58,25 +75,59 @@ struct MemoryState {
 }
 
 impl MemoryState {
-    fn register(&self, name: String, tx: Sender) {
-        let mut subs = self
+    /// Registers a subscriber sender on the live bus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus; the caller decides whether
+    /// that is an error (the `Subscribe` path) or a silent no-registration (the infallible
+    /// inherent constructor).
+    fn register(&self, name: String, tx: Sender) -> Result<(), MemoryError> {
+        match &mut *self
             .subscribers
             .lock()
-            .expect("memory broker mutex poisoned");
-        subs.entry(name).or_default().push(tx);
+            .expect("memory broker mutex poisoned")
+        {
+            Bus::Live(subscribers) => {
+                subscribers.entry(name).or_default().push(tx);
+                Ok(())
+            }
+            Bus::ShutDown => Err(MemoryError::ShutDown),
+        }
     }
 
     // Request inboxes are single-use; dropping the whole entry keeps the subscriber map from
-    // accumulating one dead sender per completed request.
+    // accumulating one dead sender per completed request. A shut-down bus has nothing to drop.
     fn unregister(&self, name: &str) {
-        let mut subs = self
+        if let Bus::Live(subscribers) = &mut *self
             .subscribers
             .lock()
-            .expect("memory broker mutex poisoned");
-        subs.remove(name);
+            .expect("memory broker mutex poisoned")
+        {
+            subscribers.remove(name);
+        }
     }
 
-    fn fanout(&self, delivery: &MemoryDelivery) {
+    /// Fans `delivery` out to the live bus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus: nothing is delivered and
+    /// nothing is recorded in the published log.
+    // significant_drop_tightening misfires here: `subscribers` borrows the guard, which already
+    // drops at the end of its minimal block right after the last use.
+    #[allow(clippy::significant_drop_tightening)]
+    fn fanout(&self, delivery: &MemoryDelivery) -> Result<(), MemoryError> {
+        {
+            let bus = self
+                .subscribers
+                .lock()
+                .expect("memory broker mutex poisoned");
+            let Bus::Live(subscribers) = &*bus else {
+                return Err(MemoryError::ShutDown);
+            };
+            self.send_to(subscribers, delivery);
+        }
         let snapshot = RawMessage::new(delivery.name.clone(), delivery.payload.clone())
             .with_headers(delivery.headers.clone());
         {
@@ -84,12 +135,12 @@ impl MemoryState {
             log.entry(delivery.name.clone()).or_default().push(snapshot);
         }
         self.notify.notify_waiters();
+        Ok(())
+    }
 
-        let subs = self
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned");
-        if let Some(senders) = subs.get(&delivery.name) {
+    /// Enqueues `delivery` to every subscriber registered under its name.
+    fn send_to(&self, subscribers: &HashMap<String, Vec<Sender>>, delivery: &MemoryDelivery) {
+        if let Some(senders) = subscribers.get(&delivery.name) {
             for tx in senders {
                 let sent = tx.send(delivery.clone());
                 // Count every live enqueue so the harness can drive to quiescence. Request inboxes
@@ -136,11 +187,15 @@ impl MemoryBroker {
 
     /// Opens a subscription to `name`. The returned subscriber starts receiving messages
     /// published after this call; messages published earlier are not buffered.
+    ///
+    /// On a shut-down broker the registration is refused and the subscriber simply never
+    /// receives anything, matching this constructor's infallible signature; the
+    /// [`Subscribe`](crate::Subscribe) path reports [`MemoryError::ShutDown`] instead.
     #[must_use]
     pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber {
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.into();
-        self.state.register(name.clone(), tx.clone());
+        let _ = self.state.register(name.clone(), tx.clone());
         MemorySubscriber {
             name,
             rx,
@@ -178,18 +233,35 @@ impl std::fmt::Debug for MemoryBroker {
 }
 
 impl Broker for MemoryBroker {
-    type Error = Infallible;
+    type Error = MemoryError;
 
+    /// Connecting is free for an in-process bus; after a shutdown it revives the broker (the
+    /// contract's "reconnect or error" choice) with a fresh, empty bus, so subscribers opened
+    /// before the shutdown stay gone and the caller re-subscribes, exactly as the runtime does
+    /// on a fresh start. A live bus keeps its registrations (idempotent).
     async fn connect(&self) -> Result<(), Self::Error> {
+        let mut bus = self
+            .state
+            .subscribers
+            .lock()
+            .expect("memory broker mutex poisoned");
+        if matches!(*bus, Bus::ShutDown) {
+            *bus = Bus::Live(HashMap::new());
+        }
+        drop(bus);
         Ok(())
     }
 
+    /// Enters the terminal shut-down state: the bus itself becomes [`Bus::ShutDown`], so every
+    /// operation that would touch it (publish, subscribe, a transaction commit, a request)
+    /// errors with [`MemoryError::ShutDown`] until a reviving [`connect`](Broker::connect).
+    /// Idempotent.
     async fn shutdown(&self) -> Result<(), Self::Error> {
-        self.state
+        *self
+            .state
             .subscribers
             .lock()
-            .expect("memory broker mutex poisoned")
-            .clear();
+            .expect("memory broker mutex poisoned") = Bus::ShutDown;
         Ok(())
     }
 }
@@ -213,11 +285,15 @@ impl crate::testing::TestableBroker for MemoryBroker {
     }
 
     fn inject(&self, message: OutgoingMessage<'_>) {
-        self.state.fanout(&MemoryDelivery {
-            name: message.name().to_owned(),
-            payload: Bytes::copy_from_slice(message.payload()),
-            headers: message.headers().clone(),
-        });
+        // Injecting into a shut-down broker is a harness bug (both run_suite and TestApp drive
+        // the bus strictly before shutdown), so fail loudly instead of losing the message.
+        self.state
+            .fanout(&MemoryDelivery {
+                name: message.name().to_owned(),
+                payload: Bytes::copy_from_slice(message.payload()),
+                headers: message.headers().clone(),
+            })
+            .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
     fn published(&self, name: &str) -> Vec<RawMessage> {
@@ -242,7 +318,17 @@ impl Subscribe for MemoryBroker {
     type Subscriber = MemorySubscriber;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
-        Ok(MemoryBroker::subscribe(self, name))
+        let (tx, rx) = mpsc::unbounded_channel();
+        let name = name.to_owned();
+        self.state.register(name.clone(), tx.clone())?;
+        Ok(MemorySubscriber {
+            name,
+            rx,
+            requeue: tx,
+            batch_limit: DEFAULT_BATCH_LIMIT,
+            #[cfg(feature = "testing")]
+            coordinator: self.state.coordinator(),
+        })
     }
 }
 
@@ -273,8 +359,8 @@ impl SubscriptionSource<MemoryBroker> for MemorySource {
         &self.name
     }
 
-    async fn subscribe(self, broker: &MemoryBroker) -> Result<Self::Subscriber, Infallible> {
-        Ok(broker.subscribe(self.name))
+    async fn subscribe(self, broker: &MemoryBroker) -> Result<Self::Subscriber, MemoryError> {
+        Subscribe::subscribe(broker, &self.name).await
     }
 }
 
@@ -369,8 +455,28 @@ impl std::fmt::Debug for MemoryPublisher {
     }
 }
 
+/// Error returned by [`MemoryPublisher`].
+///
+/// Publishing itself cannot fail (the bus is in-process); the variants cover transactional
+/// misuse, which the [`TransactionalPublisher`](crate::TransactionalPublisher) contract requires
+/// to surface as errors rather than silent no-ops.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MemoryError {
+    /// `begin_transaction` was called while a transaction is already open on this handle.
+    #[error("a transaction is already open on this publisher handle")]
+    TransactionBusy,
+    /// `commit` or `abort` was called with no open transaction on this handle.
+    #[error("no transaction is open on this publisher handle")]
+    NoTransaction,
+    /// The operation (a publish, subscribe, transaction commit, or request) ran after
+    /// [`Broker::shutdown`] and before a reviving [`Broker::connect`](crate::Broker::connect).
+    #[error("the memory broker is shut down")]
+    ShutDown,
+}
+
 impl Publisher for MemoryPublisher {
-    type Error = Infallible;
+    type Error = MemoryError;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
         let delivery = MemoryDelivery {
@@ -381,12 +487,13 @@ impl Publisher for MemoryPublisher {
         {
             let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
             if let Some(buffered) = txn.as_mut() {
+                // Buffering is local to this handle and never touches the bus; a commit against
+                // a shut-down bus is what reports the error.
                 buffered.push(delivery);
                 return Ok(());
             }
         }
-        self.state.fanout(&delivery);
-        Ok(())
+        self.state.fanout(&delivery)
     }
 }
 
