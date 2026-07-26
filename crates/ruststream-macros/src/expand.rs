@@ -333,6 +333,43 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
     })
 }
 
+/// Splits the (at most one) `Egress<P>` parameter out of the extractor list, rejecting a
+/// duplicate and the unsupported form combinations.
+fn split_egress<'a>(
+    args: &SubscriberArgs,
+    func: &ItemFn,
+    extractors: &mut Vec<(&'a syn::Pat, &'a Type)>,
+) -> syn::Result<Option<(&'a syn::Pat, &'a Type)>> {
+    let mut egress = None;
+    extractors.retain(|(pat, ty)| {
+        if let Some(publisher_ty) = egress_param_type(ty) {
+            // Only the first Egress parameter is kept; a duplicate is rejected below.
+            if egress.is_none() {
+                egress = Some((*pat, publisher_ty));
+                return false;
+            }
+        }
+        true
+    });
+    if let Some((_, dup)) = extractors
+        .iter()
+        .find(|(_, ty)| egress_param_type(ty).is_some())
+    {
+        return Err(syn::Error::new_spanned(
+            dup,
+            "a #[subscriber] handler takes at most one Egress parameter",
+        ));
+    }
+    if egress.is_some() && (args.batch || args.publish.is_some()) {
+        return Err(syn::Error::new_spanned(
+            &func.sig,
+            "an Egress parameter is not supported together with batch(..) or publish(..) yet; \
+             use the plain subscriber form",
+        ));
+    }
+    Ok(egress)
+}
+
 fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
     let first = func.sig.inputs.first().ok_or_else(|| {
         syn::Error::new_spanned(
@@ -417,33 +454,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         quote!(_ctx)
     };
     let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
-    let mut egress = None;
-    extractors.retain(|(pat, ty)| {
-        if let Some(publisher_ty) = egress_param_type(ty) {
-            // Only the first Egress parameter is kept here; a duplicate is rejected below.
-            if egress.is_none() {
-                egress = Some((*pat, publisher_ty));
-                return false;
-            }
-        }
-        true
-    });
-    if let Some((_, dup)) = extractors
-        .iter()
-        .find(|(_, ty)| egress_param_type(ty).is_some())
-    {
-        return Err(syn::Error::new_spanned(
-            dup,
-            "a #[subscriber] handler takes at most one Egress parameter",
-        ));
-    }
-    if egress.is_some() && (args.batch || args.publish.is_some()) {
-        return Err(syn::Error::new_spanned(
-            &func.sig,
-            "an Egress parameter is not supported together with batch(..) or publish(..) yet; \
-             use the plain subscriber form",
-        ));
-    }
+    let egress = split_egress(args, func, &mut extractors)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 

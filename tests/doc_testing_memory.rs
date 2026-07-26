@@ -34,7 +34,7 @@ async fn confirm(order: &Order) -> Confirmation {
 // --8<-- [end:handler]
 
 // --8<-- [start:test]
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::testing::TestApp;
 
@@ -44,8 +44,8 @@ async fn confirms_valid_orders() {
     let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            let replies = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(confirm, replies);
+            let replies = TypedPublisher::new(MemoryPublish);
+            b.include(confirm).publisher(replies);
         },
     );
 

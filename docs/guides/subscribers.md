@@ -47,6 +47,11 @@ The mechanics live in
 [Injecting dependencies](context.md#injecting-dependencies-extractor-parameters) and
 [Context fields as parameters](context.md#context-fields-as-parameters).
 
+One more parameter shape is not an extractor but an **injection**: `Egress(out): Egress<P>`
+receives a live publisher paired by the runtime from the source attached at the include site
+(`b.include(handler).publisher(..)`). See
+[Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
+
 ### Acking
 
 The return type is anything that converts into a [`Settle`] (the settlement unit: an outcome plus

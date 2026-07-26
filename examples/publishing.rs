@@ -10,18 +10,16 @@ use std::error::Error;
 use std::io;
 
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::memory::{MemoryBroker, MemoryPublisher};
+use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    App, AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
-    TypedPublisher,
+    App, AppInfo, Egress, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform,
+    RustStream, TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
 
-// A publisher shared with handlers as a typed field of the application state.
-struct AppState {
-    egress: MemoryPublisher,
-}
+// Connection-free state only: the forward handler's publisher arrives by Egress injection.
+struct AppState;
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -61,13 +59,14 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // --8<-- [end:reply_result]
 
 // --8<-- [start:forward]
-// The egress publisher is a typed field of the app state, so the handler reaches it through
-// `ctx.state()` and publishes with the publisher's own API - no registry, no erased lookup.
+// The publisher arrives as a parameter: the source is attached at the include site, the runtime
+// pairs it with the connected broker at startup, and the handler always holds a live publisher -
+// no registry, no erased lookup, no state plumbing.
 #[subscriber("ingress")]
-async fn forward(event: &Event, ctx: &mut Context<'_, (), AppState>) -> HandlerResult {
+async fn forward(event: &Event, Egress(out): Egress<MemoryPublisher>) -> HandlerResult {
     let payload = JsonCodec.encode(event).expect("serializable");
-    let out = OutgoingMessage::new("egress", payload.as_ref());
-    if ctx.state().egress.publish(out).await.is_err() {
+    let msg = OutgoingMessage::new("egress", payload.as_ref());
+    if out.publish(msg).await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -135,29 +134,29 @@ where
 #[ruststream::app]
 fn app() -> impl App {
     let broker = MemoryBroker::new();
-    let egress = broker.publisher();
     let seed = broker.publisher();
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
         // app-wide layer: wraps every published reply
         .publish_layer(AuditPublish)
-        // a publisher shared with handlers as typed state, reached via `ctx.state().egress`
         .on_startup(async move |()| {
             seed_events(seed).await.map_err(io::Error::other)?;
-            Ok::<_, io::Error>(AppState { egress })
+            Ok::<_, io::Error>(AppState)
         })
         .with_broker(broker, |b| {
-            // static, per-publisher: composed onto this TypedPublisher at compile time
-            let replies = TypedPublisher::new(b.broker().publisher()).transform(EnvelopeTransform);
-            b.include_publishing(respond, replies);
-            let validated = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(validate, validated);
-            b.include(forward);
+            // static, per-publisher: a policy stack, composed at compile time and paired with
+            // the connected broker at startup
+            b.include(respond)
+                .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform));
+            // the default reply wiring: the broker's default policy under the default codec
+            b.include(validate);
+            b.include(forward).publisher(MemoryPublish);
             // --8<-- [start:batch_publishing_mount]
-            // .transactional() exists only because MemoryPublisher implements
-            // TransactionalPublisher; without it, each reply publishes independently.
-            let confirmations = TypedPublisher::new(b.broker().publisher()).transactional();
-            b.include_batch_publishing(confirm, confirmations);
+            // .transactional() marks the wiring; the pairing checks that the policy's live
+            // publisher implements TransactionalPublisher. Without it, each reply publishes
+            // independently.
+            b.include_batch(confirm)
+                .publisher(TypedPublisher::new(MemoryPublish).transactional());
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

@@ -16,7 +16,7 @@ use ruststream::runtime::{AppInfo, RustStream};
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let router = routes::orders(b.broker());
+        let router = routes::orders();
         b.include_router(router);
     })
 }

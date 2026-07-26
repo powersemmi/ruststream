@@ -22,7 +22,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, RustStream};
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -75,8 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(metrics.consume_layer())
         .publish_layer(metrics.publish_layer())
         .with_broker(broker, |b| {
-            let replies = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(confirm, replies);
+            b.include(confirm);
         });
     // --8<-- [end:wiring]
 

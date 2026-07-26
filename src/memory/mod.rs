@@ -328,7 +328,7 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 /// # Examples
 ///
 /// ```
-/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryPublish};
 /// use ruststream::{Broker, PublishPolicy};
 ///
@@ -359,7 +359,7 @@ impl crate::DefaultPublish for ConnectedMemoryBroker {
 /// # Examples
 ///
 /// ```
-/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryRequest};
 /// use ruststream::{Broker, PublishPolicy};
 ///

@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryMessage};
+use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
     PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream, TypedPublisher,
@@ -87,14 +87,17 @@ async fn delivery_context_propagates_to_the_reply() {
     let ingress = MemoryBroker::new();
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
-    let egress_pub = TypedPublisher::new(egress.publisher()).transform(PropagateCorrelation);
 
+    let mut egress_pub = None;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(ingress, |b| {
-            b.include_publishing(echo, egress_pub);
-        })
         .with_broker(egress, |b| {
+            egress_pub =
+                Some(b.bind(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation)));
             b.include(capture);
+        })
+        .with_broker(ingress, |b| {
+            b.include(echo)
+                .publisher(egress_pub.take().expect("egress token bound"));
         });
 
     let running = app.start().await.expect("startup failed");
@@ -148,10 +151,10 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let ingress_pub = broker.publisher();
     // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
     // single-message mounts would reject a publisher carrying it.
-    let reply_pub = TypedPublisher::new(broker.publisher()).batch_transform(for_batch(MarkBatched));
+    let reply_pub = TypedPublisher::new(MemoryPublish).batch_transform(for_batch(MarkBatched));
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch_publishing(batch_echo, reply_pub);
+        b.include_batch(batch_echo).publisher(reply_pub);
         b.include(batch_capture);
     });
 
@@ -217,8 +220,7 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(stack)
         .with_broker(broker, |b| {
-            let reply_pub = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(dyn_echo, reply_pub);
+            b.include(dyn_echo);
             b.include(dyn_capture);
         });
 
@@ -307,7 +309,7 @@ async fn publish_layer_last_added_runs_outermost() {
         .publish_layer(AppendA)
         .publish_layer(AppendB)
         .with_broker(broker, |b| {
-            b.include_publishing(ord_echo, TypedPublisher::new(b.broker().publisher()));
+            b.include(ord_echo);
             b.include(ord_capture);
         });
 

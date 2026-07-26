@@ -5,12 +5,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Connected, Publisher, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, SliceHandler};
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::publish::{PublishTransform, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishTransform, ReplyWiring, TypedPublisher};
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::subscriber_def::SubscriberDef;
 
@@ -152,10 +152,9 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
             BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        RP: ReplyPublisher + 'static,
-        RP::Codec: Clone + 'static,
+        RP: ReplyWiring + 'static,
     {
-        let codec = publisher.reply_codec().clone();
+        let codec = publisher.decode_codec().clone();
         let source = def.source();
         self.mount_batch_publishing(source, def, codec, publisher)
     }
@@ -174,10 +173,9 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         D: BatchPublishingDef + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        RP: ReplyPublisher + 'static,
-        RP::Codec: Clone + 'static,
+        RP: ReplyWiring + 'static,
     {
-        let codec = publisher.reply_codec().clone();
+        let codec = publisher.decode_codec().clone();
         self.mount_batch_publishing(source, def, codec, publisher)
     }
 
@@ -198,7 +196,7 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        P: Publisher + 'static,
+        P: 'static,
         PC: Codec + Clone + 'static,
         PL: PublishTransform<D::Context> + 'static,
     {
@@ -221,7 +219,7 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
         D: PublishingDef + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        P: Publisher + 'static,
+        P: 'static,
         PC: Codec + Clone + 'static,
         PL: PublishTransform<D::Context> + 'static,
     {
@@ -330,7 +328,7 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
             BatchSubscriber + Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        RP: ReplyPublisher + 'static,
+        RP: 'static,
     {
         let codec = self.codec.clone();
         let source = def.source();
@@ -351,7 +349,7 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
         D: BatchPublishingDef + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        RP: ReplyPublisher + 'static,
+        RP: 'static,
     {
         let codec = self.codec.clone();
         self.mount_batch_publishing(source, def, codec, publisher)
@@ -370,7 +368,7 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
         <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        P: Publisher + 'static,
+        P: 'static,
         PC: Codec + 'static,
         PL: PublishTransform<D::Context> + 'static,
     {
@@ -393,7 +391,7 @@ impl<B: Broker + 'static, R, C: Codec + Clone + 'static, RL> Router<B, R, C, RL>
         D: PublishingDef + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        P: Publisher + 'static,
+        P: 'static,
         PC: Codec + 'static,
         PL: PublishTransform<D::Context> + 'static,
     {

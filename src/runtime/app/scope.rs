@@ -11,10 +11,8 @@ use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, Subscript
 
 use crate::PublishPolicy;
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
-use crate::runtime::batch_publishing::{
-    BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
-};
-use crate::runtime::dispatch::{spawn_dispatch_workers};
+use crate::runtime::batch_publishing::{BatchPublishingCall, batch_publishing_metadata};
+use crate::runtime::dispatch::spawn_dispatch_workers;
 use crate::runtime::egress::{EgressCall, EgressHandler, egress_metadata};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::handler::Handler;
@@ -86,7 +84,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     #[must_use]
     pub fn bind<S>(&self, source: S) -> crate::runtime::Bound<B, S>
     where
-        S: crate::PublishPolicy<Connected<B>>,
+        S: PublishPolicy<Connected<B>>,
     {
         crate::runtime::Bound {
             slot: Arc::clone(&self.slot),
@@ -181,8 +179,8 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     where
         R: RouterDef<B, State>,
         State: Send + Sync + 'static,
-        Layers: BlanketLayer,
-        Pipeline: PublishPipeline + Clone + 'static,
+        Layers: BlanketLayer + Clone + Send + Sync + 'static,
+        Pipeline: PublishPipeline + Clone + Send + 'static,
     {
         router.mount(&self.global, &self.pipeline, &mut self.sink);
     }
@@ -237,40 +235,6 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
             .push_subscribe_batch(source, handler, meta, policies, workers);
     }
 
-    /// Mounts a batch publishing definition on `source`, decoding each element with `codec` and
-    /// publishing the replies through `publisher`. The shared tail of the
-    /// `include_batch_publishing` / `include_batch_publishing_on` forms.
-    pub(super) fn mount_batch_publishing<S, D, C, RP>(
-        &mut self,
-        source: S,
-        def: D,
-        codec: C,
-        publisher: RP,
-    ) where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingCall<State> + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Serialize + Send + Sync + 'static,
-        C: Codec + 'static,
-        RP: ReplyPublisher + 'static,
-        Pipeline: PublishPipeline + Clone + 'static,
-        State: Send + Sync + 'static,
-    {
-        let meta = batch_publishing_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        let handler = BatchPublishingHandler {
-            def,
-            codec,
-            publisher,
-            pipeline: self.pipeline.clone(),
-            decode: policies.decode,
-        };
-        self.sink
-            .push_subscribe_batch(source, handler, meta, policies, workers);
-    }
-
     /// Mounts a publishing definition whose reply publisher is a policy source, paired by the
     /// runtime after connect. Decode uses the scope codec; the reply codec and transforms travel
     /// on the source's typed stack.
@@ -295,7 +259,8 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
-        Layers: Layer<PublishingHandler<D, SC::Codec, P, PC, PL, Pipeline>> + Clone + Send + 'static,
+        Layers:
+            Layer<PublishingHandler<D, SC::Codec, P, PC, PL, Pipeline>> + Clone + Send + 'static,
         Layers::Handler:
             Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
         B::Connected: 'static,
@@ -462,47 +427,6 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
             }),
             meta,
         );
-    }
-
-    /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
-    /// `publisher`. The shared tail of the `include_publishing` / `include_publishing_on` forms.
-    pub(super) fn mount_publishing<S, D, C, P, PC, PL>(
-        &mut self,
-        source: S,
-        def: D,
-        codec: C,
-        publisher: TypedPublisher<P, PC, PL>,
-    ) where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        <S::Subscriber as Subscriber>::Message: 'static,
-        D: PublishingCall<State> + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Serialize + Send + Sync + 'static,
-        D::Context:
-            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
-        C: Codec + 'static,
-        P: Publisher + 'static,
-        PC: Codec + 'static,
-        PL: PublishTransform<D::Context> + 'static,
-        Pipeline: PublishPipeline + Clone + 'static,
-        State: Send + Sync + 'static,
-        Layers: Layer<PublishingHandler<D, C, P, PC, PL, Pipeline>>,
-        Layers::Handler:
-            Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
-    {
-        let meta = publishing_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        let handler = self.global.layer(PublishingHandler {
-            def,
-            codec,
-            publisher,
-            pipeline: self.pipeline.clone(),
-            decode: policies.decode,
-        });
-        self.sink
-            .push_subscribe_workers(source, handler, meta, policies, workers);
     }
 }
 

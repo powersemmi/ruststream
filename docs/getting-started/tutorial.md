@@ -74,15 +74,14 @@ To publish a reply, return the reply value and name the destination with `publis
 --8<-- "examples/tutorial/orders.rs:confirm"
 ```
 
-Mount it with a publisher that carries the reply codec:
+Mount it with plain `include`; the reply goes out through the broker's default publish policy
+under the default codec (chain `.publisher(..)` with a `TypedPublisher` stack to name a reply
+codec or add transforms):
 
-<!-- inline-rust: minimal mount fragment isolating the publisher wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
+<!-- inline-rust: minimal mount fragment isolating the reply wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
 ```rust
-use ruststream::runtime::TypedPublisher;
-
 // inside with_broker(...), with `confirm` imported from the orders module
-let replies = TypedPublisher::new(b.broker().publisher());
-b.include_publishing(confirm, replies);
+b.include(confirm);
 ```
 
 See [Publishing & replies](../guides/publishing.md) for the full picture, including publishing from

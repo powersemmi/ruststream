@@ -11,9 +11,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
+// `DefaultPublish` powers only the default-reply commits, which need a default codec.
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::DefaultPublish;
 use crate::{
-    BatchSubscriber, Broker, Connected, DefaultPublish, PublishPolicy, Publisher, Subscriber,
-    SubscriptionSource,
+    BatchSubscriber, Broker, Connected, PublishPolicy, Publisher, Subscriber, SubscriptionSource,
 };
 
 use crate::runtime::batch::BatchDef;
@@ -28,9 +30,11 @@ use crate::runtime::typed::Typed;
 
 use super::scope::BrokerScope;
 
-/// Ties a definition type to its form token, so one `include` entry point can dispatch to the
-/// right mounting machinery at compile time. Implemented by the `#[subscriber]` macro; a
-/// hand-written definition adds it next to its def trait impl.
+/// Ties a definition type to its form token.
+///
+/// One `include` entry point then dispatches to the right mounting machinery at compile time.
+/// Implemented by the `#[subscriber]` macro; a hand-written definition adds it next to its def
+/// trait impl.
 pub trait IncludeDef {
     /// The form token: one of the markers in [`forms`].
     type Form;
@@ -306,7 +310,6 @@ where
 /// Commits when dropped (the end of the `b.include(..)` statement). Without a
 /// [`publisher`](Self::publisher) call it commits with the broker's default publish policy under
 /// the default codec; with one, the attached source is paired by the runtime at startup.
-#[must_use = "the registration commits when this builder drops"]
 pub struct IncludePublishing<'s, B, Layers, C, State, Pipeline, D, Src>
 where
     B: Broker + 'static,
@@ -327,6 +330,11 @@ where
     /// Attaches the reply source: a [`TypedPublisher`] stack over a publish policy (naming the
     /// reply codec and transforms), or a [`Bound`](crate::runtime::Bound) token wrapping one for
     /// a cross-broker reply. The runtime pairs it after the brokers connect.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit or this replacement.
     pub fn publisher<S2>(
         mut self,
         source: S2,
@@ -346,6 +354,17 @@ where
             scope: Some(scope),
             parts: Some((def, WithSource(source))),
         }
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, D, Src> std::fmt::Debug
+    for IncludePublishing<'_, B, Layers, C, State, Pipeline, D, Src>
+where
+    B: Broker + 'static,
+    Src: CommitPublishing<B, Layers, C, State, Pipeline, D>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncludePublishing").finish_non_exhaustive()
     }
 }
 
@@ -452,7 +471,6 @@ where
 ///
 /// Commits when dropped. There is no default source: committing without a
 /// [`publisher`](Self::publisher) call panics at application build time, naming the fix.
-#[must_use = "the registration commits when this builder drops"]
 pub struct IncludeEgress<'s, B, Layers, C, State, Pipeline, D, Src>
 where
     B: Broker + 'static,
@@ -471,6 +489,11 @@ where
     /// Attaches the source the handler's [`Egress`](crate::runtime::Egress) parameter pairs
     /// from: the scope broker's publish policy, or a [`Bound`](crate::runtime::Bound) token for
     /// a different registered broker.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit or this replacement.
     pub fn publisher<S2>(
         mut self,
         source: S2,
@@ -490,6 +513,17 @@ where
             scope: Some(scope),
             parts: Some((def, WithSource(source))),
         }
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, D, Src> std::fmt::Debug
+    for IncludeEgress<'_, B, Layers, C, State, Pipeline, D, Src>
+where
+    B: Broker + 'static,
+    Src: CommitEgress<B, Layers, C, State, Pipeline, D>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncludeEgress").finish_non_exhaustive()
     }
 }
 
@@ -587,7 +621,6 @@ where
 /// The registration builder [`BrokerScope::include_batch`] returns for a
 /// `#[subscriber(batch(..), publish("dest"))]` definition. Commits when dropped; see
 /// [`IncludePublishing`].
-#[must_use = "the registration commits when this builder drops"]
 pub struct IncludeBatchPublishing<'s, B, Layers, C, State, Pipeline, D, Src>
 where
     B: Broker + 'static,
@@ -606,6 +639,11 @@ where
     /// Attaches the reply source: a [`TypedPublisher`] stack over a publish policy, its
     /// [`transactional`](TypedPublisher::transactional) form for one transaction per batch, or a
     /// [`Bound`](crate::runtime::Bound) token wrapping either.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit or this replacement.
     pub fn publisher<S2>(
         mut self,
         source: S2,
@@ -625,6 +663,18 @@ where
             scope: Some(scope),
             parts: Some((def, WithSource(source))),
         }
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, D, Src> std::fmt::Debug
+    for IncludeBatchPublishing<'_, B, Layers, C, State, Pipeline, D, Src>
+where
+    B: Broker + 'static,
+    Src: CommitBatchPublishing<B, Layers, C, State, Pipeline, D>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncludeBatchPublishing")
+            .finish_non_exhaustive()
     }
 }
 
@@ -675,7 +725,8 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         D::Handler: 'static,
         D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
         State: Send + Sync + 'static,
-        Layers: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C::Codec, D::Handler>>,
+        Layers:
+            Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C::Codec, D::Handler>>,
         Layers::Handler:
             Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
     {
@@ -697,5 +748,55 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     {
         let codec = self.codec.scope_codec();
         self.mount_batch(source, def, codec);
+    }
+}
+
+impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
+    /// Mounts a `publish("dest")` definition on an explicit subscription `source`, replying
+    /// through `publisher` (a typed policy stack, or a [`Bound`](crate::runtime::Bound) token
+    /// wrapping one). The positional counterpart of `include(def).publisher(..)` for the
+    /// source-override case.
+    pub fn include_publishing_on<S, D, Src, P, PC, PL>(&mut self, source: S, def: D, publisher: Src)
+    where
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
+        S::Subscriber: Send + 'static,
+        <S::Subscriber as Subscriber>::Message: Send + Sync + 'static,
+        C: ScopeCodec,
+        D: PublishingCall<State> + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        D::Context:
+            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
+        Src: PublishPolicy<Connected<B>, Live = TypedPublisher<P, PC, PL>> + Send + 'static,
+        P: Publisher + 'static,
+        PC: Codec + 'static,
+        PL: PublishTransform<D::Context> + 'static,
+        Pipeline: PublishPipeline + Clone + Send + 'static,
+        State: Send + Sync + 'static,
+        Layers: Layer<PublishingHandler<D, C::Codec, P, PC, PL, Pipeline>> + Clone + Send + 'static,
+        Layers::Handler:
+            Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
+    {
+        self.mount_publishing_source(source, def, publisher);
+    }
+
+    /// Mounts a `batch(.., publish("dest"))` definition on an explicit subscription `source`,
+    /// replying through `publisher` (a typed policy stack, its transactional form, or a
+    /// [`Bound`](crate::runtime::Bound) token wrapping either).
+    pub fn include_batch_publishing_on<S, D, Src, RP>(&mut self, source: S, def: D, publisher: Src)
+    where
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        <S::Subscriber as Subscriber>::Message: Send + 'static,
+        C: ScopeCodec,
+        D: BatchPublishingCall<State> + 'static,
+        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Reply: Serialize + Send + Sync + 'static,
+        Src: PublishPolicy<Connected<B>, Live = RP> + Send + 'static,
+        RP: ReplyPublisher + 'static,
+        Pipeline: PublishPipeline + Clone + Send + 'static,
+        State: Send + Sync + 'static,
+    {
+        self.mount_batch_publishing_source(source, def, publisher);
     }
 }

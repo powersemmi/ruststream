@@ -47,8 +47,8 @@ pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
     PublishLayer, PublishNext, PublishPipeline, PublishStack, PublishTransform,
-    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, TransactionPublishError,
-    TransactionScope, Transactional, TypedPublisher, for_batch,
+    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, ReplyWiring,
+    TransactionPublishError, TransactionScope, Transactional, TypedPublisher, for_batch,
 };
 pub use publish_source::Bound;
 pub use publisher_registry::ErasedPublisher;

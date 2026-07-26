@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use common::wait_for;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemorySubscriber};
+use ruststream::memory::{
+    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
+};
 use ruststream::runtime::{
     AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
     TypedPublisher,
@@ -296,14 +298,17 @@ async fn static_publish_layer_transforms_reply() {
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
 
-    // The static layer is composed onto the publisher at compile time - no dyn dispatch.
-    let egress_pub = TypedPublisher::new(egress.publisher()).transform(StaticEnvelope);
-
+    // The static layer is composed onto the policy stack at compile time - no dyn dispatch.
+    let mut egress_pub = None;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(ingress, |b| {
-            b.include_publishing(relay, egress_pub);
+        .with_broker(egress, |b| {
+            egress_pub = Some(b.bind(TypedPublisher::new(MemoryPublish).transform(StaticEnvelope)));
+            b.include(check);
         })
-        .with_broker(egress, |b| b.include(check));
+        .with_broker(ingress, |b| {
+            b.include(relay)
+                .publisher(egress_pub.take().expect("egress token bound"));
+        });
 
     let running = app.start().await.expect("startup failed");
 
@@ -374,15 +379,18 @@ async fn macro_publisher_replies_cross_broker() {
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
 
-    // The reply is published cross-broker: egress's publisher + reply codec; name from the macro.
-    let egress_pub = TypedPublisher::new(egress.publisher());
-
+    // The reply is published cross-broker: a token bound to egress; name from the macro.
+    let mut egress_pub = None;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
-        .with_broker(ingress, |b| {
-            b.include_publishing(reply, egress_pub);
+        .with_broker(egress, |b| {
+            egress_pub = Some(b.bind(TypedPublisher::new(MemoryPublish)));
+            b.include(capture);
         })
-        .with_broker(egress, |b| b.include(capture));
+        .with_broker(ingress, |b| {
+            b.include(reply)
+                .publisher(egress_pub.take().expect("egress token bound"));
+        });
 
     let running = app.start().await.expect("startup failed");
 
@@ -441,10 +449,8 @@ async fn confirm_sink(c: &Confirmation) -> HandlerResult {
 async fn publishing_result_form_controls_ack_and_publish() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let replies = TypedPublisher::new(broker.publisher());
-
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_publishing(confirm, replies);
+        b.include(confirm);
         b.include(confirm_sink);
     });
 
@@ -506,12 +512,10 @@ async fn ctx_sink(resp: &Response) -> HandlerResult {
 async fn publishing_handler_reads_context_state() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let replies = TypedPublisher::new(broker.publisher());
-
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(|()| async { Ok::<_, Infallible>(Bump(100)) })
         .with_broker(broker, |b| {
-            b.include_publishing(ctx_reply, replies);
+            b.include(ctx_reply);
             b.include(ctx_sink);
         });
 

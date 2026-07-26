@@ -96,18 +96,23 @@ async fn a_typed_policy_stack_pairs_functorially() {
     let publisher = broker.publisher();
     let mut replies_sub = broker.subscribe("policy.replies");
 
-    // The shared in-process bus makes a connected clone pair against the app's broker.
+    // The stack itself is a policy: pairing it manually against a connected clone yields the
+    // same wiring type over the live leaf (the functorial half of the seam)...
     let connected = Broker::connect(broker.clone())
         .await
         .expect("memory connect is infallible");
-    let replies = TypedPublisher::new(MemoryPublish)
+    let paired = TypedPublisher::new(MemoryPublish)
         .transform(Envelope)
         .pair(&connected)
         .await
         .expect("memory pairing is infallible");
+    let _type_check: TypedPublisher<ruststream::memory::MemoryPublisher, _, _> = paired;
 
-    let app = RustStream::new(AppInfo::new("policy", "0.1.0"))
-        .with_broker(broker, |b| b.include_publishing(respond, replies));
+    // ...while the registration takes the unpaired stack and the runtime pairs it at startup.
+    let replies = TypedPublisher::new(MemoryPublish).transform(Envelope);
+    let app = RustStream::new(AppInfo::new("policy", "0.1.0")).with_broker(broker, |b| {
+        b.include(respond).publisher(replies);
+    });
     let running = app.start().await.expect("startup failed");
 
     publisher

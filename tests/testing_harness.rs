@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use ruststream::memory::MemoryBroker;
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
 // needs no import (matching the `examples/publishing.rs` pattern).
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::testing::{Outcome, TestApp, TestError};
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -458,8 +458,7 @@ async fn inspect_raw_messages_and_debug_surfaces() {
     use ruststream::codec::{Codec, JsonCodec};
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let out = TypedPublisher::new(b.broker().publisher());
-        b.include_publishing(echo, out);
+        b.include(echo);
     });
     let tb = TestApp::start(app).await.unwrap();
 
@@ -506,8 +505,7 @@ async fn with_on_uncalled_subscriber_panics() {
 #[should_panic(expected = "nothing was published")]
 async fn published_with_on_empty_channel_panics() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let out = TypedPublisher::new(b.broker().publisher());
-        b.include_publishing(echo, out);
+        b.include(echo);
     });
     let tb = TestApp::start(app).await.unwrap();
     tb.broker::<MemoryBroker>()
