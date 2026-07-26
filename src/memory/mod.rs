@@ -285,13 +285,15 @@ impl crate::testing::TestableBroker for MemoryBroker {
     }
 
     fn inject(&self, message: OutgoingMessage<'_>) {
-        // The harness only drives live buses; an injection racing a shutdown is simply lost,
-        // like any other post-shutdown operation.
-        let _ = self.state.fanout(&MemoryDelivery {
-            name: message.name().to_owned(),
-            payload: Bytes::copy_from_slice(message.payload()),
-            headers: message.headers().clone(),
-        });
+        // Injecting into a shut-down broker is a harness bug (both run_suite and TestApp drive
+        // the bus strictly before shutdown), so fail loudly instead of losing the message.
+        self.state
+            .fanout(&MemoryDelivery {
+                name: message.name().to_owned(),
+                payload: Bytes::copy_from_slice(message.payload()),
+                headers: message.headers().clone(),
+            })
+            .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
     fn published(&self, name: &str) -> Vec<RawMessage> {
