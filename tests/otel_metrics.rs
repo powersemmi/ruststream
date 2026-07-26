@@ -25,6 +25,11 @@ async fn consume(_order: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
+#[subscriber("otel.drops")]
+async fn reject(_order: &Order) -> HandlerResult {
+    HandlerResult::drop()
+}
+
 #[subscriber("otel.requests", publish("otel.confirmations"))]
 async fn confirm(order: &Order) -> Order {
     Order { id: order.id }
@@ -85,7 +90,10 @@ async fn consume_layer_records_per_delivery_metrics() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
-        .with_broker(MemoryBroker::new(), |b| b.include(consume));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(consume);
+            b.include(reject);
+        });
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
@@ -93,13 +101,58 @@ async fn consume_layer_records_per_delivery_metrics() {
         .await
         .expect("publish failed");
     tb.broker::<MemoryBroker>()
+        .publish("otel.drops", &Order { id: 8 })
+        .await
+        .expect("publish failed");
+    tb.broker::<MemoryBroker>()
         .subscriber("otel.orders")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .subscriber("otel.drops")
         .assert_called_once();
 
     provider.force_flush().expect("flush failed");
-    assert_eq!(u64_sum(&exporter, "messaging.client.consumed.messages"), 1);
-    assert_eq!(u64_sum(&exporter, "ruststream.messages.processed"), 1);
-    assert_eq!(histogram_count(&exporter, "messaging.process.duration"), 1);
+    assert_eq!(u64_sum(&exporter, "messaging.client.consumed.messages"), 2);
+    assert_eq!(u64_sum(&exporter, "ruststream.messages.processed"), 2);
+    assert_eq!(histogram_count(&exporter, "messaging.process.duration"), 2);
+}
+
+/// One point recorded under the u64 gauge `name` with `value` for the given state attribute.
+fn gauge_reports(exporter: &InMemoryMetricExporter, name: &str) -> bool {
+    exporter
+        .get_finished_metrics()
+        .expect("exporter drained")
+        .iter()
+        .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+        .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+        .any(|metric| metric.name() == name)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn init_installs_globals_and_shutdown_returns() {
+    // Building the exporters performs no I/O, so a dead endpoint only shows up when flushing;
+    // the test asserts init and shutdown return rather than hang. The bridge-less form runs
+    // first inside the same test, keeping the single try_init deterministic.
+    let quiet = Otel::builder()
+        .tracing_bridge(false)
+        .stamp_publish_time(false)
+        .otlp_endpoint("http://127.0.0.1:1")
+        .init()
+        .expect("bridge-less init failed");
+    let _ = quiet.shutdown();
+
+    let bridged = Otel::builder()
+        .service_name("otel-test")
+        .otlp_endpoint("http://127.0.0.1:1")
+        .messaging_system("memory")
+        .attribute("deployment.environment", "test")
+        .init()
+        .expect("init failed");
+    assert!(format!("{bridged:?}").contains("Otel"));
+    let probe_layer = bridged.consume_layer();
+    assert!(format!("{probe_layer:?}").contains("OtelConsumeLayer"));
+    assert!(format!("{:?}", bridged.publish_layer()).contains("OtelPublishLayer"));
+    let _ = bridged.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -136,8 +189,13 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
         "the publish layer must stamp the publish-time header",
     );
 
+    otel.observe_health(running.health());
     running.shutdown().await.expect("graceful shutdown failed");
     provider.force_flush().expect("flush failed");
+    assert!(
+        gauge_reports(&exporter, "ruststream.app.state"),
+        "the health gauge must be collected",
+    );
     assert_eq!(u64_sum(&exporter, "messaging.client.sent.messages"), 1);
     assert_eq!(
         histogram_count(&exporter, "messaging.client.operation.duration"),

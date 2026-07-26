@@ -92,3 +92,25 @@ async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
         "the terminal state stays Failed after shutdown",
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn detached_probe_keeps_the_last_state_and_parks() {
+    let broker = MemoryBroker::new();
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(fine));
+
+    let running = app.start().await.expect("startup failed");
+    let mut health = running.health();
+    // Detach: dropping the handle never blocks (crate rule), so no transition ever arrives.
+    drop(running);
+
+    assert!(
+        health.is_running(),
+        "a detached service keeps its last state"
+    );
+    let waited = tokio::time::timeout(Duration::from_millis(200), health.changed()).await;
+    assert!(
+        waited.is_err(),
+        "changed() must park forever instead of spinning when no transition can arrive",
+    );
+}

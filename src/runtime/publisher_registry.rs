@@ -65,3 +65,41 @@ impl<P: Publisher> ErasedPublisher for P {
         })
     }
 }
+
+#[cfg(all(test, feature = "memory"))]
+mod tests {
+    use futures::StreamExt;
+
+    use super::*;
+    use crate::memory::MemoryBroker;
+    use crate::{IncomingMessage, Subscriber};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn blanket_erasure_publishes_bytes_and_messages() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("erased");
+        let publisher = broker.publisher();
+        let erased: &dyn ErasedPublisher = &publisher;
+
+        erased
+            .publish_bytes("erased", b"raw")
+            .await
+            .expect("erased byte publish failed");
+        let mut headers = Headers::new();
+        headers.insert("k", "v");
+        erased
+            .publish_message("erased", b"tagged", &headers)
+            .await
+            .expect("erased message publish failed");
+
+        let mut stream = std::pin::pin!(subscriber.stream());
+        let first = stream.next().await.unwrap().expect("first delivery");
+        assert_eq!(first.payload(), b"raw");
+        assert!(first.headers().get_str("k").is_none());
+        first.ack().await.expect("ack failed");
+        let second = stream.next().await.unwrap().expect("second delivery");
+        assert_eq!(second.payload(), b"tagged");
+        assert_eq!(second.headers().get_str("k"), Some("v"));
+        second.ack().await.expect("ack failed");
+    }
+}

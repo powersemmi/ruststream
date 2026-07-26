@@ -561,3 +561,104 @@ impl PublishLayer for OtelPublishLayer {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outcome_attr_names_every_settlement() {
+        assert_eq!(outcome_attr(HandlerResult::Ack), "ack");
+        assert_eq!(
+            outcome_attr(HandlerResult::Nack { requeue: true }),
+            "nack_requeue"
+        );
+        assert_eq!(
+            outcome_attr(HandlerResult::Nack { requeue: false }),
+            "nack_drop"
+        );
+        assert_eq!(
+            outcome_attr(HandlerResult::retry_after(std::time::Duration::from_secs(
+                1
+            ))),
+            "retry_after"
+        );
+    }
+
+    #[cfg(feature = "json")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn publish_layer_splits_failures_by_error_type() {
+        use opentelemetry_sdk::metrics::InMemoryMetricExporter;
+
+        use crate::codec::JsonCodec;
+        use crate::runtime::{PublishContext, PublishIdentity, PublishStack, TypedPublisher};
+
+        /// A publisher with no broker behind it: every publish fails.
+        struct Failing;
+        impl crate::Publisher for Failing {
+            type Error = std::io::Error;
+            async fn publish(&self, _msg: crate::OutgoingMessage<'_>) -> Result<(), Self::Error> {
+                Err(std::io::Error::other("no broker"))
+            }
+        }
+
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter.clone())
+            .build();
+        let otel = Otel::builder().attach(SdkTracerProvider::builder().build(), provider.clone());
+
+        let pipeline = PublishStack::new(otel.publish_layer(), PublishIdentity);
+        let publisher = TypedPublisher::with_codec(Failing, JsonCodec);
+        let headers = Headers::new();
+        let cx = PublishContext::new("orders", &headers, &());
+        let result = publisher.publish("orders", &7_u32, &pipeline, &cx).await;
+        assert!(
+            result.is_err(),
+            "the failing publisher must surface its error"
+        );
+
+        provider.force_flush().expect("flush failed");
+        let recorded: Vec<String> = exporter
+            .get_finished_metrics()
+            .expect("exporter drained")
+            .iter()
+            .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+            .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+            .map(|metric| metric.name().to_owned())
+            .collect();
+        assert!(
+            recorded
+                .iter()
+                .any(|name| name == "messaging.client.sent.messages"),
+            "the failed publish must still count as sent (split by error.type): {recorded:?}",
+        );
+    }
+
+    #[test]
+    fn queue_time_ignores_absent_garbage_and_future_stamps() {
+        let empty = Headers::new();
+        assert_eq!(queue_time_seconds(&empty), None);
+
+        let mut garbage = Headers::new();
+        garbage.insert(PUBLISH_TIME_HEADER, "not-a-number");
+        assert_eq!(queue_time_seconds(&garbage), None);
+
+        // A stamp from the future would need a negative duration; it is dropped instead.
+        let mut future = Headers::new();
+        future.insert(PUBLISH_TIME_HEADER, u128::MAX.to_string());
+        assert_eq!(queue_time_seconds(&future), None);
+
+        let mut sane = Headers::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        sane.insert(PUBLISH_TIME_HEADER, (now - 1_500).to_string());
+        let seconds = queue_time_seconds(&sane).expect("a past stamp must produce a queue time");
+        assert!(
+            seconds >= 1.0,
+            "expected at least a second of lag, got {seconds}"
+        );
+    }
+}

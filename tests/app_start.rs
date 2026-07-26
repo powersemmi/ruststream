@@ -171,3 +171,32 @@ async fn start_is_reachable_through_the_app_trait() {
         .expect("handler never saw the message");
     running.shutdown().await.expect("graceful shutdown failed");
 }
+
+/// State-generic no-op subscriber for the lifecycle-hooks test below.
+#[subscriber("started.quiet")]
+async fn quiet(_order: &Order) -> HandlerResult {
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lifecycle_hooks_run_and_shutdown_hook_errors_only_log() {
+    let broker = MemoryBroker::new();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(42_u32))
+        .after_startup(async move |state| {
+            assert_eq!(*state, 42);
+            Ok::<_, Infallible>(())
+        })
+        .on_shutdown(async move |_state| Err::<(), _>(std::io::Error::other("on_shutdown boom")))
+        .after_shutdown(async move |_state| {
+            Err::<(), _>(std::io::Error::other("after_shutdown boom"))
+        })
+        .shutdown_timeout(Duration::from_secs(5))
+        .with_broker(broker, |b| b.include(quiet));
+
+    let running = app.start().await.expect("startup failed");
+    assert!(format!("{running:?}").contains("RunningApp"));
+    // Shutdown hooks may fail; per the lifecycle contract their errors are logged, never
+    // propagated, so the graceful path still completes under the configured timeout.
+    running.shutdown().await.expect("hook errors must only log");
+}
