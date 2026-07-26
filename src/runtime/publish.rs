@@ -669,6 +669,29 @@ impl<P, C, PL, BL> std::fmt::Debug for TypedPublisher<P, C, PL, BL> {
     }
 }
 
+// Pairing is functorial over the combinator stack: a typed publisher whose leaf is a policy is
+// itself a policy, and pairing swaps the leaf for its live form while the codec and transform
+// stacks travel unchanged. Fully monomorphized; no erasure anywhere on this path.
+impl<CB, P, C, PL, BL> crate::PublishPolicy<CB> for TypedPublisher<P, C, PL, BL>
+where
+    CB: crate::ConnectedBroker,
+    P: crate::PublishPolicy<CB> + Send,
+    C: Send,
+    PL: Send,
+    BL: Send,
+{
+    type Live = TypedPublisher<P::Live, C, PL, BL>;
+
+    async fn pair(self, connected: &CB) -> Result<Self::Live, CB::Error> {
+        Ok(TypedPublisher {
+            publisher: self.publisher.pair(connected).await?,
+            codec: self.codec,
+            layers: self.layers,
+            batch_layers: self.batch_layers,
+        })
+    }
+}
+
 /// A [`TypedPublisher`] whose batch replies are published inside one broker transaction.
 ///
 /// Built with [`TypedPublisher::transactional`]; accepted by the
@@ -682,6 +705,26 @@ pub struct Transactional<P, C, PL = PublishTransformIdentity, BL = BatchTransfor
 impl<P, C, PL, BL> std::fmt::Debug for Transactional<P, C, PL, BL> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Transactional").finish_non_exhaustive()
+    }
+}
+
+// The transactional wiring is a policy over a policy: pairing resolves the inner stack and keeps
+// the transactional marker, provided the leaf's live form actually is transactional.
+impl<CB, P, C, PL, BL> crate::PublishPolicy<CB> for Transactional<P, C, PL, BL>
+where
+    CB: crate::ConnectedBroker,
+    P: crate::PublishPolicy<CB> + Send,
+    P::Live: TransactionalPublisher,
+    C: Send,
+    PL: Send,
+    BL: Send,
+{
+    type Live = Transactional<P::Live, C, PL, BL>;
+
+    async fn pair(self, connected: &CB) -> Result<Self::Live, CB::Error> {
+        Ok(Transactional {
+            inner: self.inner.pair(connected).await?,
+        })
     }
 }
 

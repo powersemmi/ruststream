@@ -319,6 +319,64 @@ impl ConnectedBroker for ConnectedMemoryBroker {
     }
 }
 
+/// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
+///
+/// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`]. Exists so the memory
+/// broker exercises the full [`PublishPolicy`](crate::PublishPolicy) surface the way richer
+/// brokers do with real options (an exchange, a queue timeout, a transactional id).
+///
+/// # Examples
+///
+/// ```
+/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// use ruststream::memory::{MemoryBroker, MemoryPublish};
+/// use ruststream::{Broker, PublishPolicy};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let publisher = MemoryPublish.pair(&connected).await?;
+/// # let _ = publisher;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct MemoryPublish;
+
+impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
+    type Live = MemoryPublisher;
+
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, MemoryError> {
+        Ok(connected.publisher())
+    }
+}
+
+/// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
+///
+/// # Examples
+///
+/// ```
+/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// use ruststream::memory::{MemoryBroker, MemoryRequest};
+/// use ruststream::{Broker, PublishPolicy};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let requester = MemoryRequest.pair(&connected).await?;
+/// # let _ = requester;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct MemoryRequest;
+
+impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
+    type Live = MemoryRequester;
+
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, MemoryError> {
+        Ok(connected.requester())
+    }
+}
+
 /// The terminal witness returned by shutting down a [`ConnectedMemoryBroker`].
 ///
 /// Has no publish or subscribe surface; it carries the teardown diagnostics as plain data.
