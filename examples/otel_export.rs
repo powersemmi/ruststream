@@ -26,18 +26,22 @@ struct Order {
 }
 
 // --8<-- [start:business_metric]
-/// Business instruments are built once at startup and shared through the typed state; any field
-/// is injectable with `State<..>` thanks to `FromRef`, and handlers only add. `Otel::init`
-/// installed the global meter provider, so the counter rides the same OTLP pipeline as the
+/// The service's business instruments: one storage object, built once at startup against the
+/// global meter `Otel::init` installed, so everything in it rides the same OTLP pipeline as the
 /// framework's dispatch metrics.
+#[derive(Clone)]
+struct OrderMetrics {
+    accepted: Counter<u64>,
+}
+
 #[derive(Clone, FromRef)]
-struct AppMetrics {
-    orders_accepted: Counter<u64>,
+struct AppState {
+    metrics: OrderMetrics,
 }
 
 #[subscriber("orders")]
-async fn accept(order: &Order, State(accepted): State<Counter<u64>>) -> HandlerResult {
-    accepted.add(1, &[KeyValue::new("region", "eu")]);
+async fn accept(order: &Order, State(metrics): State<OrderMetrics>) -> HandlerResult {
+    metrics.accepted.add(1, &[KeyValue::new("region", "eu")]);
     let _ = order;
     HandlerResult::Ack
 }
@@ -63,10 +67,12 @@ fn app() -> impl App {
         .publish_layer(otel.publish_layer())
         // business instruments: built once against the global meter, shared as typed state
         .on_startup(async move |()| {
-            Ok::<_, Infallible>(AppMetrics {
-                orders_accepted: global::meter("orders-svc")
-                    .u64_counter("orders_accepted")
-                    .build(),
+            Ok::<_, Infallible>(AppState {
+                metrics: OrderMetrics {
+                    accepted: global::meter("orders-svc")
+                        .u64_counter("orders_accepted")
+                        .build(),
+                },
             })
         })
         .with_broker(MemoryBroker::new(), |b| {
