@@ -974,6 +974,59 @@ pub enum TransactionPublishError<E> {
 mod tests {
     use super::*;
 
+    #[cfg(all(feature = "memory", feature = "json"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dyn_stack_walks_its_layers_then_the_static_tail() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use futures::StreamExt;
+
+        use crate::codec::JsonCodec;
+        use crate::memory::MemoryBroker;
+        use crate::{IncomingMessage, Subscriber};
+
+        /// Adds its weight on every pass, proving order and that each layer ran exactly once.
+        struct Mark(Arc<AtomicUsize>, usize);
+        impl PublishDynLayer for Mark {
+            fn on_publish<'a>(
+                &'a self,
+                out: &'a mut Outgoing<'a>,
+                next: PublishDynNext<'a>,
+            ) -> PublishFut<'a> {
+                self.0.fetch_add(self.1, Ordering::SeqCst);
+                next.run(out)
+            }
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let stack = PublishDynStack::new([
+            Arc::new(Mark(Arc::clone(&hits), 1)) as Arc<dyn PublishDynLayer>,
+            Arc::new(Mark(Arc::clone(&hits), 10)),
+        ]);
+        assert!(format!("{stack:?}").contains("middleware"));
+        let pipeline = PublishStack::new(stack.clone(), PublishIdentity);
+
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("dyn");
+        let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
+        let headers = Headers::new();
+        let cx = PublishContext::new("dyn", &headers, &());
+        publisher
+            .publish("dyn", &5_u32, &pipeline, &cx)
+            .await
+            .expect("publish through the dynamic stack failed");
+
+        assert_eq!(hits.load(Ordering::SeqCst), 11, "each layer must run once");
+        let mut stream = std::pin::pin!(subscriber.stream());
+        let msg = stream
+            .next()
+            .await
+            .expect("delivery missing")
+            .expect("memory subscriber never errors");
+        assert_eq!(msg.payload(), b"5", "the static tail must still send");
+        msg.ack().await.expect("ack failed");
+    }
+
     #[test]
     fn borrowed_name_is_not_owned() {
         // The macro-reply hot path passes a string literal: it must stay borrowed (no alloc),

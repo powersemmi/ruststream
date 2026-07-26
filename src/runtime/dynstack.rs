@@ -176,6 +176,8 @@ mod tests {
             ctx: &'a mut Context<'_>,
             next: Next<'a, Input>,
         ) -> BoxFut<'a> {
+            // Covers the cursor's Debug alongside the walk itself.
+            assert!(format!("{next:?}").contains("remaining"));
             Box::pin(async move {
                 self.0.lock().expect("poisoned").push(self.1);
                 next.run(input, ctx).await
@@ -198,7 +200,9 @@ mod tests {
                 HandlerResult::Ack
             }
         };
+        assert!(format!("{:?}", stack.clone()).contains("middleware"));
         let handler = inner.with(stack);
+        assert!(format!("{handler:?}").contains("DynStackHandler"));
         let state = ();
         let delivery = crate::runtime::dispatch::Delivery::empty();
         let headers = Headers::new();
