@@ -7,8 +7,6 @@
 mod common;
 
 use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -342,17 +340,13 @@ static REPLY_TAGGED: AtomicU32 = AtomicU32::new(0);
 struct Tagger;
 
 impl PublishLayer for Tagger {
-    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
+    async fn on_publish<'a, N: ruststream::runtime::PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
-    > {
-        Box::pin(async move {
-            out.headers_mut().insert("x-envelope", b"1".to_vec());
-            next.run(out).await
-        })
+        next: PublishNext<'a, N, P>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        out.headers_mut().insert("x-envelope", b"1".to_vec());
+        next.run(out).await
     }
 }
 
