@@ -121,6 +121,8 @@ pub mod logging;
 
 #[cfg(feature = "opentelemetry")]
 pub mod opentelemetry;
+#[cfg(feature = "otel")]
+pub mod otel;
 
 /// Implementation detail used by the `#[subscriber]` macro to capture a payload's JSON Schema.
 ///
