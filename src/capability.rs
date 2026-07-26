@@ -37,8 +37,15 @@ pub trait BatchSubscriber: Subscriber {
 /// Implementations must guarantee that messages published between [`begin_transaction`] and
 /// [`commit`] either all become visible to subscribers or none of them do.
 ///
+/// Misuse is an error, never a silent no-op: a [`commit`] or [`abort`] with no open transaction,
+/// and a [`begin_transaction`] while one is open, must return `Self::Error`. A caller can
+/// therefore trust that `Ok` from `commit` means "an open transaction committed", not "there was
+/// nothing to commit". The [`conformance`](crate::conformance) transactional suite checks these
+/// paths.
+///
 /// [`begin_transaction`]: Self::begin_transaction
 /// [`commit`]: Self::commit
+/// [`abort`]: Self::abort
 pub trait TransactionalPublisher: Publisher {
     /// Begins a new transaction on this publisher.
     ///
@@ -47,8 +54,9 @@ pub trait TransactionalPublisher: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns `Self::Error` when the broker refuses to start a transaction, for example
-    /// because transactions are already in progress or the broker is misconfigured.
+    /// Returns `Self::Error` when a transaction is already open on this handle (a second begin
+    /// must not silently join or restart it), or when the broker refuses to start one. A
+    /// rejected begin must leave an already-open transaction untouched.
     ///
     /// [`commit`]: Self::commit
     /// [`abort`]: Self::abort
@@ -58,15 +66,21 @@ pub trait TransactionalPublisher: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns `Self::Error` when the broker rejects the commit. The transaction state after
-    /// a failed commit is implementation-defined; implementors must document it.
+    /// Returns `Self::Error` when no transaction is open on this handle, or when the broker
+    /// rejects the commit. After a failed commit the transaction is closed: the implementation
+    /// discards or aborts the broker-side transaction rather than leaving it open, and a
+    /// subsequent [`begin_transaction`](Self::begin_transaction) either starts a fresh
+    /// transaction or returns an error - the handle must never wedge permanently. Messages of a
+    /// failed transaction are lost to this handle; redelivery of the inputs, not resubmission of
+    /// the buffer, is the recovery path.
     fn commit(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// Aborts the active transaction, discarding all buffered messages.
     ///
     /// # Errors
     ///
-    /// Returns `Self::Error` when the broker rejects the abort.
+    /// Returns `Self::Error` when no transaction is open on this handle, or when the broker
+    /// fails to abort.
     fn abort(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 

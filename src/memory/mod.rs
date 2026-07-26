@@ -34,6 +34,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::Stream;
+use thiserror::Error;
 use tokio::sync::{Notify, mpsc};
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
@@ -369,8 +370,24 @@ impl std::fmt::Debug for MemoryPublisher {
     }
 }
 
+/// Error returned by [`MemoryPublisher`].
+///
+/// Publishing itself cannot fail (the bus is in-process); the variants cover transactional
+/// misuse, which the [`TransactionalPublisher`](crate::TransactionalPublisher) contract requires
+/// to surface as errors rather than silent no-ops.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MemoryError {
+    /// `begin_transaction` was called while a transaction is already open on this handle.
+    #[error("a transaction is already open on this publisher handle")]
+    TransactionBusy,
+    /// `commit` or `abort` was called with no open transaction on this handle.
+    #[error("no transaction is open on this publisher handle")]
+    NoTransaction,
+}
+
 impl Publisher for MemoryPublisher {
-    type Error = Infallible;
+    type Error = MemoryError;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
         let delivery = MemoryDelivery {

@@ -43,7 +43,10 @@ in-process semantics, not a simulation of another broker's:
   batches ship immediately, so no deadline timer is involved.
 - **Transactions.** `MemoryPublisher` implements `TransactionalPublisher`: publishes between
   `begin_transaction` and `commit` are buffered and fan out together in publish order; `abort`
-  discards them. Clones of a publisher handle do not share its transaction.
+  discards them. Misuse errors with `MemoryError` per the trait contract: a second
+  `begin_transaction` returns `TransactionBusy` (the open transaction is untouched), and
+  `commit` / `abort` without one return `NoTransaction`. Clones of a publisher handle do not
+  share its transaction.
 - **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
   well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).
 
