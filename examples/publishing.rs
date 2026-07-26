@@ -6,9 +6,6 @@
 //! cargo run --example publishing --features macros,memory,json -- run
 //! ```
 
-use std::future::Future;
-use std::pin::Pin;
-
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::runtime::{
@@ -91,17 +88,13 @@ impl<C> PublishTransform<C> for EnvelopeTransform {
 struct AuditPublish;
 
 impl PublishLayer for AuditPublish {
-    fn on_publish<'a, N: ruststream::runtime::PublishPipeline>(
+    async fn on_publish<'a, N: ruststream::runtime::PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>,
-    > {
-        Box::pin(async move {
-            println!("publishing to {}", out.name());
-            next.run(out).await
-        })
+        next: PublishNext<'a, N, P>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        println!("publishing to {}", out.name());
+        next.run(out).await
     }
 }
 // --8<-- [end:app_layer]

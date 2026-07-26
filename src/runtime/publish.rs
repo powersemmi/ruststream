@@ -13,15 +13,17 @@ use serde::Serialize;
 use tracing::warn;
 
 use super::lifecycle::BoxError;
-use super::publisher_registry::ErasedPublisher;
 use crate::codec::Codec;
 // `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
 // way, so an ungated import would break `--no-default-features`.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
-use crate::{Headers, Publisher, TransactionalPublisher};
+use crate::{Headers, OutgoingMessage, Publisher, TransactionalPublisher};
 
+// The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
+// The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
+// pays this allocation.
 type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
 
 /// A mutable outgoing message flowing through the publish pipeline.
@@ -106,11 +108,11 @@ impl<'a> Outgoing<'a> {
 /// this contract.)
 pub trait PublishPipeline: Send + Sync {
     /// Runs `out` through the remaining middleware, then sends it via `send`.
-    fn run<'a>(
+    fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        send: &'a dyn ErasedPublisher,
-    ) -> PublishFut<'a>;
+        send: &'a P,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
 }
 
 /// The terminal [`PublishPipeline`]: no middleware, just the broker send. The default for an app
@@ -119,12 +121,14 @@ pub trait PublishPipeline: Send + Sync {
 pub struct PublishIdentity;
 
 impl PublishPipeline for PublishIdentity {
-    fn run<'a>(
+    async fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        send: &'a dyn ErasedPublisher,
-    ) -> PublishFut<'a> {
-        send.publish_message(out.name(), out.payload(), out.headers())
+        send: &'a P,
+    ) -> Result<(), BoxError> {
+        let msg =
+            OutgoingMessage::new(out.name(), out.payload()).with_headers(out.headers().clone());
+        send.publish(msg).await.map_err(|e| Box::new(e) as BoxError)
     }
 }
 
@@ -144,11 +148,11 @@ impl<Head, Tail> PublishStack<Head, Tail> {
 }
 
 impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack<Head, Tail> {
-    fn run<'a>(
+    fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        send: &'a dyn ErasedPublisher,
-    ) -> PublishFut<'a> {
+        send: &'a P,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         self.head.on_publish(
             out,
             PublishNext {
@@ -167,29 +171,31 @@ impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack
 /// [`RustStream::publish_layer`](super::RustStream::publish_layer).
 pub trait PublishLayer: Send + Sync {
     /// Handle the outgoing message, calling `next` to continue the pipeline.
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PublishFut<'a>;
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
 }
 
 /// A cursor over the rest of the publish pipeline, ending in the broker send. Handed to a
 /// [`PublishLayer`]; call [`run`](Self::run) to continue.
-pub struct PublishNext<'a, N> {
+pub struct PublishNext<'a, N, P> {
     tail: &'a N,
-    send: &'a dyn ErasedPublisher,
+    send: &'a P,
 }
 
-impl<'a, N: PublishPipeline> PublishNext<'a, N> {
+impl<'a, N: PublishPipeline, P: Publisher> PublishNext<'a, N, P> {
     /// Runs the rest of the pipeline (the remaining middleware, then the send).
-    #[must_use]
-    pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
+    pub fn run(
+        self,
+        out: &'a mut Outgoing<'a>,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         self.tail.run(out, self.send)
     }
 }
 
-impl<N> std::fmt::Debug for PublishNext<'_, N> {
+impl<N, P> std::fmt::Debug for PublishNext<'_, N, P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PublishNext").finish_non_exhaustive()
     }
@@ -294,16 +300,17 @@ impl std::fmt::Debug for PublishDynStack {
 }
 
 impl PublishLayer for PublishDynStack {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PublishFut<'a> {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         // Erase the static continuation into a one-shot closure so the object-safe walker can end
-        // by handing control back to the surrounding static pipeline.
+        // by handing control back to the surrounding static pipeline. Boxing starts here: only
+        // the dynamic list pays it.
         PublishDynNext {
             rest: &self.0,
-            tail: Box::new(move |out| next.run(out)),
+            tail: Box::new(move |out| Box::pin(next.run(out)) as PublishFut<'a>),
         }
         .run(out)
     }
