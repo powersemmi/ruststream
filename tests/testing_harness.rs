@@ -416,7 +416,7 @@ async fn broker_by_type_panics_when_ambiguous() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn with_state_injects_a_mirror_state() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(|()| async {
+        .on_startup(async move |()| {
             // The real startup would build a publisher; the harness replaces it below.
             Ok::<_, std::convert::Infallible>(Egress {
                 egress: MemoryBroker::new().publisher(),

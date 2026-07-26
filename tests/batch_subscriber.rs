@@ -345,7 +345,7 @@ async fn batch_handler_reads_typed_state() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .on_startup(|()| async { Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }) })
+        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
         .with_broker(broker, |b| b.include_batch(scale));
 
     let running = app.start().await.expect("startup failed");

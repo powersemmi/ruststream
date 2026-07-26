@@ -102,7 +102,10 @@ let app = RustStream::new(info)
 
 Being scope-minted is the token's proof of registration, so pairing cannot pick a wrong broker
 instance. The same shape works for reply publishing (`.publisher(token)` on a `publish("dest")`
-handler) and for the batch forms.
+handler) and for the batch forms. Outside a registration, a token pairs itself once startup
+connected its broker: `token.live()` in an `after_startup` hook (the first publish), or
+`running.publisher(token)` for a sibling task - see
+[Lifespan](lifespan.md#lifecycle-hooks) and [Running beside another server](http.md).
 
 ## The publish pipeline
 

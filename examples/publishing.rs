@@ -7,19 +7,15 @@
 //! ```
 
 use std::error::Error;
-use std::io;
 
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
     App, AppInfo, Egress, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform,
-    RustStream, TypedPublisher,
+    RustStream, Transactional, TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
-
-// Connection-free state only: the forward handler's publisher arrives by Egress injection.
-struct AppState;
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -115,12 +111,15 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 // --8<-- [start:manual_transaction]
 /// Seeds the reference events inside one broker transaction: both records become visible
 /// together on commit, or not at all. The scope owns the transaction, so a commit without a
-/// begin, a second commit, or a publish after settling do not compile.
-async fn seed_events<P>(publisher: P) -> Result<(), Box<dyn Error + Send + Sync>>
+/// begin, a second commit, or a publish after settling do not compile. The wiring arrives
+/// already paired (a bound token gone live in `after_startup`), so seeding cannot race the
+/// broker connect.
+async fn seed_events<P>(
+    seeder: Transactional<P, JsonCodec>,
+) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     P: TransactionalPublisher,
 {
-    let seeder = TypedPublisher::new(publisher).transactional();
     let mut scope = seeder.begin().await?;
     scope.publish("events", &Event { id: 1 }).await?;
     scope.publish("events", &Event { id: 2 }).await?;
@@ -134,16 +133,15 @@ where
 #[ruststream::app]
 fn app() -> impl App {
     let broker = MemoryBroker::new();
-    let seed = broker.publisher();
+    let mut seed = None;
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
         // app-wide layer: wraps every published reply
         .publish_layer(AuditPublish)
-        .on_startup(async move |()| {
-            seed_events(seed).await.map_err(io::Error::other)?;
-            Ok::<_, io::Error>(AppState)
-        })
         .with_broker(broker, |b| {
+            // a token for the startup seeding below: bound now, paired once connected
+            seed =
+                Some(b.bind(TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional()));
             // static, per-publisher: a policy stack, composed at compile time and paired with
             // the connected broker at startup
             b.include(respond)
@@ -158,6 +156,17 @@ fn app() -> impl App {
             b.include_batch(confirm)
                 .publisher(TypedPublisher::new(MemoryPublish).transactional());
             // --8<-- [end:batch_publishing_mount]
+        })
+        // the first publish: brokers are connected and subscriptions are open, so the token
+        // pairs into a live transactional wiring
+        .after_startup(async move |_state| {
+            let seeder = seed
+                .take()
+                .expect("token bound in the scope above")
+                .live()
+                .await
+                .map_err(std::io::Error::other)?;
+            seed_events(seeder).await.map_err(std::io::Error::other)
         })
     // --8<-- [end:pipeline]
 }

@@ -40,6 +40,50 @@ impl<B2: Broker + 'static, S: Clone> Clone for Bound<B2, S> {
     }
 }
 
+impl<B2, S> Bound<B2, S>
+where
+    B2: Broker + 'static,
+    S: PublishPolicy<Connected<B2>>,
+{
+    /// Pairs the token against its own broker, producing the live form.
+    ///
+    /// Available anywhere the application startup has already connected the broker: an
+    /// `after_startup` hook (the documented home of a first publish), or a sibling task after
+    /// [`start`](crate::runtime::RustStream::start) returned (the
+    /// [`RunningApp::publisher`](crate::runtime::RunningApp::publisher) sugar calls this).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PairError`] when the broker is not connected yet (pairing before startup
+    /// finished), or when the policy's own pairing fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # fn demo() {
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    ///
+    /// let mut seed = None;
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| {
+    ///         seed = Some(b.bind(MemoryPublish));
+    ///     })
+    ///     .after_startup(async move |_state| {
+    ///         let publisher = seed.take().expect("bound").live().await?;
+    ///         // ... publish the first message through `publisher` ...
+    ///         # let _ = publisher;
+    ///         Ok::<_, ruststream::PairError>(())
+    ///     });
+    /// # let _ = app;
+    /// # }
+    /// ```
+    pub async fn live(self) -> Result<S::Live, PairError> {
+        pair_bound::<B2, S>(&self.slot, self.source).await
+    }
+}
+
 /// Pairs `source` against the broker in `slot`. The runtime's own pairing entry for tokens.
 pub(crate) async fn pair_bound<B2, S>(
     slot: &ConnectedSlot<B2>,

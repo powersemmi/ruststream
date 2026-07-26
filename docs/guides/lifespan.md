@@ -37,8 +37,11 @@ after_shutdown(Arc<S>)           # final teardown
   does not compile. Register the other lifecycle hooks after it (an earlier hook would close over
   the wrong state type; `on_startup` panics if one exists).
 - **`after_startup`** runs once subscriptions are open and handlers are live. Use it to publish an
-  initial message or signal readiness (the [testing guide](testing.md) uses it as the "handlers are
-  live" gate). A failure here also aborts startup.
+  initial message - a [`Bound`](../guides/publishing.md#publishing-to-a-different-broker) token
+  minted in the broker's scope pairs into a live publisher here with `token.live()` - or to signal
+  readiness (the [testing guide](testing.md) uses it as the "handlers are live" gate). A failure
+  here also aborts startup. This is also the delivery-correct point for seeds the app itself
+  consumes: a publish before subscriptions open has no subscribers to reach.
 - **`on_shutdown`** runs when shutdown begins, while brokers are still connected.
 - **`after_shutdown`** runs after brokers are down, for final async teardown.
 

@@ -513,7 +513,7 @@ async fn publishing_handler_reads_context_state() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(|()| async { Ok::<_, Infallible>(Bump(100)) })
+        .on_startup(async move |()| Ok::<_, Infallible>(Bump(100)))
         .with_broker(broker, |b| {
             b.include(ctx_reply);
             b.include(ctx_sink);

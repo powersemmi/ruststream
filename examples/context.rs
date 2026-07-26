@@ -93,7 +93,7 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 #[ruststream::app]
 fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
     RustStream::new(AppInfo::new("context", "0.1.0"))
-        .on_startup(|()| async {
+        .on_startup(async move |()| {
             Ok::<_, std::convert::Infallible>(AppConfig {
                 reject_zero_ids: true,
             })

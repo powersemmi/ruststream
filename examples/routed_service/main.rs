@@ -61,7 +61,7 @@ fn app() -> impl App {
         .publish_layer(metrics.publish_layer())
         // Open the shared repository before brokers connect; the produced value becomes the typed
         // app state, shared with every handler.
-        .on_startup(|()| async move { Repository::open().await })
+        .on_startup(async move |()| Repository::open().await)
         // Close the repository after brokers stop, then dump the final metrics.
         .after_shutdown(move |repo: Arc<Repository>| async move {
             repo.close().await;
