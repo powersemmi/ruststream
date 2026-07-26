@@ -7,7 +7,6 @@
 //! them.
 
 use std::{
-    convert::Infallible,
     sync::{Arc, atomic::Ordering},
     task::Poll,
     time::Duration,
@@ -18,7 +17,9 @@ use futures::Stream;
 use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
 
-use super::{MemoryDelivery, MemoryMessage, MemoryPublisher, MemoryState, MemorySubscriber};
+use super::{
+    MemoryDelivery, MemoryError, MemoryMessage, MemoryPublisher, MemoryState, MemorySubscriber,
+};
 use crate::{
     BatchSubscriber, IncomingMessage, OutgoingMessage, Partitioned, Publisher, RequestReply,
     Subscriber, TransactionalPublisher,
@@ -205,37 +206,41 @@ impl BatchSubscriber for MemorySubscriber {
 /// switches this handle to buffering, [`commit`](TransactionalPublisher::commit) fans out the
 /// buffer in publish order, [`abort`](TransactionalPublisher::abort) discards it.
 ///
-/// Every operation is total, matching the infallible publisher: `begin_transaction` inside an
-/// active transaction continues that transaction, and `commit` / `abort` without one are no-ops.
-/// Clones of the handle do not share the transaction (see [`MemoryPublisher`]).
+/// Misuse errors per the trait contract: a second `begin_transaction` returns
+/// [`MemoryError::TransactionBusy`] (leaving the open transaction untouched), and `commit` /
+/// `abort` without an open transaction return [`MemoryError::NoTransaction`]. Clones of the
+/// handle do not share the transaction (see [`MemoryPublisher`]).
 impl TransactionalPublisher for MemoryPublisher {
-    async fn begin_transaction(&self) -> Result<(), Infallible> {
+    async fn begin_transaction(&self) -> Result<(), MemoryError> {
         let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
-        if txn.is_none() {
-            *txn = Some(Vec::new());
+        if txn.is_some() {
+            return Err(MemoryError::TransactionBusy);
         }
+        *txn = Some(Vec::new());
         drop(txn);
         Ok(())
     }
 
-    async fn commit(&self) -> Result<(), Infallible> {
+    async fn commit(&self) -> Result<(), MemoryError> {
         let buffered = self
             .txn
             .lock()
             .expect("memory broker mutex poisoned")
-            .take();
-        for delivery in buffered.into_iter().flatten() {
+            .take()
+            .ok_or(MemoryError::NoTransaction)?;
+        for delivery in buffered {
             self.state.fanout(&delivery);
         }
         Ok(())
     }
 
-    async fn abort(&self) -> Result<(), Infallible> {
+    async fn abort(&self) -> Result<(), MemoryError> {
         self.txn
             .lock()
             .expect("memory broker mutex poisoned")
-            .take();
-        Ok(())
+            .take()
+            .map(|_| ())
+            .ok_or(MemoryError::NoTransaction)
     }
 }
 
@@ -381,6 +386,24 @@ mod tests {
         let second = stream.next().await.unwrap().unwrap();
         assert_eq!(second.payload(), b"buffered");
         second.ack().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transactional_misuse_errors() {
+        let broker = MemoryBroker::new();
+        let publisher = broker.publisher();
+
+        assert_eq!(publisher.commit().await, Err(MemoryError::NoTransaction));
+        assert_eq!(publisher.abort().await, Err(MemoryError::NoTransaction));
+
+        publisher.begin_transaction().await.unwrap();
+        assert_eq!(
+            publisher.begin_transaction().await,
+            Err(MemoryError::TransactionBusy),
+        );
+        // The rejected second begin left the transaction open; an abort settles it.
+        publisher.abort().await.unwrap();
+        assert_eq!(publisher.abort().await, Err(MemoryError::NoTransaction));
     }
 
     #[tokio::test]

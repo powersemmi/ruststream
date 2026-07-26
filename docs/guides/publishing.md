@@ -150,6 +150,22 @@ brokers without transactions the compiler rejects it. The single-message `includ
 forms keep taking a plain `TypedPublisher`: a one-message transaction adds broker round-trips
 for no atomicity gain.
 
+## Manual transactions
+
+Outside the batch-reply path, drive a transaction by hand: `begin()` on the transactional wiring
+opens a `TransactionScope` that owns the transaction. Publishes go through the scope, and
+`commit()` / `abort()` consume it - so a commit without a begin, a second commit, or a publish
+after settling are compile errors, not runtime surprises:
+
+```rust
+--8<-- "examples/publishing.rs:manual_transaction"
+```
+
+The scope encodes values with the publisher's codec and sends them directly: per-publisher
+transforms and the app-wide `publish_layer` middleware belong to the dispatch path (they read the
+originating delivery) and do not run here. Dropping an unsettled scope logs a warning and leaves
+the broker transaction open on that handle - always settle explicitly.
+
 ## Batch publishing
 
 There is no direct batch-publish API on `Publisher`. For most brokers (NATS, Kafka) the client
