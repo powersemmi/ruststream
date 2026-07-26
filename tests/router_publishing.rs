@@ -44,7 +44,7 @@ fn order_bytes(id: u32) -> Vec<u8> {
 /// subscriptions are open and every publish lands), then waits until every reply counter is
 /// non-zero.
 async fn publish_and_await_replies(
-    publisher: &impl Publisher<Error = std::convert::Infallible>,
+    publisher: &impl Publisher,
     topics: &[&str],
     counters: &[&AtomicUsize],
 ) {
