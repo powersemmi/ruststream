@@ -167,9 +167,9 @@ impl ErrorShutdown {
         self.failure.lock().ok().and_then(|mut slot| slot.take())
     }
 
-    /// Returns a clone of the first recorded failure description without consuming it, so the test
-    /// harness can report `run_result` more than once.
-    #[cfg(feature = "testing")]
+    /// Returns a clone of the first recorded failure description without consuming it: the
+    /// health-probe watcher reports it without racing `shutdown`'s consuming read, and the test
+    /// harness reports `run_result` more than once.
     pub(crate) fn peek_failure(&self) -> Option<String> {
         self.failure.lock().ok().and_then(|slot| slot.clone())
     }

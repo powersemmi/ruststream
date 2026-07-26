@@ -17,11 +17,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::routing::post;
+use axum::http::StatusCode;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, HealthProbe, HealthState, RustStream};
 use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -96,6 +97,17 @@ async fn relay_outbox(store: Arc<Mutex<Store>>, egress: MemoryPublisher) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // --8<-- [start:healthz]
+    /// The liveness endpoint: the probe outlives `shutdown`, so this route keeps answering with the
+    /// terminal state after the messaging side dies while the HTTP task keeps the process alive.
+    async fn healthz(State(health): State<HealthProbe>) -> (StatusCode, String) {
+        match health.state() {
+            HealthState::Running => (StatusCode::OK, "running".to_owned()),
+            state => (StatusCode::SERVICE_UNAVAILABLE, format!("{state:?}")),
+        }
+    }
+    // --8<-- [end:healthz]
+
     // --8<-- [start:wiring]
     let broker = MemoryBroker::new();
     // Taken from the broker before the app consumes it; resolves its connection on first use.
@@ -112,7 +124,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let router = Router::new()
         .route("/orders", post(place_order))
-        .with_state(store);
+        .with_state(store)
+        // The health probe is `Clone` and outlives the app handle; /healthz flips to 503 the
+        // moment the messaging side fail-fasts, even though the process stays up.
+        .route("/healthz", get(healthz).with_state(running.health()));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
     println!("orders API on http://127.0.0.1:8080/orders");

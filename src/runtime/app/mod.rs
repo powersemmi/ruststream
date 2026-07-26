@@ -2,12 +2,14 @@
 //! service.
 
 mod app_trait;
+mod health;
 mod include;
 mod run;
 mod scope;
 mod service;
 
 pub use app_trait::App;
+pub use health::{HealthProbe, HealthState};
 pub use run::RunningApp;
 pub use scope::BrokerScope;
 pub use service::RustStream;

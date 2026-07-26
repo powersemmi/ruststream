@@ -6,6 +6,7 @@ use std::{future::Future, sync::Arc, time::Duration};
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -14,6 +15,7 @@ use tracing::{debug, info, warn};
 use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 
+use super::health::{self, HealthProbe, HealthState};
 use super::service::RegisteredBroker;
 use super::{LifecycleHook, RustStream, RustStreamError};
 
@@ -176,6 +178,22 @@ impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
 
+        let health = health::channel();
+        // The watcher flips the probe on a fail-fast teardown even when nobody ever calls
+        // `shutdown`: the process may stay alive serving healthz from a sibling task, which is
+        // exactly when the probe matters.
+        {
+            let health = health.clone();
+            let error_shutdown = error_shutdown.clone();
+            let token = token.clone();
+            tokio::spawn(async move {
+                token.cancelled().await;
+                if let Some(reason) = error_shutdown.peek_failure() {
+                    let _ = health.send(HealthState::Failed { reason });
+                }
+            });
+        }
+
         Ok(RunningApp {
             token,
             error_shutdown,
@@ -185,6 +203,7 @@ impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
             brokers,
             shutdown_timeout,
             continuations,
+            health,
         })
     }
 }
@@ -220,6 +239,7 @@ pub struct RunningApp {
     brokers: Vec<RegisteredBroker>,
     shutdown_timeout: Option<Duration>,
     continuations: TaskTracker,
+    health: watch::Sender<HealthState>,
 }
 
 impl fmt::Debug for RunningApp {
@@ -248,6 +268,37 @@ impl RunningApp {
         self.token.clone().cancelled_owned()
     }
 
+    /// Hands out a [`HealthProbe`]: a cheap, cloneable view of the service's lifecycle state for
+    /// a sibling task (typically an HTTP healthz endpoint).
+    ///
+    /// The probe outlives [`shutdown`](Self::shutdown) and keeps reporting the terminal state
+    /// ([`HealthState::Stopped`], or [`HealthState::Failed`] with the fail-fast diagnostic), so
+    /// an orchestrator stops routing traffic to a process whose messaging side died while
+    /// another task keeps the process alive.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "memory")]
+    /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, HealthState, RustStream};
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new());
+    /// let running = app.start().await?;
+    /// let health = running.health();
+    /// assert!(health.is_running());
+    /// // hand `health` to the HTTP task's /healthz route, then later:
+    /// running.shutdown().await?;
+    /// assert_eq!(health.state(), HealthState::Stopped);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn health(&self) -> HealthProbe {
+        HealthProbe::new(self.health.subscribe())
+    }
+
     /// Shuts the service down gracefully.
     ///
     /// Runs the `on_shutdown` hooks, stops the dispatch loops, drains in-flight handlers and
@@ -269,50 +320,89 @@ impl RunningApp {
             brokers,
             shutdown_timeout,
             continuations,
+            health,
         } = self;
 
-        for hook in on_shutdown {
-            if let Err(err) = hook().await {
-                warn!(target: "ruststream::lifecycle", error = %err, "on_shutdown hook failed");
+        let _ = health.send(HealthState::ShuttingDown);
+        let outcome = teardown(
+            token,
+            handles,
+            on_shutdown,
+            after_shutdown,
+            brokers,
+            shutdown_timeout,
+            continuations,
+        )
+        .await;
+        match outcome {
+            Ok(()) => {
+                // A fail-fast failure tore the service down: surface it so an orchestrator
+                // restarts the service and the operator sees a non-zero exit, not a silent stop.
+                if let Some(reason) = error_shutdown.taken_failure() {
+                    let _ = health.send(HealthState::Failed {
+                        reason: reason.clone(),
+                    });
+                    return Err(RustStreamError::Dispatch(reason));
+                }
+                let _ = health.send(HealthState::Stopped);
+                Ok(())
+            }
+            Err(err) => {
+                let _ = health.send(HealthState::Failed {
+                    reason: err.to_string(),
+                });
+                Err(err)
             }
         }
-
-        token.cancel();
-        debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
-        drain_handles(handles, shutdown_timeout).await?;
-
-        // Handlers have stopped, so no new post-settle continuations can be spawned: close the
-        // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
-        // at-most-once, so timing one out only abandons follow-up work, never a settlement.
-        drain_continuations(continuations, shutdown_timeout).await;
-
-        for broker in brokers.iter().rev() {
-            broker
-                .lifecycle
-                .shutdown()
-                .await
-                .map_err(RustStreamError::Shutdown)?;
-            debug!(
-                target: "ruststream::lifecycle",
-                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
-                "broker shut down",
-            );
-        }
-
-        for hook in after_shutdown {
-            if let Err(err) = hook().await {
-                warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
-            }
-        }
-        info!(target: "ruststream::lifecycle", "service stopped");
-
-        // A fail-fast failure tore the service down: surface it so an orchestrator restarts the
-        // service and the operator sees a non-zero exit, not a silent stop.
-        if let Some(reason) = error_shutdown.taken_failure() {
-            return Err(RustStreamError::Dispatch(reason));
-        }
-        Ok(())
     }
+}
+
+/// The fallible half of the graceful teardown, factored out so [`RunningApp::shutdown`] can map
+/// its outcome onto the health probe's terminal state in one place.
+async fn teardown(
+    token: CancellationToken,
+    handles: Vec<JoinHandle<()>>,
+    on_shutdown: Vec<BoundHook>,
+    after_shutdown: Vec<BoundHook>,
+    brokers: Vec<RegisteredBroker>,
+    shutdown_timeout: Option<Duration>,
+    continuations: TaskTracker,
+) -> Result<(), RustStreamError> {
+    for hook in on_shutdown {
+        if let Err(err) = hook().await {
+            warn!(target: "ruststream::lifecycle", error = %err, "on_shutdown hook failed");
+        }
+    }
+
+    token.cancel();
+    debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
+    drain_handles(handles, shutdown_timeout).await?;
+
+    // Handlers have stopped, so no new post-settle continuations can be spawned: close the
+    // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
+    // at-most-once, so timing one out only abandons follow-up work, never a settlement.
+    drain_continuations(continuations, shutdown_timeout).await;
+
+    for broker in brokers.iter().rev() {
+        broker
+            .lifecycle
+            .shutdown()
+            .await
+            .map_err(RustStreamError::Shutdown)?;
+        debug!(
+            target: "ruststream::lifecycle",
+            broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+            "broker shut down",
+        );
+    }
+
+    for hook in after_shutdown {
+        if let Err(err) = hook().await {
+            warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
+        }
+    }
+    info!(target: "ruststream::lifecycle", "service stopped");
+    Ok(())
 }
 
 /// Awaits all handler tasks, bounded by `timeout` if set. On timeout the remaining tasks are
