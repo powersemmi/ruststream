@@ -34,7 +34,7 @@ use super::{
 ///
 /// Build it by chaining (each call consumes the router and returns a new type that carries the
 /// added registration), then mount it with
-/// [`include_router`](crate::runtime::BrokerScope::include_router). The registration list `R` is
+/// [`include_router`](crate::runtime::BrokerScope::include_router). The registration list `Routes` is
 /// an opaque nested tuple, so a builder function returns `impl RouterDef<B>` instead of naming the
 /// type.
 ///
@@ -42,7 +42,7 @@ use super::{
 /// with. It starts as `()`, meaning the [`DefaultCodec`](crate::codec::DefaultCodec); switch it
 /// for the rest of the chain with [`with_codec`](Self::with_codec).
 ///
-/// The layer parameter `L` is the router's own middleware stack, grown with
+/// The layer parameter `Layers` is the router's own middleware stack, grown with
 /// [`layer`](Self::layer). It wraps every handler in the router when the router is mounted, inside
 /// the app's global stack.
 ///
@@ -65,10 +65,10 @@ use super::{
 /// // later: app.with_broker(broker, |b| b.include_router(routes()));
 /// # }
 /// ```
-pub struct Router<B, R = (), C = (), L = Identity> {
-    pub(super) routes: R,
+pub struct Router<B, Routes = (), C = (), Layers = Identity> {
+    pub(super) routes: Routes,
     pub(super) codec: C,
-    pub(super) layers: L,
+    pub(super) layers: Layers,
     pub(super) _broker: PhantomData<fn() -> B>,
 }
 
@@ -83,7 +83,7 @@ impl<B: Broker + 'static> Default for Router<B, (), (), Identity> {
     }
 }
 
-impl<B, R, C, L> std::fmt::Debug for Router<B, R, C, L> {
+impl<B, Routes, C, Layers> std::fmt::Debug for Router<B, Routes, C, Layers> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Router").finish_non_exhaustive()
     }
@@ -97,14 +97,16 @@ impl<B: Broker + 'static> Router<B, ()> {
     }
 }
 
-impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
+impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
+    Router<B, Routes, RouteCodec, RouteLayers>
+{
     /// Sets the codec that subsequent `include` / `include_on` / `include_publishing*` calls
     /// decode with, replacing the default.
     ///
     /// Registrations already in the chain keep the codec they were mounted with, so the codec can
     /// change mid-chain.
     #[must_use]
-    pub fn with_codec<C>(self, codec: C) -> Router<B, R, C, RL> {
+    pub fn with_codec<C>(self, codec: C) -> Router<B, Routes, C, RouteLayers> {
         Router {
             routes: self.routes,
             codec,
@@ -121,7 +123,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
     /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
     /// router hides), like the app-global stack.
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> Router<B, R, RC, Stack<N, RL>> {
+    pub fn layer<N>(self, layer: N) -> Router<B, Routes, RouteCodec, Stack<N, RouteLayers>> {
         Router {
             routes: self.routes,
             codec: self.codec,
@@ -139,7 +141,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
     pub fn merge<R2, C2, L2>(
         self,
         other: Router<B, R2, C2, L2>,
-    ) -> MergedRouter<B, R2, C2, L2, RC, RL, R>
+    ) -> MergedRouter<B, R2, C2, L2, RouteCodec, RouteLayers, Routes>
     where
         L2: BlanketLayer,
     {
@@ -160,7 +162,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         subscriber: S,
         handler: H,
         meta: HandlerMetadata,
-    ) -> Router<B, (HandleRoute<S, H>, R), RC, RL>
+    ) -> Router<B, (HandleRoute<S, H>, Routes), RouteCodec, RouteLayers>
     where
         S: Subscriber + Send + 'static,
         H: Handler<S::Message> + 'static,
@@ -190,7 +192,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         source: S,
         handler: H,
         meta: HandlerMetadata,
-    ) -> Router<B, (SubscribeRoute<S, H>, R), RC, RL>
+    ) -> Router<B, (SubscribeRoute<S, H>, Routes), RouteCodec, RouteLayers>
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
@@ -221,7 +223,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         handler: H,
         codec: C,
         meta: HandlerMetadata,
-    ) -> SubscribedBatchRouter<B, S, T, C, H, RC, RL, R>
+    ) -> SubscribedBatchRouter<B, S, T, C, H, RouteCodec, RouteLayers, Routes>
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
@@ -253,7 +255,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         source: S,
         def: D,
         codec: C,
-    ) -> IncludedRouter<B, S, D, C, RC, RL, R>
+    ) -> IncludedRouter<B, S, D, C, RouteCodec, RouteLayers, Routes>
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
@@ -290,7 +292,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         source: S,
         def: D,
         codec: C,
-    ) -> IncludedBatchRouter<B, S, D, C, RC, RL, R>
+    ) -> IncludedBatchRouter<B, S, D, C, RouteCodec, RouteLayers, Routes>
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
@@ -329,7 +331,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         def: D,
         codec: C,
         publisher: RP,
-    ) -> BatchPublishingRouter<B, S, D, C, RP, RC, RL, R>
+    ) -> BatchPublishingRouter<B, S, D, C, RP, RouteCodec, RouteLayers, Routes>
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
@@ -372,7 +374,7 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
         def: D,
         codec: C,
         publisher: TypedPublisher<P, PC, PL>,
-    ) -> PublishingRouter<B, S, D, C, P, PC, PL, RC, RL, R>
+    ) -> PublishingRouter<B, S, D, C, P, PC, PL, RouteCodec, RouteLayers, Routes>
     where
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
@@ -410,7 +412,9 @@ impl<B: Broker + 'static, R, RC, RL> Router<B, R, RC, RL> {
     }
 }
 
-impl<B, S, H, R, RC, RL> Router<B, (SubscribeRoute<S, H>, R), RC, RL> {
+impl<B, S, H, Routes, RouteCodec, RouteLayers>
+    Router<B, (SubscribeRoute<S, H>, Routes), RouteCodec, RouteLayers>
+{
     /// Sets the concurrency policy of the registration just added (the preceding `subscribe` /
     /// `include` call), replacing its default.
     ///
@@ -444,7 +448,9 @@ impl<B, S, H, R, RC, RL> Router<B, (SubscribeRoute<S, H>, R), RC, RL> {
     }
 }
 
-impl<B, S, H, R, RC, RL> Router<B, (BatchRoute<S, H>, R), RC, RL> {
+impl<B, S, H, Routes, RouteCodec, RouteLayers>
+    Router<B, (BatchRoute<S, H>, Routes), RouteCodec, RouteLayers>
+{
     /// Sets the concurrency policy of the batch registration just added (the preceding
     /// `subscribe_batch` / `include_batch` call), replacing its default.
     ///
@@ -458,7 +464,7 @@ impl<B, S, H, R, RC, RL> Router<B, (BatchRoute<S, H>, R), RC, RL> {
     }
 }
 
-impl<B: Broker + 'static, R: RouterHandlers, C, L> Router<B, R, C, L> {
+impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers> Router<B, Routes, C, Layers> {
     /// Returns metadata for every registered handler, in registration order.
     #[must_use]
     pub fn handlers(&self) -> Vec<HandlerMetadata> {
@@ -488,17 +494,17 @@ impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<
     }
 }
 
-impl<B, R, C, L, St> RouterDef<B, St> for Router<B, R, C, L>
+impl<B, Routes, C, Layers, State> RouterDef<B, State> for Router<B, Routes, C, Layers>
 where
     B: Broker + 'static,
-    R: RouterDef<B, St>,
-    L: BlanketLayer,
+    Routes: RouterDef<B, State>,
+    Layers: BlanketLayer,
 {
     fn mount<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
         self,
         global: &G,
         pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
+        sink: &mut RouterSink<B, State>,
     ) {
         let composed = ComposedBlanket {
             outer: global,
@@ -508,9 +514,9 @@ where
     }
 }
 
-impl<B, R, C, L> RouterHandlers for Router<B, R, C, L>
+impl<B, Routes, C, Layers> RouterHandlers for Router<B, Routes, C, Layers>
 where
-    R: RouterHandlers,
+    Routes: RouterHandlers,
 {
     fn collect_handlers(&self, out: &mut Vec<HandlerMetadata>) {
         self.routes.collect_handlers(out);
@@ -518,26 +524,26 @@ where
 }
 
 // Lets a whole router be a single registration inside another router's list (`Router::merge`).
-impl<B, R, C, L, St> MountRoute<B, St> for Router<B, R, C, L>
+impl<B, Routes, C, Layers, State> MountRoute<B, State> for Router<B, Routes, C, Layers>
 where
     B: Broker + 'static,
-    R: RouterDef<B, St>,
-    L: BlanketLayer,
+    Routes: RouterDef<B, State>,
+    Layers: BlanketLayer,
 {
     fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
         self,
         global: &G,
         pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
+        sink: &mut RouterSink<B, State>,
     ) {
         RouterDef::mount(self, global, pipeline, sink);
     }
 }
 
 // Lets a merged router contribute its registrations' metadata to the outer router's `handlers()`.
-impl<B, R, C, L> RouteMeta for Router<B, R, C, L>
+impl<B, Routes, C, Layers> RouteMeta for Router<B, Routes, C, Layers>
 where
-    R: RouterHandlers,
+    Routes: RouterHandlers,
 {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.routes.collect_handlers(out);

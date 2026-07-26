@@ -21,10 +21,10 @@ use super::SourceMessage;
 /// A deferred registration: given the broker (after connect), shared state, the per-scope publish
 /// [`Delivery`] context, and the shutdown token, it opens the subscription and spawns the dispatch
 /// task. The source and handler are captured and type-erased.
-pub(crate) type BoundStarter<B, St> = Box<
+pub(crate) type BoundStarter<B, State> = Box<
     dyn FnOnce(
             Arc<B>,
-            Arc<St>,
+            Arc<State>,
             Arc<Delivery>,
             ErrorShutdown,
             CancellationToken,
@@ -34,18 +34,18 @@ pub(crate) type BoundStarter<B, St> = Box<
 
 /// The runtime collector a router mounts into: type-erased starters plus handler metadata.
 ///
-/// `St` is the app's shared state type, threaded so a handler is only mounted on a sink whose state
+/// `State` is the app's shared state type, threaded so a handler is only mounted on a sink whose state
 /// type it matches.
 ///
 /// Created and drained inside the application; a [`RouterDef`](crate::runtime::RouterDef) pushes
 /// into it during [`include_router`](crate::runtime::BrokerScope::include_router). You do not
 /// construct one directly.
-pub struct RouterSink<B, St = ()> {
-    starters: Vec<BoundStarter<B, St>>,
+pub struct RouterSink<B, State = ()> {
+    starters: Vec<BoundStarter<B, State>>,
     handlers: Vec<HandlerMetadata>,
 }
 
-impl<B, St> std::fmt::Debug for RouterSink<B, St> {
+impl<B, State> std::fmt::Debug for RouterSink<B, State> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RouterSink")
             .field("handlers", &self.handlers.len())
@@ -53,7 +53,7 @@ impl<B, St> std::fmt::Debug for RouterSink<B, St> {
     }
 }
 
-impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
+impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     pub(crate) fn new() -> Self {
         Self {
             starters: Vec::new(),
@@ -71,7 +71,7 @@ impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
     ) where
         S: Subscriber + Send + 'static,
         Cx: crate::BuildContext<S::Message> + Send + 'static,
-        H: Handler<S::Message, Cx, St> + 'static,
+        H: Handler<S::Message, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -101,7 +101,7 @@ impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         SourceMessage<B, S>: Send + 'static,
-        H: BatchHandler<SourceMessage<B, S>, St> + 'static,
+        H: BatchHandler<SourceMessage<B, S>, State> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -136,7 +136,7 @@ impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
         S::Subscriber: Send + 'static,
         SourceMessage<B, S>: Send + Sync + 'static,
         Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
-        H: Handler<SourceMessage<B, S>, Cx, St> + 'static,
+        H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -168,7 +168,7 @@ impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
         S: SubscriptionSource<B> + Send + 'static,
         S::Subscriber: Send + 'static,
         Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
-        H: Handler<SourceMessage<B, S>, Cx, St> + 'static,
+        H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -189,7 +189,7 @@ impl<B: Broker + 'static, St: Send + Sync + 'static> RouterSink<B, St> {
         self.handlers.push(meta);
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B, St>>, Vec<HandlerMetadata>) {
+    pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B, State>>, Vec<HandlerMetadata>) {
         (self.starters, self.handlers)
     }
 }

@@ -11,8 +11,8 @@ use tokio_util::task::TaskTracker;
 
 use crate::OutgoingMessage;
 use crate::runtime::{
-    BrokerLifecycle, ErrorShutdown, LifecycleHook, RegisteredBroker, RustStream, RustStreamError,
-    Starter, TestParts,
+    BrokerLifecycle, ErrorShutdown, LifecycleHook, PublishIdentity, RegisteredBroker, RustStream,
+    RustStreamError, Starter, TestParts,
 };
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
@@ -181,11 +181,11 @@ impl TestBrokers<'_> {
 /// # Ok(())
 /// # }
 /// ```
-pub struct TestApp<St> {
+pub struct TestApp<State> {
     entries: Vec<BrokerEntry>,
     coordinator: Coordinator,
     #[allow(dead_code)]
-    state: Arc<St>,
+    state: Arc<State>,
     error_shutdown: ErrorShutdown,
     token: CancellationToken,
     handles: Vec<JoinHandle<()>>,
@@ -193,7 +193,7 @@ pub struct TestApp<St> {
     shutdown_timeout: Option<Duration>,
 }
 
-impl<St> std::fmt::Debug for TestApp<St> {
+impl<State> std::fmt::Debug for TestApp<State> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TestApp")
             .field("brokers", &self.entries.len())
@@ -202,7 +202,7 @@ impl<St> std::fmt::Debug for TestApp<St> {
     }
 }
 
-impl<St: Send + Sync + 'static> TestApp<St> {
+impl<State: Send + Sync + 'static> TestApp<State> {
     /// Starts the harness by running the app's real `on_startup` (the existing state and its
     /// publishers bind to the in-process bus). No broker `connect` runs.
     ///
@@ -210,7 +210,9 @@ impl<St: Send + Sync + 'static> TestApp<St> {
     ///
     /// Returns [`TestError::Startup`] if a lifecycle hook fails, or [`TestError::Subscribe`] if a
     /// subscription fails to open.
-    pub async fn start<L>(app: RustStream<L, St>) -> Result<Self, TestError> {
+    pub async fn start<Layers, Phase>(
+        app: RustStream<Layers, State, PublishIdentity, Phase>,
+    ) -> Result<Self, TestError> {
         let (coordinator, entries, parts) = Self::setup(app);
         let TestParts {
             starters,
@@ -241,9 +243,12 @@ impl<St: Send + Sync + 'static> TestApp<St> {
     /// # Errors
     ///
     /// Returns [`TestError::Subscribe`] if a subscription fails to open.
-    pub async fn with_state<L, F>(app: RustStream<L, St>, build: F) -> Result<Self, TestError>
+    pub async fn with_state<Layers, F, Phase>(
+        app: RustStream<Layers, State, PublishIdentity, Phase>,
+        build: F,
+    ) -> Result<Self, TestError>
     where
-        F: FnOnce(&TestBrokers<'_>) -> St,
+        F: FnOnce(&TestBrokers<'_>) -> State,
     {
         let (coordinator, entries, parts) = Self::setup(app);
         let TestParts {
@@ -269,7 +274,9 @@ impl<St: Send + Sync + 'static> TestApp<St> {
     /// Installs a fresh coordinator into the app's hooks slot and each broker's bus, and recovers
     /// the per-broker transports. Returns the coordinator, the broker entries, and the remaining
     /// parts (the brokers field is now consumed and empty).
-    fn setup<L>(app: RustStream<L, St>) -> (Coordinator, Vec<BrokerEntry>, TestParts<St>) {
+    fn setup<Layers, Phase>(
+        app: RustStream<Layers, State, PublishIdentity, Phase>,
+    ) -> (Coordinator, Vec<BrokerEntry>, TestParts<State>) {
         let mut parts = app.into_test_parts();
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
         parts.test_hooks.install(coordinator.clone());
@@ -289,7 +296,7 @@ impl<St: Send + Sync + 'static> TestApp<St> {
 
     /// Spawns the dispatch loops against the (uninstalled) bus and runs `after_startup`, completing
     /// the harness. No broker `connect` runs.
-    async fn spawn(args: SpawnArgs<St>) -> Result<Self, TestError> {
+    async fn spawn(args: SpawnArgs<State>) -> Result<Self, TestError> {
         let SpawnArgs {
             coordinator,
             entries,
@@ -504,14 +511,14 @@ impl<St: Send + Sync + 'static> TestApp<St> {
 }
 
 /// The pieces [`TestApp::spawn`] needs to start the dispatch loops.
-struct SpawnArgs<St> {
+struct SpawnArgs<State> {
     coordinator: Coordinator,
     entries: Vec<BrokerEntry>,
-    starters: Vec<Starter<St>>,
-    after_startup: Vec<LifecycleHook<St>>,
+    starters: Vec<Starter<State>>,
+    after_startup: Vec<LifecycleHook<State>>,
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
-    state: Arc<St>,
+    state: Arc<State>,
 }
 
 /// A handle to one broker in a [`TestApp`]: inject input and assert on its handlers and publishes.
