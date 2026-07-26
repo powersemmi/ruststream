@@ -58,3 +58,8 @@ curl http://127.0.0.1:8080/metrics
 ```rust
 --8<-- "examples/metrics_http.rs"
 ```
+
+For services exporting through the `otel` feature instead, a ready-made Grafana dashboard over
+the full metrics inventory lives in
+[`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana); see the
+[OpenTelemetry guide](opentelemetry.md).
