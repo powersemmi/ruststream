@@ -428,6 +428,8 @@ impl<B, S, H, Routes, RouteCodec, RouteLayers>
     /// ```no_run
     /// # #[cfg(feature = "memory")]
     /// # fn build() {
+    /// use ruststream::nonzero;
+    ///
     /// use ruststream::Name;
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router, Workers};
@@ -438,7 +440,7 @@ impl<B, S, H, Routes, RouteCodec, RouteLayers>
     ///         |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
     ///         HandlerMetadata::raw("jobs"),
     ///     )
-    ///     .workers(Workers::pool(4));
+    ///     .workers(Workers::pool(nonzero!(4)));
     /// # }
     /// ```
     #[must_use]

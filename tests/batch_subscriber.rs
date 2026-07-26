@@ -19,7 +19,7 @@ use common::wait_for;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Buffered, Name, OutgoingMessage, Publisher, subscriber};
+use ruststream::{Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -135,7 +135,7 @@ static BUFFERED_SEEN: AtomicUsize = AtomicUsize::new(0);
 /// A handler mounted on a `Buffered`-wrapped source directly in the macro. The macro recovers
 /// the source type from the constructor path, so a generic source spells its parameter
 /// (turbofish).
-#[subscriber(batch(Buffered::<Name>::new(Name::new("events")).max_size(2)))]
+#[subscriber(batch(Buffered::<Name>::new(Name::new("events")).max_size(nonzero!(2))))]
 async fn drain(events: &[Order]) -> HandlerResult {
     BUFFERED_SEEN.fetch_add(events.len(), Ordering::SeqCst);
     HandlerResult::Ack
