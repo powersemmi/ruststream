@@ -90,6 +90,11 @@ counter built anywhere in user code rides the same OTLP pipeline:
 --8<-- "examples/otel_export.rs:business_metric"
 ```
 
+A ready-made Grafana dashboard over exactly this inventory lives in
+[`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana): import
+`dashboards/ruststream.json`, point it at any Prometheus-compatible backend receiving the OTLP
+metrics, and the panels light up per handler; its README doubles as the metrics contract.
+
 Call `otel.shutdown()` at the end of `main`, after the app's graceful shutdown, to flush the last
 spans and points. To compose the span bridge into your own subscriber stack (for example with the
 `logging` feature's fmt layer), build with `.tracing_bridge(false)` and install the bridge
