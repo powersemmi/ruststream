@@ -244,9 +244,6 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
 
 // Two app-wide publish middleware, each appending its letter to an "order" header, pin the
 // documented composition: the LAST `publish_layer` added runs OUTERMOST (so it appends first).
-type PubFut<'a> =
-    Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
-
 fn append_order(out: &mut Outgoing<'_>, letter: &str) {
     let mut order = out
         .headers()
@@ -261,11 +258,12 @@ fn append_order(out: &mut Outgoing<'_>, letter: &str) {
 struct AppendA;
 
 impl PublishLayer for AppendA {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PubFut<'a> {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
+    {
         append_order(out, "A");
         next.run(out)
     }
@@ -275,11 +273,12 @@ impl PublishLayer for AppendA {
 struct AppendB;
 
 impl PublishLayer for AppendB {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PubFut<'a> {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
+    {
         append_order(out, "B");
         next.run(out)
     }

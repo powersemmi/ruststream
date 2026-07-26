@@ -171,3 +171,13 @@ async fn start_is_reachable_through_the_app_trait() {
         .expect("handler never saw the message");
     running.shutdown().await.expect("graceful shutdown failed");
 }
+
+#[test]
+#[should_panic(expected = "on_startup must be called before lifecycle hooks")]
+fn on_startup_after_a_lifecycle_hook_panics() {
+    // A hook registered first closes over the previous state type and cannot be carried across
+    // the state change, so the builder refuses loudly instead of dropping it silently.
+    let _app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .after_startup(async move |_state| Ok::<_, Infallible>(()))
+        .on_startup(async move |()| Ok::<_, Infallible>(42_u32));
+}
