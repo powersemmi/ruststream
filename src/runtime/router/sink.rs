@@ -192,6 +192,13 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.handlers.push(meta);
     }
 
+    /// Pushes a fully custom starter. Used by mounts that must do more at startup than open a
+    /// subscription (pairing a publisher source before the handler can exist).
+    pub(crate) fn push_raw(&mut self, starter: BoundStarter<B, State>, meta: HandlerMetadata) {
+        self.starters.push(starter);
+        self.handlers.push(meta);
+    }
+
     pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B, State>>, Vec<HandlerMetadata>) {
         (self.starters, self.handlers)
     }

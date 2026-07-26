@@ -62,13 +62,15 @@ pub trait Publisher: Send + Sync {
 ///
 /// `pair` is async and fallible because some brokers do real work when a publisher comes alive
 /// (a transactional producer initializing its transactions); for most it is a cheap constructor
-/// call.
+/// call. The error is the type-erased [`PairError`]: pairing runs once at startup, never on the
+/// hot path, and a cross-broker token pairs against a different broker than the scope's, so a
+/// broker-typed error could not name one broker anyway.
 ///
 /// # Examples
 ///
 /// ```
 /// # #[cfg(feature = "memory")]
-/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryPublish};
 /// use ruststream::{Broker, OutgoingMessage, PublishPolicy, Publisher};
 ///
@@ -91,7 +93,69 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConnectedBroker::Error`] when bringing the publisher alive requires broker work
-    /// and that work fails (most policies pair infallibly).
-    fn pair(self, connected: &C) -> impl Future<Output = Result<Self::Live, C::Error>> + Send;
+    /// Returns [`PairError`] when bringing the publisher alive requires broker work and that
+    /// work fails (most policies pair infallibly).
+    fn pair(self, connected: &C) -> impl Future<Output = Result<Self::Live, PairError>> + Send;
+}
+
+/// The error of [`PublishPolicy::pair`]: whatever the broker reported while bringing a publisher
+/// alive, type-erased.
+///
+/// Pairing runs once per publisher at startup (a cold path), and a cross-broker token pairs
+/// against a broker other than the including scope's, so the error is erased rather than typed
+/// to one broker.
+#[derive(Debug)]
+pub struct PairError(Box<dyn StdError + Send + Sync>);
+
+impl PairError {
+    /// Wraps a broker's pairing failure.
+    #[must_use]
+    pub fn new(source: impl StdError + Send + Sync + 'static) -> Self {
+        Self(Box::new(source))
+    }
+
+    /// Wraps an already-boxed failure, or a plain message.
+    #[must_use]
+    pub fn from_boxed(source: Box<dyn StdError + Send + Sync>) -> Self {
+        Self(source)
+    }
+}
+
+impl std::fmt::Display for PairError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "pairing a publisher failed: {}", self.0)
+    }
+}
+
+impl StdError for PairError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+/// A connected broker that names its plain publish policy, so the runtime can build a default
+/// reply publisher when a `publish("dest")` handler is included without an explicit one.
+///
+/// Implement it alongside [`ConnectedBroker`](crate::ConnectedBroker) when the broker has a
+/// publish policy whose default configuration is usable as-is (most are). Brokers whose
+/// publishers always need explicit options simply do not implement it, and their users attach a
+/// policy at every registration.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "memory")]
+/// # fn demo() {
+/// use ruststream::DefaultPublish;
+/// use ruststream::memory::{ConnectedMemoryBroker, MemoryPublish};
+///
+/// fn default_policy<C: DefaultPublish>() -> C::Policy {
+///     C::Policy::default()
+/// }
+/// let _: MemoryPublish = default_policy::<ConnectedMemoryBroker>();
+/// # }
+/// ```
+pub trait DefaultPublish: ConnectedBroker {
+    /// The broker's plain publish policy, constructible with its defaults.
+    type Policy: PublishPolicy<Self> + Default + Send + 'static;
 }

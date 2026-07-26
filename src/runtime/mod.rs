@@ -7,6 +7,7 @@ pub mod cli;
 mod context;
 mod dispatch;
 mod dynstack;
+mod egress;
 mod extract;
 mod failure;
 mod handler;
@@ -14,6 +15,7 @@ mod lifecycle;
 mod metadata;
 mod middleware;
 mod publish;
+mod publish_source;
 mod publisher_registry;
 mod publishing;
 mod router;
@@ -21,8 +23,8 @@ mod subscriber_def;
 mod typed;
 
 pub use app::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
-    Setup, Wired,
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchPublishing, IncludeDef,
+    IncludeEgress, IncludePublishing, RunningApp, RustStream, RustStreamError, Setup, Wired, forms,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
@@ -31,6 +33,7 @@ pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublish
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
+pub use egress::{Egress, EgressCall, EgressDef, EgressHandler};
 pub use extract::{Ctx, FromContext, FromRef, State};
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
@@ -47,6 +50,7 @@ pub use publish::{
     PublishTransformIdentity, PublishTransformStack, ReplyPublisher, TransactionPublishError,
     TransactionScope, Transactional, TypedPublisher, for_batch,
 };
+pub use publish_source::Bound;
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};

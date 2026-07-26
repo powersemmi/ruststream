@@ -682,7 +682,7 @@ where
 {
     type Live = TypedPublisher<P::Live, C, PL, BL>;
 
-    async fn pair(self, connected: &CB) -> Result<Self::Live, CB::Error> {
+    async fn pair(self, connected: &CB) -> Result<Self::Live, crate::PairError> {
         Ok(TypedPublisher {
             publisher: self.publisher.pair(connected).await?,
             codec: self.codec,
@@ -721,7 +721,7 @@ where
 {
     type Live = Transactional<P::Live, C, PL, BL>;
 
-    async fn pair(self, connected: &CB) -> Result<Self::Live, CB::Error> {
+    async fn pair(self, connected: &CB) -> Result<Self::Live, crate::PairError> {
         Ok(Transactional {
             inner: self.inner.pair(connected).await?,
         })

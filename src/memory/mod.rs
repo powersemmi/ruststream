@@ -345,9 +345,13 @@ pub struct MemoryPublish;
 impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
     type Live = MemoryPublisher;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, MemoryError> {
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, crate::PairError> {
         Ok(connected.publisher())
     }
+}
+
+impl crate::DefaultPublish for ConnectedMemoryBroker {
+    type Policy = MemoryPublish;
 }
 
 /// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
@@ -372,7 +376,7 @@ pub struct MemoryRequest;
 impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
     type Live = MemoryRequester;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, MemoryError> {
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, crate::PairError> {
         Ok(connected.requester())
     }
 }
