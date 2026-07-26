@@ -132,3 +132,30 @@ impl HandlerMetadata {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_tail_attaches_every_optional_detail() {
+        let meta = HandlerMetadata::raw("orders")
+            .with_routing_key("orders.eu")
+            .with_def_details(
+                Some("handles orders"),
+                Some("{}".to_owned()),
+                Some("Order"),
+                Some("an order event"),
+            );
+        assert_eq!(meta.routing_key.as_deref(), Some("orders.eu"));
+        assert_eq!(meta.description.as_deref(), Some("handles orders"));
+        assert_eq!(meta.payload_schema.as_deref(), Some("{}"));
+        assert_eq!(meta.message_name.as_deref(), Some("Order"));
+        assert_eq!(meta.message_description.as_deref(), Some("an order event"));
+
+        // The all-None tail changes nothing.
+        let plain = HandlerMetadata::raw("orders").with_def_details(None, None, None, None);
+        assert!(plain.description.is_none());
+        assert!(plain.payload_schema.is_none());
+    }
+}

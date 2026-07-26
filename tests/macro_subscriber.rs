@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use common::wait_for;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemorySubscriber};
+use ruststream::memory::{MemoryBroker, MemoryError, MemorySubscriber};
 use ruststream::runtime::{
     AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
     TypedPublisher,
@@ -65,7 +65,7 @@ impl SubscriptionSource<MemoryBroker> for StreamSource {
         &self.name
     }
 
-    async fn subscribe(self, broker: &MemoryBroker) -> Result<MemorySubscriber, Infallible> {
+    async fn subscribe(self, broker: &MemoryBroker) -> Result<MemorySubscriber, MemoryError> {
         Ok(broker.subscribe(&self.name))
     }
 }

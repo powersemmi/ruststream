@@ -40,6 +40,10 @@ pub enum RequestError {
         /// How long the requester waited for a reply.
         timeout: Duration,
     },
+    /// The operation ran after [`Broker::shutdown`](crate::Broker::shutdown) and before a
+    /// reviving [`Broker::connect`](crate::Broker::connect).
+    #[error("the memory broker is shut down")]
+    ShutDown,
 }
 
 /// Publisher with native request / reply support, returned by
@@ -111,8 +115,9 @@ impl Publisher for MemoryRequester {
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         };
-        self.state.fanout(&delivery);
-        Ok(())
+        self.state
+            .fanout(&delivery)
+            .map_err(|_| RequestError::ShutDown)
     }
 }
 
@@ -127,7 +132,9 @@ impl RequestReply for MemoryRequester {
         let id = self.state.inbox_seq.fetch_add(1, Ordering::Relaxed);
         let inbox = format!("_inbox.{id}");
         let (tx, mut rx) = mpsc::unbounded_channel();
-        self.state.register(inbox.clone(), tx.clone());
+        self.state
+            .register(inbox.clone(), tx.clone())
+            .map_err(|_| RequestError::ShutDown)?;
 
         let mut headers = msg.headers().clone();
         headers.insert("reply-to", inbox.clone());
@@ -136,7 +143,10 @@ impl RequestReply for MemoryRequester {
             payload: Bytes::copy_from_slice(msg.payload()),
             headers,
         };
-        self.state.fanout(&delivery);
+        if self.state.fanout(&delivery).is_err() {
+            self.state.unregister(&inbox);
+            return Err(RequestError::ShutDown);
+        }
 
         let outcome = timeout(wait, rx.recv()).await;
         self.state.unregister(&inbox);
@@ -229,7 +239,7 @@ impl TransactionalPublisher for MemoryPublisher {
             .take()
             .ok_or(MemoryError::NoTransaction)?;
         for delivery in buffered {
-            self.state.fanout(&delivery);
+            self.state.fanout(&delivery)?;
         }
         Ok(())
     }
@@ -407,6 +417,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn commit_after_shutdown_errors() {
+        let broker = MemoryBroker::new();
+        let publisher = broker.publisher();
+
+        publisher.begin_transaction().await.unwrap();
+        publisher
+            .publish(OutgoingMessage::new("txn.down", b"buffered".as_slice()))
+            .await
+            .unwrap();
+        crate::Broker::shutdown(&broker).await.unwrap();
+
+        // Buffering never touched the bus, so the shutdown surfaces at the visibility point.
+        assert_eq!(publisher.commit().await, Err(MemoryError::ShutDown));
+    }
+
+    #[tokio::test]
+    async fn requester_errors_after_shutdown() {
+        let broker = MemoryBroker::new();
+        let requester = broker.requester();
+        crate::Broker::shutdown(&broker).await.unwrap();
+
+        let publish = Publisher::publish(
+            &requester,
+            OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+        )
+        .await;
+        assert!(
+            matches!(publish, Err(RequestError::ShutDown)),
+            "{publish:?}"
+        );
+
+        let request = requester
+            .request(
+                OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+                Duration::from_millis(50),
+            )
+            .await;
+        assert!(
+            matches!(request, Err(RequestError::ShutDown)),
+            "a request against a dead bus must fail fast, not time out",
+        );
+    }
+
+    #[tokio::test]
     async fn request_resolves_on_reply() {
         let broker = MemoryBroker::new();
         let mut service = broker.subscribe("svc.echo");
@@ -433,13 +487,12 @@ mod tests {
         assert_eq!(reply.unwrap().payload(), b"pong");
 
         // The single-use inbox must be unregistered once the request resolves.
-        let inbox_leaked = broker
-            .state
-            .subscribers
-            .lock()
-            .unwrap()
-            .keys()
-            .any(|name| name.starts_with("_inbox."));
+        let inbox_leaked = match &*broker.state.subscribers.lock().unwrap() {
+            super::super::Bus::Live(subscribers) => {
+                subscribers.keys().any(|name| name.starts_with("_inbox."))
+            }
+            super::super::Bus::ShutDown => false,
+        };
         assert!(!inbox_leaked);
     }
 
@@ -458,13 +511,12 @@ mod tests {
             .await;
         assert!(matches!(outcome, Err(RequestError::Timeout { .. })));
 
-        let inbox_leaked = broker
-            .state
-            .subscribers
-            .lock()
-            .unwrap()
-            .keys()
-            .any(|name| name.starts_with("_inbox."));
+        let inbox_leaked = match &*broker.state.subscribers.lock().unwrap() {
+            super::super::Bus::Live(subscribers) => {
+                subscribers.keys().any(|name| name.starts_with("_inbox."))
+            }
+            super::super::Bus::ShutDown => false,
+        };
         assert!(!inbox_leaked);
     }
 

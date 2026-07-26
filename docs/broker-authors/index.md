@@ -40,6 +40,12 @@ return a clear "not connected" error. This lazy-startup contract is what lets a 
 with the synchronous `#[ruststream::app]` builder; the
 [conformance harness](conformance.md) proves it end to end.
 
+Shutdown is a **state**, not an event: the lifecycle has three states (unconnected, connected,
+shut down), and a single "connection present?" cell encodes only two. After `shutdown`,
+operations on the broker's handles must error - never silently succeed against a dead connection -
+and a later `connect` must either re-establish a working connection or return an error, not
+report `Ok` while leaving the broker dead. The lifecycle check drives these paths too.
+
 ### `Subscribe`
 
 Implement `Subscribe` to support subscribing by name. This is what `#[subscriber("name")]` uses.
