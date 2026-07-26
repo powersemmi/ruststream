@@ -29,6 +29,24 @@ is a plain value, safe to clone into whatever state the HTTP framework carries:
 --8<-- "examples/http_outbox.rs:wiring"
 ```
 
+## A healthz endpoint
+
+`start()` is the readiness gate; the health probe covers everything after it.
+`RunningApp::health()` hands out a cheap, cloneable `HealthProbe` backed by a watch channel:
+`state()` is a lock-free snapshot (`Running`, `ShuttingDown`, `Stopped`, or `Failed { reason }`
+carrying the fail-fast diagnostic), and the probe outlives `shutdown()`, so the route keeps
+answering with the terminal state. This closes the gap `stopping()` alone leaves: when the
+messaging side fail-fasts but a sibling task keeps the process alive, `/healthz` flips to 503
+instead of serving a permanent 200 for a dead consumer:
+
+```rust
+--8<-- "examples/http_outbox.rs:healthz"
+```
+
+The route carries its own state (`get(healthz).with_state(running.health())`), so it composes
+with whatever state the rest of the router holds - the full wiring above registers it beside
+`/orders`.
+
 The subscriber side is an ordinary handler; the same service consumes what its HTTP endpoints
 produce, and any other service subscribed to the broker sees the events too:
 
