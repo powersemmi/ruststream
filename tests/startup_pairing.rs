@@ -59,20 +59,19 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
 /// that startup connected the broker.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
-    let broker = MemoryBroker::new();
-    let observer = Broker::connect(broker.clone())
+    let broker = MemoryBroker::new().bindable();
+    let observer = Broker::connect(broker.broker().clone())
         .await
         .expect("memory connect is infallible");
+    let egress = broker.bind(MemoryPublish);
 
-    let mut egress = None;
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
-        egress = Some(b.bind(MemoryPublish));
         b.include(consume);
     });
     let running = app.start().await.expect("startup failed");
 
     let publisher = running
-        .publisher(egress.take().expect("token bound"))
+        .publisher(egress)
         .await
         .expect("pairing after start is infallible for memory");
     publisher
@@ -88,15 +87,11 @@ async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
 /// clear error instead of hanging or panicking.
 #[tokio::test]
 async fn pairing_before_startup_reports_a_clear_error() {
-    let broker = MemoryBroker::new();
-    let mut token = None;
-    let _app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
-        token = Some(b.bind(MemoryPublish));
-    });
+    let broker = MemoryBroker::new().bindable();
+    let token = broker.bind(MemoryPublish);
+    let _app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |_b| {});
 
     let err = token
-        .take()
-        .expect("token bound")
         .live()
         .await
         .expect_err("pairing before startup must fail");

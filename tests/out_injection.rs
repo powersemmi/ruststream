@@ -94,21 +94,20 @@ async fn crossing(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResul
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let ingress_broker = MemoryBroker::new();
-    let other = MemoryBroker::new();
     let ingress = ingress_broker.publisher();
-    let observer = Broker::connect(other.clone())
+    let other = MemoryBroker::new().bindable();
+    let observer = Broker::connect(other.broker().clone())
         .await
         .expect("memory connect is infallible");
 
     // --8<-- [start:cross_broker]
-    let mut token = None;
-    let app = RustStream::new(AppInfo::new("egress-cross", "0.1.0"))
+    let to_other = other.bind(MemoryPublish);
+    let app = RustStream::new(AppInfo::new("cross", "0.1.0"))
         .with_broker(other, |b| {
-            token = Some(b.bind(MemoryPublish));
+            let _ = b; // the target broker may mount its own handlers here
         })
         .with_broker(ingress_broker, |b| {
-            b.include(crossing)
-                .publisher(token.take().expect("token bound"));
+            b.include(crossing).publisher(to_other);
         });
     // --8<-- [end:cross_broker]
     let running = app.start().await.expect("startup failed");

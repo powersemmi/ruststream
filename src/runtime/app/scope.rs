@@ -9,7 +9,6 @@ use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::PublishPolicy;
-use crate::runtime::Bound;
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{
     BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
@@ -103,41 +102,6 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
                 source,
                 hook,
             ));
-    }
-
-    /// Binds `source` to this scope's broker, producing a token usable as the publisher source
-    /// of a registration on a *different* broker's scope (a handler consuming one broker while
-    /// publishing to this one), or for post-start sending from a sibling task.
-    ///
-    /// Being minted by the scope is the token's proof of registration: it shares the slot the
-    /// runtime fills with this broker's connected form at startup, so pairing cannot pick a
-    /// wrong instance.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
-    /// # fn demo() {
-    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
-    /// use ruststream::runtime::{AppInfo, RustStream};
-    ///
-    /// let mut egress = None;
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| {
-    ///         egress = Some(b.bind(MemoryPublish));
-    ///     });
-    /// # let _ = (app, egress);
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn bind<S>(&self, source: S) -> Bound<B, S>
-    where
-        S: PublishPolicy<Connected<B>>,
-    {
-        Bound {
-            slot: Arc::clone(&self.slot),
-            source,
-        }
     }
 
     /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.

@@ -23,7 +23,7 @@ use axum::{Json, Router};
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{AppInfo, HandlerResult, HealthProbe, HealthState, RustStream};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -109,11 +109,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --8<-- [end:healthz]
 
     // --8<-- [start:wiring]
-    let broker = MemoryBroker::new();
-    // A token, not a publisher: bound now, paired against the connected broker after start.
-    let mut egress = None;
+    let broker = MemoryBroker::new().bindable();
+    // A token, not a publisher: minted before registration, paired after start.
+    let egress = broker.bind(MemoryPublish);
     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-        egress = Some(b.bind(MemoryPublish));
         b.include(fulfil);
     });
 
@@ -122,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let running = app.start().await?;
     // The handle existing witnesses that startup connected the broker, so the relay task gets a
     // live publisher, never a "not connected" state.
-    let egress = running.publisher(egress.take().expect("bound")).await?;
+    let egress = running.publisher(egress).await?;
 
     let store = Arc::new(Mutex::new(Store::default()));
     tokio::spawn(relay_outbox(store.clone(), egress));

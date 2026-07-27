@@ -40,6 +40,8 @@ pub use failure::{FailurePolicies, FailurePolicy};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::ConnectedLifecycle;
+#[doc(hidden)]
+pub use lifecycle::ConnectedSlot;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use out::{Out, OutCall, OutDef, OutHandler};
@@ -50,7 +52,7 @@ pub use publish::{
     PublishTransformIdentity, PublishTransformStack, ReplyPublisher, ReplyWiring,
     TransactionPublishError, TransactionScope, Transactional, TypedPublisher, for_batch,
 };
-pub use publish_source::Bound;
+pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};

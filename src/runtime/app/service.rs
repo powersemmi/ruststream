@@ -1,16 +1,12 @@
 //! The [`RustStream`] builder: construction, configuration and handler registration.
 
 use std::{
-    collections::BTreeMap,
-    error::Error as StdError,
-    fmt,
-    future::Future,
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-    time::Duration,
+    collections::BTreeMap, error::Error as StdError, fmt, future::Future, marker::PhantomData,
+    sync::Arc, time::Duration,
 };
 
 use crate::codec::Codec;
+use crate::runtime::publish_source::BrokerRegistration;
 use crate::{Broker, DescribeServer, ServerSpec};
 
 use tokio_util::task::TaskTracker;
@@ -397,12 +393,12 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// Registers a broker for lifecycle management only (connect / shutdown), without attaching
     /// subscribers. Use for publish-only brokers.
     #[must_use]
-    pub fn register_broker<B>(mut self, broker: B) -> Self
+    pub fn register_broker<R>(mut self, broker: R) -> Self
     where
-        B: Broker + 'static,
+        R: BrokerRegistration,
     {
-        // No subscriptions read this slot; it only satisfies the cell's shape.
-        let slot: ConnectedSlot<B> = Arc::new(Mutex::new(None));
+        // No subscriptions read the slot, but a Bindable registration's tokens do.
+        let (broker, slot) = broker.into_parts();
         self.brokers.push(RegisteredBroker {
             lifecycle: Box::new(BrokerCell { broker, slot }),
             label: None,
@@ -439,20 +435,21 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// and the publish pipeline are fixed from here on, so a configuration call that could not
     /// apply to this broker's handlers does not compile.
     #[must_use]
-    pub fn with_broker<B, F>(
+    pub fn with_broker<R, F>(
         self,
-        broker: B,
+        broker: R,
         build: F,
     ) -> RustStream<Layers, State, Pipeline, Wired>
     where
-        B: Broker + 'static,
+        R: BrokerRegistration,
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, Layers, (), State, Pipeline>),
+        F: FnOnce(&mut BrokerScope<R::Broker, Layers, (), State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
-        let mut scope = this.new_scope(broker, ());
+        let (broker, slot) = broker.into_parts();
+        let mut scope = this.new_scope(broker, slot, ());
         build(&mut scope);
         this.collect_scope(scope, None);
         this
@@ -465,22 +462,23 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`include_publishing`](BrokerScope::include_publishing) take just the definition and decode
     /// it with `codec`.
     #[must_use]
-    pub fn with_broker_codec<B, C, F>(
+    pub fn with_broker_codec<R, C, F>(
         self,
-        broker: B,
+        broker: R,
         codec: C,
         build: F,
     ) -> RustStream<Layers, State, Pipeline, Wired>
     where
-        B: Broker + 'static,
+        R: BrokerRegistration,
         C: Codec + Clone + 'static,
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, Layers, C, State, Pipeline>),
+        F: FnOnce(&mut BrokerScope<R::Broker, Layers, C, State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
-        let mut scope = this.new_scope(broker, codec);
+        let (broker, slot) = broker.into_parts();
+        let mut scope = this.new_scope(broker, slot, codec);
         build(&mut scope);
         this.collect_scope(scope, None);
         this
@@ -528,22 +526,24 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// # }
     /// ```
     #[must_use]
-    pub fn with_broker_labeled<B, F>(
+    pub fn with_broker_labeled<R, F>(
         self,
         label: impl Into<String>,
-        broker: B,
+        broker: R,
         build: F,
     ) -> RustStream<Layers, State, Pipeline, Wired>
     where
-        B: DescribeServer + 'static,
+        R: BrokerRegistration,
+        R::Broker: DescribeServer,
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, Layers, (), State, Pipeline>),
+        F: FnOnce(&mut BrokerScope<R::Broker, Layers, (), State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
+        let (broker, slot) = broker.into_parts();
         let label = this.record_server(label, &broker);
-        let mut scope = this.new_scope(broker, ());
+        let mut scope = this.new_scope(broker, slot, ());
         build(&mut scope);
         this.collect_scope(scope, Some(label));
         this
@@ -556,24 +556,26 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`with_broker_codec`](Self::with_broker_codec) (macro handlers mount without repeating the
     /// codec).
     #[must_use]
-    pub fn with_broker_labeled_codec<B, C, F>(
+    pub fn with_broker_labeled_codec<R, C, F>(
         self,
         label: impl Into<String>,
-        broker: B,
+        broker: R,
         codec: C,
         build: F,
     ) -> RustStream<Layers, State, Pipeline, Wired>
     where
-        B: DescribeServer + 'static,
+        R: BrokerRegistration,
+        R::Broker: DescribeServer,
         C: Codec + Clone + 'static,
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<B, Layers, C, State, Pipeline>),
+        F: FnOnce(&mut BrokerScope<R::Broker, Layers, C, State, Pipeline>),
     {
         let mut this = self.into_phase::<Wired>();
+        let (broker, slot) = broker.into_parts();
         let label = this.record_server(label, &broker);
-        let mut scope = this.new_scope(broker, codec);
+        let mut scope = this.new_scope(broker, slot, codec);
         build(&mut scope);
         this.collect_scope(scope, Some(label));
         this
@@ -590,7 +592,12 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     }
 
     /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
-    fn new_scope<B, C>(&self, broker: B, codec: C) -> BrokerScope<B, Layers, C, State, Pipeline>
+    fn new_scope<B, C>(
+        &self,
+        broker: B,
+        slot: ConnectedSlot<B>,
+        codec: C,
+    ) -> BrokerScope<B, Layers, C, State, Pipeline>
     where
         B: Broker + 'static,
         Layers: Clone,
@@ -599,7 +606,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     {
         BrokerScope {
             broker,
-            slot: Arc::new(Mutex::new(None)),
+            slot,
             startup_hooks: Vec::new(),
             sink: RouterSink::new(),
             pipeline: self.publish_pipeline.clone(),

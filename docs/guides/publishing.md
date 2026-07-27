@@ -76,9 +76,11 @@ runtime), naming the fix: an injected publisher has no broker-side default.
 ### Publishing to a different broker
 
 When the handler consumes one broker and publishes to another (consume Kafka, forward to Redis),
-the target broker's scope mints a **bound token** carrying the instance identity a foreign scope
-cannot provide; the token is then the source at the include site (shown here with two in-memory
-brokers, the shape is the same for any pair):
+wrap the target broker with `.bindable()` and mint a **bound token** before registration: the
+token carries the instance identity a foreign scope cannot provide, and because tokens exist
+before any `with_broker` runs, registration order does not matter - a bidirectional bridge binds
+both directions up front. The token is then the source at the include site (shown here with two
+in-memory brokers, the shape is the same for any pair):
 
 ```rust
 --8<-- "tests/out_injection.rs:cross_broker"

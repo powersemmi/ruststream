@@ -337,16 +337,15 @@ impl RunningApp {
     /// ```no_run
     /// # #[cfg(all(feature = "memory", feature = "json"))]
     /// # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::Broker;
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
     /// use ruststream::runtime::{AppInfo, RustStream};
     ///
-    /// let mut egress = None;
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| {
-    ///         egress = Some(b.bind(MemoryPublish));
-    ///     });
+    /// let broker = MemoryBroker::new().bindable();
+    /// let egress = broker.bind(MemoryPublish);
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |_b| {});
     /// let running = app.start().await?;
-    /// let publisher = running.publisher(egress.take().expect("bound")).await?;
+    /// let publisher = running.publisher(egress).await?;
     /// // hand `publisher` to the sibling task (an outbox relay, a timer) ...
     /// # let _ = publisher;
     /// running.shutdown().await?;
