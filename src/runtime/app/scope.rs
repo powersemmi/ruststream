@@ -10,13 +10,16 @@ use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::PublishPolicy;
+use crate::runtime::Bound;
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
-use crate::runtime::batch_publishing::{BatchPublishingCall, batch_publishing_metadata};
-use crate::runtime::dispatch::spawn_dispatch_workers;
+use crate::runtime::batch_publishing::{
+    BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
+};
+use crate::runtime::dispatch::{spawn_batch_dispatch, spawn_dispatch_workers};
 use crate::runtime::egress::{EgressCall, EgressHandler, egress_metadata};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::handler::Handler;
-use crate::runtime::lifecycle::BoxError;
+use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
 use crate::runtime::publish::{
@@ -42,7 +45,7 @@ pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipelin
     pub(super) broker: B,
     /// The slot the runtime fills with this broker's connected form at startup; shared with
     /// every starter of this scope and with the [`Bound`] tokens minted here.
-    pub(super) slot: crate::runtime::lifecycle::ConnectedSlot<B>,
+    pub(super) slot: ConnectedSlot<B>,
     pub(super) sink: RouterSink<B, State>,
     pub(super) pipeline: Pipeline,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
@@ -82,11 +85,11 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// # }
     /// ```
     #[must_use]
-    pub fn bind<S>(&self, source: S) -> crate::runtime::Bound<B, S>
+    pub fn bind<S>(&self, source: S) -> Bound<B, S>
     where
         S: PublishPolicy<Connected<B>>,
     {
-        crate::runtime::Bound {
+        Bound {
             slot: Arc::clone(&self.slot),
             source,
         }
@@ -405,7 +408,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
                         .subscribe(connected.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
-                    let handler = crate::runtime::batch_publishing::BatchPublishingHandler {
+                    let handler = BatchPublishingHandler {
                         def,
                         codec,
                         publisher,
@@ -413,7 +416,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
                         decode: policies.decode,
                     };
                     let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(crate::runtime::dispatch::spawn_batch_dispatch(
+                    Ok(spawn_batch_dispatch(
                         subscriber,
                         Arc::new(handler),
                         token,

@@ -1,13 +1,18 @@
 //! Startup and post-start pairing of bound tokens: the first publish from `after_startup`, and
 //! a sibling task's publisher obtained through the running handle.
-#![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+#![cfg(all(
+    feature = "memory",
+    feature = "macros",
+    feature = "json",
+    feature = "testing"
+))]
 
 use std::time::Duration;
 
-use futures::StreamExt;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::{IncomingMessage, OutgoingMessage, PairError, Publisher, Subscriber, subscriber};
+use ruststream::testing::expect_published;
+use ruststream::{Broker, OutgoingMessage, PairError, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,15 +25,10 @@ async fn consume(_event: &Event) -> HandlerResult {
     HandlerResult::Ack
 }
 
-async fn expect_payload(sub: &mut ruststream::memory::MemorySubscriber, expected: &[u8]) {
-    let mut stream = std::pin::pin!(sub.stream());
-    let msg = tokio::time::timeout(Duration::from_secs(2), stream.next())
-        .await
-        .expect("delivery timed out")
-        .expect("stream ended")
-        .expect("stream errored");
-    assert_eq!(msg.payload(), expected);
-    msg.ack().await.expect("ack");
+async fn expect_payload(observer: &ConnectedMemoryBroker, name: &str, expected: &[u8]) {
+    let seen = expect_published(observer, name, 1, Duration::from_secs(2)).await;
+    assert_eq!(seen.len(), 1, "expected one publish on {name}");
+    assert_eq!(seen[0].payload(), expected);
 }
 
 /// The first publish: `after_startup` runs post-connect and post-subscribe, so a token paired
@@ -37,7 +37,9 @@ async fn expect_payload(sub: &mut ruststream::memory::MemorySubscriber, expected
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_token_pairs_in_after_startup_for_the_first_publish() {
     let broker = MemoryBroker::new();
-    let mut observer = broker.subscribe("pairing.seeded");
+    let observer = Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible");
 
     let mut seed = None;
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0"))
@@ -54,7 +56,7 @@ async fn a_token_pairs_in_after_startup_for_the_first_publish() {
         });
 
     let running = app.start().await.expect("startup failed");
-    expect_payload(&mut observer, b"first").await;
+    expect_payload(&observer, "pairing.seeded", b"first").await;
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
@@ -63,7 +65,9 @@ async fn a_token_pairs_in_after_startup_for_the_first_publish() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
     let broker = MemoryBroker::new();
-    let mut observer = broker.subscribe("pairing.sibling");
+    let observer = Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible");
 
     let mut egress = None;
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
@@ -80,7 +84,7 @@ async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
         .publish(OutgoingMessage::new("pairing.sibling", b"late".as_slice()))
         .await
         .expect("publish");
-    expect_payload(&mut observer, b"late").await;
+    expect_payload(&observer, "pairing.sibling", b"late").await;
 
     running.shutdown().await.expect("graceful shutdown failed");
 }

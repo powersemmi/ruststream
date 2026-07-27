@@ -11,18 +11,21 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-// `DefaultPublish` powers only the default-reply commits, which need a default codec.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::DefaultPublish;
+// The default-reply commits need a default codec, so their imports are gated the same way.
 use crate::{
-    BatchSubscriber, Broker, Connected, PublishPolicy, Publisher, Subscriber, SubscriptionSource,
+    BatchSubscriber, Broker, BuildContext, Connected, PublishPolicy, Publisher, Subscriber,
+    SubscriptionSource,
 };
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::{DefaultPublish, codec::DefaultCodec};
 
+use crate::runtime::SliceHandler;
 use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
-use crate::runtime::egress::{EgressCall, EgressDef};
+use crate::runtime::egress::{EgressCall, EgressDef, EgressHandler};
 use crate::runtime::handler::Handler;
 use crate::runtime::middleware::Layer;
+use crate::runtime::publish::PublishTransformIdentity;
 use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
 use crate::runtime::subscriber_def::SubscriberDef;
@@ -114,9 +117,9 @@ pub trait ScopeCodec {
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 impl ScopeCodec for () {
-    type Codec = crate::codec::DefaultCodec;
+    type Codec = DefaultCodec;
     fn scope_codec(&self) -> Self::Codec {
-        crate::codec::DefaultCodec::default()
+        DefaultCodec::default()
     }
 }
 
@@ -141,7 +144,7 @@ where
     <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
     D::Input: DeserializeOwned + Send + Sync + 'static,
     D::Handler: 'static,
-    D::Context: crate::BuildContext<
+    D::Context: BuildContext<
             <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
         + 'static,
@@ -181,7 +184,7 @@ where
     D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
     D::Input: DeserializeOwned + Send + Sync + 'static,
-    D::Handler: crate::runtime::SliceHandler<D::Input, State> + 'static,
+    D::Handler: SliceHandler<D::Input, State> + 'static,
     State: Send + Sync + 'static,
 {
     type Out = ();
@@ -232,7 +235,7 @@ where
         Send + Sync + 'static,
     D::Input: DeserializeOwned + Send + Sync + 'static,
     D::Reply: Serialize + Send + Sync + 'static,
-    D::Context: crate::BuildContext<
+    D::Context: BuildContext<
             <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
         + Sync
@@ -246,8 +249,8 @@ where
                 D,
                 <C as ScopeCodec>::Codec,
                 <<B::Connected as DefaultPublish>::Policy as PublishPolicy<Connected<B>>>::Live,
-                crate::codec::DefaultCodec,
-                crate::runtime::PublishTransformIdentity,
+                DefaultCodec,
+                PublishTransformIdentity,
                 Pipeline,
             >,
         > + Clone
@@ -278,7 +281,7 @@ where
         Send + Sync + 'static,
     D::Input: DeserializeOwned + Send + Sync + 'static,
     D::Reply: Serialize + Send + Sync + 'static,
-    D::Context: crate::BuildContext<
+    D::Context: BuildContext<
             <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
         + Sync
@@ -442,7 +445,7 @@ where
     <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
     D::Input: DeserializeOwned + Send + Sync + 'static,
-    D::Context: crate::BuildContext<
+    D::Context: BuildContext<
             <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
         + Sync
@@ -450,10 +453,7 @@ where
     D::Egress: Send + Sync + 'static,
     Src: PublishPolicy<Connected<B>, Live = D::Egress> + Send + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<crate::runtime::EgressHandler<D, <C as ScopeCodec>::Codec, D::Egress>>
-        + Clone
-        + Send
-        + 'static,
+    Layers: Layer<EgressHandler<D, <C as ScopeCodec>::Codec, D::Egress>> + Clone + Send + 'static,
     Layers::Handler: Handler<
             <<D::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             D::Context,
@@ -723,7 +723,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         D: SubscriberDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Handler: 'static,
-        D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
+        D::Context: BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
         State: Send + Sync + 'static,
         Layers:
             Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C::Codec, D::Handler>>,
@@ -743,7 +743,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         C: ScopeCodec,
         D: BatchDef,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: crate::runtime::SliceHandler<D::Input, State> + 'static,
+        D::Handler: SliceHandler<D::Input, State> + 'static,
         State: Send + Sync + 'static,
     {
         let codec = self.codec.scope_codec();
@@ -765,8 +765,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         D: PublishingCall<State> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
-        D::Context:
-            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
+        D::Context: BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
         Src: PublishPolicy<Connected<B>, Live = TypedPublisher<P, PC, PL>> + Send + 'static,
         P: Publisher + 'static,
         PC: Codec + 'static,

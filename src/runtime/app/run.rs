@@ -14,6 +14,8 @@ use tracing::{debug, info, warn};
 
 use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
+use crate::runtime::publish_source::Bound;
+use crate::{Broker, Connected, PairError, PublishPolicy};
 
 use super::health::{self, HealthProbe, HealthState};
 use super::service::RegisteredBroker;
@@ -328,7 +330,7 @@ impl RunningApp {
     ///
     /// # Errors
     ///
-    /// Returns [`PairError`](crate::PairError) when the token's policy fails to pair.
+    /// Returns [`PairError`] when the token's policy fails to pair.
     ///
     /// # Examples
     ///
@@ -355,11 +357,11 @@ impl RunningApp {
     // boxes), and pairing only needs the token.
     pub fn publisher<B2, S>(
         &self,
-        token: crate::runtime::Bound<B2, S>,
-    ) -> impl Future<Output = Result<S::Live, crate::PairError>> + Send
+        token: Bound<B2, S>,
+    ) -> impl Future<Output = Result<S::Live, PairError>> + Send
     where
-        B2: crate::Broker + 'static,
-        S: crate::PublishPolicy<crate::Connected<B2>> + Send,
+        B2: Broker + 'static,
+        S: PublishPolicy<Connected<B2>> + Send,
     {
         token.live()
     }
