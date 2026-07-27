@@ -12,7 +12,7 @@ use std::time::Duration;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, OutgoingMessage, PairError, Publisher, subscriber};
+use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,29 +31,24 @@ async fn expect_payload(observer: &ConnectedMemoryBroker, name: &str, expected: 
     assert_eq!(seen[0].payload(), expected);
 }
 
-/// The first publish: `after_startup` runs post-connect and post-subscribe, so a token paired
-/// there feeds the app's own subscription (a pre-subscribe publish would reach nobody on the
-/// in-memory bus).
+/// The first publish: the scope-level `after_startup` runs post-connect and post-subscribe with
+/// an already-paired publisher, so it feeds the app's own subscription (a pre-subscribe publish
+/// would reach nobody on the in-memory bus) and nothing leaves the wiring closure.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_token_pairs_in_after_startup_for_the_first_publish() {
+async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
     let broker = MemoryBroker::new();
     let observer = Broker::connect(broker.clone())
         .await
         .expect("memory connect is infallible");
 
-    let mut seed = None;
-    let app = RustStream::new(AppInfo::new("pairing", "0.1.0"))
-        .with_broker(broker, |b| {
-            seed = Some(b.bind(MemoryPublish));
-            b.include(consume);
-        })
-        .after_startup(async move |_state| {
-            let publisher = seed.take().expect("token bound").live().await?;
+    let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
+        b.include(consume);
+        b.after_startup(MemoryPublish, async move |publisher| {
             publisher
                 .publish(OutgoingMessage::new("pairing.seeded", b"first".as_slice()))
                 .await
-                .map_err(PairError::new)
         });
+    });
 
     let running = app.start().await.expect("startup failed");
     expect_payload(&observer, "pairing.seeded", b"first").await;

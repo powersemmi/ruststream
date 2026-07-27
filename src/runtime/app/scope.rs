@@ -1,7 +1,6 @@
 //! The per-broker handler registration scope and its shared mount tails.
 
-use std::fmt;
-use std::sync::Arc;
+use std::{error::Error as StdError, fmt, future::Future, sync::Arc};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -31,6 +30,7 @@ use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::{Typed, typed};
 
 use super::include::ScopeCodec;
+use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 
 /// A handler-registration scope bound to one broker.
 ///
@@ -45,6 +45,9 @@ pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipelin
     /// The slot the runtime fills with this broker's connected form at startup; shared with
     /// every starter of this scope and with the [`Bound`] tokens minted here.
     pub(super) slot: ConnectedSlot<B>,
+    /// Startup publishes registered on this scope: paired against the broker and run with the
+    /// app-level `after_startup` hooks, in registration order.
+    pub(super) startup_hooks: Vec<LifecycleHook<State>>,
     pub(super) sink: RouterSink<B, State>,
     pub(super) pipeline: Pipeline,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
@@ -57,6 +60,49 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     #[must_use]
     pub fn broker(&self) -> &B {
         &self.broker
+    }
+
+    /// Registers a startup publish: once every broker is connected and the subscriptions are
+    /// open, `source` is paired against this scope's broker and `hook` runs with the live
+    /// publisher. The scope-side home of the first message (seeding reference data, announcing
+    /// readiness): the pairing happens inside, so no token leaves the closure. A failing hook
+    /// aborts startup, exactly like the app-level
+    /// [`after_startup`](crate::runtime::RustStream::after_startup).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # fn demo() {
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    /// use ruststream::{OutgoingMessage, Publisher};
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| {
+    ///         b.after_startup(MemoryPublish, async move |publisher| {
+    ///             let msg = OutgoingMessage::new("announcements", b"up".as_slice());
+    ///             publisher.publish(msg).await
+    ///         });
+    ///     });
+    /// # let _ = app;
+    /// # }
+    /// ```
+    pub fn after_startup<Source, Hook, Fut, E>(&mut self, source: Source, hook: Hook)
+    where
+        Source: PublishPolicy<Connected<B>> + Send + 'static,
+        Source::Live: Send,
+        Hook: FnOnce(Source::Live) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send + 'static,
+        E: StdError + Send + Sync + 'static,
+        B: 'static,
+    {
+        self.startup_hooks
+            .push(box_startup_publish::<B, State, Source, Hook, Fut, E>(
+                Arc::clone(&self.slot),
+                source,
+                hook,
+            ));
     }
 
     /// Binds `source` to this scope's broker, producing a token usable as the publisher source

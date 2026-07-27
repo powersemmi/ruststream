@@ -36,12 +36,13 @@ after_shutdown(Arc<S>)           # final teardown
   `with_broker`: handlers are registered against the state type it produces, so the reverse order
   does not compile. Register the other lifecycle hooks after it (an earlier hook would close over
   the wrong state type; `on_startup` panics if one exists).
-- **`after_startup`** runs once subscriptions are open and handlers are live. Use it to publish an
-  initial message - a [`Bound`](../guides/publishing.md#publishing-to-a-different-broker) token
-  minted in the broker's scope pairs into a live publisher here with `token.live()` - or to signal
-  readiness (the [testing guide](testing.md) uses it as the "handlers are live" gate). A failure
-  here also aborts startup. This is also the delivery-correct point for seeds the app itself
-  consumes: a publish before subscriptions open has no subscribers to reach.
+- **`after_startup`** runs once subscriptions are open and handlers are live. For publishing an
+  initial message, prefer the scope-level form `b.after_startup(policy, hook)`: it runs at the
+  same point, but the hook receives an already-paired live publisher, so nothing is threaded out
+  of the wiring closure. The app-level hook remains for readiness signalling and non-broker work
+  (the [testing guide](testing.md) uses it as the "handlers are live" gate). A failure in either
+  aborts startup. This is also the delivery-correct point for seeds the app itself consumes: a
+  publish before subscriptions open has no subscribers to reach.
 - **`on_shutdown`** runs when shutdown begins, while brokers are still connected.
 - **`after_shutdown`** runs after brokers are down, for final async teardown.
 

@@ -112,7 +112,7 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 /// Seeds the reference events inside one broker transaction: both records become visible
 /// together on commit, or not at all. The scope owns the transaction, so a commit without a
 /// begin, a second commit, or a publish after settling do not compile. The wiring arrives
-/// already paired (a bound token gone live in `after_startup`), so seeding cannot race the
+/// already paired (the scope's `after_startup` hands it over live), so seeding cannot race the
 /// broker connect.
 async fn seed_events<P>(
     seeder: Transactional<P, JsonCodec>,
@@ -133,15 +133,17 @@ where
 #[ruststream::app]
 fn app() -> impl App {
     let broker = MemoryBroker::new();
-    let mut seed = None;
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
         // app-wide layer: wraps every published reply
         .publish_layer(AuditPublish)
         .with_broker(broker, |b| {
-            // a token for the startup seeding below: bound now, paired once connected
-            seed =
-                Some(b.bind(TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional()));
+            // the first publish: runs once connected and subscribed, with the transactional
+            // wiring already paired
+            b.after_startup(
+                TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional(),
+                async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
+            );
             // --8<-- [start:reply_mount]
             // static, per-publisher: a policy stack, composed at compile time and paired with
             // the connected broker at startup
@@ -160,17 +162,6 @@ fn app() -> impl App {
             b.include_batch(confirm)
                 .publisher(TypedPublisher::new(MemoryPublish).transactional());
             // --8<-- [end:batch_publishing_mount]
-        })
-        // the first publish: brokers are connected and subscriptions are open, so the token
-        // pairs into a live transactional wiring
-        .after_startup(async move |_state| {
-            let seeder = seed
-                .take()
-                .expect("token bound in the scope above")
-                .live()
-                .await
-                .map_err(std::io::Error::other)?;
-            seed_events(seeder).await.map_err(std::io::Error::other)
         })
     // --8<-- [end:pipeline]
 }

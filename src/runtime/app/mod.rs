@@ -114,3 +114,40 @@ pub enum RustStreamError {
     #[error("dispatch failed: {0}")]
     Dispatch(String),
 }
+
+/// Boxing helpers for scope-registered lifecycle hooks.
+pub(super) mod lifecycle_hooks {
+    use std::{error::Error as StdError, future::Future, sync::Arc};
+
+    use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
+    use crate::runtime::publish_source::pair_bound;
+    use crate::{Broker, Connected, PublishPolicy};
+
+    use super::LifecycleHook;
+
+    /// Erases a scope-level startup publish (pair `source`, run `hook` with the live publisher)
+    /// into an app lifecycle hook. The state handle is ignored: the hook's input is the
+    /// publisher, and app state stays reachable through the app-level `after_startup`.
+    pub(crate) fn box_startup_publish<B, State, Source, Hook, Fut, E>(
+        slot: ConnectedSlot<B>,
+        source: Source,
+        hook: Hook,
+    ) -> LifecycleHook<State>
+    where
+        B: Broker + 'static,
+        Source: PublishPolicy<Connected<B>> + Send + 'static,
+        Source::Live: Send,
+        Hook: FnOnce(Source::Live) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send + 'static,
+        E: StdError + Send + Sync + 'static,
+    {
+        Box::new(move |_state: Arc<State>| {
+            Box::pin(async move {
+                let live = pair_bound::<B, Source>(&slot, source)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                hook(live).await.map_err(|e| Box::new(e) as BoxError)
+            })
+        })
+    }
+}
