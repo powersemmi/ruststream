@@ -1,7 +1,7 @@
 # Publishing and replies
 
 There are two ways to publish: return a reply from a handler, or publish explicitly through a
-publisher injected into the handler with the `Egress` parameter. Either way the handler never
+publisher injected into the handler with the `Out` parameter. Either way the handler never
 sees an unconnected publisher: registrations carry publish *policies* (pure declarations), and
 the runtime pairs them with the connected broker at startup.
 
@@ -52,14 +52,14 @@ Make publishing handlers idempotent under redelivery.
 ## Publishing from inside a handler
 
 To publish to a destination other than a single reply (a computed destination, fan-out, side
-effects), take the publisher as a handler parameter with `Egress`: the pattern
-`Egress(out): Egress<MemoryPublisher>` binds `out` to a live `&MemoryPublisher` inside the body.
+effects), take the publisher as a handler parameter with `Out`: the pattern
+`Out(out): Out<MemoryPublisher>` binds `out` to a live `&MemoryPublisher` inside the body.
 The source is attached where the handler is included, and the runtime pairs it after the broker
 connects, so the handler cannot observe a "not connected" publisher, and the state stays free of
 connection-bound values.
 
 ```rust
-use ruststream::runtime::Egress;
+use ruststream::runtime::Out;
 
 --8<-- "examples/publishing.rs:forward"
 ```
@@ -70,8 +70,8 @@ The include site names the source; for the scope's own broker it is just the pub
 --8<-- "examples/publishing.rs:forward_mount"
 ```
 
-An `Egress` handler included without `.publisher(..)` panics when the application is built (not
-at runtime), naming the fix: an injected publisher has no broker-side default.
+An `Out` handler included without `.publisher(..)` panics when the application is built (not at
+runtime), naming the fix: an injected publisher has no broker-side default.
 
 ### Publishing to a different broker
 
@@ -81,7 +81,7 @@ cannot provide; the token is then the source at the include site (shown here wit
 brokers, the shape is the same for any pair):
 
 ```rust
---8<-- "tests/egress.rs:cross_broker"
+--8<-- "tests/out_injection.rs:cross_broker"
 ```
 
 Being scope-minted is the token's proof of registration, so pairing cannot pick a wrong broker

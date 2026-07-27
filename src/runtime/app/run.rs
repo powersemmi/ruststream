@@ -323,7 +323,7 @@ impl RunningApp {
 
     /// Pairs a [`Bound`](crate::runtime::Bound) token against its broker, for sending from a
     /// sibling task while the service runs (the third home of a publisher, next to reply
-    /// wiring and [`Egress`](crate::runtime::Egress) injection).
+    /// wiring and [`Out`](crate::runtime::Out) injection).
     ///
     /// Sugar over [`Bound::live`](crate::runtime::Bound::live), anchored here because the handle
     /// existing is the witness that startup connected every registered broker.

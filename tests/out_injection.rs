@@ -1,4 +1,4 @@
-//! Egress injection: a handler receives a live publisher as a parameter, paired by the runtime
+//! Out injection: a handler receives a live publisher as a parameter, paired by the runtime
 //! from the source attached at the include site.
 #![cfg(all(
     feature = "memory",
@@ -10,7 +10,7 @@
 use std::time::Duration;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, Egress, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
 use ruststream::testing::expect_published;
 use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -22,12 +22,12 @@ struct Event {
 
 /// The destination is computed per message: exactly the case reply publishing cannot cover and
 /// the injected publisher exists for.
-#[subscriber("egress.in")]
-async fn forward(event: &Event, Egress(out): Egress<MemoryPublisher>) -> HandlerResult {
+#[subscriber("out.in")]
+async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult {
     let dest = if event.id % 2 == 0 {
-        "egress.even"
+        "out.even"
     } else {
-        "egress.odd"
+        "out.odd"
     };
     let payload = serde_json::to_vec(event).expect("serializable");
     if out
@@ -64,23 +64,23 @@ async fn an_injected_publisher_reaches_the_handler_live() {
     for id in [2u64, 3u64] {
         ingress
             .publish(OutgoingMessage::new(
-                "egress.in",
+                "out.in",
                 serde_json::to_vec(&Event { id }).unwrap().as_slice(),
             ))
             .await
             .expect("publish");
     }
-    expect_id(&observer, "egress.even", 2).await;
-    expect_id(&observer, "egress.odd", 3).await;
+    expect_id(&observer, "out.even", 2).await;
+    expect_id(&observer, "out.odd", 3).await;
 
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[subscriber("egress.crossing")]
-async fn crossing(event: &Event, Egress(out): Egress<MemoryPublisher>) -> HandlerResult {
+#[subscriber("out.crossing")]
+async fn crossing(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult {
     let payload = serde_json::to_vec(event).expect("serializable");
     if out
-        .publish(OutgoingMessage::new("egress.other", payload.as_slice()))
+        .publish(OutgoingMessage::new("out.other", payload.as_slice()))
         .await
         .is_err()
     {
@@ -115,12 +115,12 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
 
     ingress
         .publish(OutgoingMessage::new(
-            "egress.crossing",
+            "out.crossing",
             serde_json::to_vec(&Event { id: 9 }).unwrap().as_slice(),
         ))
         .await
         .expect("publish");
-    expect_id(&observer, "egress.other", 9).await;
+    expect_id(&observer, "out.other", 9).await;
 
     running.shutdown().await.expect("graceful shutdown failed");
 }

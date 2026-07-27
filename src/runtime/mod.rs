@@ -7,13 +7,13 @@ pub mod cli;
 mod context;
 mod dispatch;
 mod dynstack;
-mod egress;
 mod extract;
 mod failure;
 mod handler;
 mod lifecycle;
 mod metadata;
 mod middleware;
+mod out;
 mod publish;
 mod publish_source;
 mod publisher_registry;
@@ -24,7 +24,7 @@ mod typed;
 
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchPublishing, IncludeDef,
-    IncludeEgress, IncludePublishing, RunningApp, RustStream, RustStreamError, Setup, Wired, forms,
+    IncludeOut, IncludePublishing, RunningApp, RustStream, RustStreamError, Setup, Wired, forms,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
@@ -33,7 +33,6 @@ pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublish
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
-pub use egress::{Egress, EgressCall, EgressDef, EgressHandler};
 pub use extract::{Ctx, FromContext, FromRef, State};
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
@@ -43,6 +42,7 @@ pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 pub(crate) use lifecycle::ConnectedLifecycle;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+pub use out::{Out, OutCall, OutDef, OutHandler};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,

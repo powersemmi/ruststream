@@ -12,7 +12,7 @@ use crate::{
 
 use crate::runtime::batch::BatchHandler;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingHandler};
-use crate::runtime::dispatch::{Workers, spawn_batch_dispatch, spawn_dispatch_workers};
+use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::handler::Handler;
 use crate::runtime::lifecycle::BoxError;
@@ -214,22 +214,26 @@ impl<S, D, C, R> RouteMeta for BatchPublishingRoute<S, D, C, R> {
     }
 }
 
-impl<B, S, D, C, P, PC, PL, State> MountRoute<B, State> for PublishingRoute<S, D, C, P, PC, PL>
+impl<B, Source, Def, DecodeCodec, Leaf, ReplyCodec, Transforms, State> MountRoute<B, State>
+    for PublishingRoute<Source, Def, DecodeCodec, Leaf, ReplyCodec, Transforms>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<Connected<B>> + Send + 'static,
-    S::Subscriber: Send + 'static,
-    SourceMessage<B, S>: Send + Sync + 'static,
+    // The subscription side: the source opens against the connected form, and the definition's
+    // handler runs over the messages it yields.
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Subscriber: Send + 'static,
+    SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
-    D: PublishingCall<State> + 'static,
-    D::Input: DeserializeOwned + Send + Sync + 'static,
-    D::Reply: Serialize + Send + Sync + 'static,
-    D::Context: crate::BuildContext<SourceMessage<B, S>> + Send + Sync + 'static,
-    C: Codec + Send + 'static,
-    P: PublishPolicy<Connected<B>> + Send + 'static,
-    P::Live: Publisher + 'static,
-    PC: Codec + Send + 'static,
-    PL: PublishTransform<D::Context> + Send + 'static,
+    Def: PublishingCall<State> + 'static,
+    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Context: crate::BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
+    DecodeCodec: Codec + Send + 'static,
+    // The reply side: a typed stack over a policy leaf, paired at startup into the live wiring.
+    Leaf: PublishPolicy<Connected<B>> + Send + 'static,
+    Leaf::Live: Publisher + 'static,
+    ReplyCodec: Codec + Send + 'static,
+    Transforms: PublishTransform<Def::Context> + Send + 'static,
 {
     fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
     where
@@ -249,6 +253,9 @@ where
             policies,
             workers,
         } = self;
+        // Not the paired-factory helper: `BlanketLayer::apply` is an RPITIT whose hidden type
+        // captures the layer borrow, so the applied handler cannot be returned out of a factory
+        // closure; apply and spawn stay in one block instead.
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         sink.push_raw(
             Box::new(move |connected, state, delivery, shutdown, token| {
@@ -261,7 +268,7 @@ where
                         .subscribe(connected.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
-                    let handler = global.apply::<SourceMessage<B, S>, D::Context, State, _>(
+                    let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         PublishingHandler {
                             def,
                             codec,
@@ -288,19 +295,23 @@ where
     }
 }
 
-impl<B, S, D, C, R, RLive, State> MountRoute<B, State> for BatchPublishingRoute<S, D, C, R>
+impl<B, Source, Def, DecodeCodec, ReplySource, BatchReply, State> MountRoute<B, State>
+    for BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<Connected<B>> + Send + 'static,
-    S::Subscriber: BatchSubscriber + Send + 'static,
-    SourceMessage<B, S>: Send + 'static,
+    // The subscription side: batches open against the connected form.
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Subscriber: BatchSubscriber + Send + 'static,
+    SourceMessage<B, Source>: Send + 'static,
     State: Send + Sync + 'static,
-    D: BatchPublishingCall<State> + 'static,
-    D::Input: DeserializeOwned + Send + Sync + 'static,
-    D::Reply: Serialize + Send + Sync + 'static,
-    C: Codec + Send + 'static,
-    R: PublishPolicy<Connected<B>, Live = RLive> + Send + 'static,
-    RLive: ReplyPublisher + 'static,
+    Def: BatchPublishingCall<State> + 'static,
+    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Reply: Serialize + Send + Sync + 'static,
+    DecodeCodec: Codec + Send + 'static,
+    // The reply side: the source pairs at startup into a batch reply wiring (plain or
+    // transactional).
+    ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
+    BatchReply: ReplyPublisher + 'static,
 {
     fn mount_one<G, PP>(self, _global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
     where
@@ -319,39 +330,24 @@ where
             policies,
             workers,
         } = self;
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        sink.push_raw(
-            Box::new(move |connected, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let publisher = publisher
-                        .pair(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let handler = BatchPublishingHandler {
-                        def,
-                        codec,
-                        publisher,
-                        pipeline,
-                        decode: policies.decode,
-                    };
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_batch_dispatch(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    ))
+        sink.push_paired_batch(
+            source,
+            async move |connected: Arc<Connected<B>>| {
+                let publisher = publisher
+                    .pair(connected.as_ref())
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                Ok(BatchPublishingHandler {
+                    def,
+                    codec,
+                    publisher,
+                    pipeline,
+                    decode: policies.decode,
                 })
-            }),
+            },
             meta,
+            policies,
+            workers,
         );
     }
 }

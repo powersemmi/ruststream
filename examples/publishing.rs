@@ -11,7 +11,7 @@ use std::error::Error;
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    App, AppInfo, Egress, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform,
+    App, AppInfo, HandlerResult, Out, Outgoing, PublishLayer, PublishNext, PublishTransform,
     RustStream, Transactional, TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
@@ -55,11 +55,11 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // --8<-- [end:reply_result]
 
 // --8<-- [start:forward]
-// The publisher arrives as a parameter: the source is attached at the include site, the runtime
-// pairs it with the connected broker at startup, and the handler always holds a live publisher -
-// no registry, no erased lookup, no state plumbing.
+// The publisher arrives as a parameter (the Out marker): the source is attached at the include
+// site, the runtime pairs it with the connected broker at startup, and the handler always holds
+// a live publisher - no registry, no erased lookup, no state plumbing.
 #[subscriber("ingress")]
-async fn forward(event: &Event, Egress(out): Egress<MemoryPublisher>) -> HandlerResult {
+async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult {
     let payload = JsonCodec.encode(event).expect("serializable");
     let msg = OutgoingMessage::new("egress", payload.as_ref());
     if out.publish(msg).await.is_err() {
