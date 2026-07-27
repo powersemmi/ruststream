@@ -100,6 +100,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
         .await
         .expect("memory connect is infallible");
 
+    // --8<-- [start:cross_broker]
     let mut token = None;
     let app = RustStream::new(AppInfo::new("egress-cross", "0.1.0"))
         .with_broker(other, |b| {
@@ -109,6 +110,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
             b.include(crossing)
                 .publisher(token.take().expect("token bound"));
         });
+    // --8<-- [end:cross_broker]
     let running = app.start().await.expect("startup failed");
 
     ingress

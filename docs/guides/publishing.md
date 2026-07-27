@@ -22,16 +22,8 @@ default publish policy under the default codec; to name the reply codec or add t
 (`TypedPublisher::new` uses the default codec; name one with `TypedPublisher::with_codec`). The
 stack is a declaration: the runtime pairs it with the connected broker at startup.
 
-<!-- inline-rust: minimal mount fragment for a reply publisher; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
 ```rust
-use ruststream::memory::MemoryPublish;
-use ruststream::runtime::TypedPublisher;
-
-RustStream::new(info).with_broker(broker, |b| {
-    b.include(respond); // default policy, default codec
-    b.include(validate)
-        .publisher(TypedPublisher::with_codec(MemoryPublish, JsonCodec));
-});
+--8<-- "examples/publishing.rs:reply_mount"
 ```
 
 Decoding of the incoming request follows the scope (the scope codec set with
@@ -74,9 +66,8 @@ use ruststream::runtime::Egress;
 
 The include site names the source; for the scope's own broker it is just the publish policy:
 
-<!-- inline-rust: the include fragment for the Egress handler; compiled in publishing.rs:pipeline, pulled in below -->
 ```rust
-b.include(forward).publisher(MemoryPublish);
+--8<-- "examples/publishing.rs:forward_mount"
 ```
 
 An `Egress` handler included without `.publisher(..)` panics when the application is built (not
@@ -86,18 +77,11 @@ at runtime), naming the fix: an injected publisher has no broker-side default.
 
 When the handler consumes one broker and publishes to another (consume Kafka, forward to Redis),
 the target broker's scope mints a **bound token** carrying the instance identity a foreign scope
-cannot provide; the token is then the source at the include site:
+cannot provide; the token is then the source at the include site (shown here with two in-memory
+brokers, the shape is the same for any pair):
 
-<!-- inline-rust: the cross-broker shape; the compiled equivalent lives in tests/egress.rs -->
 ```rust
-let mut egress = None;
-let app = RustStream::new(info)
-    .with_broker(redis, |b| {
-        egress = Some(b.bind(RedisPublish::default()));
-    })
-    .with_broker(kafka, |b| {
-        b.include(forward).publisher(egress.take().expect("bound"));
-    });
+--8<-- "tests/egress.rs:cross_broker"
 ```
 
 Being scope-minted is the token's proof of registration, so pairing cannot pick a wrong broker

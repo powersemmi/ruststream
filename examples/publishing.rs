@@ -142,13 +142,17 @@ fn app() -> impl App {
             // a token for the startup seeding below: bound now, paired once connected
             seed =
                 Some(b.bind(TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional()));
+            // --8<-- [start:reply_mount]
             // static, per-publisher: a policy stack, composed at compile time and paired with
             // the connected broker at startup
             b.include(respond)
                 .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform));
             // the default reply wiring: the broker's default policy under the default codec
             b.include(validate);
+            // --8<-- [end:reply_mount]
+            // --8<-- [start:forward_mount]
             b.include(forward).publisher(MemoryPublish);
+            // --8<-- [end:forward_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes
