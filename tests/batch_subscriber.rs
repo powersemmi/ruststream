@@ -16,7 +16,7 @@ use std::{
 };
 
 use common::wait_for;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
 use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
@@ -266,9 +266,10 @@ async fn batch_replies_publish_transactionally() {
         .await
         .expect("memory connect is infallible");
 
-    let replies = TypedPublisher::new(broker.publisher()).transactional();
-    let app = RustStream::new(AppInfo::new("confirmations", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch_publishing(confirm, replies));
+    let replies = TypedPublisher::new(MemoryPublish).transactional();
+    let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(confirm).publisher(replies);
+    });
 
     let running = app.start().await.expect("startup failed");
 
@@ -291,9 +292,10 @@ async fn batch_replies_publish_transactionally() {
 #[test]
 fn batch_publishing_def_records_metadata() {
     let broker = MemoryBroker::new();
-    let replies = TypedPublisher::new(broker.publisher());
-    let app = RustStream::new(AppInfo::new("audit", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch_publishing(audit, replies));
+    let replies = TypedPublisher::new(MemoryPublish);
+    let app = RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(audit).publisher(replies);
+    });
 
     assert_eq!(app.handlers().len(), 1);
     assert_eq!(app.handlers()[0].name, "requests");
@@ -343,7 +345,7 @@ async fn batch_handler_reads_typed_state() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .on_startup(|()| async { Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }) })
+        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
         .with_broker(broker, |b| b.include_batch(scale));
 
     let running = app.start().await.expect("startup failed");

@@ -7,21 +7,15 @@
 //! ```
 
 use std::error::Error;
-use std::io;
 
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::memory::{MemoryBroker, MemoryPublisher};
+use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    App, AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
-    TypedPublisher,
+    App, AppInfo, HandlerResult, Out, Outgoing, PublishLayer, PublishNext, PublishTransform,
+    RustStream, Transactional, TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
-
-// A publisher shared with handlers as a typed field of the application state.
-struct AppState {
-    egress: MemoryPublisher,
-}
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -61,13 +55,14 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // --8<-- [end:reply_result]
 
 // --8<-- [start:forward]
-// The egress publisher is a typed field of the app state, so the handler reaches it through
-// `ctx.state()` and publishes with the publisher's own API - no registry, no erased lookup.
+// The publisher arrives as a parameter (the Out marker): the source is attached at the include
+// site, the runtime pairs it with the connected broker at startup, and the handler always holds
+// a live publisher - no registry, no erased lookup, no state plumbing.
 #[subscriber("ingress")]
-async fn forward(event: &Event, ctx: &mut Context<'_, (), AppState>) -> HandlerResult {
+async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult {
     let payload = JsonCodec.encode(event).expect("serializable");
-    let out = OutgoingMessage::new("egress", payload.as_ref());
-    if ctx.state().egress.publish(out).await.is_err() {
+    let msg = OutgoingMessage::new("egress", payload.as_ref());
+    if out.publish(msg).await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -116,12 +111,15 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 // --8<-- [start:manual_transaction]
 /// Seeds the reference events inside one broker transaction: both records become visible
 /// together on commit, or not at all. The scope owns the transaction, so a commit without a
-/// begin, a second commit, or a publish after settling do not compile.
-async fn seed_events<P>(publisher: P) -> Result<(), Box<dyn Error + Send + Sync>>
+/// begin, a second commit, or a publish after settling do not compile. The wiring arrives
+/// already paired (the scope's `after_startup` hands it over live), so seeding cannot race the
+/// broker connect.
+async fn seed_events<P>(
+    seeder: Transactional<P, JsonCodec>,
+) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     P: TransactionalPublisher,
 {
-    let seeder = TypedPublisher::new(publisher).transactional();
     let mut scope = seeder.begin().await?;
     scope.publish("events", &Event { id: 1 }).await?;
     scope.publish("events", &Event { id: 2 }).await?;
@@ -135,29 +133,34 @@ where
 #[ruststream::app]
 fn app() -> impl App {
     let broker = MemoryBroker::new();
-    let egress = broker.publisher();
-    let seed = broker.publisher();
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
         // app-wide layer: wraps every published reply
         .publish_layer(AuditPublish)
-        // a publisher shared with handlers as typed state, reached via `ctx.state().egress`
-        .on_startup(async move |()| {
-            seed_events(seed).await.map_err(io::Error::other)?;
-            Ok::<_, io::Error>(AppState { egress })
-        })
         .with_broker(broker, |b| {
-            // static, per-publisher: composed onto this TypedPublisher at compile time
-            let replies = TypedPublisher::new(b.broker().publisher()).transform(EnvelopeTransform);
-            b.include_publishing(respond, replies);
-            let validated = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(validate, validated);
-            b.include(forward);
+            // the first publish: runs once connected and subscribed, with the transactional
+            // wiring already paired
+            b.after_startup(
+                TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional(),
+                async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
+            );
+            // --8<-- [start:reply_mount]
+            // static, per-publisher: a policy stack, composed at compile time and paired with
+            // the connected broker at startup
+            b.include(respond)
+                .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform));
+            // the default reply wiring: the broker's default policy under the default codec
+            b.include(validate);
+            // --8<-- [end:reply_mount]
+            // --8<-- [start:forward_mount]
+            b.include(forward).publisher(MemoryPublish);
+            // --8<-- [end:forward_mount]
             // --8<-- [start:batch_publishing_mount]
-            // .transactional() exists only because MemoryPublisher implements
-            // TransactionalPublisher; without it, each reply publishes independently.
-            let confirmations = TypedPublisher::new(b.broker().publisher()).transactional();
-            b.include_batch_publishing(confirm, confirmations);
+            // .transactional() marks the wiring; the pairing checks that the policy's live
+            // publisher implements TransactionalPublisher. Without it, each reply publishes
+            // independently.
+            b.include_batch(confirm)
+                .publisher(TypedPublisher::new(MemoryPublish).transactional());
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

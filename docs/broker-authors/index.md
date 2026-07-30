@@ -123,6 +123,31 @@ pub trait Publisher: Send + Sync {
 
 `OutgoingMessage` borrows its name and payload, so publishing does not force an allocation.
 
+### `PublishPolicy`
+
+A broker publisher is a bundle of policy (an exchange, a queue timeout, a transactional id) plus
+the live connection. Split it along that seam: ship a freely constructible **policy** type with
+the builder options and no publish surface, and implement `PublishPolicy` to pair it with the
+connected form into the live publisher. Pairing is async and fallible for brokers that do real
+work when a publisher comes alive (initializing a transactional producer); for most it is a cheap
+constructor call.
+
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+```rust
+pub trait PublishPolicy<C: ConnectedBroker> {
+    type Live; // the live publisher (or live wiring form, for combinator stacks)
+    async fn pair(self, connected: &C) -> Result<Self::Live, C::Error>;
+}
+```
+
+Ship one policy/live pair per genuine publishing **mode**, and make mode selection a policy type
+transition rather than a runtime flag: a plain policy pairs into the plain publisher, and a
+`transactional_id(..)` builder step moves to a distinct transactional policy type whose live form
+implements `TransactionalPublisher` - so the plain publisher has no transactional surface at all.
+The in-memory broker's `MemoryPublish` / `MemoryRequest` are the minimal reference (no options, so
+they are unit markers); the core's typed combinators implement `PublishPolicy` functorially, which
+is what lets users compose codecs and transforms over your policy before it pairs.
+
 ## Subscription sources
 
 `Subscribe` covers the by-name case. When a subscription needs broker-specific options (a consumer

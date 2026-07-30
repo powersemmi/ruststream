@@ -15,7 +15,7 @@ use std::{
 };
 
 use common::wait_for;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
 use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
@@ -58,9 +58,10 @@ async fn transactional_replies_compose_with_a_batch_pool() {
         .await
         .expect("memory connect is infallible");
 
-    let replies = TypedPublisher::new(broker.publisher()).transactional();
-    let app = RustStream::new(AppInfo::new("tx", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch_publishing(tx_confirm, replies));
+    let replies = TypedPublisher::new(MemoryPublish).transactional();
+    let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(tx_confirm).publisher(replies);
+    });
 
     let running = app.start().await.expect("startup failed");
 
@@ -156,7 +157,7 @@ async fn publishing_replies_compose_with_a_worker_pool() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("pub", "0.1.0")).with_broker(broker, |b| {
-        b.include_publishing(pooled_relay, TypedPublisher::new(b.broker().publisher()));
+        b.include(pooled_relay);
         b.include(pooled_check);
     });
 

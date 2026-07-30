@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, SliceHandler, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
@@ -15,7 +15,7 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
-use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{PublishPipeline, PublishTransform, TypedPublisher};
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::typed;
@@ -339,7 +339,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
-        RP: ReplyPublisher + 'static,
+        RP: 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
@@ -382,7 +382,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         D::Input: DeserializeOwned + Send + Sync + 'static,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
-        P: Publisher + 'static,
+        P: 'static,
         PC: Codec + 'static,
         PL: PublishTransform<D::Context> + 'static,
     {
@@ -476,14 +476,15 @@ impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers> Router<B, Routes, C
     }
 }
 
-/// Composes the mount-time global stack (outer) with a router's own layer stack (inner) by
-/// reference, so [`RouterDef::mount`] can pass both down without cloning either.
-struct ComposedBlanket<'a, Outer, Inner> {
-    outer: &'a Outer,
-    inner: &'a Inner,
+/// Composes the mount-time global stack (outer) with a router's own layer stack (inner), owned
+/// so publishing mounts can carry the composition into their startup pairing closures.
+#[derive(Clone)]
+struct ComposedBlanket<Outer, Inner> {
+    outer: Outer,
+    inner: Inner,
 }
 
-impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<'_, Outer, Inner> {
+impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<Outer, Inner> {
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
         M: Send + Sync + 'static,
@@ -500,17 +501,16 @@ impl<B, Routes, C, Layers, State> RouterDef<B, State> for Router<B, Routes, C, L
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State>,
-    Layers: BlanketLayer,
+    Layers: BlanketLayer + Clone + Send + Sync + 'static,
 {
-    fn mount<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        pipeline: &PP,
-        sink: &mut RouterSink<B, State>,
-    ) {
+    fn mount<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
         let composed = ComposedBlanket {
-            outer: global,
-            inner: &self.layers,
+            outer: global.clone(),
+            inner: self.layers,
         };
         self.routes.mount(&composed, pipeline, sink);
     }
@@ -530,14 +530,13 @@ impl<B, Routes, C, Layers, State> MountRoute<B, State> for Router<B, Routes, C, 
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State>,
-    Layers: BlanketLayer,
+    Layers: BlanketLayer + Clone + Send + Sync + 'static,
 {
-    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        pipeline: &PP,
-        sink: &mut RouterSink<B, State>,
-    ) {
+    fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
         RouterDef::mount(self, global, pipeline, sink);
     }
 }

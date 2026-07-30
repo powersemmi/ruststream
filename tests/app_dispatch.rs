@@ -471,7 +471,7 @@ async fn handler_reads_context_topic_and_state() {
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(|()| async {
+        .on_startup(async move |()| {
             Ok::<_, std::convert::Infallible>(Config {
                 greeting: "hello".to_owned(),
             })

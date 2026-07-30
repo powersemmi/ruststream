@@ -30,8 +30,9 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, ConnectedBroker, DescribeServer, Headers, IncomingMessage, OutgoingMessage,
-    Publisher, RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Headers, IncomingMessage,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec, Subscribe,
+    Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -316,6 +317,68 @@ impl ConnectedBroker for ConnectedMemoryBroker {
         Ok(ClosedMemoryBroker {
             subscribers_dropped: dropped,
         })
+    }
+}
+
+/// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
+///
+/// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`]. Exists so the memory
+/// broker exercises the full [`PublishPolicy`](crate::PublishPolicy) surface the way richer
+/// brokers do with real options (an exchange, a queue timeout, a transactional id).
+///
+/// # Examples
+///
+/// ```
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// use ruststream::memory::{MemoryBroker, MemoryPublish};
+/// use ruststream::{Broker, PublishPolicy};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let publisher = MemoryPublish.pair(&connected).await?;
+/// # let _ = publisher;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct MemoryPublish;
+
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
+    type Live = MemoryPublisher;
+
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
+        Ok(connected.publisher())
+    }
+}
+
+impl DefaultPublish for ConnectedMemoryBroker {
+    type Policy = MemoryPublish;
+}
+
+/// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
+///
+/// # Examples
+///
+/// ```
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// use ruststream::memory::{MemoryBroker, MemoryRequest};
+/// use ruststream::{Broker, PublishPolicy};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let requester = MemoryRequest.pair(&connected).await?;
+/// # let _ = requester;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct MemoryRequest;
+
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
+    type Live = MemoryRequester;
+
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
+        Ok(connected.requester())
     }
 }
 
