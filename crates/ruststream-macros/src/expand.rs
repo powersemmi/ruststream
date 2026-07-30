@@ -18,6 +18,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
         (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
         (true, None) => expand_batch(&parts, func),
         (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
+        (false, None) if parts.out.is_some() => expand_out(&parts),
         (false, None) => expand_subscribing(&parts),
     };
     Ok(body.into())
@@ -39,6 +40,7 @@ struct HandlerParts<'a> {
     ctx_ty: TokenStream2,
     state_ty: Option<TokenStream2>,
     extractors: Vec<(&'a syn::Pat, &'a Type)>,
+    out: Option<(&'a syn::Pat, &'a Type)>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
 }
@@ -85,6 +87,31 @@ fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
         }
     }
     quote!(())
+}
+
+/// The publisher type `P` of an `Out<P>`-shaped parameter type, when the type has that shape.
+/// Purely syntactic (the last path segment `Out` with exactly one type argument), like the
+/// `Ctx<K>` probe below.
+fn out_param_type(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Out" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let publisher = types.next()?;
+    if types.next().is_some() {
+        return None;
+    }
+    Some(publisher)
 }
 
 /// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
@@ -306,6 +333,43 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
     })
 }
 
+/// Splits the (at most one) `Out<P>` parameter out of the extractor list, rejecting a
+/// duplicate and the unsupported form combinations.
+fn split_out<'a>(
+    args: &SubscriberArgs,
+    func: &ItemFn,
+    extractors: &mut Vec<(&'a syn::Pat, &'a Type)>,
+) -> syn::Result<Option<(&'a syn::Pat, &'a Type)>> {
+    let mut out = None;
+    extractors.retain(|(pat, ty)| {
+        if let Some(publisher_ty) = out_param_type(ty) {
+            // Only the first Out parameter is kept; a duplicate is rejected below.
+            if out.is_none() {
+                out = Some((*pat, publisher_ty));
+                return false;
+            }
+        }
+        true
+    });
+    if let Some((_, dup)) = extractors
+        .iter()
+        .find(|(_, ty)| out_param_type(ty).is_some())
+    {
+        return Err(syn::Error::new_spanned(
+            dup,
+            "a #[subscriber] handler takes at most one Out parameter",
+        ));
+    }
+    if out.is_some() && (args.batch || args.publish.is_some()) {
+        return Err(syn::Error::new_spanned(
+            &func.sig,
+            "an Out parameter is not supported together with batch(..) or publish(..) yet; \
+             use the plain subscriber form",
+        ));
+    }
+    Ok(out)
+}
+
 fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
     let first = func.sig.inputs.first().ok_or_else(|| {
         syn::Error::new_spanned(
@@ -389,7 +453,8 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     } else {
         quote!(_ctx)
     };
-    let extractors = collect_extractors(func, ctx_arg.is_some())?;
+    let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
+    let out = split_out(args, func, &mut extractors)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
@@ -411,6 +476,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         ctx_ty,
         state_ty,
         extractors,
+        out,
         workers_method,
         failure_method,
     })
@@ -467,6 +533,7 @@ fn expand_batch_publishing(
         ctx_ty: _,
         state_ty,
         extractors,
+        out: _,
         workers_method,
         failure_method,
     } = parts;
@@ -510,6 +577,10 @@ fn expand_batch_publishing(
     Ok(quote! {
         #[allow(non_camel_case_types)]
         #vis struct #name;
+
+        impl ::ruststream::runtime::IncludeDef for #name {
+            type Form = ::ruststream::runtime::forms::BatchPublishing;
+        }
 
         impl ::ruststream::runtime::BatchPublishingDef for #name {
             type Input = #input_ty;
@@ -567,6 +638,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ctx_ty: _,
         state_ty,
         extractors,
+        out: _,
         workers_method,
         failure_method,
     } = parts;
@@ -623,6 +695,10 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
                 }
             }
 
+            impl ::ruststream::runtime::IncludeDef for #name {
+                type Form = ::ruststream::runtime::forms::Batch;
+            }
+
             impl ::ruststream::runtime::BatchDef for #name {
                 type Input = #input_ty;
                 type Handler = Self;
@@ -667,6 +743,7 @@ fn expand_publishing(
         ctx_ty,
         state_ty,
         extractors,
+        out: _,
         workers_method,
         failure_method,
     } = parts;
@@ -717,6 +794,10 @@ fn expand_publishing(
         #[allow(non_camel_case_types)]
         #vis struct #name;
 
+        impl ::ruststream::runtime::IncludeDef for #name {
+            type Form = ::ruststream::runtime::forms::Publishing;
+        }
+
         impl ::ruststream::runtime::PublishingDef for #name {
             type Input = #input_ty;
             type Reply = #reply_ty;
@@ -755,6 +836,98 @@ fn expand_publishing(
     })
 }
 
+fn expand_out(parts: &HandlerParts<'_>) -> TokenStream2 {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        message_meta,
+        ctx_param,
+        ctx_ty,
+        state_ty,
+        extractors,
+        out,
+        workers_method,
+        failure_method,
+    } = parts;
+    let (out_pat, out_ty) = out.expect("expand_out runs only with an Out param");
+
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
+    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        ctx_ty,
+        &state_in_ctx,
+        &quote!(
+            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
+                ::ruststream::runtime::HandlerResult,
+            >::into(__rs_err),)
+        ),
+    );
+
+    quote! {
+        #[derive(Clone, Copy)]
+        #[allow(non_camel_case_types)]
+        #vis struct #name;
+
+        impl ::ruststream::runtime::IncludeDef for #name {
+            type Form = ::ruststream::runtime::forms::Out;
+        }
+
+        impl ::ruststream::runtime::OutDef for #name {
+            type Input = #input_ty;
+            type Context = #ctx_ty;
+            type Source = #source_ty;
+            type Out = #out_ty;
+
+            fn source(&self) -> Self::Source { #source_expr }
+
+            #workers_method
+
+            #failure_method
+
+            fn description(&self) -> ::core::option::Option<&str> {
+                #description
+            }
+
+            #input_schema
+
+            #message_meta
+        }
+
+        impl #impl_generics
+            ::ruststream::runtime::OutCall<#state_in_ctx> for #name
+            #where_clause
+        {
+            async fn call(
+                &self,
+                #pat: &#input_ty,
+                __rs_out: &#out_ty,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
+            ) -> ::ruststream::runtime::Settle {
+                #prelude
+                let #out_pat = ::ruststream::runtime::Out(__rs_out);
+                ::ruststream::runtime::IntoSettle::into_settle(
+                    (async move #block).await,
+                )
+            }
+        }
+    }
+}
+
 fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
     let HandlerParts {
         vis,
@@ -771,6 +944,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         ctx_ty,
         state_ty,
         extractors,
+        out: _,
         workers_method,
         failure_method,
     } = parts;
@@ -821,6 +995,10 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
             #vis struct #name;
 
             #handler_impl
+
+            impl ::ruststream::runtime::IncludeDef for #name {
+                type Form = ::ruststream::runtime::forms::Subscribing;
+            }
 
             impl ::ruststream::runtime::SubscriberDef for #name {
                 type Input = #input_ty;

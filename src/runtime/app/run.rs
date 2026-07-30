@@ -14,6 +14,8 @@ use tracing::{debug, info, warn};
 
 use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
+use crate::runtime::publish_source::Bound;
+use crate::{Broker, Connected, PairError, PublishPolicy};
 
 use super::health::{self, HealthProbe, HealthState};
 use super::service::RegisteredBroker;
@@ -317,6 +319,50 @@ impl RunningApp {
     #[must_use]
     pub fn health(&self) -> HealthProbe {
         HealthProbe::new(self.health.subscribe())
+    }
+
+    /// Pairs a [`Bound`](crate::runtime::Bound) token against its broker, for sending from a
+    /// sibling task while the service runs (the third home of a publisher, next to reply
+    /// wiring and [`Out`](crate::runtime::Out) injection).
+    ///
+    /// Sugar over [`Bound::live`](crate::runtime::Bound::live), anchored here because the handle
+    /// existing is the witness that startup connected every registered broker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PairError`] when the token's policy fails to pair.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::Broker;
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    ///
+    /// let broker = MemoryBroker::new().bindable();
+    /// let egress = broker.bind(MemoryPublish);
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |_b| {});
+    /// let running = app.start().await?;
+    /// let publisher = running.publisher(egress).await?;
+    /// // hand `publisher` to the sibling task (an outbox relay, a timer) ...
+    /// # let _ = publisher;
+    /// running.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    // Not `async fn`: the future must not capture `&self` (the handle holds non-Sync hook
+    // boxes), and pairing only needs the token.
+    pub fn publisher<B2, S>(
+        &self,
+        token: Bound<B2, S>,
+    ) -> impl Future<Output = Result<S::Live, PairError>> + Send
+    where
+        B2: Broker + 'static,
+        S: PublishPolicy<Connected<B2>> + Send,
+    {
+        token.live()
     }
 
     /// Shuts the service down gracefully.

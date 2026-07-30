@@ -1,17 +1,20 @@
 //! The publish-policy seam: a policy is pure declaration, pairing against a connected broker is
 //! the only way to a live publisher, and pairing is functorial over the typed combinator stack.
-#![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+#![cfg(all(
+    feature = "memory",
+    feature = "macros",
+    feature = "json",
+    feature = "testing"
+))]
 
 use std::time::Duration;
 
-use futures::StreamExt;
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryRequest};
 use ruststream::runtime::{
     AppInfo, Outgoing, PublishContext, PublishTransform, RustStream, TypedPublisher,
 };
-use ruststream::{
-    Broker, IncomingMessage, OutgoingMessage, PublishPolicy, Publisher, Subscriber, subscriber,
-};
+use ruststream::testing::expect_published;
+use ruststream::{Broker, OutgoingMessage, PublishPolicy, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,10 +38,7 @@ impl<C> PublishTransform<C> for Envelope {
 
 #[tokio::test]
 async fn a_bare_policy_pairs_into_a_live_publisher() {
-    let broker = MemoryBroker::new();
-    let mut sub = broker.subscribe("policy.out");
-
-    let connected = broker
+    let connected = MemoryBroker::new()
         .connect()
         .await
         .expect("memory connect is infallible");
@@ -52,14 +52,9 @@ async fn a_bare_policy_pairs_into_a_live_publisher() {
         .await
         .expect("publish through the paired publisher");
 
-    let mut stream = std::pin::pin!(sub.stream());
-    let msg = tokio::time::timeout(Duration::from_secs(2), stream.next())
-        .await
-        .expect("delivery timed out")
-        .expect("stream ended")
-        .expect("stream errored");
-    assert_eq!(msg.payload(), b"paired");
-    msg.ack().await.expect("ack");
+    let seen = expect_published(&connected, "policy.out", 1, Duration::from_secs(2)).await;
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].payload(), b"paired");
 }
 
 #[tokio::test]
@@ -94,20 +89,24 @@ async fn respond(order: &Order) -> Receipt {
 async fn a_typed_policy_stack_pairs_functorially() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let mut replies_sub = broker.subscribe("policy.replies");
 
-    // The shared in-process bus makes a connected clone pair against the app's broker.
+    // The stack itself is a policy: pairing it manually against a connected clone yields the
+    // same wiring type over the live leaf (the functorial half of the seam)...
     let connected = Broker::connect(broker.clone())
         .await
         .expect("memory connect is infallible");
-    let replies = TypedPublisher::new(MemoryPublish)
+    let paired = TypedPublisher::new(MemoryPublish)
         .transform(Envelope)
         .pair(&connected)
         .await
         .expect("memory pairing is infallible");
+    let _type_check: TypedPublisher<ruststream::memory::MemoryPublisher, _, _> = paired;
 
-    let app = RustStream::new(AppInfo::new("policy", "0.1.0"))
-        .with_broker(broker, |b| b.include_publishing(respond, replies));
+    // ...while the registration takes the unpaired stack and the runtime pairs it at startup.
+    let replies = TypedPublisher::new(MemoryPublish).transform(Envelope);
+    let app = RustStream::new(AppInfo::new("policy", "0.1.0")).with_broker(broker, |b| {
+        b.include(respond).publisher(replies);
+    });
     let running = app.start().await.expect("startup failed");
 
     publisher
@@ -118,18 +117,13 @@ async fn a_typed_policy_stack_pairs_functorially() {
         .await
         .expect("publish request");
 
-    let mut stream = std::pin::pin!(replies_sub.stream());
-    let reply = tokio::time::timeout(Duration::from_secs(2), stream.next())
-        .await
-        .expect("reply timed out")
-        .expect("stream ended")
-        .expect("stream errored");
+    let seen = expect_published(&connected, "policy.replies", 1, Duration::from_secs(2)).await;
+    assert_eq!(seen.len(), 1, "the reply must be published");
     assert_eq!(
-        reply.headers().get("x-envelope"),
+        seen[0].headers().get("x-envelope"),
         Some(b"1".as_slice()),
         "the transform stack must survive pairing",
     );
-    reply.ack().await.expect("ack");
 
     running.shutdown().await.expect("graceful shutdown failed");
 }

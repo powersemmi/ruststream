@@ -30,8 +30,9 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, ConnectedBroker, DescribeServer, Headers, IncomingMessage, OutgoingMessage,
-    Publisher, RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Headers, IncomingMessage,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec, Subscribe,
+    Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -328,7 +329,7 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 /// # Examples
 ///
 /// ```
-/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryPublish};
 /// use ruststream::{Broker, PublishPolicy};
 ///
@@ -342,12 +343,16 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryPublish;
 
-impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
     type Live = MemoryPublisher;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, MemoryError> {
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(connected.publisher())
     }
+}
+
+impl DefaultPublish for ConnectedMemoryBroker {
+    type Policy = MemoryPublish;
 }
 
 /// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
@@ -355,7 +360,7 @@ impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
 /// # Examples
 ///
 /// ```
-/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryRequest};
 /// use ruststream::{Broker, PublishPolicy};
 ///
@@ -369,10 +374,10 @@ impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
 #[must_use]
 pub struct MemoryRequest;
 
-impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
     type Live = MemoryRequester;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, MemoryError> {
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(connected.requester())
     }
 }

@@ -76,6 +76,34 @@ pub trait Broker: Send + Sync + Sized {
     /// Returns [`Self::Error`] when the broker is unreachable, authentication fails, or the
     /// configuration is invalid.
     fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send;
+
+    /// Wraps the broker for publisher-token minting before registration: the returned
+    /// [`Bindable`](crate::runtime::Bindable) hands out
+    /// [`Bound`](crate::runtime::Bound) tokens via its `bind`, and is itself what
+    /// [`with_broker`](crate::runtime::RustStream::with_broker) takes.
+    ///
+    /// Provided for every broker; implementations do not override it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # fn demo() {
+    /// use ruststream::Broker;
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    ///
+    /// let broker = MemoryBroker::new().bindable();
+    /// let egress = broker.bind(MemoryPublish);
+    /// # let _ = (broker, egress);
+    /// # }
+    /// ```
+    #[must_use]
+    fn bindable(self) -> crate::runtime::Bindable<Self>
+    where
+        Self: 'static,
+    {
+        crate::runtime::Bindable::new(self)
+    }
 }
 
 /// A connected broker: the typed witness of a live connection.

@@ -20,7 +20,10 @@ use crate::codec::{Codec, CodecError};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
-use crate::{Headers, OutgoingMessage, Publisher, TransactionalPublisher};
+use crate::{
+    ConnectedBroker, Headers, OutgoingMessage, PairError, PublishPolicy, Publisher,
+    TransactionalPublisher,
+};
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
@@ -596,17 +599,15 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// `#[subscriber(batch(..), publish(..))]` handler all become visible atomically on commit,
     /// or none of them do.
     ///
-    /// Exists only when the underlying publisher implements
-    /// [`TransactionalPublisher`](crate::TransactionalPublisher); for brokers without
-    /// transactions, the method does not exist and the compiler enforces it. The returned wiring
-    /// is accepted by the batch publishing mounts only: a one-message transaction adds broker
-    /// round-trips for no atomicity gain, so the single-message `include_publishing` forms keep
-    /// taking a plain [`TypedPublisher`].
+    /// The leaf may be a live publisher or a publish policy; either way the transactional
+    /// requirement is enforced where the wiring is consumed (the batch publishing mounts bound
+    /// the live form by [`TransactionalPublisher`](crate::TransactionalPublisher), and pairing a
+    /// policy stack requires the same), so a broker without transactions still fails to compile,
+    /// at the registration instead of here. The returned wiring is accepted by the batch
+    /// publishing mounts only: a one-message transaction adds broker round-trips for no
+    /// atomicity gain, so the single-message forms keep taking a plain [`TypedPublisher`].
     #[must_use]
-    pub fn transactional(self) -> Transactional<P, C, PL, BL>
-    where
-        P: TransactionalPublisher,
-    {
+    pub fn transactional(self) -> Transactional<P, C, PL, BL> {
         Transactional { inner: self }
     }
 }
@@ -672,17 +673,17 @@ impl<P, C, PL, BL> std::fmt::Debug for TypedPublisher<P, C, PL, BL> {
 // Pairing is functorial over the combinator stack: a typed publisher whose leaf is a policy is
 // itself a policy, and pairing swaps the leaf for its live form while the codec and transform
 // stacks travel unchanged. Fully monomorphized; no erasure anywhere on this path.
-impl<CB, P, C, PL, BL> crate::PublishPolicy<CB> for TypedPublisher<P, C, PL, BL>
+impl<CB, P, C, PL, BL> PublishPolicy<CB> for TypedPublisher<P, C, PL, BL>
 where
-    CB: crate::ConnectedBroker,
-    P: crate::PublishPolicy<CB> + Send,
+    CB: ConnectedBroker,
+    P: PublishPolicy<CB> + Send,
     C: Send,
     PL: Send,
     BL: Send,
 {
     type Live = TypedPublisher<P::Live, C, PL, BL>;
 
-    async fn pair(self, connected: &CB) -> Result<Self::Live, CB::Error> {
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         Ok(TypedPublisher {
             publisher: self.publisher.pair(connected).await?,
             codec: self.codec,
@@ -710,10 +711,10 @@ impl<P, C, PL, BL> std::fmt::Debug for Transactional<P, C, PL, BL> {
 
 // The transactional wiring is a policy over a policy: pairing resolves the inner stack and keeps
 // the transactional marker, provided the leaf's live form actually is transactional.
-impl<CB, P, C, PL, BL> crate::PublishPolicy<CB> for Transactional<P, C, PL, BL>
+impl<CB, P, C, PL, BL> PublishPolicy<CB> for Transactional<P, C, PL, BL>
 where
-    CB: crate::ConnectedBroker,
-    P: crate::PublishPolicy<CB> + Send,
+    CB: ConnectedBroker,
+    P: PublishPolicy<CB> + Send,
     P::Live: TransactionalPublisher,
     C: Send,
     PL: Send,
@@ -721,7 +722,7 @@ where
 {
     type Live = Transactional<P::Live, C, PL, BL>;
 
-    async fn pair(self, connected: &CB) -> Result<Self::Live, CB::Error> {
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         Ok(Transactional {
             inner: self.inner.pair(connected).await?,
         })
@@ -735,6 +736,36 @@ mod sealed {
 
     impl<P, C, PL, BL> Sealed for super::TypedPublisher<P, C, PL, BL> {}
     impl<P, C, PL, BL> Sealed for super::Transactional<P, C, PL, BL> {}
+}
+
+/// The decode-codec view of a reply wiring, readable before pairing.
+///
+/// Both wrapper shapes carry their codec as a field, whatever the leaf (a live publisher or a
+/// publish policy), so the batch publishing mounts can reuse the reply codec for decoding
+/// without requiring a live leaf at include time. Sealed like [`ReplyPublisher`].
+pub trait ReplyWiring: Sealed {
+    /// The codec replies are encoded with.
+    type Codec: Codec + Clone;
+
+    /// Returns the reply codec.
+    #[doc(hidden)]
+    fn decode_codec(&self) -> &Self::Codec;
+}
+
+impl<P, C: Codec + Clone, PL, BL> ReplyWiring for TypedPublisher<P, C, PL, BL> {
+    type Codec = C;
+
+    fn decode_codec(&self) -> &C {
+        self.codec()
+    }
+}
+
+impl<P, C: Codec + Clone, PL, BL> ReplyWiring for Transactional<P, C, PL, BL> {
+    type Codec = C;
+
+    fn decode_codec(&self) -> &C {
+        self.inner.codec()
+    }
 }
 
 /// The reply wiring accepted by the `include_batch_publishing` mounts.
