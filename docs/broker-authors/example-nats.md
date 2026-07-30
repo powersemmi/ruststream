@@ -66,8 +66,8 @@ pub enum NatsError {
 the synchronous `#[ruststream::app]` builder. The consuming `connect` dials and returns the
 connected form, which holds the live client directly. One shared cell remains: a publisher can be
 built while the application is being assembled, before `connect` runs, and it reads the client
-through the cell `connect` fills. That cell serves only those early publishers; the connected
-form itself never checks it.
+through the cell `connect` fills. The cell exists for the publishers (one publisher type serves
+both the early and the connected path); the connected form's own operations never check it.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -117,7 +117,7 @@ impl Broker for NatsBroker {
     async fn connect(self) -> Result<Self::Connected, Self::Error> {
         let client = self
             .client
-            .get_or_try_init(|| async {
+            .get_or_try_init(async || {
                 let addrs = self.addrs.as_deref().ok_or(NatsError::NotConnected)?;
                 async_nats::connect(addrs)
                     .await
@@ -140,7 +140,8 @@ pub struct ConnectedNatsBroker {
 }
 
 impl ConnectedNatsBroker {
-    /// A publisher from the connected form; no cell involved.
+    /// A publisher from the connected form. It rides the same cell-backed publisher type as the
+    /// early path; by now `connect` has filled the cell, so it resolves immediately.
     #[must_use]
     pub fn publisher(&self) -> NatsPublisher {
         NatsPublisher::new(Arc::clone(&self.shared))

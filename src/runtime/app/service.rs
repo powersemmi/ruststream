@@ -1,8 +1,13 @@
 //! The [`RustStream`] builder: construction, configuration and handler registration.
 
 use std::{
-    collections::BTreeMap, error::Error as StdError, future::Future, marker::PhantomData,
-    sync::Arc, time::Duration,
+    collections::BTreeMap,
+    error::Error as StdError,
+    fmt,
+    future::Future,
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use crate::codec::Codec;
@@ -132,10 +137,8 @@ pub(crate) struct TestParts<State> {
     pub(crate) test_hooks: Arc<TestHooks>,
 }
 
-impl<Layers, State, Pipeline, Phase> std::fmt::Debug
-    for RustStream<Layers, State, Pipeline, Phase>
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Layers, State, Pipeline, Phase> fmt::Debug for RustStream<Layers, State, Pipeline, Phase> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RustStream")
             .field("info", &self.info)
             .field("brokers", &self.brokers.len())
@@ -399,7 +402,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         B: Broker + 'static,
     {
         // No subscriptions read this slot; it only satisfies the cell's shape.
-        let slot: ConnectedSlot<B> = Arc::new(std::sync::Mutex::new(None));
+        let slot: ConnectedSlot<B> = Arc::new(Mutex::new(None));
         self.brokers.push(RegisteredBroker {
             lifecycle: Box::new(BrokerCell { broker, slot }),
             label: None,
@@ -624,7 +627,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             retry_publisher,
             ..
         } = scope;
-        let slot: ConnectedSlot<B> = Arc::new(std::sync::Mutex::new(None));
+        let slot: ConnectedSlot<B> = Arc::new(Mutex::new(None));
         // The scope id is the index this broker will occupy once pushed below; the harness uses it
         // to scope recorded deliveries per broker.
         #[cfg(feature = "testing")]

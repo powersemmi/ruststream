@@ -22,6 +22,7 @@ pub use capability::{MemoryRequester, PARTITION_KEY_HEADER, RequestError};
 use std::{
     collections::HashMap,
     convert::Infallible,
+    fmt,
     sync::{Arc, Mutex, OnceLock, atomic::AtomicU64},
     time::Duration,
 };
@@ -29,13 +30,14 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, DescribeServer, Headers, IncomingMessage, OutgoingMessage, Publisher,
-    RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    AckError, Broker, ConnectedBroker, DescribeServer, Headers, IncomingMessage, OutgoingMessage,
+    Publisher, RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
 use thiserror::Error;
 use tokio::sync::{Notify, mpsc};
+use tokio::time::sleep;
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
@@ -190,7 +192,7 @@ impl MemoryBroker {
     ///
     /// On a shut-down broker the registration is refused and the subscriber simply never
     /// receives anything, matching this constructor's infallible signature; the
-    /// [`Subscribe`](crate::Subscribe) path reports [`MemoryError::ShutDown`] instead.
+    /// [`Subscribe`] path reports [`MemoryError::ShutDown`] instead.
     #[must_use]
     pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -226,8 +228,8 @@ impl MemoryBroker {
     }
 }
 
-impl std::fmt::Debug for MemoryBroker {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemoryBroker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryBroker").finish_non_exhaustive()
     }
 }
@@ -254,19 +256,18 @@ impl Broker for MemoryBroker {
     }
 }
 
-/// The connected form of [`MemoryBroker`]: the typed witness that
-/// [`Broker::connect`](crate::Broker::connect) ran.
+/// The connected form of [`MemoryBroker`]: the typed witness that [`Broker::connect`] ran.
 ///
 /// Cheap to clone: the in-memory bus is shared state by nature, so the connected form is a
 /// shareable handle on it, exactly like the unconnected broker. Subscriptions (the
-/// [`Subscribe`](crate::Subscribe) capability, [`MemorySource`]) resolve against this form.
+/// [`Subscribe`] capability, [`MemorySource`]) resolve against this form.
 #[derive(Clone)]
 pub struct ConnectedMemoryBroker {
     state: Arc<MemoryState>,
 }
 
-impl std::fmt::Debug for ConnectedMemoryBroker {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for ConnectedMemoryBroker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConnectedMemoryBroker")
             .finish_non_exhaustive()
     }
@@ -291,12 +292,12 @@ impl ConnectedMemoryBroker {
     }
 }
 
-impl crate::ConnectedBroker for ConnectedMemoryBroker {
+impl ConnectedBroker for ConnectedMemoryBroker {
     type Error = MemoryError;
     type Closed = ClosedMemoryBroker;
 
-    /// Enters the terminal shut-down state: the bus itself becomes [`Bus::ShutDown`], so every
-    /// aliased handle that would touch it (a publisher's publish or transaction commit, a
+    /// Enters the terminal shut-down state: the bus itself flips to its `ShutDown` variant, so
+    /// every aliased handle that would touch it (a publisher's publish or transaction commit, a
     /// request) errors with [`MemoryError::ShutDown`]. Consuming `self` makes any further use
     /// of this handle a compile error; the returned witness reports how many subscriber
     /// registrations the teardown dropped.
@@ -464,8 +465,8 @@ impl MemorySubscriber {
     }
 }
 
-impl std::fmt::Debug for MemorySubscriber {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemorySubscriber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemorySubscriber")
             .field("name", &self.name)
             .finish_non_exhaustive()
@@ -519,8 +520,8 @@ impl Clone for MemoryPublisher {
     }
 }
 
-impl std::fmt::Debug for MemoryPublisher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemoryPublisher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryPublisher").finish_non_exhaustive()
     }
 }
@@ -539,8 +540,9 @@ pub enum MemoryError {
     /// `commit` or `abort` was called with no open transaction on this handle.
     #[error("no transaction is open on this publisher handle")]
     NoTransaction,
-    /// The operation (a publish, subscribe, transaction commit, or request) ran after
-    /// [`Broker::shutdown`] and before a reviving [`Broker::connect`](crate::Broker::connect).
+    /// The operation (a publish, subscribe, transaction commit, or request) ran through a handle
+    /// aliasing a bus that was shut down ([`ConnectedBroker::shutdown`]) and not revived by a
+    /// sibling clone's [`Broker::connect`].
     #[error("the memory broker is shut down")]
     ShutDown,
 }
@@ -594,8 +596,8 @@ impl Drop for MemoryMessage {
     }
 }
 
-impl std::fmt::Debug for MemoryMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemoryMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryMessage")
             .field("name", &self.delivery.as_ref().map(|d| d.name.as_str()))
             .finish_non_exhaustive()
@@ -692,7 +694,7 @@ impl IncomingMessage for MemoryMessage {
             return Ok(());
         }
         tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
+            sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.
             let _ = requeue.send(delivery);
         });
@@ -734,6 +736,33 @@ mod tests {
         let raw = msg.into_raw();
         assert_eq!(raw.name(), "dbg");
         assert_eq!(raw.payload(), b"payload");
+    }
+
+    #[tokio::test]
+    async fn shutdown_reports_dropped_registrations() {
+        let broker = MemoryBroker::new();
+        let connected = broker
+            .connect()
+            .await
+            .expect("memory connect is infallible");
+        let _first = connected.subscribe("orders").await.unwrap();
+        let _second = connected.subscribe("orders").await.unwrap();
+        let _third = connected.subscribe("billing").await.unwrap();
+
+        let closed = connected.shutdown().await.unwrap();
+        assert_eq!(closed.subscribers_dropped(), 3);
+    }
+
+    #[tokio::test]
+    async fn shutdown_after_a_sibling_shutdown_reports_nothing_dropped() {
+        let broker = MemoryBroker::new();
+        let first = broker.clone().connect().await.unwrap();
+        let second = broker.connect().await.unwrap();
+        let _sub = first.subscribe("orders").await.unwrap();
+
+        assert_eq!(first.shutdown().await.unwrap().subscribers_dropped(), 1);
+        // The sibling shares the bus, which is already terminal: nothing left to drop.
+        assert_eq!(second.shutdown().await.unwrap().subscribers_dropped(), 0);
     }
 
     // Paused time needs the current-thread runtime; the redelivery timer auto-advances instead

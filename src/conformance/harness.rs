@@ -19,7 +19,7 @@
 //! # }
 //! ```
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use crate::{
     AckError, Broker, Connected, ConnectedBroker, Headers, IncomingMessage, OutgoingMessage,
@@ -27,6 +27,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::StreamExt;
+use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
@@ -47,7 +48,7 @@ where
     B::Connected: TestableBroker + Subscribe,
     F: Fn() -> B,
 {
-    let connect = async |broker: B| {
+    let connect = async move |broker: B| {
         broker
             .connect()
             .await
@@ -317,9 +318,9 @@ pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
     M: IncomingMessage,
-    E: std::fmt::Debug,
+    E: fmt::Debug,
 {
-    let item = tokio::time::timeout(DEFAULT_TIMEOUT, stream.next())
+    let item = timeout(DEFAULT_TIMEOUT, stream.next())
         .await
         .unwrap_or_else(|_| panic!("{label}: stream timed out"));
     let item = item.unwrap_or_else(|| panic!("{label}: stream ended unexpectedly"));
@@ -330,9 +331,9 @@ pub(crate) async fn expect_no_more<S, M, E>(stream: &mut S, label: &str)
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
     M: IncomingMessage,
-    E: std::fmt::Debug,
+    E: fmt::Debug,
 {
-    let result = tokio::time::timeout(NEGATIVE_WAIT, stream.next()).await;
+    let result = timeout(NEGATIVE_WAIT, stream.next()).await;
     assert!(
         result.is_err(),
         "{label}: expected no further deliveries within {NEGATIVE_WAIT:?}",

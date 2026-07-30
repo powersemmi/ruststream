@@ -10,6 +10,7 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
+use tokio::time::sleep;
 
 use crate::{BatchSubscriber, ConnectedBroker, Subscriber, SubscriptionSource};
 
@@ -149,7 +150,7 @@ impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
                 batch.push(first);
                 let mut carry = Carry::Nothing;
                 if max_size > 1 {
-                    let deadline = tokio::time::sleep(max_wait);
+                    let deadline = sleep(max_wait);
                     tokio::pin!(deadline);
                     loop {
                         tokio::select! {
@@ -184,15 +185,17 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::memory::MemoryBroker;
-    use crate::{IncomingMessage, Name, OutgoingMessage, Publisher};
+    use crate::memory::{MemoryBroker, MemorySubscriber};
+    use crate::{Broker, IncomingMessage, Name, OutgoingMessage, Publisher};
 
     async fn buffered(
         broker: &MemoryBroker,
         max_size: usize,
         max_wait: Duration,
-    ) -> BufferedSubscriber<crate::memory::MemorySubscriber> {
-        let connected = crate::Broker::connect(broker.clone())
+    ) -> BufferedSubscriber<MemorySubscriber> {
+        let connected = broker
+            .clone()
+            .connect()
             .await
             .expect("memory connect is infallible");
         Buffered::new(Name::new("buffered"))

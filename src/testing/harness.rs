@@ -3,6 +3,7 @@
 //! `connect` runs to produce the connected form the subscriptions need; for an in-process broker
 //! that transition performs no I/O.
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -108,8 +109,8 @@ pub struct TestBrokers<'a> {
     entries: &'a [BrokerEntry],
 }
 
-impl std::fmt::Debug for TestBrokers<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for TestBrokers<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestBrokers")
             .field("brokers", &self.entries.len())
             .finish_non_exhaustive()
@@ -203,8 +204,8 @@ pub struct TestApp<State> {
     shutdown_timeout: Option<Duration>,
 }
 
-impl<State> std::fmt::Debug for TestApp<State> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<State> fmt::Debug for TestApp<State> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestApp")
             .field("brokers", &self.entries.len())
             .field("subscribers", &self.handles.len())
@@ -545,8 +546,8 @@ pub struct BrokerHandle<'a> {
     label: String,
 }
 
-impl std::fmt::Debug for BrokerHandle<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for BrokerHandle<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BrokerHandle")
             .field("broker", &self.label)
             .field("testable", &self.testable.is_some())

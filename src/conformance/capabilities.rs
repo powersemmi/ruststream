@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use futures::StreamExt;
+use tokio::time::timeout;
 
 use super::harness::{expect_next, expect_no_more};
 use crate::{
@@ -196,7 +197,7 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     let mut received = Vec::new();
     let mut stream = std::pin::pin!(subscriber.batches());
     while received.len() < COUNT as usize {
-        let batch = tokio::time::timeout(DEFAULT_TIMEOUT, stream.next())
+        let batch = timeout(DEFAULT_TIMEOUT, stream.next())
             .await
             .expect("batches: stream timed out")
             .expect("batches: stream ended unexpectedly")

@@ -2,6 +2,8 @@
 //! routing works with both the [`TestApp`](super::TestApp) harness and the
 //! [`conformance`](crate::conformance) suite.
 
+use std::any::Any;
+use std::fmt;
 use std::time::Duration;
 
 use crate::{OutgoingMessage, RawMessage};
@@ -70,11 +72,11 @@ pub trait TestableBroker: Send + Sync {
 /// [`register_testable_broker!`](crate::register_testable_broker); the harness iterates the
 /// registered downcasters to recover each broker's transport from the built app.
 pub struct TestableRegistration {
-    downcast: fn(&dyn core::any::Any) -> Option<&dyn TestableBroker>,
+    downcast: fn(&dyn Any) -> Option<&dyn TestableBroker>,
 }
 
-impl std::fmt::Debug for TestableRegistration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for TestableRegistration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestableRegistration")
             .finish_non_exhaustive()
     }
@@ -84,15 +86,12 @@ impl TestableRegistration {
     /// Wraps a downcaster (the [`register_testable_broker!`](crate::register_testable_broker) macro
     /// builds this for you).
     #[must_use]
-    pub const fn new(downcast: fn(&dyn core::any::Any) -> Option<&dyn TestableBroker>) -> Self {
+    pub const fn new(downcast: fn(&dyn Any) -> Option<&dyn TestableBroker>) -> Self {
         Self { downcast }
     }
 
     /// Resolves `any` to a `TestableBroker` if it is this registration's broker type.
-    pub(crate) fn resolve<'a>(
-        &self,
-        any: &'a dyn core::any::Any,
-    ) -> Option<&'a dyn TestableBroker> {
+    pub(crate) fn resolve<'a>(&self, any: &'a dyn Any) -> Option<&'a dyn TestableBroker> {
         (self.downcast)(any)
     }
 }

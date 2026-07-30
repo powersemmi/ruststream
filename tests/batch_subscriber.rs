@@ -19,7 +19,7 @@ use common::wait_for;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
+use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -260,7 +260,9 @@ async fn audit(orders: &[Order]) -> Vec<Confirmation> {
 async fn batch_replies_publish_transactionally() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = ruststream::Broker::connect(broker.clone())
+    let observer = broker
+        .clone()
+        .connect()
         .await
         .expect("memory connect is infallible");
 

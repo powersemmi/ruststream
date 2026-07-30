@@ -100,7 +100,8 @@ pub enum RustStreamError {
     /// A subscription failed to open after connect.
     #[error("subscription failed: {0}")]
     Subscribe(#[source] BoxError),
-    /// A broker failed to [`shutdown`](crate::Broker::shutdown) during graceful shutdown.
+    /// A broker failed to [`shutdown`](crate::ConnectedBroker::shutdown) during graceful
+    /// shutdown.
     #[error("broker shutdown failed: {0}")]
     Shutdown(#[source] BoxError),
     /// A dispatch task panicked or was aborted.

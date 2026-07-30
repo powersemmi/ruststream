@@ -52,7 +52,9 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     let publisher = broker.publisher();
     // The observing side needs the TestableBroker surface, which lives on the connected form;
     // the shared in-process bus makes this clone observe the app's broker.
-    let observer = Broker::connect(broker.clone())
+    let observer = broker
+        .clone()
+        .connect()
         .await
         .expect("memory connect is infallible");
 

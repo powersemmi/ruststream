@@ -1,5 +1,6 @@
 //! The per-broker handler registration scope and its shared mount tails.
 
+use std::fmt;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -268,10 +269,10 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     }
 }
 
-impl<B: Broker, Layers, C, State, Pipeline> std::fmt::Debug
+impl<B: Broker, Layers, C, State, Pipeline> fmt::Debug
     for BrokerScope<B, Layers, C, State, Pipeline>
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BrokerScope")
             .field("sink", &self.sink)
             .finish_non_exhaustive()

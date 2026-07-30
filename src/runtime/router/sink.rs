@@ -1,5 +1,6 @@
 //! The runtime collector routers and scopes mount into: type-erased starters plus metadata.
 
+use std::fmt;
 use std::sync::Arc;
 
 use tokio::task::JoinHandle;
@@ -46,8 +47,8 @@ pub struct RouterSink<B: Broker, State = ()> {
     handlers: Vec<HandlerMetadata>,
 }
 
-impl<B: Broker, State> std::fmt::Debug for RouterSink<B, State> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<B: Broker, State> fmt::Debug for RouterSink<B, State> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RouterSink")
             .field("handlers", &self.handlers.len())
             .finish_non_exhaustive()

@@ -40,8 +40,9 @@ pub enum RequestError {
         /// How long the requester waited for a reply.
         timeout: Duration,
     },
-    /// The operation ran after [`Broker::shutdown`](crate::Broker::shutdown) and before a
-    /// reviving [`Broker::connect`](crate::Broker::connect).
+    /// The operation ran through a handle aliasing a bus that was shut down
+    /// ([`ConnectedBroker::shutdown`](crate::ConnectedBroker::shutdown)) and not revived by a
+    /// sibling clone's [`Broker::connect`](crate::Broker::connect).
     #[error("the memory broker is shut down")]
     ShutDown,
 }
@@ -269,7 +270,7 @@ mod tests {
 
     use super::super::MemoryBroker;
     use super::*;
-    use crate::Headers;
+    use crate::{Broker, ConnectedBroker, Headers};
 
     #[tokio::test]
     async fn batches_drain_buffered_deliveries() {
@@ -426,8 +427,8 @@ mod tests {
             .publish(OutgoingMessage::new("txn.down", b"buffered".as_slice()))
             .await
             .unwrap();
-        let connected = crate::Broker::connect(broker).await.unwrap();
-        crate::ConnectedBroker::shutdown(connected).await.unwrap();
+        let connected = broker.connect().await.unwrap();
+        connected.shutdown().await.unwrap();
 
         // Buffering never touched the bus, so the shutdown surfaces at the visibility point.
         assert_eq!(publisher.commit().await, Err(MemoryError::ShutDown));
@@ -437,8 +438,8 @@ mod tests {
     async fn requester_errors_after_shutdown() {
         let broker = MemoryBroker::new();
         let requester = broker.requester();
-        let connected = crate::Broker::connect(broker).await.unwrap();
-        crate::ConnectedBroker::shutdown(connected).await.unwrap();
+        let connected = broker.connect().await.unwrap();
+        connected.shutdown().await.unwrap();
 
         let publish = Publisher::publish(
             &requester,
