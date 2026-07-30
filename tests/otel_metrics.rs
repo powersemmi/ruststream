@@ -3,17 +3,24 @@
 //! publish layer's per-publish instruments, both labeled per handler.
 #![cfg(all(feature = "otel", feature = "testing", feature = "macros"))]
 
+mod common;
+
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+use opentelemetry::metrics::MeterProvider as _;
+use opentelemetry_sdk::metrics::data::{
+    AggregatedMetrics, HistogramDataPoint, MetricData, ResourceMetrics, ScopeMetrics, SumDataPoint,
+};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::MemoryBroker;
-use ruststream::otel::Otel;
+use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
+use ruststream::{Broker, ConnectedBroker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Order {
@@ -28,6 +35,15 @@ async fn consume(_order: &Order) -> HandlerResult {
 #[subscriber("otel.drops")]
 async fn reject(_order: &Order) -> HandlerResult {
     HandlerResult::drop()
+}
+
+/// Panics on every delivery; the drop policy keeps the service alive across the panic.
+#[subscriber("otel.panics", on_failure(panic = drop))]
+async fn implode(order: &Order) -> HandlerResult {
+    // The test never publishes u32::MAX, so this always panics; the trailing expression keeps
+    // the body typed as HandlerResult.
+    assert_eq!(order.id, u32::MAX, "handler exploded");
+    HandlerResult::Ack
 }
 
 #[subscriber("otel.requests", publish("otel.confirmations"))]
@@ -53,17 +69,60 @@ fn u64_sum(exporter: &InMemoryMetricExporter, name: &str) -> u64 {
         .get_finished_metrics()
         .expect("exporter drained")
         .iter()
-        .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
-        .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+        .flat_map(ResourceMetrics::scope_metrics)
+        .flat_map(ScopeMetrics::metrics)
         .filter(|metric| metric.name() == name)
         .map(|metric| match metric.data() {
-            AggregatedMetrics::U64(MetricData::Sum(sum)) => sum
-                .data_points()
-                .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
-                .sum::<u64>(),
+            AggregatedMetrics::U64(MetricData::Sum(sum)) => {
+                sum.data_points().map(SumDataPoint::value).sum::<u64>()
+            }
             _ => 0,
         })
         .sum()
+}
+
+/// The total of every i64 sum data point recorded under `name` (up-down counters).
+fn i64_sum(exporter: &InMemoryMetricExporter, name: &str) -> i64 {
+    exporter
+        .get_finished_metrics()
+        .expect("exporter drained")
+        .iter()
+        .flat_map(ResourceMetrics::scope_metrics)
+        .flat_map(ScopeMetrics::metrics)
+        .filter(|metric| metric.name() == name)
+        .map(|metric| match metric.data() {
+            AggregatedMetrics::I64(MetricData::Sum(sum)) => {
+                sum.data_points().map(SumDataPoint::value).sum::<i64>()
+            }
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Every value the u64 sum under `name` recorded for the attribute `key`, one per data point
+/// that carries it.
+fn sum_attr_values(exporter: &InMemoryMetricExporter, name: &str, key: &str) -> Vec<String> {
+    exporter
+        .get_finished_metrics()
+        .expect("exporter drained")
+        .iter()
+        .flat_map(ResourceMetrics::scope_metrics)
+        .flat_map(ScopeMetrics::metrics)
+        .filter(|metric| metric.name() == name)
+        .flat_map(|metric| match metric.data() {
+            AggregatedMetrics::U64(MetricData::Sum(sum)) => sum
+                .data_points()
+                .flat_map(|point| {
+                    point
+                        .attributes()
+                        .filter(|kv| kv.key.as_str() == key)
+                        .map(|kv| kv.value.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 /// How many points were recorded under the histogram `name`.
@@ -72,13 +131,13 @@ fn histogram_count(exporter: &InMemoryMetricExporter, name: &str) -> u64 {
         .get_finished_metrics()
         .expect("exporter drained")
         .iter()
-        .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
-        .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+        .flat_map(ResourceMetrics::scope_metrics)
+        .flat_map(ScopeMetrics::metrics)
         .filter(|metric| metric.name() == name)
         .map(|metric| match metric.data() {
             AggregatedMetrics::F64(MetricData::Histogram(histogram)) => histogram
                 .data_points()
-                .map(opentelemetry_sdk::metrics::data::HistogramDataPoint::count)
+                .map(HistogramDataPoint::count)
                 .sum::<u64>(),
             _ => 0,
         })
@@ -123,8 +182,8 @@ fn gauge_reports(exporter: &InMemoryMetricExporter, name: &str) -> bool {
         .get_finished_metrics()
         .expect("exporter drained")
         .iter()
-        .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
-        .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+        .flat_map(ResourceMetrics::scope_metrics)
+        .flat_map(ScopeMetrics::metrics)
         .any(|metric| metric.name() == name)
 }
 
@@ -153,6 +212,131 @@ async fn init_installs_globals_and_shutdown_returns() {
     assert!(format!("{probe_layer:?}").contains("OtelConsumeLayer"));
     assert!(format!("{:?}", bridged.publish_layer()).contains("OtelPublishLayer"));
     let _ = bridged.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panicking_handler_does_not_leak_the_in_flight_gauge() {
+    let (otel, provider, exporter) = otel_with_memory_exporter();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .layer(otel.consume_layer())
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(implode);
+        });
+
+    let tb = TestApp::start(app).await.expect("harness start failed");
+    tb.broker::<MemoryBroker>()
+        .publish("otel.panics", &Order { id: 1 })
+        .await
+        .expect("publish failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("otel.panics")
+        .assert_called_once();
+
+    provider.force_flush().expect("flush failed");
+    assert_eq!(
+        i64_sum(&exporter, "ruststream.messages.in_flight"),
+        0,
+        "a panic caught by the failure policy must still balance the in-flight gauge",
+    );
+}
+
+/// Signals when the failing handler holds its delivery, so the test can kill the bus first.
+static FAIL_ENTERED: Notify = Notify::const_new();
+static FAIL_PROCEED: Notify = Notify::const_new();
+static FAIL_ONCE: AtomicBool = AtomicBool::new(false);
+
+/// Replies once (the publish fails against the killed bus); redeliveries settle quietly.
+#[subscriber("otel.failing", publish("otel.nowhere"))]
+async fn confirm_once(order: &Order) -> Result<Order, HandlerResult> {
+    if FAIL_ONCE.swap(true, Ordering::SeqCst) {
+        return Err(HandlerResult::Ack);
+    }
+    FAIL_ENTERED.notify_one();
+    FAIL_PROCEED.notified().await;
+    Ok(Order { id: order.id })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_publish_keeps_error_type_low_cardinality() {
+    let (otel, provider, exporter) = otel_with_memory_exporter();
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    // An aliased connected clone: shutting it down kills the shared bus mid-flight, which is
+    // the only way a memory publish fails.
+    let bus_killer = broker
+        .clone()
+        .connect()
+        .await
+        .expect("memory connect is infallible");
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .publish_layer(otel.publish_layer())
+        .with_broker(broker, |b| {
+            b.include(confirm_once);
+        });
+
+    let running = app.start().await.expect("startup failed");
+    publisher
+        .publish(OutgoingMessage::new(
+            "otel.failing",
+            serde_json::to_vec(&Order { id: 5 }).unwrap().as_slice(),
+        ))
+        .await
+        .expect("publish failed");
+
+    // The handler holds the delivery while the bus dies under it; its reply publish then fails.
+    tokio::time::timeout(Duration::from_secs(5), FAIL_ENTERED.notified())
+        .await
+        .expect("the handler never received the request");
+    bus_killer.shutdown().await.expect("bus shutdown failed");
+    FAIL_PROCEED.notify_one();
+
+    common::wait_for(
+        || {
+            provider.force_flush().expect("flush failed");
+            !sum_attr_values(&exporter, "messaging.client.sent.messages", "error.type").is_empty()
+        },
+        Duration::from_secs(5),
+    )
+    .await;
+    running.shutdown().await.expect("graceful shutdown failed");
+
+    let errors = sum_attr_values(&exporter, "messaging.client.sent.messages", "error.type");
+    assert!(
+        errors.iter().all(|value| value == "_OTHER"),
+        "error.type must be a bounded class, not the raw error text (a fresh time series per \
+         distinct failure): got {errors:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_flushes_metrics_even_when_the_tracer_fails() {
+    let exporter = InMemoryMetricExporter::default();
+    let meter_provider = SdkMeterProvider::builder()
+        .with_periodic_exporter(exporter.clone())
+        .build();
+    let tracer_provider = SdkTracerProvider::builder().build();
+    // A second shutdown on the shared inner state errors, which is exactly the failure the
+    // meter's flush must survive.
+    tracer_provider
+        .shutdown()
+        .expect("the first tracer shutdown succeeds");
+    let otel = Otel::builder().attach(tracer_provider, meter_provider.clone());
+
+    meter_provider
+        .meter("probe")
+        .u64_counter("otel.shutdown.probe")
+        .build()
+        .add(1, &[]);
+
+    assert!(
+        otel.shutdown().is_err(),
+        "the poisoned tracer provider must surface its shutdown error",
+    );
+    assert_eq!(
+        u64_sum(&exporter, "otel.shutdown.probe"),
+        1,
+        "a failing tracer shutdown must not skip the meter flush",
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -187,7 +371,7 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     assert!(
         confirmed[0]
             .headers()
-            .get_str(ruststream::otel::PUBLISH_TIME_HEADER)
+            .get_str(PUBLISH_TIME_HEADER)
             .is_some(),
         "the publish layer must stamp the publish-time header",
     );

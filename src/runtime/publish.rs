@@ -1048,6 +1048,96 @@ pub enum TransactionPublishError<E> {
 mod tests {
     use super::*;
 
+    // A cancelled commit leaves the broker transaction genuinely unsettled, so the scope's
+    // drop warning must still fire (needs a tracing subscriber, hence the `logging` gate; the
+    // stub's pending commit is the cancellation window the single-poll memory broker lacks).
+    #[cfg(all(feature = "json", feature = "logging"))]
+    #[tokio::test]
+    async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
+        use std::sync::{Arc, Mutex};
+
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
+
+        use crate::{OutgoingMessage, Publisher, TransactionalPublisher};
+
+        struct PendingCommit;
+
+        impl Publisher for PendingCommit {
+            type Error = std::convert::Infallible;
+
+            async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        impl TransactionalPublisher for PendingCommit {
+            async fn begin_transaction(&self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            async fn commit(&self) -> Result<(), Self::Error> {
+                std::future::pending().await
+            }
+
+            async fn abort(&self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        struct Capture(Arc<Mutex<Vec<String>>>);
+
+        impl<S: tracing::Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
+                struct Grab(Option<String>);
+                impl tracing::field::Visit for Grab {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
+                        if field.name() == "message" {
+                            self.0 = Some(format!("{value:?}"));
+                        }
+                    }
+                }
+                let mut grab = Grab(None);
+                event.record(&mut grab);
+                if let Some(message) = grab.0 {
+                    self.0.lock().unwrap().push(message);
+                }
+            }
+        }
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
+        );
+
+        let wrapper = TypedPublisher::new(PendingCommit).transactional();
+        let scope = wrapper.begin().await.expect("begin failed");
+        {
+            let mut commit = std::pin::pin!(scope.commit());
+            assert!(
+                futures::poll!(commit.as_mut()).is_pending(),
+                "the stub commit must hold the cancellation window open",
+            );
+        }
+        drop(guard);
+
+        let warned = {
+            let captured = events.lock().unwrap();
+            captured
+                .iter()
+                .any(|message| message.contains("transaction scope dropped without commit"))
+        };
+        assert!(
+            warned,
+            "a commit cancelled mid-flight leaves the broker transaction unsettled and must \
+             keep the drop warning",
+        );
+    }
+
     #[cfg(all(feature = "memory", feature = "json"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dyn_stack_walks_its_layers_then_the_static_tail() {

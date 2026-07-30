@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
-use ruststream::testing::expect_published;
+use ruststream::testing::{Outcome, TestApp, expect_published};
 use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +87,28 @@ async fn crossing(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResul
         return HandlerResult::retry();
     }
     HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn decode_failures_are_recorded_for_out_handlers() {
+    let app =
+        RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(forward).publisher(MemoryPublish);
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    // Not valid JSON for `Event`: the Out wrapper fails to decode, the handler never runs, and
+    // the harness must classify the delivery as a decode failure, exactly like the typed path.
+    tb.broker::<MemoryBroker>()
+        .publish_raw("out.in", b"not json")
+        .await
+        .expect("raw publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("out.in")
+        .assert_called_once()
+        .assert_outcome(Outcome::DecodeFailed)
+        .assert_last_failed_to_decode();
 }
 
 /// The cross-broker case: the handler consumes one broker and its injected publisher targets
