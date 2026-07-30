@@ -30,8 +30,9 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, ConnectedBroker, DescribeServer, Headers, IncomingMessage, OutgoingMessage,
-    Publisher, RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Headers, IncomingMessage,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec, Subscribe,
+    Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -342,15 +343,15 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryPublish;
 
-impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
     type Live = MemoryPublisher;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, crate::PairError> {
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(connected.publisher())
     }
 }
 
-impl crate::DefaultPublish for ConnectedMemoryBroker {
+impl DefaultPublish for ConnectedMemoryBroker {
     type Policy = MemoryPublish;
 }
 
@@ -373,10 +374,10 @@ impl crate::DefaultPublish for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryRequest;
 
-impl crate::PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
     type Live = MemoryRequester;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, crate::PairError> {
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(connected.requester())
     }
 }

@@ -14,7 +14,7 @@ use ruststream::runtime::{
     for_batch,
 };
 use ruststream::{
-    BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
+    Broker, BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -88,16 +88,15 @@ async fn delivery_context_propagates_to_the_reply() {
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
 
-    let mut egress_pub = None;
+    let egress = egress.bindable();
+    let egress_pub =
+        egress.bind(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation));
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(egress, |b| {
-            egress_pub =
-                Some(b.bind(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation)));
             b.include(capture);
         })
         .with_broker(ingress, |b| {
-            b.include(echo)
-                .publisher(egress_pub.take().expect("egress token bound"));
+            b.include(echo).publisher(egress_pub);
         });
 
     let running = app.start().await.expect("startup failed");

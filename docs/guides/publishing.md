@@ -1,7 +1,7 @@
 # Publishing and replies
 
 There are two ways to publish: return a reply from a handler, or publish explicitly through a
-publisher injected into the handler with the `Egress` parameter. Either way the handler never
+publisher injected into the handler with the `Out` parameter. Either way the handler never
 sees an unconnected publisher: registrations carry publish *policies* (pure declarations), and
 the runtime pairs them with the connected broker at startup.
 
@@ -22,16 +22,8 @@ default publish policy under the default codec; to name the reply codec or add t
 (`TypedPublisher::new` uses the default codec; name one with `TypedPublisher::with_codec`). The
 stack is a declaration: the runtime pairs it with the connected broker at startup.
 
-<!-- inline-rust: minimal mount fragment for a reply publisher; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
 ```rust
-use ruststream::memory::MemoryPublish;
-use ruststream::runtime::TypedPublisher;
-
-RustStream::new(info).with_broker(broker, |b| {
-    b.include(respond); // default policy, default codec
-    b.include(validate)
-        .publisher(TypedPublisher::with_codec(MemoryPublish, JsonCodec));
-});
+--8<-- "examples/publishing.rs:reply_mount"
 ```
 
 Decoding of the incoming request follows the scope (the scope codec set with
@@ -60,49 +52,48 @@ Make publishing handlers idempotent under redelivery.
 ## Publishing from inside a handler
 
 To publish to a destination other than a single reply (a computed destination, fan-out, side
-effects), take the publisher as a handler parameter with `Egress`: the pattern
-`Egress(out): Egress<MemoryPublisher>` binds `out` to a live `&MemoryPublisher` inside the body.
+effects), take the publisher as a handler parameter with `Out`: the pattern
+`Out(out): Out<MemoryPublisher>` binds `out` to a live `&MemoryPublisher` inside the body.
 The source is attached where the handler is included, and the runtime pairs it after the broker
 connects, so the handler cannot observe a "not connected" publisher, and the state stays free of
 connection-bound values.
 
 ```rust
-use ruststream::runtime::Egress;
+use ruststream::runtime::Out;
 
 --8<-- "examples/publishing.rs:forward"
 ```
 
 The include site names the source; for the scope's own broker it is just the publish policy:
 
-<!-- inline-rust: the include fragment for the Egress handler; compiled in publishing.rs:pipeline, pulled in below -->
 ```rust
-b.include(forward).publisher(MemoryPublish);
+--8<-- "examples/publishing.rs:forward_mount"
 ```
 
-An `Egress` handler included without `.publisher(..)` panics when the application is built (not
-at runtime), naming the fix: an injected publisher has no broker-side default.
+An `Out` handler included without `.publisher(..)` panics when the application is built (not at
+runtime), naming the fix: an injected publisher has no broker-side default.
 
 ### Publishing to a different broker
 
 When the handler consumes one broker and publishes to another (consume Kafka, forward to Redis),
-the target broker's scope mints a **bound token** carrying the instance identity a foreign scope
-cannot provide; the token is then the source at the include site:
+wrap the target broker with `.bindable()` and mint a **bound token** before registration: the
+token carries the instance identity a foreign scope cannot provide, and because tokens exist
+before any `with_broker` runs, registration order does not matter - a bidirectional bridge binds
+both directions up front. The token is then the source at the include site (shown here with two
+in-memory brokers, the shape is the same for any pair):
 
-<!-- inline-rust: the cross-broker shape; the compiled equivalent lives in tests/egress.rs -->
 ```rust
-let mut egress = None;
-let app = RustStream::new(info)
-    .with_broker(redis, |b| {
-        egress = Some(b.bind(RedisPublish::default()));
-    })
-    .with_broker(kafka, |b| {
-        b.include(forward).publisher(egress.take().expect("bound"));
-    });
+--8<-- "tests/out_injection.rs:cross_broker"
 ```
 
 Being scope-minted is the token's proof of registration, so pairing cannot pick a wrong broker
 instance. The same shape works for reply publishing (`.publisher(token)` on a `publish("dest")`
-handler) and for the batch forms.
+handler) and for the batch forms. Outside a registration, a token pairs itself once startup
+connected its broker: `running.publisher(token)` hands a sibling task its live publisher - see
+[Running beside another server](http.md). For the first publish at startup, no token is needed
+at all: the scope-level `b.after_startup(policy, hook)` runs the hook with an already-paired
+publisher once subscriptions are open (see [Lifespan](lifespan.md#lifecycle-hooks)); the
+publishing example's seeding rides it.
 
 ## The publish pipeline
 

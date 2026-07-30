@@ -18,7 +18,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
         (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
         (true, None) => expand_batch(&parts, func),
         (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
-        (false, None) if parts.egress.is_some() => expand_egress(&parts),
+        (false, None) if parts.out.is_some() => expand_out(&parts),
         (false, None) => expand_subscribing(&parts),
     };
     Ok(body.into())
@@ -40,7 +40,7 @@ struct HandlerParts<'a> {
     ctx_ty: TokenStream2,
     state_ty: Option<TokenStream2>,
     extractors: Vec<(&'a syn::Pat, &'a Type)>,
-    egress: Option<(&'a syn::Pat, &'a Type)>,
+    out: Option<(&'a syn::Pat, &'a Type)>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
 }
@@ -89,15 +89,15 @@ fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
     quote!(())
 }
 
-/// The publisher type `P` of an `Egress<P>`-shaped parameter type, when the type has that shape.
-/// Purely syntactic (the last path segment `Egress` with exactly one type argument), like the
+/// The publisher type `P` of an `Out<P>`-shaped parameter type, when the type has that shape.
+/// Purely syntactic (the last path segment `Out` with exactly one type argument), like the
 /// `Ctx<K>` probe below.
-fn egress_param_type(ty: &Type) -> Option<&Type> {
+fn out_param_type(ty: &Type) -> Option<&Type> {
     let Type::Path(path) = ty else {
         return None;
     };
     let segment = path.path.segments.last()?;
-    if segment.ident != "Egress" {
+    if segment.ident != "Out" {
         return None;
     }
     let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
@@ -333,19 +333,19 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
     })
 }
 
-/// Splits the (at most one) `Egress<P>` parameter out of the extractor list, rejecting a
+/// Splits the (at most one) `Out<P>` parameter out of the extractor list, rejecting a
 /// duplicate and the unsupported form combinations.
-fn split_egress<'a>(
+fn split_out<'a>(
     args: &SubscriberArgs,
     func: &ItemFn,
     extractors: &mut Vec<(&'a syn::Pat, &'a Type)>,
 ) -> syn::Result<Option<(&'a syn::Pat, &'a Type)>> {
-    let mut egress = None;
+    let mut out = None;
     extractors.retain(|(pat, ty)| {
-        if let Some(publisher_ty) = egress_param_type(ty) {
-            // Only the first Egress parameter is kept; a duplicate is rejected below.
-            if egress.is_none() {
-                egress = Some((*pat, publisher_ty));
+        if let Some(publisher_ty) = out_param_type(ty) {
+            // Only the first Out parameter is kept; a duplicate is rejected below.
+            if out.is_none() {
+                out = Some((*pat, publisher_ty));
                 return false;
             }
         }
@@ -353,21 +353,21 @@ fn split_egress<'a>(
     });
     if let Some((_, dup)) = extractors
         .iter()
-        .find(|(_, ty)| egress_param_type(ty).is_some())
+        .find(|(_, ty)| out_param_type(ty).is_some())
     {
         return Err(syn::Error::new_spanned(
             dup,
-            "a #[subscriber] handler takes at most one Egress parameter",
+            "a #[subscriber] handler takes at most one Out parameter",
         ));
     }
-    if egress.is_some() && (args.batch || args.publish.is_some()) {
+    if out.is_some() && (args.batch || args.publish.is_some()) {
         return Err(syn::Error::new_spanned(
             &func.sig,
-            "an Egress parameter is not supported together with batch(..) or publish(..) yet; \
+            "an Out parameter is not supported together with batch(..) or publish(..) yet; \
              use the plain subscriber form",
         ));
     }
-    Ok(egress)
+    Ok(out)
 }
 
 fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
@@ -454,7 +454,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         quote!(_ctx)
     };
     let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
-    let egress = split_egress(args, func, &mut extractors)?;
+    let out = split_out(args, func, &mut extractors)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
@@ -476,7 +476,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         ctx_ty,
         state_ty,
         extractors,
-        egress,
+        out,
         workers_method,
         failure_method,
     })
@@ -533,7 +533,7 @@ fn expand_batch_publishing(
         ctx_ty: _,
         state_ty,
         extractors,
-        egress: _,
+        out: _,
         workers_method,
         failure_method,
     } = parts;
@@ -638,7 +638,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ctx_ty: _,
         state_ty,
         extractors,
-        egress: _,
+        out: _,
         workers_method,
         failure_method,
     } = parts;
@@ -743,7 +743,7 @@ fn expand_publishing(
         ctx_ty,
         state_ty,
         extractors,
-        egress: _,
+        out: _,
         workers_method,
         failure_method,
     } = parts;
@@ -836,7 +836,7 @@ fn expand_publishing(
     })
 }
 
-fn expand_egress(parts: &HandlerParts<'_>) -> TokenStream2 {
+fn expand_out(parts: &HandlerParts<'_>) -> TokenStream2 {
     let HandlerParts {
         vis,
         name,
@@ -852,11 +852,11 @@ fn expand_egress(parts: &HandlerParts<'_>) -> TokenStream2 {
         ctx_ty,
         state_ty,
         extractors,
-        egress,
+        out,
         workers_method,
         failure_method,
     } = parts;
-    let (egress_pat, egress_ty) = egress.expect("expand_egress runs only with an Egress param");
+    let (out_pat, out_ty) = out.expect("expand_out runs only with an Out param");
 
     let (impl_generics, state_in_ctx) = match &state_ty {
         Some(state_ty) => (quote!(), quote!(#state_ty)),
@@ -884,14 +884,14 @@ fn expand_egress(parts: &HandlerParts<'_>) -> TokenStream2 {
         #vis struct #name;
 
         impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = ::ruststream::runtime::forms::Egress;
+            type Form = ::ruststream::runtime::forms::Out;
         }
 
-        impl ::ruststream::runtime::EgressDef for #name {
+        impl ::ruststream::runtime::OutDef for #name {
             type Input = #input_ty;
             type Context = #ctx_ty;
             type Source = #source_ty;
-            type Egress = #egress_ty;
+            type Out = #out_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
 
@@ -909,17 +909,17 @@ fn expand_egress(parts: &HandlerParts<'_>) -> TokenStream2 {
         }
 
         impl #impl_generics
-            ::ruststream::runtime::EgressCall<#state_in_ctx> for #name
+            ::ruststream::runtime::OutCall<#state_in_ctx> for #name
             #where_clause
         {
             async fn call(
                 &self,
                 #pat: &#input_ty,
-                __rs_egress: &#egress_ty,
+                __rs_out: &#out_ty,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::ruststream::runtime::Settle {
                 #prelude
-                let #egress_pat = ::ruststream::runtime::Egress(__rs_egress);
+                let #out_pat = ::ruststream::runtime::Out(__rs_out);
                 ::ruststream::runtime::IntoSettle::into_settle(
                     (async move #block).await,
                 )
@@ -944,7 +944,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         ctx_ty,
         state_ty,
         extractors,
-        egress: _,
+        out: _,
         workers_method,
         failure_method,
     } = parts;

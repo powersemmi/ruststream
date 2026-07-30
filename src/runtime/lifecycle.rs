@@ -26,8 +26,11 @@ pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// The channel between the erased `connect` and the typed starters: `connect` stores the typed
 /// connected broker here, starters clone it out to open their subscriptions. The teardown takes
-/// the slot's reference back so the connected broker can be consumed by value.
-pub(crate) type ConnectedSlot<B> = Arc<Mutex<Option<Arc<<B as Broker>::Connected>>>>;
+/// the slot's reference back so the connected broker can be consumed by value. Public only
+/// because [`BrokerRegistration`](crate::runtime::BrokerRegistration) names it in a hidden
+/// method; never constructed by users.
+#[doc(hidden)]
+pub type ConnectedSlot<B> = Arc<Mutex<Option<Arc<<B as Broker>::Connected>>>>;
 
 /// An unconnected broker, with its concrete type and error erased. Consuming `connect` yields
 /// the erased connected form.

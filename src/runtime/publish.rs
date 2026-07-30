@@ -20,7 +20,10 @@ use crate::codec::{Codec, CodecError};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
-use crate::{Headers, OutgoingMessage, Publisher, TransactionalPublisher};
+use crate::{
+    ConnectedBroker, Headers, OutgoingMessage, PairError, PublishPolicy, Publisher,
+    TransactionalPublisher,
+};
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
@@ -670,17 +673,17 @@ impl<P, C, PL, BL> std::fmt::Debug for TypedPublisher<P, C, PL, BL> {
 // Pairing is functorial over the combinator stack: a typed publisher whose leaf is a policy is
 // itself a policy, and pairing swaps the leaf for its live form while the codec and transform
 // stacks travel unchanged. Fully monomorphized; no erasure anywhere on this path.
-impl<CB, P, C, PL, BL> crate::PublishPolicy<CB> for TypedPublisher<P, C, PL, BL>
+impl<CB, P, C, PL, BL> PublishPolicy<CB> for TypedPublisher<P, C, PL, BL>
 where
-    CB: crate::ConnectedBroker,
-    P: crate::PublishPolicy<CB> + Send,
+    CB: ConnectedBroker,
+    P: PublishPolicy<CB> + Send,
     C: Send,
     PL: Send,
     BL: Send,
 {
     type Live = TypedPublisher<P::Live, C, PL, BL>;
 
-    async fn pair(self, connected: &CB) -> Result<Self::Live, crate::PairError> {
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         Ok(TypedPublisher {
             publisher: self.publisher.pair(connected).await?,
             codec: self.codec,
@@ -708,10 +711,10 @@ impl<P, C, PL, BL> std::fmt::Debug for Transactional<P, C, PL, BL> {
 
 // The transactional wiring is a policy over a policy: pairing resolves the inner stack and keeps
 // the transactional marker, provided the leaf's live form actually is transactional.
-impl<CB, P, C, PL, BL> crate::PublishPolicy<CB> for Transactional<P, C, PL, BL>
+impl<CB, P, C, PL, BL> PublishPolicy<CB> for Transactional<P, C, PL, BL>
 where
-    CB: crate::ConnectedBroker,
-    P: crate::PublishPolicy<CB> + Send,
+    CB: ConnectedBroker,
+    P: PublishPolicy<CB> + Send,
     P::Live: TransactionalPublisher,
     C: Send,
     PL: Send,
@@ -719,7 +722,7 @@ where
 {
     type Live = Transactional<P::Live, C, PL, BL>;
 
-    async fn pair(self, connected: &CB) -> Result<Self::Live, crate::PairError> {
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         Ok(Transactional {
             inner: self.inner.pair(connected).await?,
         })

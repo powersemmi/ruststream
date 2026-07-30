@@ -1,7 +1,6 @@
 //! The per-broker handler registration scope and its shared mount tails.
 
-use std::fmt;
-use std::sync::Arc;
+use std::{error::Error as StdError, fmt, future::Future, sync::Arc};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -11,14 +10,15 @@ use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, Subscript
 
 use crate::PublishPolicy;
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
-use crate::runtime::batch_publishing::{BatchPublishingCall, batch_publishing_metadata};
-use crate::runtime::dispatch::spawn_dispatch_workers;
-use crate::runtime::egress::{EgressCall, EgressHandler, egress_metadata};
-use crate::runtime::failure::{DispatchFailure, FailurePolicies};
+use crate::runtime::batch_publishing::{
+    BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
+};
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
-use crate::runtime::lifecycle::BoxError;
+use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
+use crate::runtime::out::{OutCall, OutHandler, out_metadata};
 use crate::runtime::publish::{
     PublishIdentity, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
@@ -29,6 +29,7 @@ use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::{Typed, typed};
 
 use super::include::ScopeCodec;
+use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 
 /// A handler-registration scope bound to one broker.
 ///
@@ -42,7 +43,10 @@ pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipelin
     pub(super) broker: B,
     /// The slot the runtime fills with this broker's connected form at startup; shared with
     /// every starter of this scope and with the [`Bound`] tokens minted here.
-    pub(super) slot: crate::runtime::lifecycle::ConnectedSlot<B>,
+    pub(super) slot: ConnectedSlot<B>,
+    /// Startup publishes registered on this scope: paired against the broker and run with the
+    /// app-level `after_startup` hooks, in registration order.
+    pub(super) startup_hooks: Vec<LifecycleHook<State>>,
     pub(super) sink: RouterSink<B, State>,
     pub(super) pipeline: Pipeline,
     pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
@@ -57,13 +61,12 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         &self.broker
     }
 
-    /// Binds `source` to this scope's broker, producing a token usable as the publisher source
-    /// of a registration on a *different* broker's scope (a handler consuming one broker while
-    /// publishing to this one), or for post-start sending from a sibling task.
-    ///
-    /// Being minted by the scope is the token's proof of registration: it shares the slot the
-    /// runtime fills with this broker's connected form at startup, so pairing cannot pick a
-    /// wrong instance.
+    /// Registers a startup publish: once every broker is connected and the subscriptions are
+    /// open, `source` is paired against this scope's broker and `hook` runs with the live
+    /// publisher. The scope-side home of the first message (seeding reference data, announcing
+    /// readiness): the pairing happens inside, so no token leaves the closure. A failing hook
+    /// aborts startup, exactly like the app-level
+    /// [`after_startup`](crate::runtime::RustStream::after_startup).
     ///
     /// # Examples
     ///
@@ -72,24 +75,33 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// # fn demo() {
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
     /// use ruststream::runtime::{AppInfo, RustStream};
+    /// use ruststream::{OutgoingMessage, Publisher};
     ///
-    /// let mut egress = None;
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
     ///     .with_broker(MemoryBroker::new(), |b| {
-    ///         egress = Some(b.bind(MemoryPublish));
+    ///         b.after_startup(MemoryPublish, async move |publisher| {
+    ///             let msg = OutgoingMessage::new("announcements", b"up".as_slice());
+    ///             publisher.publish(msg).await
+    ///         });
     ///     });
-    /// # let _ = (app, egress);
+    /// # let _ = app;
     /// # }
     /// ```
-    #[must_use]
-    pub fn bind<S>(&self, source: S) -> crate::runtime::Bound<B, S>
+    pub fn after_startup<Source, Hook, Fut, E>(&mut self, source: Source, hook: Hook)
     where
-        S: PublishPolicy<Connected<B>>,
+        Source: PublishPolicy<Connected<B>> + Send + 'static,
+        Source::Live: Send,
+        Hook: FnOnce(Source::Live) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send + 'static,
+        E: StdError + Send + Sync + 'static,
+        B: 'static,
     {
-        crate::runtime::Bound {
-            slot: Arc::clone(&self.slot),
-            source,
-        }
+        self.startup_hooks
+            .push(box_startup_publish::<B, State, Source, Hook, Fut, E>(
+                Arc::clone(&self.slot),
+                source,
+                hook,
+            ));
     }
 
     /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.
@@ -271,118 +283,100 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let codec = self.codec.scope_codec();
         let pipeline = self.pipeline.clone();
         let global = self.global.clone();
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.sink.push_raw(
-            Box::new(move |connected, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let publisher = reply
-                        .pair(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let handler = global.layer(PublishingHandler {
-                        def,
-                        codec,
-                        publisher,
-                        pipeline,
-                        decode: policies.decode,
-                    });
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    ))
-                })
-            }),
+        self.sink.push_paired_workers(
+            source,
+            async move |connected: Arc<Connected<B>>| {
+                let publisher = reply
+                    .pair(connected.as_ref())
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                Ok(global.layer(PublishingHandler {
+                    def,
+                    codec,
+                    publisher,
+                    pipeline,
+                    decode: policies.decode,
+                }))
+            },
             meta,
+            policies,
+            workers,
         );
     }
 
-    /// Mounts an egress definition: the handler's injected publisher comes from `egress`, a
-    /// policy source paired by the runtime after connect. Decode uses the scope codec.
-    pub(super) fn mount_egress_source<S, D, Src>(&mut self, source: S, def: D, egress: Src)
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        <S::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        D: EgressCall<State> + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Context:
-            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
-        D::Egress: Send + Sync + 'static,
-        Src: PublishPolicy<Connected<B>, Live = D::Egress> + Send + 'static,
+    /// Mounts an out definition: the handler's injected publisher comes from `out`, a policy
+    /// source paired by the runtime after connect. Decode uses the scope codec.
+    pub(super) fn mount_out_source<Source, Def, OutSource>(
+        &mut self,
+        source: Source,
+        def: Def,
+        out: OutSource,
+    ) where
+        // The subscription side, as in mount_publishing_source.
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
+        Def: OutCall<State> + 'static,
+        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
+            + Send
+            + Sync
+            + 'static,
+        Def::Out: Send + Sync + 'static,
+        // The injected publisher: the source pairs at startup into exactly the type the
+        // handler's Out parameter names.
+        OutSource: PublishPolicy<Connected<B>, Live = Def::Out> + Send + 'static,
         SC: ScopeCodec,
         State: Send + Sync + 'static,
-        Layers: Layer<EgressHandler<D, SC::Codec, D::Egress>> + Clone + Send + 'static,
+        Layers: Layer<OutHandler<Def, SC::Codec, Def::Out>> + Clone + Send + 'static,
         Layers::Handler:
-            Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
+            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
         B::Connected: 'static,
     {
-        let meta = egress_metadata(source.name().to_owned(), &def);
+        let meta = out_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
         let codec = self.codec.scope_codec();
         let global = self.global.clone();
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.sink.push_raw(
-            Box::new(move |connected, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let live = egress
-                        .pair(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let handler = global.layer(EgressHandler {
-                        def,
-                        codec,
-                        egress: live,
-                        decode: policies.decode,
-                    });
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    ))
-                })
-            }),
+        self.sink.push_paired_workers(
+            source,
+            async move |connected: Arc<Connected<B>>| {
+                let live = out
+                    .pair(connected.as_ref())
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                Ok(global.layer(OutHandler {
+                    def,
+                    codec,
+                    out: live,
+                    decode: policies.decode,
+                }))
+            },
             meta,
+            policies,
+            workers,
         );
     }
 
     /// Mounts a batch publishing definition whose reply publisher is a policy source, paired by
     /// the runtime after connect. Decode uses the scope codec.
-    pub(super) fn mount_batch_publishing_source<S, D, Src, RP>(
+    pub(super) fn mount_batch_publishing_source<Source, Def, ReplySource, BatchReply>(
         &mut self,
-        source: S,
-        def: D,
-        reply: Src,
+        source: Source,
+        def: Def,
+        reply: ReplySource,
     ) where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        <S::Subscriber as Subscriber>::Message: Send + 'static,
-        D: BatchPublishingCall<State> + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Serialize + Send + Sync + 'static,
-        Src: PublishPolicy<Connected<B>, Live = RP> + Send + 'static,
-        RP: ReplyPublisher + 'static,
+        // The subscription side: batches open against the connected form.
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: Send + 'static,
+        Def: BatchPublishingCall<State> + 'static,
+        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Reply: Serialize + Send + Sync + 'static,
+        // The reply side: the source pairs at startup into a batch reply wiring (plain or
+        // transactional).
+        ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
+        BatchReply: ReplyPublisher + 'static,
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
@@ -393,39 +387,24 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let workers = def.workers();
         let codec = self.codec.scope_codec();
         let pipeline = self.pipeline.clone();
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.sink.push_raw(
-            Box::new(move |connected, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let publisher = reply
-                        .pair(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let handler = crate::runtime::batch_publishing::BatchPublishingHandler {
-                        def,
-                        codec,
-                        publisher,
-                        pipeline,
-                        decode: policies.decode,
-                    };
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(crate::runtime::dispatch::spawn_batch_dispatch(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    ))
+        self.sink.push_paired_batch(
+            source,
+            async move |connected: Arc<Connected<B>>| {
+                let publisher = reply
+                    .pair(connected.as_ref())
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                Ok(BatchPublishingHandler {
+                    def,
+                    codec,
+                    publisher,
+                    pipeline,
+                    decode: policies.decode,
                 })
-            }),
+            },
             meta,
+            policies,
+            workers,
         );
     }
 }

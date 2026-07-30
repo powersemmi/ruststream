@@ -7,19 +7,15 @@
 //! ```
 
 use std::error::Error;
-use std::io;
 
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    App, AppInfo, Egress, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform,
-    RustStream, TypedPublisher,
+    App, AppInfo, HandlerResult, Out, Outgoing, PublishLayer, PublishNext, PublishTransform,
+    RustStream, Transactional, TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
-
-// Connection-free state only: the forward handler's publisher arrives by Egress injection.
-struct AppState;
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -59,11 +55,11 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // --8<-- [end:reply_result]
 
 // --8<-- [start:forward]
-// The publisher arrives as a parameter: the source is attached at the include site, the runtime
-// pairs it with the connected broker at startup, and the handler always holds a live publisher -
-// no registry, no erased lookup, no state plumbing.
+// The publisher arrives as a parameter (the Out marker): the source is attached at the include
+// site, the runtime pairs it with the connected broker at startup, and the handler always holds
+// a live publisher - no registry, no erased lookup, no state plumbing.
 #[subscriber("ingress")]
-async fn forward(event: &Event, Egress(out): Egress<MemoryPublisher>) -> HandlerResult {
+async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult {
     let payload = JsonCodec.encode(event).expect("serializable");
     let msg = OutgoingMessage::new("egress", payload.as_ref());
     if out.publish(msg).await.is_err() {
@@ -115,12 +111,15 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
 // --8<-- [start:manual_transaction]
 /// Seeds the reference events inside one broker transaction: both records become visible
 /// together on commit, or not at all. The scope owns the transaction, so a commit without a
-/// begin, a second commit, or a publish after settling do not compile.
-async fn seed_events<P>(publisher: P) -> Result<(), Box<dyn Error + Send + Sync>>
+/// begin, a second commit, or a publish after settling do not compile. The wiring arrives
+/// already paired (the scope's `after_startup` hands it over live), so seeding cannot race the
+/// broker connect.
+async fn seed_events<P>(
+    seeder: Transactional<P, JsonCodec>,
+) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     P: TransactionalPublisher,
 {
-    let seeder = TypedPublisher::new(publisher).transactional();
     let mut scope = seeder.begin().await?;
     scope.publish("events", &Event { id: 1 }).await?;
     scope.publish("events", &Event { id: 2 }).await?;
@@ -134,23 +133,28 @@ where
 #[ruststream::app]
 fn app() -> impl App {
     let broker = MemoryBroker::new();
-    let seed = broker.publisher();
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
         // app-wide layer: wraps every published reply
         .publish_layer(AuditPublish)
-        .on_startup(async move |()| {
-            seed_events(seed).await.map_err(io::Error::other)?;
-            Ok::<_, io::Error>(AppState)
-        })
         .with_broker(broker, |b| {
+            // the first publish: runs once connected and subscribed, with the transactional
+            // wiring already paired
+            b.after_startup(
+                TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional(),
+                async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
+            );
+            // --8<-- [start:reply_mount]
             // static, per-publisher: a policy stack, composed at compile time and paired with
             // the connected broker at startup
             b.include(respond)
                 .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform));
             // the default reply wiring: the broker's default policy under the default codec
             b.include(validate);
+            // --8<-- [end:reply_mount]
+            // --8<-- [start:forward_mount]
             b.include(forward).publisher(MemoryPublish);
+            // --8<-- [end:forward_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes
