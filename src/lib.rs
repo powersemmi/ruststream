@@ -49,7 +49,7 @@ pub mod testing;
 #[doc(hidden)]
 pub use inventory;
 
-pub use broker::Broker;
+pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, Partitioned, RequestReply,
@@ -59,7 +59,7 @@ pub use error::AckError;
 pub use field::{BuildContext, ContextField, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
-pub use publisher::Publisher;
+pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::Message;
 pub use subscriber::Subscriber;
 pub use subscription::{Name, SubscriptionSource};

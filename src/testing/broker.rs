@@ -2,6 +2,8 @@
 //! routing works with both the [`TestApp`](super::TestApp) harness and the
 //! [`conformance`](crate::conformance) suite.
 
+use std::any::Any;
+use std::fmt;
 use std::time::Duration;
 
 use crate::{OutgoingMessage, RawMessage};
@@ -12,8 +14,9 @@ use super::Coordinator;
 ///
 /// A broker crate ships an in-process transport - a normal [`Broker`](crate::Broker) that routes in
 /// memory with no server, emulating the broker's Core routing - and implements `TestableBroker` on
-/// it. That one
-/// type then works with both the [`TestApp`](super::TestApp) harness (application unit tests) and
+/// its **connected form** (the harness drives brokers after their consuming
+/// [`connect`](crate::Broker::connect)). That one type then works with both the
+/// [`TestApp`](super::TestApp) harness (application unit tests) and
 /// [`conformance::harness::run_suite`](crate::conformance::harness::run_suite) (routing self-check).
 ///
 /// To plug into the harness, the broker also:
@@ -24,17 +27,20 @@ use super::Coordinator;
 /// - registers its concrete type with [`register_testable_broker!`](crate::register_testable_broker)
 ///   so the harness can recover it from the type-erased app.
 ///
-/// [`MemoryBroker`](crate::memory::MemoryBroker) is the in-tree reference implementation.
+/// [`ConnectedMemoryBroker`](crate::memory::ConnectedMemoryBroker) is the in-tree reference
+/// implementation.
 ///
-/// It is a separate, object-safe capability (not a [`Broker`](crate::Broker) supertrait, since
-/// `Broker` is not dyn-compatible), so the harness can hold `&dyn TestableBroker` recovered from the
-/// type-erased app.
+/// It is a separate, object-safe capability (not a
+/// [`ConnectedBroker`](crate::ConnectedBroker) supertrait, since the broker traits are not
+/// dyn-compatible), so the harness can hold `&dyn TestableBroker` recovered from the type-erased
+/// app.
 ///
 /// # Examples
 ///
 /// ```
 /// # #[cfg(feature = "memory")]
-/// # {
+/// # async fn demo() {
+/// use ruststream::Broker;
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::testing::TestableBroker;
 ///
@@ -42,7 +48,8 @@ use super::Coordinator;
 ///     broker.published(name).len()
 /// }
 ///
-/// assert_eq!(published(&MemoryBroker::new(), "orders"), 0);
+/// let connected = MemoryBroker::new().connect().await.unwrap();
+/// assert_eq!(published(&connected, "orders"), 0);
 /// # }
 /// ```
 pub trait TestableBroker: Send + Sync {
@@ -65,11 +72,11 @@ pub trait TestableBroker: Send + Sync {
 /// [`register_testable_broker!`](crate::register_testable_broker); the harness iterates the
 /// registered downcasters to recover each broker's transport from the built app.
 pub struct TestableRegistration {
-    downcast: fn(&dyn core::any::Any) -> Option<&dyn TestableBroker>,
+    downcast: fn(&dyn Any) -> Option<&dyn TestableBroker>,
 }
 
-impl std::fmt::Debug for TestableRegistration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for TestableRegistration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestableRegistration")
             .finish_non_exhaustive()
     }
@@ -79,15 +86,12 @@ impl TestableRegistration {
     /// Wraps a downcaster (the [`register_testable_broker!`](crate::register_testable_broker) macro
     /// builds this for you).
     #[must_use]
-    pub const fn new(downcast: fn(&dyn core::any::Any) -> Option<&dyn TestableBroker>) -> Self {
+    pub const fn new(downcast: fn(&dyn Any) -> Option<&dyn TestableBroker>) -> Self {
         Self { downcast }
     }
 
     /// Resolves `any` to a `TestableBroker` if it is this registration's broker type.
-    pub(crate) fn resolve<'a>(
-        &self,
-        any: &'a dyn core::any::Any,
-    ) -> Option<&'a dyn TestableBroker> {
+    pub(crate) fn resolve<'a>(&self, any: &'a dyn Any) -> Option<&'a dyn TestableBroker> {
         (self.downcast)(any)
     }
 }
@@ -137,11 +141,11 @@ macro_rules! register_testable_broker {
 /// use std::time::Duration;
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::testing::{TestableBroker, expect_published};
-/// use ruststream::{OutgoingMessage};
+/// use ruststream::{Broker, OutgoingMessage};
 ///
-/// let broker = MemoryBroker::new();
-/// broker.inject(OutgoingMessage::new("out", b"x".as_slice()));
-/// let seen = expect_published(&broker, "out", 1, Duration::from_secs(1)).await;
+/// let connected = MemoryBroker::new().connect().await.unwrap();
+/// connected.inject(OutgoingMessage::new("out", b"x".as_slice()));
+/// let seen = expect_published(&connected, "out", 1, Duration::from_secs(1)).await;
 /// assert_eq!(seen.len(), 1);
 /// # }
 /// ```

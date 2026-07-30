@@ -13,11 +13,20 @@ use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
 use crate::runtime::failure::ErrorShutdown;
-use crate::runtime::lifecycle::{BoxError, BoxFuture};
+use crate::runtime::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
+use crate::runtime::publish_source::Bound;
+use crate::{Broker, Connected, PairError, PublishPolicy};
 
 use super::health::{self, HealthProbe, HealthState};
 use super::service::RegisteredBroker;
 use super::{LifecycleHook, RustStream, RustStreamError};
+
+/// A broker that finished [`Broker::connect`](crate::Broker::connect), held erased for the
+/// consuming teardown, paired with its optional label.
+pub(crate) struct ConnectedEntry {
+    pub(crate) lifecycle: Box<dyn ConnectedLifecycle>,
+    pub(crate) label: Option<String>,
+}
 
 /// A lifecycle hook with the state already bound, so [`RunningApp`] stays non-generic.
 type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
@@ -94,7 +103,9 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     /// # Errors
     ///
     /// Returns [`RustStreamError`] if the state producer or an `after_startup` hook fails, a
-    /// broker fails to connect, or a subscription fails to open.
+    /// broker fails to connect, or a subscription fails to open. Brokers that had already
+    /// connected are shut down (best effort, failures logged) before the error is returned, so
+    /// a failed startup does not leak live connections.
     ///
     /// # Examples
     ///
@@ -138,17 +149,21 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         let state = state_init().await.map_err(RustStreamError::Startup)?;
         let state = Arc::new(state);
 
-        for broker in &brokers {
-            broker
-                .lifecycle
-                .connect()
-                .await
-                .map_err(RustStreamError::Connect)?;
+        let mut connected = Vec::with_capacity(brokers.len());
+        for RegisteredBroker { lifecycle, label } in brokers {
+            let lifecycle = match lifecycle.connect().await {
+                Ok(lifecycle) => lifecycle,
+                Err(err) => {
+                    unwind_connected(connected).await;
+                    return Err(RustStreamError::Connect(err));
+                }
+            };
             info!(
                 target: "ruststream::lifecycle",
-                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+                broker = label.as_deref().unwrap_or_else(|| lifecycle.name()),
                 "broker connected",
             );
+            connected.push(ConnectedEntry { lifecycle, label });
         }
 
         let token = CancellationToken::new();
@@ -157,9 +172,13 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         let error_shutdown = ErrorShutdown::new(token.clone());
         let mut handles = Vec::with_capacity(starters.len());
         for (starter, meta) in starters.into_iter().zip(handlers) {
-            let handle = starter(state.clone(), error_shutdown.clone(), token.clone())
-                .await
-                .map_err(RustStreamError::Subscribe)?;
+            let handle = match starter(state.clone(), error_shutdown.clone(), token.clone()).await {
+                Ok(handle) => handle,
+                Err(err) => {
+                    unwind_started(&token, handles, shutdown_timeout, connected).await;
+                    return Err(RustStreamError::Subscribe(err));
+                }
+            };
             info!(
                 target: "ruststream::dispatch",
                 subscriber = %meta.name,
@@ -173,9 +192,10 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             debug!(target: "ruststream::lifecycle", count = after_startup.len(), "running after_startup hooks");
         }
         for hook in after_startup {
-            hook(Arc::clone(&state))
-                .await
-                .map_err(RustStreamError::Startup)?;
+            if let Err(err) = hook(Arc::clone(&state)).await {
+                unwind_started(&token, handles, shutdown_timeout, connected).await;
+                return Err(RustStreamError::Startup(err));
+            }
         }
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
@@ -202,7 +222,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             handles,
             on_shutdown: bind_hooks(on_shutdown, &state),
             after_shutdown: bind_hooks(after_shutdown, &state),
-            brokers,
+            brokers: connected,
             shutdown_timeout,
             continuations,
             health,
@@ -238,7 +258,7 @@ pub struct RunningApp {
     handles: Vec<JoinHandle<()>>,
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
-    brokers: Vec<RegisteredBroker>,
+    brokers: Vec<ConnectedEntry>,
     shutdown_timeout: Option<Duration>,
     continuations: TaskTracker,
     health: watch::Sender<HealthState>,
@@ -301,6 +321,50 @@ impl RunningApp {
         HealthProbe::new(self.health.subscribe())
     }
 
+    /// Pairs a [`Bound`](crate::runtime::Bound) token against its broker, for sending from a
+    /// sibling task while the service runs (the third home of a publisher, next to reply
+    /// wiring and [`Out`](crate::runtime::Out) injection).
+    ///
+    /// Sugar over [`Bound::live`](crate::runtime::Bound::live), anchored here because the handle
+    /// existing is the witness that startup connected every registered broker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PairError`] when the token's policy fails to pair.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::Broker;
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    ///
+    /// let broker = MemoryBroker::new().bindable();
+    /// let egress = broker.bind(MemoryPublish);
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |_b| {});
+    /// let running = app.start().await?;
+    /// let publisher = running.publisher(egress).await?;
+    /// // hand `publisher` to the sibling task (an outbox relay, a timer) ...
+    /// # let _ = publisher;
+    /// running.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    // Not `async fn`: the future must not capture `&self` (the handle holds non-Sync hook
+    // boxes), and pairing only needs the token.
+    pub fn publisher<B2, S>(
+        &self,
+        token: Bound<B2, S>,
+    ) -> impl Future<Output = Result<S::Live, PairError>> + Send
+    where
+        B2: Broker + 'static,
+        S: PublishPolicy<Connected<B2>> + Send,
+    {
+        token.live()
+    }
+
     /// Shuts the service down gracefully.
     ///
     /// Runs the `on_shutdown` hooks, stops the dispatch loops, drains in-flight handlers and
@@ -359,6 +423,47 @@ impl RunningApp {
     }
 }
 
+/// Best-effort unwind of a startup that failed after dispatch tasks were spawned: stops the
+/// tasks, then shuts the connected brokers down. Failures are logged, not returned, so the
+/// original startup error stays the caller's answer.
+async fn unwind_started(
+    token: &CancellationToken,
+    handles: Vec<JoinHandle<()>>,
+    shutdown_timeout: Option<Duration>,
+    brokers: Vec<ConnectedEntry>,
+) {
+    token.cancel();
+    if let Err(err) = drain_handles(handles, shutdown_timeout).await {
+        warn!(
+            target: "ruststream::lifecycle",
+            error = %err,
+            "draining dispatch tasks failed during the startup unwind",
+        );
+    }
+    unwind_connected(brokers).await;
+}
+
+/// Shuts down the brokers a failed startup had already connected, in reverse connect order,
+/// logging shutdown failures instead of returning them.
+async fn unwind_connected(brokers: Vec<ConnectedEntry>) {
+    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+        let name = lifecycle.name();
+        match lifecycle.shutdown().await {
+            Ok(()) => debug!(
+                target: "ruststream::lifecycle",
+                broker = label.as_deref().unwrap_or(name),
+                "broker shut down after a startup failure",
+            ),
+            Err(err) => warn!(
+                target: "ruststream::lifecycle",
+                broker = label.as_deref().unwrap_or(name),
+                error = %err,
+                "broker shutdown failed during the startup unwind",
+            ),
+        }
+    }
+}
+
 /// The fallible half of the graceful teardown, factored out so [`RunningApp::shutdown`] can map
 /// its outcome onto the health probe's terminal state in one place.
 async fn teardown(
@@ -366,7 +471,7 @@ async fn teardown(
     handles: Vec<JoinHandle<()>>,
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
-    brokers: Vec<RegisteredBroker>,
+    brokers: Vec<ConnectedEntry>,
     shutdown_timeout: Option<Duration>,
     continuations: TaskTracker,
 ) -> Result<(), RustStreamError> {
@@ -385,15 +490,15 @@ async fn teardown(
     // at-most-once, so timing one out only abandons follow-up work, never a settlement.
     drain_continuations(continuations, shutdown_timeout).await;
 
-    for broker in brokers.iter().rev() {
-        broker
-            .lifecycle
+    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+        let name = lifecycle.name();
+        lifecycle
             .shutdown()
             .await
             .map_err(RustStreamError::Shutdown)?;
         debug!(
             target: "ruststream::lifecycle",
-            broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+            broker = label.as_deref().unwrap_or(name),
             "broker shut down",
         );
     }

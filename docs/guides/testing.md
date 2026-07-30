@@ -3,8 +3,9 @@
 RustStream services are tested at two levels:
 
 1. **In-process unit tests** drive your real handlers, middleware, and codecs with the
-   [`TestApp`](#unit-testing-a-service-with-testapp) harness - no server, no docker, no network, no
-   `connect`. This is the default path and it covers handler logic end to end: decode, dispatch, the
+   [`TestApp`](#unit-testing-a-service-with-testapp) harness - no server, no docker, no network
+   (the in-process broker's `connect` is I/O-free). This is the default path and it covers handler
+   logic end to end: decode, dispatch, the
    outcome (ack / nack / drop / panic / decode failure), and any messages the handler publishes.
 2. **Integration tests** run against a real broker, gated behind an environment variable, and cover
    the semantics only a real server has (durable consumers, redelivery timers, partitions).
@@ -22,8 +23,8 @@ RustStream services are tested at two levels:
 
 ## Unit-testing a service with `TestApp`
 
-`TestApp` takes a built `RustStream` application, mounts its handlers on the broker's in-process bus
-with no `connect`, and records every delivery. You publish input, and the publish drives the whole
+`TestApp` takes a built `RustStream` application, connects its brokers (I/O-free for the
+in-process bus), mounts the handlers, and records every delivery. You publish input, and the publish drives the whole
 reaction (the handler, its downstream publishes, any cross-broker cascade) to a standstill before it
 returns - then you assert.
 

@@ -97,10 +97,10 @@ async fn consume_metrics_are_recorded_through_a_router() {
 #[cfg(feature = "macros")]
 mod publish {
     use super::{Duration, wait_for};
-    use ruststream::memory::MemoryBroker;
+    use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::metrics::Metrics;
     use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
-    use ruststream::{OutgoingMessage, Publisher, subscriber};
+    use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
@@ -124,12 +124,14 @@ mod publish {
         let ingress = MemoryBroker::new();
         let egress = MemoryBroker::new();
         let ingress_pub = ingress.publisher();
-        let egress_pub = TypedPublisher::new(egress.publisher());
 
+        let egress = egress.bindable();
+        let egress_pub = egress.bind(TypedPublisher::new(MemoryPublish));
         let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
             .publish_layer(metrics.publish_layer())
+            .with_broker(egress, |_b| {})
             .with_broker(ingress, |b| {
-                b.include_publishing(reply, egress_pub);
+                b.include(reply).publisher(egress_pub);
             });
 
         let running = app.start().await.expect("startup failed");

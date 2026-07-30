@@ -1,6 +1,9 @@
 //! The [`TestApp`] harness: drives a built [`RustStream`](crate::runtime::RustStream) application in
-//! process, with no network `connect` and no server, and exposes per-broker assertions.
+//! process, with no server, and exposes per-broker assertions. Each registered broker's consuming
+//! `connect` runs to produce the connected form the subscriptions need; for an in-process broker
+//! that transition performs no I/O.
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,8 +14,8 @@ use tokio_util::task::TaskTracker;
 
 use crate::OutgoingMessage;
 use crate::runtime::{
-    BrokerLifecycle, ErrorShutdown, LifecycleHook, PublishIdentity, RegisteredBroker, RustStream,
-    RustStreamError, Starter, TestParts,
+    ConnectedLifecycle, ErrorShutdown, LifecycleHook, PublishIdentity, RegisteredBroker,
+    RustStream, RustStreamError, Starter, TestParts,
 };
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
@@ -39,6 +42,9 @@ pub enum TestError {
         /// How many deliveries were dispatched before the harness gave up.
         processed: usize,
     },
+    /// A broker failed its consuming `connect` while starting the harness.
+    #[error("broker connect failed: {0}")]
+    Connect(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// A publish was attempted after a fail-fast failure tore the service down.
     #[error("publish after the service shut down")]
     ShutDown,
@@ -54,12 +60,12 @@ pub enum TestError {
     Encode(String),
 }
 
-/// One broker registered in the app under test: its label, its erased lifecycle handle (for
+/// One broker registered in the app under test: its label, its erased connected handle (for
 /// type/label addressing), and the registration that recovers its [`TestableBroker`] view (when it
 /// is registered with [`register_testable_broker!`](crate::register_testable_broker)).
 struct BrokerEntry {
     label: Option<String>,
-    lifecycle: Arc<dyn BrokerLifecycle>,
+    lifecycle: Box<dyn ConnectedLifecycle>,
     registration: Option<&'static TestableRegistration>,
 }
 
@@ -82,7 +88,9 @@ impl BrokerEntry {
 /// its bus. Returns `None` for a broker whose type was not registered with
 /// [`register_testable_broker!`](crate::register_testable_broker).
 fn recover_testable(
-    lifecycle: &Arc<dyn BrokerLifecycle>,
+    // The explicit object bound keeps the default from shrinking to the reference lifetime,
+    // which `as_any`'s `Self: 'static` requirement rejects.
+    lifecycle: &(dyn ConnectedLifecycle + 'static),
     coordinator: &Coordinator,
 ) -> Option<&'static TestableRegistration> {
     let any = lifecycle.as_any();
@@ -101,8 +109,8 @@ pub struct TestBrokers<'a> {
     entries: &'a [BrokerEntry],
 }
 
-impl std::fmt::Debug for TestBrokers<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for TestBrokers<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestBrokers")
             .field("brokers", &self.entries.len())
             .finish_non_exhaustive()
@@ -110,19 +118,19 @@ impl std::fmt::Debug for TestBrokers<'_> {
 }
 
 impl TestBrokers<'_> {
-    /// Returns the unique registered broker of type `B`, for building a mirror state's publishers
-    /// (`tb.broker::<MemoryBroker>().publisher()`).
+    /// Returns the connected form of the unique registered broker of type `B`, for building a
+    /// mirror state's publishers (`tb.broker::<MemoryBroker>().publisher()`).
     ///
     /// # Panics
     ///
     /// Panics if no broker of type `B` is registered, or more than one is (disambiguate the app, or
     /// address by label is not supported when building state).
     #[must_use]
-    pub fn broker<B: crate::Broker + 'static>(&self) -> &B {
+    pub fn broker<B: crate::Broker + 'static>(&self) -> &B::Connected {
         let mut found = self
             .entries
             .iter()
-            .filter_map(|e| e.lifecycle.as_any().downcast_ref::<B>());
+            .filter_map(|e| e.lifecycle.as_any().downcast_ref::<B::Connected>());
         let first = found.next().unwrap_or_else(|| {
             panic!(
                 "no registered broker of type {}",
@@ -138,8 +146,11 @@ impl TestBrokers<'_> {
     }
 }
 
-/// In-process harness around a built application: drives input through the broker bus (no `connect`,
-/// no server), records what handlers saw and published, and exposes per-broker assertions.
+/// In-process harness around a built application.
+///
+/// Drives input through the broker bus (no server; each broker's consuming `connect` runs, which
+/// is I/O-free for in-process brokers), records what handlers saw and published, and exposes
+/// per-broker assertions.
 ///
 /// Build one with [`start`](Self::start) (runs the app's real `on_startup`) or
 /// [`with_state`](Self::with_state) (injects a mirror state for non-broker dependencies). Drive
@@ -193,8 +204,8 @@ pub struct TestApp<State> {
     shutdown_timeout: Option<Duration>,
 }
 
-impl<State> std::fmt::Debug for TestApp<State> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<State> fmt::Debug for TestApp<State> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestApp")
             .field("brokers", &self.entries.len())
             .field("subscribers", &self.handles.len())
@@ -204,16 +215,17 @@ impl<State> std::fmt::Debug for TestApp<State> {
 
 impl<State: Send + Sync + 'static> TestApp<State> {
     /// Starts the harness by running the app's real `on_startup` (the existing state and its
-    /// publishers bind to the in-process bus). No broker `connect` runs.
+    /// publishers bind to the in-process bus). Each broker's consuming `connect` runs to produce
+    /// the connected form; for an in-process broker that transition performs no I/O.
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::Startup`] if a lifecycle hook fails, or [`TestError::Subscribe`] if a
-    /// subscription fails to open.
+    /// Returns [`TestError::Startup`] if a lifecycle hook fails, [`TestError::Connect`] if a
+    /// broker fails to connect, or [`TestError::Subscribe`] if a subscription fails to open.
     pub async fn start<Layers, Phase>(
         app: RustStream<Layers, State, PublishIdentity, Phase>,
     ) -> Result<Self, TestError> {
-        let (coordinator, entries, parts) = Self::setup(app);
+        let (coordinator, entries, parts) = Self::setup(app).await?;
         let TestParts {
             starters,
             state_init,
@@ -238,11 +250,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// Starts the harness with an injected mirror `state`, instead of running the app's
     /// `on_startup`. `build` receives the brokers so it can wire the mirror state's publishers onto
     /// the same bus (`tb.broker::<MemoryBroker>().publisher()`) and supply fakes for non-broker
-    /// dependencies. No broker `connect` runs.
+    /// dependencies. Each broker's consuming `connect` runs first, so the mirror state's
+    /// publishers pair against connected brokers.
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::Subscribe`] if a subscription fails to open.
+    /// Returns [`TestError::Connect`] if a broker fails to connect, or [`TestError::Subscribe`]
+    /// if a subscription fails to open.
     pub async fn with_state<Layers, F, Phase>(
         app: RustStream<Layers, State, PublishIdentity, Phase>,
         build: F,
@@ -250,7 +264,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     where
         F: FnOnce(&TestBrokers<'_>) -> State,
     {
-        let (coordinator, entries, parts) = Self::setup(app);
+        let (coordinator, entries, parts) = Self::setup(app).await?;
         let TestParts {
             starters,
             after_startup,
@@ -271,27 +285,27 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         .await
     }
 
-    /// Installs a fresh coordinator into the app's hooks slot and each broker's bus, and recovers
-    /// the per-broker transports. Returns the coordinator, the broker entries, and the remaining
-    /// parts (the brokers field is now consumed and empty).
-    fn setup<Layers, Phase>(
+    /// Installs a fresh coordinator into the app's hooks slot, drives each broker's consuming
+    /// `connect`, and recovers the per-broker transports from the connected forms. Returns the
+    /// coordinator, the broker entries, and the remaining parts (the brokers field is now
+    /// consumed and empty).
+    async fn setup<Layers, Phase>(
         app: RustStream<Layers, State, PublishIdentity, Phase>,
-    ) -> (Coordinator, Vec<BrokerEntry>, TestParts<State>) {
+    ) -> Result<(Coordinator, Vec<BrokerEntry>, TestParts<State>), TestError> {
         let mut parts = app.into_test_parts();
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
         parts.test_hooks.install(coordinator.clone());
-        let entries = std::mem::take(&mut parts.brokers)
-            .into_iter()
-            .map(|RegisteredBroker { lifecycle, label }| {
-                let registration = recover_testable(&lifecycle, &coordinator);
-                BrokerEntry {
-                    label,
-                    lifecycle,
-                    registration,
-                }
-            })
-            .collect();
-        (coordinator, entries, parts)
+        let mut entries = Vec::new();
+        for RegisteredBroker { lifecycle, label } in std::mem::take(&mut parts.brokers) {
+            let lifecycle = lifecycle.connect().await.map_err(TestError::Connect)?;
+            let registration = recover_testable(lifecycle.as_ref(), &coordinator);
+            entries.push(BrokerEntry {
+                label,
+                lifecycle,
+                registration,
+            });
+        }
+        Ok((coordinator, entries, parts))
     }
 
     /// Spawns the dispatch loops against the (uninstalled) bus and runs `after_startup`, completing
@@ -338,10 +352,12 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// [`broker_named`](Self::broker_named) instead).
     #[must_use]
     pub fn broker<B: crate::Broker + 'static>(&self) -> BrokerHandle<'_> {
-        let mut matches = self
-            .entries
-            .iter()
-            .filter(|e| e.lifecycle.as_any().downcast_ref::<B>().is_some());
+        let mut matches = self.entries.iter().filter(|e| {
+            e.lifecycle
+                .as_any()
+                .downcast_ref::<B::Connected>()
+                .is_some()
+        });
         let first = matches.next().unwrap_or_else(|| {
             panic!(
                 "no registered broker of type {}",
@@ -530,8 +546,8 @@ pub struct BrokerHandle<'a> {
     label: String,
 }
 
-impl std::fmt::Debug for BrokerHandle<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for BrokerHandle<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BrokerHandle")
             .field("broker", &self.label)
             .field("testable", &self.testable.is_some())

@@ -9,4 +9,4 @@ error[E0599]: no method named `layer` found for struct `RustStream` in the curre
    | |_________|
    |
    |
-   = note: the method was found for `RustStream<L, St, PP, Setup>`
+   = note: the method was found for `RustStream<Layers, State, Pipeline, Setup>`

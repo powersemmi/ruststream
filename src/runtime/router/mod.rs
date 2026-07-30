@@ -22,7 +22,7 @@ pub use builder::Router;
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
-use crate::{Subscriber, SubscriptionSource};
+use crate::{Connected, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, TypedBatch};
 use crate::runtime::subscriber_def::SubscriberDef;
@@ -30,9 +30,10 @@ use crate::runtime::typed::Typed;
 
 use routes::{BatchPublishingRoute, BatchRoute, PublishingRoute, SubscribeRoute};
 
-/// The message a source's subscriber yields, for broker `B`. Tames the long projection in bounds
-/// and return types.
-type SourceMessage<B, S> = <<S as SubscriptionSource<B>>::Subscriber as Subscriber>::Message;
+/// The message a source's subscriber yields, for broker `B` (the source resolves against the
+/// broker's connected form). Tames the long projection in bounds and return types.
+type SourceMessage<B, S> =
+    <<S as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message;
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.

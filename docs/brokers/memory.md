@@ -49,19 +49,20 @@ in-process semantics, not a simulation of another broker's:
   share its transaction.
 - **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
   well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).
-- **Shutdown.** `Broker::shutdown` is a terminal state of the bus itself (a single enum, so the
-  lifecycle and the registrations cannot disagree): publish, subscribe, transaction commits, and
-  requests afterwards error with `MemoryError::ShutDown` / `RequestError::ShutDown`. A later
-  `connect` revives the broker with a fresh bus (the contract's reconnect option); callers
-  re-subscribe, as the runtime does on a fresh start.
+- **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
+  `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
+  reporting how many subscriber registrations the teardown dropped. The bus itself is a single
+  enum (so the lifecycle and the registrations cannot disagree): aliased handles used after the
+  shutdown - publishers, transaction commits, requests - error with `MemoryError::ShutDown` /
+  `RequestError::ShutDown` instead of silently succeeding.
 
 `DescribeServer` stays deliberately unimplemented: the in-memory broker has no network
 coordinates, and that asymmetry is part of the contract documentation.
 
 ## Subscription source
 
-`MemoryBroker` implements `Subscribe`, so `#[subscriber("orders")]` works directly. Its descriptor
-type is `MemorySource` - it carries no extra options (the in-memory broker has none) but keeps the
+`ConnectedMemoryBroker` implements `Subscribe`, so `#[subscriber("orders")]` works directly. The
+descriptor type is `MemorySource` - it carries no extra options (the in-memory broker has none) but keeps the
 descriptor form uniform across brokers. From the
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:

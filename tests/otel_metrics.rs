@@ -10,9 +10,9 @@ use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::Otel;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -160,13 +160,16 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker.clone();
+    let observer = broker
+        .clone()
+        .connect()
+        .await
+        .expect("memory connect is infallible");
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
         .publish_layer(otel.publish_layer())
         .with_broker(broker, |b| {
-            let replies = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(confirm, replies);
+            b.include(confirm);
         });
 
     let running = app.start().await.expect("startup failed");

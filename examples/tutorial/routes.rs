@@ -1,13 +1,14 @@
 //! The tutorial's router: collects the [`orders`](crate::orders) handlers into one group.
 
 // --8<-- [start:routes]
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{Router, RouterDef, TypedPublisher};
 
 use crate::orders;
 
-pub(crate) fn orders(broker: &MemoryBroker) -> impl RouterDef<MemoryBroker> + use<> {
-    let replies = TypedPublisher::new(broker.publisher());
+// The reply wiring is a publish policy: pure declaration, so the router needs no broker at all.
+pub(crate) fn orders() -> impl RouterDef<MemoryBroker> {
+    let replies = TypedPublisher::new(MemoryPublish);
     Router::new()
         .include_publishing(orders::confirm, replies)
         .include(orders::handle)

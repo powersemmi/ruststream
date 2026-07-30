@@ -13,7 +13,9 @@ mod handler;
 mod lifecycle;
 mod metadata;
 mod middleware;
+mod out;
 mod publish;
+mod publish_source;
 mod publisher_registry;
 mod publishing;
 mod router;
@@ -21,8 +23,8 @@ mod subscriber_def;
 mod typed;
 
 pub use app::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
-    Setup, Wired,
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchPublishing, IncludeDef,
+    IncludeOut, IncludePublishing, RunningApp, RustStream, RustStreamError, Setup, Wired, forms,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
@@ -37,16 +39,20 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 #[cfg(feature = "testing")]
-pub(crate) use lifecycle::BrokerLifecycle;
+pub(crate) use lifecycle::ConnectedLifecycle;
+#[doc(hidden)]
+pub use lifecycle::ConnectedSlot;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+pub use out::{Out, OutCall, OutDef, OutHandler};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
     PublishLayer, PublishNext, PublishPipeline, PublishStack, PublishTransform,
-    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, TransactionPublishError,
-    TransactionScope, Transactional, TypedPublisher, for_batch,
+    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, ReplyWiring,
+    TransactionPublishError, TransactionScope, Transactional, TypedPublisher, for_batch,
 };
+pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};

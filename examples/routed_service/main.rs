@@ -61,7 +61,7 @@ fn app() -> impl App {
         .publish_layer(metrics.publish_layer())
         // Open the shared repository before brokers connect; the produced value becomes the typed
         // app state, shared with every handler.
-        .on_startup(|()| async move { Repository::open().await })
+        .on_startup(async move |()| Repository::open().await)
         // Close the repository after brokers stop, then dump the final metrics.
         .after_shutdown(move |repo: Arc<Repository>| async move {
             repo.close().await;
@@ -74,7 +74,7 @@ fn app() -> impl App {
         // Bound the post-shutdown drain of in-flight handlers.
         .shutdown_timeout(Duration::from_secs(10))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(routes::orders(b.broker(), &metrics));
-            b.include_router(routes::payments(b.broker(), &metrics));
+            b.include_router(routes::orders(&metrics));
+            b.include_router(routes::payments(&metrics));
         })
 }

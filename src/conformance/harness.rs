@@ -19,14 +19,15 @@
 //! # }
 //! ```
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use crate::{
-    AckError, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscribe, Subscriber,
-    SubscriptionSource, testing::TestableBroker,
+    AckError, Broker, Connected, ConnectedBroker, Headers, IncomingMessage, OutgoingMessage,
+    Publisher, Subscribe, Subscriber, SubscriptionSource, testing::TestableBroker,
 };
 use bytes::Bytes;
 use futures::StreamExt;
+use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
@@ -34,42 +35,52 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// Runs every scenario in the suite, panicking with a descriptive message on the first failure.
 ///
 /// `factory` is invoked once per scenario to obtain a fresh broker, so tests cannot leak state
-/// between each other.
+/// between each other. Each scenario connects the broker (the consuming ladder transition) and
+/// drives the connected form through the broker's own [`Subscribe`] /
+/// [`TestableBroker::inject`] surface.
 ///
 /// # Panics
 ///
 /// Panics if any scenario fails an assertion. The panic message identifies the scenario.
 pub async fn run_suite<B, F>(factory: F)
 where
-    B: TestableBroker + Subscribe,
+    B: Broker,
+    B::Connected: TestableBroker + Subscribe,
     F: Fn() -> B,
 {
-    ordering(factory()).await;
-    publish_after_subscribe(factory()).await;
-    ack_consumes_delivery(factory()).await;
-    nack_with_requeue_redelivers(factory()).await;
-    nack_without_requeue_drops(factory()).await;
-    headers_propagate(factory()).await;
-    published_log_observes_publishes(factory()).await;
+    let connect = async move |broker: B| {
+        broker
+            .connect()
+            .await
+            .expect("broker must connect before a suite scenario")
+    };
+    ordering(connect(factory()).await).await;
+    publish_after_subscribe(connect(factory()).await).await;
+    ack_consumes_delivery(connect(factory()).await).await;
+    nack_with_requeue_redelivers(connect(factory()).await).await;
+    nack_without_requeue_drops(connect(factory()).await).await;
+    headers_propagate(connect(factory()).await).await;
+    published_log_observes_publishes(connect(factory()).await).await;
 }
 
-/// Verifies a broker honours the lazy-startup contract end to end.
+/// Verifies a broker honours the lifecycle ladder end to end.
 ///
-/// The steps are: synchronous construction (no I/O in the constructor), then `connect`, a
-/// subscription opened through the broker's own [`SubscriptionSource`], a publish the subscription
-/// receives and acks (or reports [`AckError::Unsupported`] for a broker with no ack semantics),
-/// then `shutdown` - and the post-shutdown contract: publish and subscribe must error against the
-/// shut-down broker, a second `shutdown` stays `Ok`, and a later `connect` either revives the
-/// broker (proved by a working subscribe / publish / deliver round trip) or returns an error;
-/// reporting `Ok` while staying dead is the one forbidden outcome.
+/// The steps are: synchronous construction (no I/O in the constructor), then the consuming
+/// `connect` producing the typed connected form, a subscription opened through the broker's own
+/// [`SubscriptionSource`], a publish the subscription receives and acks (or reports
+/// [`AckError::Unsupported`] for a broker with no ack semantics), then the consuming `shutdown`
+/// producing the terminal witness. Owner-side misuse after shutdown is a compile error under the
+/// ladder, so what remains checkable at runtime is the aliased-handle contract: a publisher
+/// created before the shutdown must error afterwards, never silently succeed against a dead
+/// connection.
 ///
 /// The three factories keep the check broker-agnostic:
 /// * `make_broker` is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
-///   cannot satisfy it, which is exactly the contract: construct cheaply, connect lazily in
+///   cannot satisfy it, which is exactly the contract: construct cheaply, connect in
 ///   [`Broker::connect`].
 /// * `make_source` builds the broker's subscription descriptor for a subject (the macro-subscriber
 ///   path).
-/// * `make_publisher` produces a publisher from the connected broker.
+/// * `make_publisher` produces a publisher from the connected form.
 ///
 /// Run it from the broker crate, against a real server where one is needed (NATS, Kafka, ...) or
 /// in-process for the in-memory broker.
@@ -84,7 +95,7 @@ where
 /// harness::lifecycle(
 ///     || MemoryBroker::new(),
 ///     |name| MemorySource::new(name),
-///     |broker| broker.publisher(),
+///     |connected| connected.publisher(),
 /// )
 /// .await;
 /// # }
@@ -92,8 +103,8 @@ where
 ///
 /// # Panics
 ///
-/// Panics with a descriptive message if construction, connection, subscription, delivery, ack, or
-/// shutdown does not behave as the contract requires.
+/// Panics with a descriptive message if construction, connection, subscription, delivery, ack,
+/// shutdown, or the aliased-handle behaviour does not follow the contract.
 pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_broker: MkBroker,
     make_source: MkSrc,
@@ -101,24 +112,24 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<B> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
-    MkPub: Fn(&B) -> Pub,
+    MkPub: Fn(&Connected<B>) -> Pub,
 {
     const SUBJECT: &str = "conformance.lifecycle";
 
-    let broker = make_broker();
-    Broker::connect(&broker)
+    let connected = make_broker()
+        .connect()
         .await
         .expect("broker must connect after synchronous construction");
 
     let mut subscriber = make_source(SUBJECT)
-        .subscribe(&broker)
+        .subscribe(&connected)
         .await
-        .expect("subscription source must open after connect");
-    let publisher = make_publisher(&broker);
+        .expect("subscription source must open against the connected form");
+    let publisher = make_publisher(&connected);
 
     publisher
         .publish(OutgoingMessage::new(SUBJECT, b"lifecycle".as_slice()))
@@ -139,58 +150,23 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
     }
 
-    Broker::shutdown(&broker)
+    let _closed = connected
+        .shutdown()
         .await
         .expect("broker must shut down cleanly");
 
-    // Shutdown is a state, not an event: operations against the shut-down broker must error
-    // rather than silently succeed against a dead connection.
+    // The ladder makes owner-side misuse unrepresentable; the aliased publisher created before
+    // the shutdown is the surface that must stay honest at runtime.
     assert!(
         publisher
             .publish(OutgoingMessage::new(SUBJECT, b"post-shutdown".as_slice()))
             .await
             .is_err(),
-        "publish after shutdown must error",
+        "publish through a handle aliasing the closed connection must error",
     );
-    assert!(
-        make_source(SUBJECT).subscribe(&broker).await.is_err(),
-        "subscribing after shutdown must error",
-    );
-    Broker::shutdown(&broker)
-        .await
-        .expect("shutdown must stay idempotent");
-
-    // A post-shutdown connect either revives the broker or errors; Ok-but-dead is forbidden.
-    // (An Err here is fine: reconnect-after-shutdown is not required, a clear error satisfies
-    // the contract.)
-    if Broker::connect(&broker).await.is_ok() {
-        let mut subscriber = make_source(SUBJECT)
-            .subscribe(&broker)
-            .await
-            .expect("subscribe must work after a reconnect that reported Ok");
-        let publisher = make_publisher(&broker);
-        publisher
-            .publish(OutgoingMessage::new(SUBJECT, b"revived".as_slice()))
-            .await
-            .expect("publish must work after a reconnect that reported Ok");
-        let mut stream = std::pin::pin!(subscriber.stream());
-        let msg = expect_next(&mut stream, "lifecycle: after reconnect").await;
-        assert_eq!(
-            msg.payload(),
-            b"revived",
-            "a reconnect that reports Ok must actually deliver",
-        );
-        match msg.ack().await {
-            Ok(()) | Err(AckError::Unsupported) => {}
-            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-        }
-        Broker::shutdown(&broker)
-            .await
-            .expect("broker must shut down cleanly");
-    }
 }
 
-async fn ordering<B: TestableBroker + Subscribe>(broker: B) {
+async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.ordering")
         .await
         .expect("subscribe failed");
@@ -212,10 +188,10 @@ async fn ordering<B: TestableBroker + Subscribe>(broker: B) {
         );
         msg.ack().await.expect("ack failed");
     }
-    Broker::shutdown(&broker).await.expect("shutdown failed");
+    broker.shutdown().await.expect("shutdown failed");
 }
 
-async fn publish_after_subscribe<B: TestableBroker + Subscribe>(broker: B) {
+async fn publish_after_subscribe<C: TestableBroker + Subscribe>(broker: C) {
     broker.inject(OutgoingMessage::new(
         "conformance.late",
         b"before-subscribe".as_slice(),
@@ -238,10 +214,10 @@ async fn publish_after_subscribe<B: TestableBroker + Subscribe>(broker: B) {
         "subscriber must receive only messages published after subscription opened",
     );
     msg.ack().await.expect("ack failed");
-    Broker::shutdown(&broker).await.expect("shutdown failed");
+    broker.shutdown().await.expect("shutdown failed");
 }
 
-async fn ack_consumes_delivery<B: TestableBroker + Subscribe>(broker: B) {
+async fn ack_consumes_delivery<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.ack")
         .await
         .expect("subscribe failed");
@@ -253,10 +229,10 @@ async fn ack_consumes_delivery<B: TestableBroker + Subscribe>(broker: B) {
     msg.ack().await.expect("ack failed");
 
     expect_no_more(&mut stream, "ack_consumes_delivery").await;
-    Broker::shutdown(&broker).await.expect("shutdown failed");
+    broker.shutdown().await.expect("shutdown failed");
 }
 
-async fn nack_with_requeue_redelivers<B: TestableBroker + Subscribe>(broker: B) {
+async fn nack_with_requeue_redelivers<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.requeue")
         .await
         .expect("subscribe failed");
@@ -278,10 +254,10 @@ async fn nack_with_requeue_redelivers<B: TestableBroker + Subscribe>(broker: B) 
         "nack(requeue=true) must redeliver the same payload",
     );
     second.ack().await.expect("ack failed");
-    Broker::shutdown(&broker).await.expect("shutdown failed");
+    broker.shutdown().await.expect("shutdown failed");
 }
 
-async fn nack_without_requeue_drops<B: TestableBroker + Subscribe>(broker: B) {
+async fn nack_without_requeue_drops<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.drop")
         .await
         .expect("subscribe failed");
@@ -293,10 +269,10 @@ async fn nack_without_requeue_drops<B: TestableBroker + Subscribe>(broker: B) {
     msg.nack(false).await.expect("nack failed");
 
     expect_no_more(&mut stream, "nack_without_requeue").await;
-    Broker::shutdown(&broker).await.expect("shutdown failed");
+    broker.shutdown().await.expect("shutdown failed");
 }
 
-async fn headers_propagate<B: TestableBroker + Subscribe>(broker: B) {
+async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.headers")
         .await
         .expect("subscribe failed");
@@ -314,10 +290,10 @@ async fn headers_propagate<B: TestableBroker + Subscribe>(broker: B) {
     assert_eq!(msg.headers().content_type(), Some("application/json"));
     assert_eq!(msg.headers().get("x-tenant"), Some(b"acme".as_slice()));
     msg.ack().await.expect("ack failed");
-    Broker::shutdown(&broker).await.expect("shutdown failed");
+    broker.shutdown().await.expect("shutdown failed");
 }
 
-async fn published_log_observes_publishes<B: TestableBroker + Subscribe>(broker: B) {
+async fn published_log_observes_publishes<C: TestableBroker + Subscribe>(broker: C) {
     broker.inject(OutgoingMessage::new(
         "conformance.observe",
         b"first".as_slice(),
@@ -335,16 +311,16 @@ async fn published_log_observes_publishes<B: TestableBroker + Subscribe>(broker:
     );
     assert_eq!(observed[0].payload(), b"first");
     assert_eq!(observed[1].payload(), b"second");
-    Broker::shutdown(&broker).await.expect("shutdown failed");
+    broker.shutdown().await.expect("shutdown failed");
 }
 
 pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
     M: IncomingMessage,
-    E: std::fmt::Debug,
+    E: fmt::Debug,
 {
-    let item = tokio::time::timeout(DEFAULT_TIMEOUT, stream.next())
+    let item = timeout(DEFAULT_TIMEOUT, stream.next())
         .await
         .unwrap_or_else(|_| panic!("{label}: stream timed out"));
     let item = item.unwrap_or_else(|| panic!("{label}: stream ended unexpectedly"));
@@ -355,9 +331,9 @@ pub(crate) async fn expect_no_more<S, M, E>(stream: &mut S, label: &str)
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
     M: IncomingMessage,
-    E: std::fmt::Debug,
+    E: fmt::Debug,
 {
-    let result = tokio::time::timeout(NEGATIVE_WAIT, stream.next()).await;
+    let result = timeout(NEGATIVE_WAIT, stream.next()).await;
     assert!(
         result.is_err(),
         "{label}: expected no further deliveries within {NEGATIVE_WAIT:?}",

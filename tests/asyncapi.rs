@@ -81,12 +81,20 @@ impl DescribingBroker {
 
 impl ruststream::Broker for DescribingBroker {
     type Error = std::convert::Infallible;
+    type Connected = ConnectedDescribingBroker;
 
-    async fn connect(&self) -> Result<(), Self::Error> {
-        Ok(())
+    async fn connect(self) -> Result<Self::Connected, Self::Error> {
+        Ok(ConnectedDescribingBroker)
     }
+}
 
-    async fn shutdown(&self) -> Result<(), Self::Error> {
+struct ConnectedDescribingBroker;
+
+impl ruststream::ConnectedBroker for ConnectedDescribingBroker {
+    type Error = std::convert::Infallible;
+    type Closed = ();
+
+    async fn shutdown(self) -> Result<(), Self::Error> {
         Ok(())
     }
 }
