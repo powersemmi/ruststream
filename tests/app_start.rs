@@ -8,12 +8,13 @@
 #![cfg(feature = "macros")]
 
 use std::convert::Infallible;
+use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryError};
 use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream, RustStreamError};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::{Broker, ConnectedBroker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -187,10 +188,8 @@ async fn lifecycle_hooks_run_and_shutdown_hook_errors_only_log() {
             assert_eq!(*state, 42);
             Ok::<_, Infallible>(())
         })
-        .on_shutdown(async move |_state| Err::<(), _>(std::io::Error::other("on_shutdown boom")))
-        .after_shutdown(async move |_state| {
-            Err::<(), _>(std::io::Error::other("after_shutdown boom"))
-        })
+        .on_shutdown(async move |_state| Err::<(), _>(io::Error::other("on_shutdown boom")))
+        .after_shutdown(async move |_state| Err::<(), _>(io::Error::other("after_shutdown boom")))
         .shutdown_timeout(Duration::from_secs(5))
         .with_broker(broker, |b| b.include(quiet));
 
@@ -209,4 +208,72 @@ fn on_startup_after_a_lifecycle_hook_panics() {
     let _app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .after_startup(async move |_state| Ok::<_, Infallible>(()))
         .on_startup(async move |()| Ok::<_, Infallible>(42_u32));
+}
+
+/// A broker whose connect always fails, for the partial-startup unwind tests.
+struct FailingBroker;
+
+/// Uninhabited connected form: [`FailingBroker::connect`] never produces one.
+enum NeverConnected {}
+
+impl Broker for FailingBroker {
+    type Error = io::Error;
+    type Connected = NeverConnected;
+
+    async fn connect(self) -> Result<Self::Connected, Self::Error> {
+        Err(io::Error::other("dial refused"))
+    }
+}
+
+impl ConnectedBroker for NeverConnected {
+    type Error = io::Error;
+    type Closed = ();
+
+    async fn shutdown(self) -> Result<(), Self::Error> {
+        match self {}
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_connect_unwinds_already_connected_brokers() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .register_broker(broker)
+        .register_broker(FailingBroker);
+
+    let err = app
+        .start()
+        .await
+        .expect_err("the second broker cannot connect");
+    assert!(matches!(err, RustStreamError::Connect(_)), "got: {err:?}");
+    // The first broker had connected; the unwind must shut it down, not leave it live.
+    assert_eq!(
+        publisher
+            .publish(OutgoingMessage::new("started.unwind", b"x".as_slice()))
+            .await,
+        Err(MemoryError::ShutDown),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_after_startup_unwinds_connected_brokers() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .after_startup(async move |_state| Err::<(), _>(io::Error::other("after_startup boom")))
+        .with_broker(broker, |b| b.include(quiet));
+
+    let err = app
+        .start()
+        .await
+        .expect_err("the failing hook must abort startup");
+    assert!(matches!(err, RustStreamError::Startup(_)), "got: {err:?}");
+    // The hook failed after the broker connected and dispatch spawned; both are unwound.
+    assert_eq!(
+        publisher
+            .publish(OutgoingMessage::new("started.quiet", b"x".as_slice()))
+            .await,
+        Err(MemoryError::ShutDown),
+    );
 }

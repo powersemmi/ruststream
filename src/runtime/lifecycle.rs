@@ -9,6 +9,8 @@
 //! connected broker travels from the erased `connect` to the typed starters through a shared
 //! slot ([`ConnectedSlot`]), populated before any subscription opens.
 
+#[cfg(feature = "testing")]
+use std::any::Any;
 use std::{
     any::type_name,
     error::Error as StdError,
@@ -47,7 +49,7 @@ pub(crate) trait ConnectedLifecycle: Send + Sync {
     /// `where Self: 'static` bound keeps the method object-safe (it stays in the vtable) without
     /// tightening the impls below.
     #[cfg(feature = "testing")]
-    fn as_any(&self) -> &dyn core::any::Any
+    fn as_any(&self) -> &dyn Any
     where
         Self: 'static;
 }
@@ -91,7 +93,7 @@ impl<B: Broker + 'static> ConnectedLifecycle for ConnectedCell<B> {
     }
 
     #[cfg(feature = "testing")]
-    fn as_any(&self) -> &dyn core::any::Any
+    fn as_any(&self) -> &dyn Any
     where
         Self: 'static,
     {
@@ -107,8 +109,12 @@ impl<B: Broker + 'static> ConnectedLifecycle for ConnectedCell<B> {
                 .lock()
                 .expect("connected slot mutex poisoned")
                 .take();
-            let connected = Arc::try_unwrap(self.connected)
-                .map_err(|_| Box::from("connected broker still aliased at shutdown") as BoxError)?;
+            let connected = Arc::try_unwrap(self.connected).map_err(|_| {
+                Box::from(format!(
+                    "connected broker {} still aliased at shutdown",
+                    type_name::<B>(),
+                )) as BoxError
+            })?;
             connected
                 .shutdown()
                 .await
