@@ -23,12 +23,12 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
             None => expand_raw(&parts),
         }
     } else if let Some(reply_topic) = &args.publish_raw {
-        expand_raw_reply(&parts, func, reply_topic)?
+        expand_publishing(&parts, func, reply_topic, true)?
     } else {
         match (&args.batch, &args.publish) {
             (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
             (true, None) => expand_batch(&parts, func),
-            (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
+            (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic, false)?,
             (false, None) if parts.out.is_some() || parts.seek.is_some() => expand_injected(&parts),
             (false, None) => expand_subscribing(&parts),
         }
@@ -906,10 +906,14 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
     }
 }
 
+/// The reply-publishing form. `bare` marks the `publish_raw` (typed input, byte reply)
+/// variant: the same definition and machinery, with the form token selecting the bare-policy
+/// default commit instead of the typed-codec one.
 fn expand_publishing(
     parts: &HandlerParts<'_>,
     func: &ItemFn,
     reply_topic: &LitStr,
+    bare: bool,
 ) -> syn::Result<TokenStream2> {
     let HandlerParts {
         vis,
@@ -937,7 +941,12 @@ fn expand_publishing(
         ReturnType::Default => {
             return Err(Error::new_spanned(
                 &func.sig,
-                "a publishing handler must return the reply value",
+                if bare {
+                    "a publish_raw handler must return the reply bytes: Vec<u8>, or \
+                     Result<Vec<u8>, HandlerResult>"
+                } else {
+                    "a publishing handler must return the reply value"
+                },
             ));
         }
     };
@@ -950,6 +959,11 @@ fn expand_publishing(
             declared_ty,
             quote!(::core::result::Result::Ok((async move #block).await)),
         ),
+    };
+    let form = if bare {
+        quote!(::ruststream::runtime::forms::RawReply)
+    } else {
+        quote!(::ruststream::runtime::forms::Publishing)
     };
 
     // As for `expand_subscribing`: a publishing handler that names a state type implements
@@ -979,7 +993,7 @@ fn expand_publishing(
         #vis struct #name;
 
         impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = ::ruststream::runtime::forms::Publishing;
+            type Form = #form;
         }
 
         impl ::ruststream::runtime::PublishingDef for #name {
@@ -1339,120 +1353,6 @@ fn expand_raw_publishing(
             async fn call(
                 &self,
                 #pat: &[u8],
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
-                #prelude
-                #call_body
-            }
-        }
-    })
-}
-
-/// The typed-input, byte-reply form (`publish_raw` without `raw`): the input decodes like the
-/// typed publishing form, the returned bytes publish unencoded like the raw one.
-fn expand_raw_reply(
-    parts: &HandlerParts<'_>,
-    func: &ItemFn,
-    reply_topic: &LitStr,
-) -> syn::Result<TokenStream2> {
-    let HandlerParts {
-        vis,
-        name,
-        block,
-        pat,
-        input_ty,
-        description,
-        source_ty,
-        source_expr,
-        input_schema,
-        message_meta,
-        ctx_param,
-        ctx_ty,
-        state_ty,
-        extractors,
-        out: _,
-        seek: _,
-        workers_method,
-        failure_method,
-    } = parts;
-
-    let declared_ty = match &func.sig.output {
-        ReturnType::Type(_, ty) => &**ty,
-        ReturnType::Default => {
-            return Err(Error::new_spanned(
-                &func.sig,
-                "a publish_raw handler must return the reply bytes: Vec<u8>, or \
-                 Result<Vec<u8>, HandlerResult>",
-            ));
-        }
-    };
-    // Same syntactic split as the typed publishing form: `-> Result<Reply, HandlerResult>`
-    // gives ack control, a plain `-> Reply` is wrapped in `Ok`. The reply itself is bounded to
-    // `AsRef<[u8]>` at the mount site, which accepts `Vec<u8>` and friends.
-    let (reply_ty, call_body) = match publish_result_reply(declared_ty) {
-        Some(reply_ty) => (reply_ty, quote!((async move #block).await)),
-        None => (
-            declared_ty,
-            quote!(::core::result::Result::Ok((async move #block).await)),
-        ),
-    };
-
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty)),
-        None => (
-            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
-            quote!(__RsState),
-        ),
-    };
-    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
-    let prelude = extractor_prelude(
-        extractors,
-        ctx_param,
-        ctx_ty,
-        &state_in_ctx,
-        &quote!(
-            return ::core::result::Result::Err(::core::convert::Into::<
-                ::ruststream::runtime::HandlerResult,
-            >::into(__rs_err),)
-        ),
-    );
-    Ok(quote! {
-        #[allow(non_camel_case_types)]
-        #vis struct #name;
-
-        impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = ::ruststream::runtime::forms::RawReply;
-        }
-
-        impl ::ruststream::runtime::RawReplyDef for #name {
-            type Input = #input_ty;
-            type Reply = #reply_ty;
-            type Context = #ctx_ty;
-            type Source = #source_ty;
-
-            fn source(&self) -> Self::Source { #source_expr }
-            fn reply_name(&self) -> &str { #reply_topic }
-
-            #workers_method
-
-            #failure_method
-
-            fn description(&self) -> ::core::option::Option<&str> {
-                #description
-            }
-
-            #input_schema
-
-            #message_meta
-        }
-
-        impl #impl_generics
-            ::ruststream::runtime::RawReplyCall<#state_in_ctx> for #name
-            #where_clause
-        {
-            async fn call(
-                &self,
-                #pat: &#input_ty,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
                 #prelude

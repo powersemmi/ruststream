@@ -57,10 +57,7 @@ pub use publish::{
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
-pub use raw::{
-    RawPublishingCall, RawPublishingDef, RawPublishingHandler, RawReplyCall, RawReplyDef,
-    RawReplyHandler, RawSubscriberDef,
-};
+pub use raw::{RawPublishingCall, RawPublishingDef, RawPublishingHandler, RawSubscriberDef};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

@@ -19,11 +19,11 @@ use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler, inject_meta
 use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
-use crate::runtime::publish::{
-    PublishIdentity, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
-};
+use crate::runtime::publish::{PublishIdentity, PublishPipeline, ReplyPublisher};
 use crate::runtime::publisher_registry::ErasedPublisher;
-use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
+use crate::runtime::publishing::{
+    PublishingCall, PublishingHandler, ReplySink, publishing_metadata,
+};
 use crate::runtime::router::{RouterDef, RouterSink};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::{Typed, typed};
@@ -248,31 +248,26 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     }
 
     /// Mounts a publishing definition whose reply publisher is a policy source, paired by the
-    /// runtime after connect. Decode uses the scope codec; the reply codec and transforms travel
-    /// on the source's typed stack.
-    pub(super) fn mount_publishing_source<S, D, Src, P, PC, PL>(
-        &mut self,
-        source: S,
-        def: D,
-        reply: Src,
-    ) where
+    /// runtime after connect. Decode uses the scope codec; how the reply leaves (encoded
+    /// through a typed stack, or byte-for-byte through a bare publisher) is the source's live
+    /// form, per its [`ReplySink`] wiring.
+    pub(super) fn mount_publishing_source<S, D, Src>(&mut self, source: S, def: D, reply: Src)
+    where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         <S::Subscriber as Subscriber>::Message: Send + Sync + 'static,
         D: PublishingCall<State> + 'static,
         D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Serialize + Send + Sync + 'static,
+        D::Reply: Send + Sync + 'static,
         D::Context:
             crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
-        Src: PublishPolicy<Connected<B>, Live = TypedPublisher<P, PC, PL>> + Send + 'static,
-        P: Publisher + 'static,
-        PC: Codec + 'static,
-        PL: PublishTransform<D::Context> + 'static,
+        Src: PublishPolicy<Connected<B>> + Send + 'static,
+        Src::Live: ReplySink<D::Reply, D::Context, Pipeline> + 'static,
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
         Layers:
-            Layer<PublishingHandler<D, SC::Codec, P, PC, PL, Pipeline>> + Clone + Send + 'static,
+            Layer<PublishingHandler<D, SC::Codec, Src::Live, Pipeline>> + Clone + Send + 'static,
         Layers::Handler:
             Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
         B::Connected: 'static,

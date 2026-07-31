@@ -29,13 +29,11 @@ use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::middleware::Layer;
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::runtime::publish::PublishTransformIdentity;
-use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
-use crate::runtime::publishing::{PublishingCall, PublishingHandler};
+use crate::runtime::publish::{PublishPipeline, ReplyPublisher, TypedPublisher};
+use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
 use crate::runtime::raw::{
-    RawPublishingCall, RawPublishingHandler, RawReplyCall, RawReplyHandler, RawSubscriberDef,
-    raw_metadata, raw_publishing_metadata, raw_reply_metadata,
+    RawPublishingCall, RawPublishingHandler, RawSubscriberDef, raw_metadata,
+    raw_publishing_metadata,
 };
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
@@ -336,49 +334,23 @@ impl<B, Layers, C, State, Pipeline, Def> CommitPublishing<B, Layers, C, State, P
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
-    C: ScopeCodec,
-    Def: PublishingCall<State> + 'static,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
-    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
-        Send + Sync + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
-    Def::Reply: Serialize + Send + Sync + 'static,
-    Def::Context: BuildContext<
-            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
-        > + Send
-        + Sync
-        + 'static,
-    <<B::Connected as DefaultPublish>::Policy as PublishPolicy<Connected<B>>>::Live:
-        Publisher + 'static,
-    Pipeline: PublishPipeline + Clone + Send + 'static,
-    State: Send + Sync + 'static,
-    Layers: Layer<
-            PublishingHandler<
-                Def,
-                <C as ScopeCodec>::Codec,
-                <<B::Connected as DefaultPublish>::Policy as PublishPolicy<Connected<B>>>::Live,
-                DefaultCodec,
-                PublishTransformIdentity,
-                Pipeline,
-            >,
-        > + Clone
-        + Send
-        + 'static,
-    Layers::Handler: Handler<
-            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
-            Def::Context,
-            State,
-        > + 'static,
+    WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>:
+        CommitPublishing<B, Layers, C, State, Pipeline, Def>,
 {
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
-        let source = def.source();
-        let reply = TypedPublisher::new(<B::Connected as DefaultPublish>::Policy::default());
-        scope.mount_publishing_source(source, def, reply);
+        // The typed default reply: the broker's plain publish policy under the default codec,
+        // committed as if the user had chained `.publisher(TypedPublisher::new(<policy>))`.
+        CommitPublishing::commit(
+            WithSource(TypedPublisher::new(
+                <B::Connected as DefaultPublish>::Policy::default(),
+            )),
+            def,
+            scope,
+        );
     }
 }
 
-impl<B, Layers, C, State, Pipeline, Def, Source, Leaf, ReplyCodec, Transforms>
+impl<B, Layers, C, State, Pipeline, Def, Source>
     CommitPublishing<B, Layers, C, State, Pipeline, Def> for WithSource<Source>
 where
     B: Broker + 'static,
@@ -389,30 +361,18 @@ where
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
     Def::Input: DeserializeOwned + Send + Sync + 'static,
-    Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Reply: Send + Sync + 'static,
     Def::Context: BuildContext<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
         + Sync
         + 'static,
-    Source: PublishPolicy<Connected<B>, Live = TypedPublisher<Leaf, ReplyCodec, Transforms>>
-        + Send
-        + 'static,
-    Leaf: Publisher + 'static,
-    ReplyCodec: Codec + 'static,
-    Transforms: PublishTransform<Def::Context> + 'static,
+    Source: PublishPolicy<Connected<B>> + Send + 'static,
+    Source::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
     Pipeline: PublishPipeline + Clone + Send + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<
-            PublishingHandler<
-                Def,
-                <C as ScopeCodec>::Codec,
-                Leaf,
-                ReplyCodec,
-                Transforms,
-                Pipeline,
-            >,
-        > + Clone
+    Layers: Layer<PublishingHandler<Def, <C as ScopeCodec>::Codec, Source::Live, Pipeline>>
+        + Clone
         + Send
         + 'static,
     Layers::Handler: Handler<
@@ -708,170 +668,30 @@ where
 }
 
 // ---------------------------------------------------------------------------------------------
-// Typed-input, byte-reply publishing (`publish_raw` without `raw`): the consume side decodes
-// with the scope codec exactly like the typed reply form, the reply side is the bare live
-// publisher of the raw form.
+// Typed-input, byte-reply publishing (`publish_raw` without `raw`): the same builder and
+// machinery as the typed reply form - the ReplySink wiring resolves "encoded vs bytes" from
+// the attached source's live type - so the form token only picks a different default commit:
+// the broker's plain publish policy taken bare, with no codec to attach.
 
-/// One commit strategy of a typed-input, byte-reply registration builder. Machinery; never
-/// named directly.
+/// The default commit of the byte-reply form: the broker's plain publish policy taken bare.
 #[doc(hidden)]
-pub trait CommitRawReply<B: Broker, Layers, C, State, Pipeline, Def>: Sized {
-    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>);
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DefaultBareReply;
 
-impl<B, Layers, C, State, Pipeline, Def> CommitRawReply<B, Layers, C, State, Pipeline, Def>
-    for DefaultReply
+impl<B, Layers, C, State, Pipeline, Def> CommitPublishing<B, Layers, C, State, Pipeline, Def>
+    for DefaultBareReply
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
     WithSource<<B::Connected as DefaultPublish>::Policy>:
-        CommitRawReply<B, Layers, C, State, Pipeline, Def>,
+        CommitPublishing<B, Layers, C, State, Pipeline, Def>,
 {
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
-        // Same shape as the raw default: the reply side carries no codec, so the default is
-        // the broker's plain publish policy taken bare. (UFCS: several Commit* traits give
-        // `WithSource` a `commit`.)
-        CommitRawReply::commit(
+        CommitPublishing::commit(
             WithSource(<B::Connected as DefaultPublish>::Policy::default()),
             def,
             scope,
         );
-    }
-}
-
-impl<B, Layers, C, State, Pipeline, Def, Source, Live>
-    CommitRawReply<B, Layers, C, State, Pipeline, Def> for WithSource<Source>
-where
-    B: Broker + 'static,
-    B::Connected: 'static,
-    C: ScopeCodec,
-    Def: RawReplyCall<State> + 'static,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
-    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
-        Send + Sync + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
-    Def::Reply: AsRef<[u8]> + Send + Sync + 'static,
-    Def::Context: BuildContext<
-            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
-        > + Send
-        + Sync
-        + 'static,
-    Source: PublishPolicy<Connected<B>, Live = Live> + Send + 'static,
-    Live: Publisher + 'static,
-    State: Send + Sync + 'static,
-    Layers: Layer<RawReplyHandler<Def, C::Codec, Live>> + Clone + Send + 'static,
-    Layers::Handler: Handler<
-            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
-            Def::Context,
-            State,
-        > + 'static,
-{
-    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
-        let source = def.source();
-        let meta = raw_reply_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        let decode = policies.decode;
-        let codec = scope.codec.scope_codec();
-        let global = scope.global.clone();
-        let reply = self.0;
-        scope.sink.push_paired_workers(
-            source,
-            async move |connected: Arc<Connected<B>>| {
-                let publisher = reply
-                    .pair(connected.as_ref())
-                    .await
-                    .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(global.layer(RawReplyHandler {
-                    def,
-                    codec,
-                    publisher,
-                    decode,
-                }))
-            },
-            meta,
-            policies,
-            workers,
-        );
-    }
-}
-
-/// The registration builder [`BrokerScope::include`] returns for a `publish_raw("dest")`
-/// definition with a typed input.
-///
-/// Commits when dropped, exactly like [`IncludeRawPublishing`]: the broker's default publish
-/// policy without a [`publisher`](Self::publisher) call, the attached source with one. The
-/// input decodes with the scope codec; the reply bytes go out through the policy's bare live
-/// [`Publisher`], unencoded.
-pub struct IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, Source>
-where
-    B: Broker + 'static,
-    Source: CommitRawReply<B, Layers, C, State, Pipeline, Def>,
-{
-    // Options only so `publisher` can move the pieces into the replacement builder out of a
-    // Drop type; both stay `Some` until the commit or that replacement.
-    scope: Option<&'s mut BrokerScope<B, Layers, C, State, Pipeline>>,
-    parts: Option<(Def, Source)>,
-}
-
-impl<'s, B, Layers, C, State, Pipeline, Def, Source>
-    IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, Source>
-where
-    B: Broker + 'static,
-    Source: CommitRawReply<B, Layers, C, State, Pipeline, Def>,
-{
-    /// Attaches the reply source: any publish policy whose live form is a bare [`Publisher`]
-    /// (a raw reply has no codec), or a [`Bound`](crate::runtime::Bound) token wrapping one for
-    /// a cross-broker reply. The runtime pairs it after the brokers connect.
-    ///
-    /// # Panics
-    ///
-    /// Never in practice: the internal expects guard builder invariants that hold until the
-    /// commit or this replacement.
-    pub fn publisher<NewSource>(
-        mut self,
-        source: NewSource,
-    ) -> IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, WithSource<NewSource>>
-    where
-        WithSource<NewSource>: CommitRawReply<B, Layers, C, State, Pipeline, Def>,
-    {
-        let (def, _default) = self
-            .parts
-            .take()
-            .expect("builder parts are present until commit or replacement");
-        let scope = self
-            .scope
-            .take()
-            .expect("builder scope is present until commit or replacement");
-        IncludeRawReply {
-            scope: Some(scope),
-            parts: Some((def, WithSource(source))),
-        }
-    }
-}
-
-impl<B, Layers, C, State, Pipeline, Def, Source> std::fmt::Debug
-    for IncludeRawReply<'_, B, Layers, C, State, Pipeline, Def, Source>
-where
-    B: Broker + 'static,
-    Source: CommitRawReply<B, Layers, C, State, Pipeline, Def>,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IncludeRawReply").finish_non_exhaustive()
-    }
-}
-
-impl<B, Layers, C, State, Pipeline, Def, Source> Drop
-    for IncludeRawReply<'_, B, Layers, C, State, Pipeline, Def, Source>
-where
-    B: Broker + 'static,
-    Source: CommitRawReply<B, Layers, C, State, Pipeline, Def>,
-{
-    fn drop(&mut self) {
-        if let (Some((def, src)), Some(scope)) = (self.parts.take(), self.scope.take()) {
-            src.commit(def, scope);
-        }
     }
 }
 
@@ -883,14 +703,14 @@ where
     C: 's,
     State: 's,
     Pipeline: 's,
-    DefaultReply: CommitRawReply<B, Layers, C, State, Pipeline, Def>,
+    DefaultBareReply: CommitPublishing<B, Layers, C, State, Pipeline, Def>,
 {
-    type Out = IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, DefaultReply>;
+    type Out = IncludePublishing<'s, B, Layers, C, State, Pipeline, Def, DefaultBareReply>;
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
-        IncludeRawReply {
+        IncludePublishing {
             scope: Some(scope),
-            parts: Some((def, DefaultReply)),
+            parts: Some((def, DefaultBareReply)),
         }
     }
 }
@@ -1251,7 +1071,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// through `publisher` (a typed policy stack, or a [`Bound`](crate::runtime::Bound) token
     /// wrapping one). The positional counterpart of `include(def).publisher(..)` for the
     /// source-override case.
-    pub fn include_publishing_on<Source, Def, ReplySource, Leaf, ReplyCodec, Transforms>(
+    pub fn include_publishing_on<Source, Def, ReplySource>(
         &mut self,
         source: Source,
         def: Def,
@@ -1263,18 +1083,14 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         C: ScopeCodec,
         Def: PublishingCall<State> + 'static,
         Def::Input: DeserializeOwned + Send + Sync + 'static,
-        Def::Reply: Serialize + Send + Sync + 'static,
+        Def::Reply: Send + Sync + 'static,
         Def::Context:
             BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
-        ReplySource: PublishPolicy<Connected<B>, Live = TypedPublisher<Leaf, ReplyCodec, Transforms>>
-            + Send
-            + 'static,
-        Leaf: Publisher + 'static,
-        ReplyCodec: Codec + 'static,
-        Transforms: PublishTransform<Def::Context> + 'static,
+        ReplySource: PublishPolicy<Connected<B>> + Send + 'static,
+        ReplySource::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
-        Layers: Layer<PublishingHandler<Def, C::Codec, Leaf, ReplyCodec, Transforms, Pipeline>>
+        Layers: Layer<PublishingHandler<Def, C::Codec, ReplySource::Live, Pipeline>>
             + Clone
             + Send
             + 'static,
