@@ -5,7 +5,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{FnArg, Ident, ItemFn, LitStr, PatType, ReturnType, Type, TypePath};
+use syn::{Error, FnArg, Ident, ItemFn, LitStr, Pat, PatType, ReturnType, Type, TypePath};
 
 use crate::parse::{
     FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, position_type,
@@ -43,7 +43,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
 /// reply clauses at once, and a batch with a byte reply.
 fn reject_raw_combinations(args: &SubscriberArgs) -> syn::Result<()> {
     if let (Some(_), Some(publish_raw)) = (&args.publish, &args.publish_raw) {
-        return Err(syn::Error::new(
+        return Err(Error::new(
             publish_raw.span(),
             "publish(..) and publish_raw(..) are mutually exclusive: one reply, one destination",
         ));
@@ -51,7 +51,7 @@ fn reject_raw_combinations(args: &SubscriberArgs) -> syn::Result<()> {
     if let Some(publish_raw) = &args.publish_raw
         && args.batch
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             publish_raw,
             "publish_raw(..) is not supported together with batch(..) yet; publish per message \
              or use the encoded batch reply form",
@@ -61,14 +61,14 @@ fn reject_raw_combinations(args: &SubscriberArgs) -> syn::Result<()> {
         return Ok(());
     };
     if args.publish.is_some() {
-        return Err(syn::Error::new(
+        return Err(Error::new(
             raw.span(),
             "the reply of a raw handler is bytes and is never encoded; use \
              publish_raw(\"dest\") instead of publish(..)",
         ));
     }
     if args.batch {
-        return Err(syn::Error::new(
+        return Err(Error::new(
             raw.span(),
             "raw is not supported together with batch(..); a raw handler takes one delivery's \
              payload as `&[u8]`",
@@ -77,7 +77,7 @@ fn reject_raw_combinations(args: &SubscriberArgs) -> syn::Result<()> {
     if let Some(failure) = &args.on_failure
         && failure.decode.is_some()
     {
-        return Err(syn::Error::new(
+        return Err(Error::new(
             raw.span(),
             "on_failure(decode = ..) does not apply to raw: the payload is not decoded; keep \
              only on_failure(panic = ..)",
@@ -91,7 +91,7 @@ struct HandlerParts<'a> {
     vis: &'a syn::Visibility,
     name: &'a Ident,
     block: &'a syn::Block,
-    pat: &'a syn::Pat,
+    pat: &'a Pat,
     input_ty: &'a Type,
     description: TokenStream2,
     source_ty: TokenStream2,
@@ -101,9 +101,9 @@ struct HandlerParts<'a> {
     ctx_param: TokenStream2,
     ctx_ty: TokenStream2,
     state_ty: Option<TokenStream2>,
-    extractors: Vec<(&'a syn::Pat, &'a Type)>,
-    out: Option<(&'a syn::Pat, &'a Type)>,
-    seek: Option<(&'a syn::Pat, &'a Type)>,
+    extractors: Vec<(&'a Pat, &'a Type)>,
+    out: Option<(&'a Pat, &'a Type)>,
+    seek: Option<(&'a Pat, &'a Type)>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
 }
@@ -274,18 +274,18 @@ fn is_context_param(ty: &Type) -> bool {
 /// The handler's extractor parameters: every parameter after the message that is not the optional
 /// `&mut Context`. Each is resolved through [`FromContext`] before the body runs. `ctx_present`
 /// reports whether the second parameter is the context (and so is skipped here).
-fn collect_extractors(func: &ItemFn, ctx_present: bool) -> syn::Result<Vec<(&syn::Pat, &Type)>> {
+fn collect_extractors(func: &ItemFn, ctx_present: bool) -> syn::Result<Vec<(&Pat, &Type)>> {
     let start = if ctx_present { 2 } else { 1 };
     let mut extractors = Vec::new();
     for arg in func.sig.inputs.iter().skip(start) {
         let FnArg::Typed(PatType { pat, ty, .. }) = arg else {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 arg,
                 "a #[subscriber] handler cannot take `self`",
             ));
         };
         if is_context_param(ty) {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 ty,
                 "the `&mut Context` parameter must come immediately after the message, before any \
                  extractor parameters",
@@ -300,7 +300,7 @@ fn collect_extractors(func: &ItemFn, ctx_present: bool) -> syn::Result<Vec<(&syn
 /// `C` and state `S`, or nothing when there are no extractors. Added to the generated call impl so a
 /// state-specific extractor compiles without forcing the handler to name a `&mut Context`.
 fn extractor_where(
-    extractors: &[(&syn::Pat, &Type)],
+    extractors: &[(&Pat, &Type)],
     ctx_ty: &TokenStream2,
     state: &TokenStream2,
 ) -> TokenStream2 {
@@ -316,7 +316,7 @@ fn extractor_where(
 /// The `let` bindings that resolve each extractor from the context before the body runs. A failed
 /// extraction runs `reject` (a `return` settling the delivery by the rejection's `HandlerResult`).
 fn extractor_prelude(
-    extractors: &[(&syn::Pat, &Type)],
+    extractors: &[(&Pat, &Type)],
     ctx_param: &TokenStream2,
     ctx_ty: &TokenStream2,
     state: &TokenStream2,
@@ -381,14 +381,14 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
         return Ok(quote!());
     };
     if count.base10_parse::<usize>()? == 0 {
-        return Err(syn::Error::new(
+        return Err(Error::new(
             count.span(),
             "workers(0) is not a policy; the minimum is 1",
         ));
     }
     if let Some(marker) = by_key {
         if args.batch {
-            return Err(syn::Error::new(
+            return Err(Error::new(
                 marker.span(),
                 "by_key lanes order single messages per key; they do not apply to batch(..) \
                  forms",
@@ -426,8 +426,8 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
 fn split_out<'a>(
     args: &SubscriberArgs,
     func: &ItemFn,
-    extractors: &mut Vec<(&'a syn::Pat, &'a Type)>,
-) -> syn::Result<Option<(&'a syn::Pat, &'a Type)>> {
+    extractors: &mut Vec<(&'a Pat, &'a Type)>,
+) -> syn::Result<Option<(&'a Pat, &'a Type)>> {
     let mut out = None;
     extractors.retain(|(pat, ty)| {
         if let Some(publisher_ty) = out_param_type(ty) {
@@ -443,20 +443,20 @@ fn split_out<'a>(
         .iter()
         .find(|(_, ty)| out_param_type(ty).is_some())
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             dup,
             "a #[subscriber] handler takes at most one Out parameter",
         ));
     }
     if out.is_some() && (args.batch || args.publish.is_some() || args.publish_raw.is_some()) {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &func.sig,
             "an Out parameter is not supported together with batch(..), publish(..) or \
              publish_raw(..) yet; use the plain subscriber form",
         ));
     }
     if out.is_some() && args.raw.is_some() {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &func.sig,
             "an Out parameter is not supported together with raw; use the plain raw subscriber \
              form and publish through an application-owned publisher",
@@ -470,9 +470,9 @@ fn split_out<'a>(
 fn split_seek<'a>(
     args: &SubscriberArgs,
     func: &ItemFn,
-    extractors: &mut Vec<(&'a syn::Pat, &'a Type)>,
-    out: Option<(&'a syn::Pat, &'a Type)>,
-) -> syn::Result<Option<(&'a syn::Pat, &'a Type)>> {
+    extractors: &mut Vec<(&'a Pat, &'a Type)>,
+    out: Option<(&'a Pat, &'a Type)>,
+) -> syn::Result<Option<(&'a Pat, &'a Type)>> {
     let mut seek = None;
     extractors.retain(|(pat, ty)| {
         if let Some(seeker_ty) = seek_param_type(ty) {
@@ -488,27 +488,27 @@ fn split_seek<'a>(
         .iter()
         .find(|(_, ty)| seek_param_type(ty).is_some())
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             dup,
             "a #[subscriber] handler takes at most one Seek parameter",
         ));
     }
     if seek.is_some() && out.is_some() {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &func.sig,
             "a Seek parameter is not supported together with an Out parameter yet; reposition \
              from outside through a WithSeeker token instead",
         ));
     }
     if seek.is_some() && (args.batch || args.publish.is_some() || args.publish_raw.is_some()) {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &func.sig,
             "a Seek parameter is not supported together with batch(..), publish(..) or \
              publish_raw(..) yet; use the plain subscriber form",
         ));
     }
     if seek.is_some() && args.raw.is_some() {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &func.sig,
             "a Seek parameter is not supported together with raw yet; use the plain subscriber \
              form",
@@ -527,7 +527,7 @@ fn input_type<'a>(
     if args.batch {
         return match &*reference.elem {
             Type::Slice(slice) => Ok(&slice.elem),
-            other => Err(syn::Error::new_spanned(
+            other => Err(Error::new_spanned(
                 other,
                 "a batch handler takes the whole batch as a slice: `&[T]`",
             )),
@@ -536,7 +536,7 @@ fn input_type<'a>(
     if args.raw.is_some() {
         return match &*reference.elem {
             elem if is_u8_slice(elem) => Ok(elem),
-            other => Err(syn::Error::new_spanned(
+            other => Err(Error::new_spanned(
                 other,
                 "a raw subscriber receives the payload bytes: make the message parameter \
                  `&[u8]`, or drop `raw` to decode into a typed value",
@@ -544,7 +544,7 @@ fn input_type<'a>(
         };
     }
     if matches!(&*reference.elem, Type::Slice(_)) {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &reference.elem,
             "a slice parameter needs the batch source form: #[subscriber(batch(..))]; for the \
              undecoded payload bytes use #[subscriber(.., raw)]",
@@ -567,19 +567,19 @@ fn is_u8_slice(ty: &Type) -> bool {
 
 fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
     let first = func.sig.inputs.first().ok_or_else(|| {
-        syn::Error::new_spanned(
+        Error::new_spanned(
             &func.sig,
             "a #[subscriber] handler must take exactly one message parameter",
         )
     })?;
     let FnArg::Typed(PatType { pat, ty, .. }) = first else {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             first,
             "a #[subscriber] handler cannot take `self`",
         ));
     };
     let Type::Reference(reference) = &**ty else {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             ty,
             "the message parameter must be a reference `&T`",
         ));
@@ -682,7 +682,7 @@ fn batch_reply_body<'a>(
 ) -> syn::Result<(&'a Type, TokenStream2)> {
     if let Some(ok_ty) = publish_result_reply(declared_ty) {
         let Some(elem) = vec_element(ok_ty) else {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 ok_ty,
                 "a batch publishing handler replies with a Vec: Result<Vec<Reply>, HandlerResult>",
             ));
@@ -690,7 +690,7 @@ fn batch_reply_body<'a>(
         Ok((elem, quote!((async move #block).await)))
     } else {
         let Some(elem) = vec_element(declared_ty) else {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 declared_ty,
                 "a batch publishing handler returns the replies: Vec<Reply>, or \
                  Result<Vec<Reply>, HandlerResult>",
@@ -732,7 +732,7 @@ fn expand_batch_publishing(
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
         ReturnType::Default => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 &func.sig,
                 "a batch publishing handler must return the replies: Vec<Reply>, or \
                  Result<Vec<Reply>, HandlerResult>",
@@ -944,7 +944,7 @@ fn expand_publishing(
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
         ReturnType::Default => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 &func.sig,
                 "a publishing handler must return the reply value",
             ));
@@ -1344,7 +1344,7 @@ fn expand_raw_publishing(
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
         ReturnType::Default => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 &func.sig,
                 "a raw publishing handler must return the reply bytes: Vec<u8>, or \
                  Result<Vec<u8>, HandlerResult>",
@@ -1458,7 +1458,7 @@ fn expand_raw_reply(
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
         ReturnType::Default => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 &func.sig,
                 "a publish_raw handler must return the reply bytes: Vec<u8>, or \
                  Result<Vec<u8>, HandlerResult>",
