@@ -16,6 +16,7 @@ use crate::runtime::batch_publishing::{
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler, inject_metadata};
+use crate::runtime::input::DecodeWith;
 use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
@@ -313,7 +314,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Source::Subscriber: Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
         Def: InjectCall<State> + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
         Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
             + Send
             + Sync

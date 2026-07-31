@@ -230,6 +230,52 @@ async fn an_out_and_a_seek_parameter_combine_in_one_handler() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
+/// A raw handler with an injected seeker: the input axis lets the byte-level form compose
+/// with startup injections, borrowing the payload with no decode and no copy.
+#[subscriber("seek.frames", raw)]
+async fn raw_work(frame: &[u8], Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+    if frame == b"poison" {
+        // The marker frame: resume from the third entry.
+        if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
+            return HandlerResult::retry();
+        }
+        return HandlerResult::Ack;
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_raw_handler_composes_with_a_seek_parameter() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(broker, |b| {
+        b.include(raw_work);
+    });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    for payload in [b"poison".as_slice(), b"skipped", b"kept"] {
+        ingress
+            .publish(OutgoingMessage::new("seek.frames", payload))
+            .await
+            .expect("publish");
+    }
+    tb.settle().await.expect("settle");
+
+    let received = tb
+        .broker::<MemoryBroker>()
+        .subscriber("seek.frames")
+        .received_raw();
+    let frames: Vec<&[u8]> = received.iter().map(AsRef::as_ref).collect();
+    assert_eq!(
+        frames,
+        [b"poison".as_slice(), b"kept"],
+        "the raw handler's seek must skip the queued frame before the target",
+    );
+
+    tb.shutdown().await.expect("graceful shutdown");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_token_is_pending_before_startup() {
     let (_source, token) = WithSeeker::attach(MemorySource::new("seek.unopened"));

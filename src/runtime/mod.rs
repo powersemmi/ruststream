@@ -11,6 +11,7 @@ mod extract;
 mod failure;
 mod handler;
 mod inject;
+mod input;
 mod lifecycle;
 mod metadata;
 mod middleware;
@@ -40,6 +41,7 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out, Seek};
+pub use input::{DecodeWith, Decoded, InputKind, RawBytes};
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::ConnectedLifecycle;
 #[doc(hidden)]

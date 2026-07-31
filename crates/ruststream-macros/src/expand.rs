@@ -17,9 +17,11 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
     let parts = handler_parts(args, func)?;
     let body = if args.raw.is_some() {
         // The remaining combinations are already rejected above; publish_raw(..) selects the
-        // byte reply form, otherwise raw is the plain form.
+        // byte reply form, otherwise raw is the plain form (injected when the signature
+        // carries Out / Seek parameters - the input axis makes raw compose with them).
         match &args.publish_raw {
             Some(reply_topic) => expand_raw_publishing(&parts, func, reply_topic)?,
+            None if parts.out.is_some() || parts.seek.is_some() => expand_injected(&parts, true),
             None => expand_raw(&parts),
         }
     } else if let Some(reply_topic) = &args.publish_raw {
@@ -29,7 +31,9 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
             (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
             (true, None) => expand_batch(&parts, func),
             (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic, false)?,
-            (false, None) if parts.out.is_some() || parts.seek.is_some() => expand_injected(&parts),
+            (false, None) if parts.out.is_some() || parts.seek.is_some() => {
+                expand_injected(&parts, false)
+            }
             (false, None) => expand_subscribing(&parts),
         }
     };
@@ -454,13 +458,6 @@ fn split_out<'a>(
              publish_raw(..) yet; use the plain subscriber form",
         ));
     }
-    if out.is_some() && args.raw.is_some() {
-        return Err(Error::new_spanned(
-            &func.sig,
-            "an Out parameter is not supported together with raw; use the plain raw subscriber \
-             form and publish through an application-owned publisher",
-        ));
-    }
     Ok(out)
 }
 
@@ -496,13 +493,6 @@ fn split_seek<'a>(
             &func.sig,
             "a Seek parameter is not supported together with batch(..), publish(..) or \
              publish_raw(..) yet; use the plain subscriber form",
-        ));
-    }
-    if seek.is_some() && args.raw.is_some() {
-        return Err(Error::new_spanned(
-            &func.sig,
-            "a Seek parameter is not supported together with raw yet; use the plain subscriber \
-             form",
         ));
     }
     Ok(seek)
@@ -1034,9 +1024,37 @@ fn expand_publishing(
     })
 }
 
+/// Collects the canonical injection tuple (Out first, then Seek), the matching binding
+/// patterns for the generated call (the user's parameter patterns are already
+/// `Out(..)` / `Seek(..)`-shaped, so they destructure the tuple elements directly), and the
+/// form token: an Out parameter needs a publisher attachment at the include site, so it
+/// selects the builder form; injections resolved off the subscription alone mount eagerly.
+fn injection_pieces(
+    out: Option<(&Pat, &Type)>,
+    seek: Option<(&Pat, &Type)>,
+) -> (Vec<TokenStream2>, Vec<TokenStream2>, TokenStream2) {
+    let mut injection_tys = Vec::new();
+    let mut injection_pats = Vec::new();
+    if let Some((out_pat, out_ty)) = out {
+        injection_tys.push(quote!(::ruststream::runtime::Out<#out_ty>));
+        injection_pats.push(quote!(#out_pat));
+    }
+    if let Some((seek_pat, seeker_ty)) = seek {
+        injection_tys.push(quote!(::ruststream::runtime::Seek<#seeker_ty>));
+        injection_pats.push(quote!(#seek_pat));
+    }
+    let form = if out.is_some() {
+        quote!(::ruststream::runtime::forms::Out)
+    } else {
+        quote!(::ruststream::runtime::forms::Seek)
+    };
+    (injection_tys, injection_pats, form)
+}
+
 /// The startup-injection form: `Out` / `Seek` parameters travel as one tuple resolved by the
 /// runtime after the subscription opens, so any combination shares this single expansion.
-fn expand_injected(parts: &HandlerParts<'_>) -> TokenStream2 {
+/// `raw` selects the byte input kind (the handler borrows the payload as `&[u8]`).
+fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
     let HandlerParts {
         vis,
         name,
@@ -1058,26 +1076,23 @@ fn expand_injected(parts: &HandlerParts<'_>) -> TokenStream2 {
         failure_method,
     } = parts;
 
-    // The tuple order is canonical (Out first, then Seek) and the bindings below mirror it,
-    // so the handler's own parameter order stays free.
-    let mut injection_tys = Vec::new();
-    let mut injection_pats = Vec::new();
-    if let Some((out_pat, out_ty)) = out {
-        injection_tys.push(quote!(::ruststream::runtime::Out<#out_ty>));
-        // The user's parameter pattern is already `Out(..)`-shaped; it destructures the
-        // tuple element directly.
-        injection_pats.push(quote!(#out_pat));
-    }
-    if let Some((seek_pat, seeker_ty)) = seek {
-        injection_tys.push(quote!(::ruststream::runtime::Seek<#seeker_ty>));
-        injection_pats.push(quote!(#seek_pat));
-    }
-    // An Out parameter needs a publisher attachment at the include site, so it selects the
-    // builder form; injections resolved off the subscription alone mount eagerly.
-    let form = if out.is_some() {
-        quote!(::ruststream::runtime::forms::Out)
+    let (injection_tys, injection_pats, form) = injection_pieces(*out, *seek);
+    // The input axis: a typed parameter decodes into an owned value the handler borrows, a
+    // raw one borrows the payload itself. Raw inputs carry no schema or message metadata.
+    let (input_kind, input_param, input_schema, message_meta) = if raw {
+        (
+            quote!(::ruststream::runtime::RawBytes),
+            quote!(&[u8]),
+            quote!(),
+            quote!(),
+        )
     } else {
-        quote!(::ruststream::runtime::forms::Seek)
+        (
+            quote!(::ruststream::runtime::Decoded<#input_ty>),
+            quote!(&#input_ty),
+            input_schema.clone(),
+            message_meta.clone(),
+        )
     };
 
     let (impl_generics, state_in_ctx) = match &state_ty {
@@ -1110,7 +1125,7 @@ fn expand_injected(parts: &HandlerParts<'_>) -> TokenStream2 {
         }
 
         impl ::ruststream::runtime::InjectDef for #name {
-            type Input = #input_ty;
+            type Input = #input_kind;
             type Context = #ctx_ty;
             type Source = #source_ty;
             type Injections = (#(#injection_tys,)*);
@@ -1134,12 +1149,16 @@ fn expand_injected(parts: &HandlerParts<'_>) -> TokenStream2 {
             ::ruststream::runtime::InjectCall<#state_in_ctx> for #name
             #where_clause
         {
+            // The parameter type repeats the trait's `View<'_>` projection verbatim so the
+            // lifetime binding structure matches the declaration; it normalizes to the
+            // concrete view (`&T`, or `&[u8]` for a raw input) bound to the user's pattern.
             async fn call(
                 &self,
-                #pat: &#input_ty,
+                __rs_input: <Self::Input as ::ruststream::runtime::InputKind>::View<'_>,
                 __rs_inj: &Self::Injections,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::ruststream::runtime::Settle {
+                let #pat: #input_param = __rs_input;
                 #prelude
                 let (#(#injection_pats,)*) = __rs_inj;
                 ::ruststream::runtime::IntoSettle::into_settle(

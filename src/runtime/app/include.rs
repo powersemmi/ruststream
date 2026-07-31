@@ -27,6 +27,7 @@ use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
+use crate::runtime::input::DecodeWith;
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::middleware::Layer;
 use crate::runtime::publish::{PublishPipeline, ReplyPublisher, TypedPublisher};
@@ -253,7 +254,7 @@ where
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
     Def::Context: BuildContext<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
@@ -755,7 +756,7 @@ where
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
     Def::Context: BuildContext<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
