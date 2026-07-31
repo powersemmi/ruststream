@@ -30,6 +30,9 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
     } else {
         match (&args.batch, &args.publish) {
             (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
+            (true, None) if parts.out.is_some() || parts.seek.is_some() => {
+                expand_batch_injected(&parts, func)
+            }
             (true, None) => expand_batch(&parts, func),
             (false, Some(reply_topic)) => {
                 expand_publishing(&parts, func, reply_topic, false, false)?
@@ -454,11 +457,11 @@ fn split_out<'a>(
             "a #[subscriber] handler takes at most one Out parameter",
         ));
     }
-    if out.is_some() && (args.batch || args.publish.is_some() || args.publish_raw.is_some()) {
+    if out.is_some() && (args.publish.is_some() || args.publish_raw.is_some()) {
         return Err(Error::new_spanned(
             &func.sig,
-            "an Out parameter is not supported together with batch(..), publish(..) or \
-             publish_raw(..) yet; use the plain subscriber form",
+            "an Out parameter is not supported together with publish(..) or publish_raw(..) \
+             yet; use the plain or batch subscriber form",
         ));
     }
     Ok(out)
@@ -491,11 +494,11 @@ fn split_seek<'a>(
             "a #[subscriber] handler takes at most one Seek parameter",
         ));
     }
-    if seek.is_some() && (args.batch || args.publish.is_some() || args.publish_raw.is_some()) {
+    if seek.is_some() && (args.publish.is_some() || args.publish_raw.is_some()) {
         return Err(Error::new_spanned(
             &func.sig,
-            "a Seek parameter is not supported together with batch(..), publish(..) or \
-             publish_raw(..) yet; use the plain subscriber form",
+            "a Seek parameter is not supported together with publish(..) or publish_raw(..) \
+             yet; use the plain or batch subscriber form",
         ));
     }
     Ok(seek)
@@ -896,6 +899,114 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
 
                 fn into_handler(self) -> Self { self }
             }
+    }
+}
+
+/// The injected batch form: `batch(..)` with Out / Seek parameters. Mirrors `expand_injected`
+/// at the batch shape (slice input, `IntoBatchResult` conversion, unit context).
+fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        message_meta,
+        ctx_param,
+        ctx_ty: _,
+        state_ty,
+        extractors,
+        out,
+        seek,
+        workers_method,
+        failure_method,
+    } = parts;
+
+    // The injection tuple is shared with the single-message form; only the form token differs
+    // (the batch mount arms drive batches, not a per-message stream).
+    let (injection_tys, injection_pats, _single_form) = injection_pieces(*out, *seek);
+    let form = if out.is_some() {
+        quote!(::ruststream::runtime::forms::BatchOut)
+    } else {
+        quote!(::ruststream::runtime::forms::BatchSeek)
+    };
+
+    // As for `expand_batch`: pin the body's type before the `IntoBatchResult` conversion.
+    let outcome_ty = match &func.sig.output {
+        ReturnType::Type(_, ty) => quote!(#ty),
+        ReturnType::Default => quote!(()),
+    };
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
+    // The batch context is always `()`; extractors resolve against it.
+    let unit_ctx = quote!(());
+    let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        &unit_ctx,
+        &state_in_ctx,
+        &quote!(
+            return ::ruststream::runtime::IntoBatchResult::into_batch_result(
+                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+            )
+        ),
+    );
+
+    quote! {
+        #[derive(Clone, Copy)]
+        #[allow(non_camel_case_types)]
+        #vis struct #name;
+
+        impl ::ruststream::runtime::IncludeDef for #name {
+            type Form = #form;
+        }
+
+        impl ::ruststream::runtime::BatchInjectDef for #name {
+            type Input = ::ruststream::runtime::Decoded<#input_ty>;
+            type Source = #source_ty;
+            type Injections = (#(#injection_tys,)*);
+
+            fn source(&self) -> Self::Source { #source_expr }
+
+            #workers_method
+
+            #failure_method
+
+            fn description(&self) -> ::core::option::Option<&str> {
+                #description
+            }
+
+            #input_schema
+
+            #message_meta
+        }
+
+        impl #impl_generics
+            ::ruststream::runtime::BatchInjectCall<#state_in_ctx> for #name
+            #where_clause
+        {
+            async fn call(
+                &self,
+                #pat: &[#input_ty],
+                __rs_inj: &Self::Injections,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
+            ) -> ::ruststream::runtime::BatchResult {
+                #prelude
+                let (#(#injection_pats,)*) = __rs_inj;
+                let outcome: #outcome_ty = (async move #block).await;
+                ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)
+            }
+        }
     }
 }
 

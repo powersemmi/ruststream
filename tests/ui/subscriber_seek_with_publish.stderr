@@ -1,4 +1,4 @@
-error: a Seek parameter is not supported together with batch(..), publish(..) or publish_raw(..) yet; use the plain subscriber form
+error: a Seek parameter is not supported together with publish(..) or publish_raw(..) yet; use the plain or batch subscriber form
   --> tests/ui/subscriber_seek_with_publish.rs:13:1
    |
 13 | async fn handle(order: &Order, Seek(_seeker): Seek<MemorySeeker>) -> u32 {

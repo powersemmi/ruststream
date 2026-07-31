@@ -25,6 +25,7 @@ use crate::{
 
 use crate::runtime::SliceHandler;
 use crate::runtime::batch::BatchDef;
+use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
@@ -81,6 +82,14 @@ pub mod forms {
     /// A batch reply-publishing subscriber (`#[subscriber(batch("in"), publish("out"))]`).
     #[derive(Debug, Clone, Copy)]
     pub struct BatchPublishing;
+    /// A batch subscriber whose startup injections need a publisher attachment (an `Out`
+    /// parameter, optionally next to a `Seek` one).
+    #[derive(Debug, Clone, Copy)]
+    pub struct BatchOut;
+    /// A batch subscriber whose startup injections need nothing from the include site (a
+    /// `Seek` parameter and no `Out`).
+    #[derive(Debug, Clone, Copy)]
+    pub struct BatchSeek;
 }
 
 /// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in [`forms`],
@@ -680,6 +689,175 @@ where
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
         IncludeOut {
+            scope: Some(scope),
+            parts: Some((def, MissingOut)),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Batch injections: the batch counterparts of the Seek (eager) and Out (builder) forms.
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::BatchSeek
+where
+    B: Broker + 'static,
+    C: ScopeCodec,
+    Def: BatchInjectCall<State> + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+        BatchSubscriber + Sync + Send + 'static,
+    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
+        Send + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ()>
+        + Send
+        + Sync
+        + 'static,
+    State: Send + Sync + 'static,
+{
+    type Out = ();
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let source = def.source();
+        scope.mount_batch_inject(source, def, ());
+    }
+}
+
+/// One commit strategy of a batch out registration builder. Machinery; never named directly.
+#[doc(hidden)]
+pub trait CommitBatchOut<B: Broker, Layers, C, State, Pipeline, Def>: Sized {
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>);
+}
+
+impl<B, Layers, C, State, Pipeline, Def> CommitBatchOut<B, Layers, C, State, Pipeline, Def>
+    for MissingOut
+where
+    B: Broker + 'static,
+{
+    fn commit(self, _def: Def, _scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        // Same contract as the single-message Out form: the source is required at the include
+        // site, and the miss fires at application build time.
+        panic!(
+            "an Out batch handler was included without a publisher source: chain \
+             .publisher(<policy or bound token>) on b.include_batch(..)"
+        );
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, Def, Source> CommitBatchOut<B, Layers, C, State, Pipeline, Def>
+    for WithSource<Source>
+where
+    B: Broker + 'static,
+    C: ScopeCodec,
+    Def: BatchInjectCall<State> + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+        BatchSubscriber + Sync + Send + 'static,
+    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
+        Send + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, Source>
+        + Send
+        + Sync
+        + 'static,
+    Source: Send + Sync + 'static,
+    State: Send + Sync + 'static,
+{
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let source = def.source();
+        scope.mount_batch_inject(source, def, self.0);
+    }
+}
+
+/// The registration builder [`BrokerScope::include_batch`] returns for a batch handler with an
+/// [`Out`](crate::runtime::Out) parameter.
+///
+/// Commits when dropped. There is no default source: committing without a
+/// [`publisher`](Self::publisher) call panics at application build time, naming the fix.
+pub struct IncludeBatchOut<'s, B, Layers, C, State, Pipeline, Def, Source>
+where
+    B: Broker + 'static,
+    Source: CommitBatchOut<B, Layers, C, State, Pipeline, Def>,
+{
+    scope: Option<&'s mut BrokerScope<B, Layers, C, State, Pipeline>>,
+    parts: Option<(Def, Source)>,
+}
+
+impl<'s, B, Layers, C, State, Pipeline, Def, Source>
+    IncludeBatchOut<'s, B, Layers, C, State, Pipeline, Def, Source>
+where
+    B: Broker + 'static,
+    Source: CommitBatchOut<B, Layers, C, State, Pipeline, Def>,
+{
+    /// Attaches the source the handler's [`Out`](crate::runtime::Out) parameter pairs from:
+    /// the scope broker's publish policy, or a [`Bound`](crate::runtime::Bound) token for a
+    /// different registered broker.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit or this replacement.
+    pub fn publisher<NewSource>(
+        mut self,
+        source: NewSource,
+    ) -> IncludeBatchOut<'s, B, Layers, C, State, Pipeline, Def, WithSource<NewSource>>
+    where
+        WithSource<NewSource>: CommitBatchOut<B, Layers, C, State, Pipeline, Def>,
+    {
+        let (def, _missing) = self
+            .parts
+            .take()
+            .expect("builder parts are present until commit or replacement");
+        let scope = self
+            .scope
+            .take()
+            .expect("builder scope is present until commit or replacement");
+        IncludeBatchOut {
+            scope: Some(scope),
+            parts: Some((def, WithSource(source))),
+        }
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, Def, Source> std::fmt::Debug
+    for IncludeBatchOut<'_, B, Layers, C, State, Pipeline, Def, Source>
+where
+    B: Broker + 'static,
+    Source: CommitBatchOut<B, Layers, C, State, Pipeline, Def>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncludeBatchOut").finish_non_exhaustive()
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, Def, Source> Drop
+    for IncludeBatchOut<'_, B, Layers, C, State, Pipeline, Def, Source>
+where
+    B: Broker + 'static,
+    Source: CommitBatchOut<B, Layers, C, State, Pipeline, Def>,
+{
+    fn drop(&mut self) {
+        if let (Some((def, src)), Some(scope)) = (self.parts.take(), self.scope.take()) {
+            src.commit(def, scope);
+        }
+    }
+}
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::BatchOut
+where
+    B: Broker + 'static,
+    Layers: 's,
+    C: 's,
+    State: 's,
+    Pipeline: 's,
+    Def: BatchInjectDef,
+{
+    type Out = IncludeBatchOut<'s, B, Layers, C, State, Pipeline, Def, MissingOut>;
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
+        IncludeBatchOut {
             scope: Some(scope),
             parts: Some((def, MissingOut)),
         }

@@ -10,7 +10,9 @@ mod service;
 
 pub use app_trait::App;
 pub use health::{HealthProbe, HealthState};
-pub use include::{IncludeBatchPublishing, IncludeDef, IncludeOut, IncludePublishing, forms};
+pub use include::{
+    IncludeBatchOut, IncludeBatchPublishing, IncludeDef, IncludeOut, IncludePublishing, forms,
+};
 pub use run::RunningApp;
 pub use scope::BrokerScope;
 #[cfg(feature = "testing")]

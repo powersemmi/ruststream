@@ -247,6 +247,51 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.handlers.push(meta);
     }
 
+    /// The batch counterpart of [`push_injected_workers`](Self::push_injected_workers): the
+    /// factory resolves the injections off the opened subscriber, then the loop drives
+    /// [`BatchSubscriber::batches`].
+    pub(crate) fn push_injected_batch<Source, MakeHandler, HandlerFut, NewHandler>(
+        &mut self,
+        source: Source,
+        make_handler: MakeHandler,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+        workers: Workers,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        SourceMessage<B, Source>: Send + 'static,
+        MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
+        HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
+        NewHandler: BatchHandler<SourceMessage<B, Source>, State> + 'static,
+    {
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        self.starters.push(Box::new(
+            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
+                Box::pin(async move {
+                    let subscriber = source
+                        .subscribe(connected.as_ref())
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let (subscriber, handler) =
+                        make_handler(Arc::clone(&connected), subscriber).await?;
+                    let failure = DispatchFailure::new(policies, shutdown);
+                    Ok(spawn_batch_dispatch(
+                        subscriber,
+                        Arc::new(handler),
+                        token,
+                        name,
+                        state,
+                        delivery,
+                        failure,
+                        workers,
+                    ))
+                })
+            },
+        ));
+        self.handlers.push(meta);
+    }
+
     /// Erases a source plus an async handler factory over the connected broker and the opened
     /// subscriber into a starter under the `workers` policy.
     ///

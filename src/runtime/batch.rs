@@ -17,6 +17,7 @@ use opentelemetry::metrics::Histogram;
 #[cfg(feature = "otel")]
 use opentelemetry::{KeyValue, global};
 use serde::de::DeserializeOwned;
+use tokio_util::task::TaskTracker;
 use tracing::{error, warn};
 
 use crate::IncomingMessage;
@@ -337,37 +338,49 @@ where
             return;
         }
         let tasks = ctx.tasks().clone();
-        match self.inner.handle_slice(&values, ctx).await {
-            BatchResult::Uniform(result) => {
-                for msg in accepted {
-                    settle(msg, result, &subscription).await;
-                }
+        let result = self.inner.handle_slice(&values, ctx).await;
+        settle_batch(accepted, result, &subscription, &tasks).await;
+    }
+}
+
+/// Applies one [`BatchResult`] to the accepted deliveries behind it - uniformly, or element by
+/// element, spawning each per-element continuation on the tracked set after its settle.
+pub(crate) async fn settle_batch<M: IncomingMessage>(
+    accepted: Vec<M>,
+    result: BatchResult,
+    subscription: &str,
+    tasks: &TaskTracker,
+) {
+    match result {
+        BatchResult::Uniform(result) => {
+            for msg in accepted {
+                settle(msg, result, subscription).await;
             }
-            BatchResult::PerElement(results) => {
-                if results.len() != accepted.len() {
-                    error!(
-                        target: "ruststream::dispatch",
-                        subscription = %subscription,
-                        expected = accepted.len(),
-                        returned = results.len(),
-                        "per-element outcome count does not match the batch; \
-                         retrying the unmatched remainder",
-                    );
-                }
-                let mut results = results.into_iter();
-                for msg in accepted {
-                    // An unmatched message gets retried: an extra redelivery beats losing it.
-                    let mut result = results
-                        .next()
-                        .unwrap_or_else(|| HandlerResult::retry().into());
-                    let after = result.take_after();
-                    settle(msg, result.outcome(), &subscription).await;
-                    // The continuation runs after this element is settled, on the tracked set so a
-                    // graceful shutdown drains it. At-most-once: a lost or panicking continuation
-                    // never redelivers the already-settled message.
-                    if let Some(after) = after {
-                        tasks.spawn(after);
-                    }
+        }
+        BatchResult::PerElement(results) => {
+            if results.len() != accepted.len() {
+                error!(
+                    target: "ruststream::dispatch",
+                    subscription = %subscription,
+                    expected = accepted.len(),
+                    returned = results.len(),
+                    "per-element outcome count does not match the batch; \
+                     retrying the unmatched remainder",
+                );
+            }
+            let mut results = results.into_iter();
+            for msg in accepted {
+                // An unmatched message gets retried: an extra redelivery beats losing it.
+                let mut result = results
+                    .next()
+                    .unwrap_or_else(|| HandlerResult::retry().into());
+                let after = result.take_after();
+                settle(msg, result.outcome(), subscription).await;
+                // The continuation runs after this element is settled, on the tracked set so a
+                // graceful shutdown drains it. At-most-once: a lost or panicking continuation
+                // never redelivers the already-settled message.
+                if let Some(after) = after {
+                    tasks.spawn(after);
                 }
             }
         }

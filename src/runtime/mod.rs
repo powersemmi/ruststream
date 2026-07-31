@@ -2,6 +2,7 @@
 
 mod app;
 mod batch;
+mod batch_inject;
 mod batch_publishing;
 pub mod cli;
 mod context;
@@ -24,12 +25,14 @@ mod subscriber_def;
 mod typed;
 
 pub use app::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchPublishing, IncludeDef,
-    IncludeOut, IncludePublishing, RunningApp, RustStream, RustStreamError, Setup, Wired, forms,
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchOut, IncludeBatchPublishing,
+    IncludeDef, IncludeOut, IncludePublishing, RunningApp, RustStream, RustStreamError, Setup,
+    Wired, forms,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
+pub use batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
 pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};

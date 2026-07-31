@@ -7,6 +7,11 @@
     feature = "testing"
 ))]
 
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tokio::sync::Notify;
+
 use ruststream::memory::{
     MemoryBroker, MemoryPosition, MemoryPublish, MemoryPublisher, MemorySeeker, MemorySource,
 };
@@ -284,4 +289,62 @@ async fn a_token_is_pending_before_startup() {
         token.seeker().is_err(),
         "a token must not resolve before the runtime opens the subscription",
     );
+}
+
+// Observed through statics: batch handlers bypass the per-message instrumentation the
+// TestApp assertions ride (the documented middleware exception), so the handler records
+// itself and signals through a notify permit.
+static PAGE_IDS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+static REPLAYED: AtomicBool = AtomicBool::new(false);
+static REPLAY_DONE: Notify = Notify::const_new();
+
+/// A batch handler with an injected seeker: the batch form composes with startup injections.
+/// The tail marker (id 2) triggers one replay of the log from the second entry on; the guard
+/// keeps the redelivered marker from seeking again.
+#[subscriber(batch("seek.pages"))]
+async fn page_work(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+    let seen_twice = {
+        let mut ids = PAGE_IDS.lock().unwrap();
+        ids.extend(events.iter().map(|event| event.id));
+        ids.iter().filter(|id| **id == 2).count() == 2
+    };
+    if events.iter().any(|event| event.id == 2)
+        && !REPLAYED.swap(true, Ordering::SeqCst)
+        && seeker.seek(MemoryPosition::sequence(1)).await.is_err()
+    {
+        return HandlerResult::retry();
+    }
+    if seen_twice {
+        REPLAY_DONE.notify_one();
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_handler_composes_with_a_seek_parameter() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("pages", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(page_work);
+    });
+    let running = app.start().await.expect("startup failed");
+
+    for id in [0u64, 1, 2] {
+        ingress
+            .publish(OutgoingMessage::new("seek.pages", payload(id).as_slice()))
+            .await
+            .expect("publish");
+    }
+    REPLAY_DONE.notified().await;
+
+    // However the pages split, the first pass is the publish order and the replay redelivers
+    // exactly the suffix from the seek target on.
+    assert_eq!(
+        *PAGE_IDS.lock().unwrap(),
+        [0, 1, 2, 1, 2],
+        "the batch handler's seek must replay the log suffix from the target",
+    );
+
+    running.shutdown().await.expect("graceful shutdown failed");
 }

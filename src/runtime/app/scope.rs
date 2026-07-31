@@ -8,6 +8,7 @@ use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, Subscript
 
 use crate::PublishPolicy;
 use crate::runtime::batch::{BatchDef, TypedBatch, batch_metadata};
+use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler, batch_inject_metadata};
 use crate::runtime::batch_publishing::{
     BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
 };
@@ -371,6 +372,52 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
                     injections,
                     decode: policies.decode,
                 });
+                Ok((subscriber, handler))
+            },
+            meta,
+            policies,
+            workers,
+        );
+    }
+
+    /// Mounts an injected batch definition on `source`: the subscription opens first, then the
+    /// injections resolve against it (pairing the attached publish policy, minting a seeker)
+    /// and the handler is built with them, so every injected handle is live by construction.
+    /// The batch counterpart of [`mount_inject`](Self::mount_inject); batch handlers are not
+    /// wrapped by the global stack (the documented middleware exception).
+    pub(super) fn mount_batch_inject<Source, Def, Extra>(
+        &mut self,
+        source: Source,
+        def: Def,
+        extra: Extra,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: Send + 'static,
+        Def: BatchInjectCall<State> + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
+        Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
+        Extra: Send + Sync + 'static,
+        SC: ScopeCodec,
+        State: Send + Sync + 'static,
+        B::Connected: 'static,
+    {
+        let meta = batch_inject_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let codec = self.codec.scope_codec();
+        self.sink.push_injected_batch(
+            source,
+            async move |connected: Arc<Connected<B>>, subscriber| {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = BatchInjectHandler {
+                    def,
+                    codec,
+                    injections,
+                    decode: policies.decode,
+                };
                 Ok((subscriber, handler))
             },
             meta,

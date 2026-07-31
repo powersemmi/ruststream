@@ -96,8 +96,9 @@ use parse::{SubscriberArgs, doc_description};
 /// source attached at the include site (`b.include(f).publisher(..)`); a
 /// `Seek(seeker): Seek<K>` parameter injects the subscription's own seeker, minted right
 /// after the subscription opens (the source's subscriber must implement the `Seekable`
-/// capability). The two combine freely in one handler, with each other and with `raw`; the
-/// `.publisher(..)` attachment is required exactly when an `Out` parameter is present.
+/// capability). The two combine freely in one handler, with each other, with `raw`, and
+/// with `batch(..)`; the `.publisher(..)` attachment is required exactly when an `Out`
+/// parameter is present.
 ///
 /// A `start_at(<position>)` clause opens the subscription at that position instead of the
 /// broker's default, seeking before the first delivery ("start from the latest on deploy",
