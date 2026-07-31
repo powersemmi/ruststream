@@ -1,7 +1,7 @@
 <h1 align="center">RustStream</h1>
 
 <p align="center">
-  <i>An async messaging framework for Rust: broker-agnostic traits, a router runtime, codecs, AsyncAPI generation, Prometheus metrics, and a conformance harness for broker authors.</i>
+  <i>An async messaging framework for Rust: broker-agnostic traits, a router runtime, codecs, AsyncAPI generation, Prometheus and OpenTelemetry observability, and a conformance harness for broker authors.</i>
 </p>
 
 <p align="center">
@@ -38,21 +38,33 @@ block, so the guarantee cannot regress.
   crates, and the contract is checked by a conformance harness.
 - **Fully async on tokio.** No blocking APIs in the public surface.
 - **Subscribers are `Stream`s, not callbacks.** Back-pressure comes for free.
-- **Ack consumes `self`.** Double-ack is a compile error.
-- **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features.
+- **Misuse does not compile.** Ack consumes `self` (no double-ack); the broker lifecycle is a
+  ladder of consuming transitions (`connect(self)` yields the connected form, `shutdown(self)`
+  a terminal witness), so out-of-order lifecycle calls are compile errors; transactions settle
+  by consuming their scope.
+- **Publishers pair at startup.** Reply wiring and the `Out(..)` handler parameter attach a
+  publish policy where the handler is included; the runtime pairs it against the connected
+  broker, so a handler never sees a "not connected" publisher.
+- **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features - or none at all:
+  `raw` subscribers and `publish_raw` replies move payload bytes untouched.
 - **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI
   scaffolds projects, runs them, and generates the AsyncAPI document.
 - **AsyncAPI 3.0 and Prometheus metrics,** served from your own HTTP stack.
+- **OpenTelemetry** behind the `otel` feature: OTLP export for traces and metrics, per-handler
+  dispatch metrics following the messaging semantic conventions, and W3C trace-context
+  propagation across the consume-transform-produce chain.
+- **A cloneable health probe** off the running app, so a sibling healthz route keeps reporting
+  the terminal state after the messaging side stops.
 - **Colored console logging** behind the `logging` feature; the generated CLI installs it on `run`,
   with verbosity driven by `RUST_LOG`.
-- **Capability traits** for optional features (batch subscribe, transactions, request-reply,
-  partitioning); a broker implements only what it supports.
+- **Capability traits** for optional features (batch subscribe, borrowed and owned transactions,
+  request-reply, partitioning); a broker implements only what it supports.
 
 ## Install
 
 ```toml
 [dependencies]
-ruststream = { version = "0.5", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 schemars = "1"
 ```

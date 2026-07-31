@@ -12,7 +12,7 @@ Run both: `run_suite` for the dispatch guarantees, `lifecycle` to prove `new` ->
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.5", features = ["conformance"] }
+ruststream = { version = "0.6", features = ["conformance"] }
 ```
 
 The `conformance` feature pulls in `testing`, so the one `TestableBroker` your crate ships works with
