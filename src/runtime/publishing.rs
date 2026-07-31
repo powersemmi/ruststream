@@ -33,7 +33,7 @@ use super::publish::{
 /// [`Publisher`] sends the reply's bytes as-is (no codec, no transforms, no pipeline). One
 /// [`PublishingHandler`] serves both, so the encoded and the byte reply forms differ only in
 /// what pairs at the include site.
-pub trait ReplySink<R, Cx, PP>: Send + Sync {
+pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     /// The error surfaced when the reply cannot be published.
     type Error: std::fmt::Display;
 
@@ -41,52 +41,53 @@ pub trait ReplySink<R, Cx, PP>: Send + Sync {
     fn deliver(
         &self,
         name: &str,
-        reply: &R,
-        pipeline: &PP,
-        cx: &PublishContext<'_, Cx>,
+        reply: &Reply,
+        pipeline: &Pipeline,
+        cx: &PublishContext<'_, DeliveryCx>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// The encoded wiring: the reply serializes through the stack's reply codec, then travels the
 /// stack's transforms and the scope's publish pipeline.
-impl<R, Cx, PP, P, PC, PL> ReplySink<R, Cx, PP> for TypedPublisher<P, PC, PL>
+impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
+    ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
 where
-    R: Serialize + Sync,
-    Cx: Sync,
-    PP: PublishPipeline,
-    P: Publisher,
-    PC: Codec,
-    PL: PublishTransform<Cx>,
+    Reply: Serialize + Sync,
+    DeliveryCx: Sync,
+    Pipeline: PublishPipeline,
+    Leaf: Publisher,
+    ReplyCodec: Codec,
+    Transforms: PublishTransform<DeliveryCx>,
 {
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
     async fn deliver(
         &self,
         name: &str,
-        reply: &R,
-        pipeline: &PP,
-        cx: &PublishContext<'_, Cx>,
+        reply: &Reply,
+        pipeline: &Pipeline,
+        cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
         self.publish(name, reply, pipeline, cx).await
     }
 }
 
 /// The byte wiring: a bare [`Publisher`] sends an `AsRef<[u8]>` reply unencoded.
-impl<R, Cx, PP, P> ReplySink<R, Cx, PP> for P
+impl<Reply, DeliveryCx, Pipeline, Bare> ReplySink<Reply, DeliveryCx, Pipeline> for Bare
 where
-    R: AsRef<[u8]> + Sync,
-    Cx: Sync,
-    PP: Send + Sync,
-    P: Publisher,
+    Reply: AsRef<[u8]> + Sync,
+    DeliveryCx: Sync,
+    Pipeline: Send + Sync,
+    Bare: Publisher,
 {
-    type Error = P::Error;
+    type Error = Bare::Error;
 
     async fn deliver(
         &self,
         name: &str,
-        reply: &R,
-        _pipeline: &PP,
-        _cx: &PublishContext<'_, Cx>,
+        reply: &Reply,
+        _pipeline: &Pipeline,
+        _cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
         self.publish(OutgoingMessage::new(name, reply.as_ref()))
             .await
@@ -192,47 +193,50 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, deliver the reply, ack.
 ///
-/// `C` decodes the incoming message; the reply leaves through the [`ReplySink`] wiring `W`
-/// (encoded by a [`TypedPublisher`] stack, or byte-for-byte through a bare publisher) to the
+/// `DecodeCodec` decodes the incoming message; the reply leaves through the [`ReplySink`]
+/// `Wiring` (encoded by a [`TypedPublisher`] stack, or byte-for-byte through a bare publisher) to the
 /// definition's [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)`
 /// skips the publish; a failed reply publish nacks the incoming message with `requeue = true`,
 /// so the broker redelivers it instead of silently losing the reply.
-pub struct PublishingHandler<D, C, W, PP = PublishIdentity> {
-    pub(crate) def: D,
-    pub(crate) codec: C,
-    pub(crate) publisher: W,
-    pub(crate) pipeline: PP,
+pub struct PublishingHandler<Def, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
+    pub(crate) def: Def,
+    pub(crate) codec: DecodeCodec,
+    pub(crate) publisher: Wiring,
+    pub(crate) pipeline: Pipeline,
     pub(crate) decode: FailurePolicy,
 }
 
-impl<D, C, W, PP> std::fmt::Debug for PublishingHandler<D, C, W, PP> {
+impl<Def, DecodeCodec, Wiring, Pipeline> std::fmt::Debug
+    for PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PublishingHandler").finish_non_exhaustive()
     }
 }
 
-impl<M, D, C, W, PP, S> Handler<M, D::Context, S> for PublishingHandler<D, C, W, PP>
+impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> Handler<Msg, Def::Context, State>
+    for PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>
 where
-    M: IncomingMessage,
-    D: PublishingCall<S>,
-    D::Input: DeserializeOwned + Send + Sync,
-    D::Reply: Send + Sync,
-    D::Context: Send + Sync,
-    C: Codec,
-    W: ReplySink<D::Reply, D::Context, PP>,
-    PP: Send + Sync,
-    S: Send + Sync,
+    Msg: IncomingMessage,
+    Def: PublishingCall<State>,
+    Def::Input: DeserializeOwned + Send + Sync,
+    Def::Reply: Send + Sync,
+    Def::Context: Send + Sync,
+    DecodeCodec: Codec,
+    Wiring: ReplySink<Def::Reply, Def::Context, Pipeline>,
+    Pipeline: Send + Sync,
+    State: Send + Sync,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, D::Context, S>) -> Settle {
+    async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {
         // The publishing path settles by a bare outcome (no per-element continuation): decode,
         // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
-        let input = match self.codec.decode::<D::Input>(msg.payload()) {
+        let input = match self.codec.decode::<Def::Input>(msg.payload()) {
             Ok(value) => value,
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",
                     subscription = %ctx.name(),
-                    message_type = std::any::type_name::<D::Input>(),
+                    message_type = std::any::type_name::<Def::Input>(),
                     error = %err,
                     "codec decode failed",
                 );
@@ -262,7 +266,7 @@ where
                 target: "ruststream::dispatch",
                 subscription = %ctx.name(),
                 reply = %name,
-                reply_type = std::any::type_name::<D::Reply>(),
+                reply_type = std::any::type_name::<Def::Reply>(),
                 error = %err,
                 "reply publish failed",
             );

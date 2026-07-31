@@ -265,58 +265,60 @@ pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMet
 
 /// The [`Handler`] built from an [`InjectDef`] once its injections resolved: decode, then run
 /// the body with them.
-pub struct InjectHandler<D: InjectDef, C> {
-    pub(crate) def: D,
-    pub(crate) codec: C,
-    pub(crate) injections: D::Injections,
+pub struct InjectHandler<Def: InjectDef, DecodeCodec> {
+    pub(crate) def: Def,
+    pub(crate) codec: DecodeCodec,
+    pub(crate) injections: Def::Injections,
     pub(crate) decode: FailurePolicy,
 }
 
-impl<D: InjectDef, C> std::fmt::Debug for InjectHandler<D, C> {
+impl<Def: InjectDef, DecodeCodec> std::fmt::Debug for InjectHandler<Def, DecodeCodec> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InjectHandler").finish_non_exhaustive()
     }
 }
 
-impl<M, D, C, S> Handler<M, D::Context, S> for InjectHandler<D, C>
+impl<Msg, Def, DecodeCodec, State> Handler<Msg, Def::Context, State>
+    for InjectHandler<Def, DecodeCodec>
 where
-    M: IncomingMessage,
-    D: InjectCall<S>,
-    D::Input: DecodeWith<C>,
-    D::Context: Send + Sync,
-    D::Injections: Send + Sync,
-    C: Codec,
-    S: Send + Sync,
+    Msg: IncomingMessage,
+    Def: InjectCall<State>,
+    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Context: Send + Sync,
+    Def::Injections: Send + Sync,
+    DecodeCodec: Codec,
+    State: Send + Sync,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, D::Context, S>) -> Settle {
+    async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {
         // The decode product lives on this stack frame and the handler borrows its view, so
         // the input path allocates nothing of its own (a raw input borrows the payload
         // straight out of the broker's buffer).
-        let owned = match <D::Input as DecodeWith<C>>::decode(&self.codec, msg.payload()) {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %ctx.name(),
-                    message_type = <D::Input as InputKind>::input_label(),
-                    error = %err,
-                    "codec decode failed",
-                );
-                #[cfg(any(feature = "testing", feature = "otel"))]
-                ctx.mark_decode_failed();
-                return match self.decode {
-                    FailurePolicy::FailFast => {
-                        ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerResult::drop().into()
-                    }
-                    other => other
-                        .settlement()
-                        .unwrap_or_else(HandlerResult::drop)
-                        .into(),
-                };
-            }
-        };
-        let view = <D::Input as InputKind>::view(&owned, msg.payload());
+        let owned =
+            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload()) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(
+                        target: "ruststream::dispatch",
+                        subscription = %ctx.name(),
+                        message_type = <Def::Input as InputKind>::input_label(),
+                        error = %err,
+                        "codec decode failed",
+                    );
+                    #[cfg(any(feature = "testing", feature = "otel"))]
+                    ctx.mark_decode_failed();
+                    return match self.decode {
+                        FailurePolicy::FailFast => {
+                            ctx.fail_fast(&format!("decode failed: {err}"));
+                            HandlerResult::drop().into()
+                        }
+                        other => other
+                            .settlement()
+                            .unwrap_or_else(HandlerResult::drop)
+                            .into(),
+                    };
+                }
+            };
+        let view = <Def::Input as InputKind>::view(&owned, msg.payload());
         self.def.call(view, &self.injections, ctx).await
     }
 }

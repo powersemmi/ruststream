@@ -39,17 +39,17 @@ pub trait InputKind: Send + Sync + 'static {
 /// Split from [`InputKind`] so the view machinery stays codec-free: [`RawBytes`] implements
 /// this for every `C` without touching the payload.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot be decoded with the codec `{C}`",
+    message = "`{Self}` cannot be decoded with the codec `{DecodeCodec}`",
     note = "a typed input needs `serde::de::DeserializeOwned`; a raw `&[u8]` input decodes with any codec"
 )]
-pub trait DecodeWith<C>: InputKind {
+pub trait DecodeWith<DecodeCodec>: InputKind {
     /// Decodes one delivery's payload.
     ///
     /// # Errors
     ///
     /// Returns [`CodecError`] when the payload does not decode; the adapter applies the
     /// definition's decode failure policy.
-    fn decode(codec: &C, payload: &[u8]) -> Result<Self::Owned, CodecError>;
+    fn decode(codec: &DecodeCodec, payload: &[u8]) -> Result<Self::Owned, CodecError>;
 }
 
 /// The typed input kind: the payload decodes into an owned `T`, the handler borrows `&T`.
@@ -74,8 +74,10 @@ impl<T: Send + Sync + 'static> InputKind for Decoded<T> {
     }
 }
 
-impl<C: Codec, T: DeserializeOwned + Send + Sync + 'static> DecodeWith<C> for Decoded<T> {
-    fn decode(codec: &C, payload: &[u8]) -> Result<T, CodecError> {
+impl<DecodeCodec: Codec, T: DeserializeOwned + Send + Sync + 'static> DecodeWith<DecodeCodec>
+    for Decoded<T>
+{
+    fn decode(codec: &DecodeCodec, payload: &[u8]) -> Result<T, CodecError> {
         codec.decode(payload)
     }
 }
@@ -97,8 +99,8 @@ impl InputKind for RawBytes {
     }
 }
 
-impl<C> DecodeWith<C> for RawBytes {
-    fn decode(_codec: &C, _payload: &[u8]) -> Result<(), CodecError> {
+impl<DecodeCodec> DecodeWith<DecodeCodec> for RawBytes {
+    fn decode(_codec: &DecodeCodec, _payload: &[u8]) -> Result<(), CodecError> {
         Ok(())
     }
 }
