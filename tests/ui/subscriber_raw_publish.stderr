@@ -1,0 +1,5 @@
+error: publish(..) is not supported together with raw; use the plain raw subscriber form and publish through an application-owned publisher
+ --> tests/ui/subscriber_raw_publish.rs:4:37
+  |
+4 | #[subscriber("frames", raw, publish("out"))]
+  |                                     ^^^^^

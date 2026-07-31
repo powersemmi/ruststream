@@ -1,6 +1,8 @@
 //! The `include` family on [`Router`]: mounting macro-generated definitions, in the
 //! default-codec form (`C = ()`) and the chain-codec form (`C: Codec`).
 
+use std::marker::PhantomData;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -12,9 +14,11 @@ use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::publish::{PublishTransform, ReplyWiring, TypedPublisher};
 use crate::runtime::publishing::PublishingDef;
+use crate::runtime::raw::{RawSubscriberDef, raw_metadata};
 use crate::runtime::subscriber_def::SubscriberDef;
 
 use super::builder::Router;
+use super::routes::SubscribeRoute;
 use super::{
     BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, PublishingRouter,
     SubscribedBatchRouter,
@@ -225,6 +229,56 @@ impl<B: Broker + 'static, R, RL> Router<B, R, (), RL> {
     {
         let codec = publisher.codec().clone();
         self.mount_publishing(source, def, codec, publisher)
+    }
+}
+
+/// The router that mounting a raw [`RawSubscriberDef`] `D` onto `R` produces: the handler is
+/// registered as-is, with no `Typed` wrapper and no codec. `RC` / `RL` are the chain's codec and
+/// layer parameters, carried unchanged (raw mounts ignore the codec). Lives here rather than next
+/// to the sibling aliases in the module root because only [`Router::include_raw`] names it.
+type RawIncludedRouter<B, D, RC, RL, R> = Router<
+    B,
+    (
+        SubscribeRoute<<D as RawSubscriberDef>::Source, <D as RawSubscriberDef>::Handler>,
+        R,
+    ),
+    RC,
+    RL,
+>;
+
+impl<B: Broker + 'static, R, C, RL> Router<B, R, C, RL> {
+    /// Mounts a `#[subscriber(.., raw)]`-generated definition on its own source.
+    ///
+    /// No codec is involved: the handler receives each delivery's payload bytes, so this form
+    /// exists on every chain regardless of [`with_codec`](Self::with_codec) (which raw mounts
+    /// ignore). The router-level counterpart of mounting a raw definition with
+    /// [`BrokerScope::include`](crate::runtime::BrokerScope::include).
+    #[must_use]
+    pub fn include_raw<D>(self, def: D) -> RawIncludedRouter<B, D, C, RL, R>
+    where
+        D: RawSubscriberDef,
+        D::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <D::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+    {
+        let source = def.source();
+        let meta = raw_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        Router {
+            routes: (
+                SubscribeRoute {
+                    source,
+                    handler: def.into_handler(),
+                    meta,
+                    policies,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
     }
 }
 

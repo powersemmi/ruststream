@@ -12,14 +12,17 @@ use syn::{
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
 /// descriptor constructor `Type::new(..)` / `Type { .. }`), optionally wrapped in `batch(..)`
-/// to consume whole batches, plus optional `publish("topic")` (the reply destination) and
-/// `workers(n[, by_key])` (the dispatch concurrency) clauses, in any order.
+/// to consume whole batches, plus optional `publish("topic")` (the reply destination),
+/// `workers(n[, by_key])` (the dispatch concurrency), and `raw` (the handler takes the payload
+/// bytes, undecoded) clauses, in any order.
 pub(crate) struct SubscriberArgs {
     pub(crate) source: Expr,
     pub(crate) batch: bool,
     pub(crate) publish: Option<LitStr>,
     pub(crate) workers: Option<WorkersArg>,
     pub(crate) on_failure: Option<FailureArg>,
+    /// The `raw` flag keyword, kept as the parsed [`Ident`] so combination errors can point at it.
+    pub(crate) raw: Option<Ident>,
 }
 
 pub(crate) struct WorkersArg {
@@ -137,10 +140,16 @@ impl Parse for SubscriberArgs {
         let mut publish = None;
         let mut workers = None;
         let mut on_failure = None;
+        let mut raw = None;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let keyword: Ident = input.parse()?;
-            if keyword == "on_failure" {
+            if keyword == "raw" {
+                if raw.is_some() {
+                    return Err(syn::Error::new(keyword.span(), "duplicate `raw`"));
+                }
+                raw = Some(keyword);
+            } else if keyword == "on_failure" {
                 if on_failure.is_some() {
                     return Err(syn::Error::new(keyword.span(), "duplicate on_failure(..)"));
                 }
@@ -177,8 +186,8 @@ impl Parse for SubscriberArgs {
             } else {
                 return Err(syn::Error::new(
                     keyword.span(),
-                    "expected `publish(\"reply-topic\")`, `workers(n[, by_key])`, or \
-                     `on_failure(panic = .., decode = ..)`",
+                    "expected `publish(\"reply-topic\")`, `workers(n[, by_key])`, \
+                     `on_failure(panic = .., decode = ..)`, or `raw`",
                 ));
             }
         }
@@ -188,6 +197,7 @@ impl Parse for SubscriberArgs {
             publish,
             workers,
             on_failure,
+            raw,
         })
     }
 }

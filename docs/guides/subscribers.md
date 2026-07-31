@@ -238,6 +238,25 @@ way it does for a single-message nack (the crate of that broker documents it). R
 vector whose length does not match the batch is a bug in the handler: the unmatched remainder is
 retried (an extra redelivery beats a silently lost message) and the mismatch is logged.
 
+## Raw subscribers
+
+When the payload is not a serialized value at all (a binary frame, a foreign wire format you
+parse yourself), the `raw` clause takes the codec out of the path entirely: the handler receives
+each delivery's bytes exactly as the broker handed them over.
+
+```rust
+--8<-- "tests/raw_subscriber.rs:raw"
+```
+
+The message parameter must be `&[u8]` - a serde-typed parameter under `raw` is a compile error,
+as is `raw` combined with `batch(..)`, `publish(..)`, an injected `Out` publisher, or an
+`on_failure(decode = ..)` policy (there is no decode step to fail). Extractors, `&mut Context`,
+`workers(..)`, and `on_failure(panic = ..)` work unchanged, and a raw subscriber mounts with the
+same `include` as every other definition - a scope codec, when one is set, simply does not apply
+to it. Because no codec is involved, raw subscribers are also the one subscriber form available
+with no codec feature enabled at all. For a custom serialization format you want *typed*
+handlers for, implement [`Codec`](codecs.md) instead and keep the typed path.
+
 ## Worker pools
 
 The dispatch loop is sequential per subscriber: one delivery is handled and settled before the

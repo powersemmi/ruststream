@@ -1,0 +1,5 @@
+error: a slice parameter needs the batch source form: #[subscriber(batch(..))]; for the undecoded payload bytes use #[subscriber(.., raw)]
+ --> tests/ui/subscriber_bytes_without_raw.rs:6:25
+  |
+6 | async fn handle(frame: &[u8]) {}
+  |                         ^^^^

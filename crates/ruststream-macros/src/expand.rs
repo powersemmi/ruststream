@@ -5,7 +5,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{FnArg, Ident, ItemFn, LitStr, PatType, ReturnType, Type};
+use syn::{FnArg, Ident, ItemFn, LitStr, PatType, ReturnType, Type, TypePath};
 
 use crate::parse::{
     FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, publish_result_reply,
@@ -13,15 +13,53 @@ use crate::parse::{
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
+    reject_raw_combinations(args)?;
     let parts = handler_parts(args, func)?;
-    let body = match (&args.batch, &args.publish) {
-        (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
-        (true, None) => expand_batch(&parts, func),
-        (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
-        (false, None) if parts.out.is_some() => expand_out(&parts),
-        (false, None) => expand_subscribing(&parts),
+    let body = if args.raw.is_some() {
+        // The combinations above are already rejected, so raw is always the plain form here.
+        expand_raw(&parts)
+    } else {
+        match (&args.batch, &args.publish) {
+            (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
+            (true, None) => expand_batch(&parts, func),
+            (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
+            (false, None) if parts.out.is_some() => expand_out(&parts),
+            (false, None) => expand_subscribing(&parts),
+        }
     };
     Ok(body.into())
+}
+
+/// Rejects the argument combinations the `raw` form does not take: there is no decode step to
+/// configure and no typed reply to publish.
+fn reject_raw_combinations(args: &SubscriberArgs) -> syn::Result<()> {
+    let Some(raw) = &args.raw else {
+        return Ok(());
+    };
+    if args.batch {
+        return Err(syn::Error::new(
+            raw.span(),
+            "raw is not supported together with batch(..); a raw handler takes one delivery's \
+             payload as `&[u8]`",
+        ));
+    }
+    if let Some(publish) = &args.publish {
+        return Err(syn::Error::new(
+            publish.span(),
+            "publish(..) is not supported together with raw; use the plain raw subscriber form \
+             and publish through an application-owned publisher",
+        ));
+    }
+    if let Some(failure) = &args.on_failure
+        && failure.decode.is_some()
+    {
+        return Err(syn::Error::new(
+            raw.span(),
+            "on_failure(decode = ..) does not apply to raw: the payload is not decoded; keep \
+             only on_failure(panic = ..)",
+        ));
+    }
+    Ok(())
 }
 
 /// The pieces of the handler shared by every expansion form, extracted from the signature.
@@ -367,7 +405,62 @@ fn split_out<'a>(
              use the plain subscriber form",
         ));
     }
+    if out.is_some() && args.raw.is_some() {
+        return Err(syn::Error::new_spanned(
+            &func.sig,
+            "an Out parameter is not supported together with raw; use the plain raw subscriber \
+             form and publish through an application-owned publisher",
+        ));
+    }
     Ok(out)
+}
+
+/// Resolves the message parameter's referent into the def's input type per form: batch unwraps
+/// the `&[T]` slice to its element, raw accepts only `&[u8]` (its type is never emitted), and the
+/// plain form takes `&T`. Each misuse gets an error naming the fix.
+fn input_type<'a>(
+    args: &SubscriberArgs,
+    reference: &'a syn::TypeReference,
+) -> syn::Result<&'a Type> {
+    if args.batch {
+        return match &*reference.elem {
+            Type::Slice(slice) => Ok(&slice.elem),
+            other => Err(syn::Error::new_spanned(
+                other,
+                "a batch handler takes the whole batch as a slice: `&[T]`",
+            )),
+        };
+    }
+    if args.raw.is_some() {
+        return match &*reference.elem {
+            elem if is_u8_slice(elem) => Ok(elem),
+            other => Err(syn::Error::new_spanned(
+                other,
+                "a raw subscriber receives the payload bytes: make the message parameter \
+                 `&[u8]`, or drop `raw` to decode into a typed value",
+            )),
+        };
+    }
+    if matches!(&*reference.elem, Type::Slice(_)) {
+        return Err(syn::Error::new_spanned(
+            &reference.elem,
+            "a slice parameter needs the batch source form: #[subscriber(batch(..))]; for the \
+             undecoded payload bytes use #[subscriber(.., raw)]",
+        ));
+    }
+    Ok(&reference.elem)
+}
+
+/// True when `ty` is syntactically `[u8]`, the only message parameter shape the raw form takes.
+fn is_u8_slice(ty: &Type) -> bool {
+    if let Type::Slice(slice) = ty
+        && let Type::Path(TypePath {
+            qself: None, path, ..
+        }) = &*slice.elem
+    {
+        return path.is_ident("u8");
+    }
+    false
 }
 
 fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
@@ -389,27 +482,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
             "the message parameter must be a reference `&T`",
         ));
     };
-    // In the batch(..) form the parameter is the whole batch `&[T]`; the def's `Input` is the
-    // element type either way.
-    let input_ty = if args.batch {
-        match &*reference.elem {
-            Type::Slice(slice) => &*slice.elem,
-            other => {
-                return Err(syn::Error::new_spanned(
-                    other,
-                    "a batch handler takes the whole batch as a slice: `&[T]`",
-                ));
-            }
-        }
-    } else {
-        if matches!(&*reference.elem, Type::Slice(_)) {
-            return Err(syn::Error::new_spanned(
-                &reference.elem,
-                "a slice parameter needs the batch source form: #[subscriber(batch(..))]",
-            ));
-        }
-        &*reference.elem
-    };
+    let input_ty = input_type(args, reference)?;
     let description = doc_description(&func.attrs);
     let (source_ty, source_expr) = source_tokens(&args.source)?;
 
@@ -924,6 +997,105 @@ fn expand_out(parts: &HandlerParts<'_>) -> TokenStream2 {
                     (async move #block).await,
                 )
             }
+        }
+    }
+}
+
+fn expand_raw(parts: &HandlerParts<'_>) -> TokenStream2 {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty: _,
+        description,
+        source_ty,
+        source_expr,
+        input_schema: _,
+        message_meta: _,
+        ctx_param,
+        ctx_ty,
+        state_ty,
+        extractors,
+        out: _,
+        workers_method,
+        failure_method,
+    } = parts;
+
+    // As for `expand_subscribing`, a handler naming a state type is bound to it; one that names
+    // none is generic over the state. The message type is generic too: the handler runs at the
+    // raw level (`Handler<M>` for any broker message), reading the payload straight off the
+    // delivery - no codec, no decode step.
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (
+            quote!(<__RsM: ::ruststream::IncomingMessage>),
+            quote!(#state_ty),
+        ),
+        None => (
+            quote! {
+                <
+                    __RsM: ::ruststream::IncomingMessage,
+                    __RsState: ::core::marker::Send + ::core::marker::Sync,
+                >
+            },
+            quote!(__RsState),
+        ),
+    };
+    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        ctx_ty,
+        &state_in_ctx,
+        &quote!(
+            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
+                ::ruststream::runtime::HandlerResult,
+            >::into(__rs_err),)
+        ),
+    );
+
+    quote! {
+        #[derive(Clone, Copy)]
+        #[allow(non_camel_case_types)]
+        #vis struct #name;
+
+        impl #impl_generics
+            ::ruststream::runtime::Handler<__RsM, #ctx_ty, #state_in_ctx> for #name
+            #where_clause
+        {
+            async fn handle(
+                &self,
+                __rs_msg: &__RsM,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
+            ) -> ::ruststream::runtime::Settle {
+                let #pat: &[u8] = ::ruststream::IncomingMessage::payload(__rs_msg);
+                #prelude
+                ::ruststream::runtime::IntoSettle::into_settle(
+                    (async move #block).await,
+                )
+            }
+        }
+
+        impl ::ruststream::runtime::IncludeDef for #name {
+            type Form = ::ruststream::runtime::forms::RawSubscribing;
+        }
+
+        impl ::ruststream::runtime::RawSubscriberDef for #name {
+            type Context = #ctx_ty;
+            type Handler = Self;
+            type Source = #source_ty;
+
+            fn source(&self) -> Self::Source { #source_expr }
+
+            #workers_method
+
+            #failure_method
+
+            fn description(&self) -> ::core::option::Option<&str> {
+                #description
+            }
+
+            fn into_handler(self) -> Self { self }
         }
     }
 }

@@ -29,6 +29,7 @@ use crate::runtime::out::{OutCall, OutDef, OutHandler};
 use crate::runtime::publish::PublishTransformIdentity;
 use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
+use crate::runtime::raw::{RawSubscriberDef, raw_metadata};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -49,6 +50,9 @@ pub mod forms {
     /// A plain subscriber (`#[subscriber("in")]`).
     #[derive(Debug, Clone, Copy)]
     pub struct Subscribing;
+    /// A raw-bytes subscriber (`#[subscriber("in", raw)]`): no decode, no codec.
+    #[derive(Debug, Clone, Copy)]
+    pub struct RawSubscribing;
     /// A reply-publishing subscriber (`#[subscriber("in", publish("out"))]`).
     #[derive(Debug, Clone, Copy)]
     pub struct Publishing;
@@ -170,6 +174,46 @@ where
         let source = def.source();
         let codec = scope.codec.scope_codec();
         scope.mount_subscriber(source, def, codec);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Raw subscribing: eager, no builder, and no codec anywhere - the handler runs at the raw level
+// over the broker's message type, so the scope codec parameter `C` is left unconstrained and the
+// mount works without any codec feature.
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::RawSubscribing
+where
+    B: Broker + 'static,
+    Def: RawSubscriberDef,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
+    Def::Handler: 'static,
+    Def::Context: BuildContext<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+        > + Send
+        + 'static,
+    State: Send + Sync + 'static,
+    Layers: Layer<Def::Handler>,
+    Layers::Handler: Handler<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+            Def::Context,
+            State,
+        > + 'static,
+{
+    type Out = ();
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let source = def.source();
+        let meta = raw_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let handler = scope.global.layer(def.into_handler());
+        scope
+            .sink
+            .push_subscribe_workers(source, handler, meta, policies, workers);
     }
 }
 

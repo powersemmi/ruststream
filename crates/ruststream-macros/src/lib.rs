@@ -39,6 +39,11 @@ use parse::{SubscriberArgs, doc_description};
 /// // subscriber must implement BatchSubscriber. Mounted with include_batch.
 /// #[subscriber(batch("orders"))]
 /// async fn bill(orders: &[Order]) -> HandlerResult { /* settles the whole batch */ }
+///
+/// // raw form: no codec, no serde - the handler receives the payload bytes as-is. The
+/// // message parameter must be `&[u8]`; a serde-typed parameter under `raw` is an error.
+/// #[subscriber("frames", raw)]
+/// async fn on_frame(frame: &[u8]) -> HandlerResult { /* parse it yourself */ }
 /// ```
 ///
 /// Without `publish(..)` the handler returns any `Into<Settle>` (a `Settle`, a `HandlerResult`,

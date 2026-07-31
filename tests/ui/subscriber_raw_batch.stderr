@@ -1,0 +1,5 @@
+error: raw is not supported together with batch(..); a raw handler takes one delivery's payload as `&[u8]`
+ --> tests/ui/subscriber_raw_batch.rs:4:31
+  |
+4 | #[subscriber(batch("frames"), raw)]
+  |                               ^^^
