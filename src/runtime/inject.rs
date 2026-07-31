@@ -245,7 +245,7 @@ pub trait InjectCall<S>: InjectDef {
     /// Runs the handler body with the resolved injections.
     fn call(
         &self,
-        input: <Self::Input as InputKind>::View<'_>,
+        input: &<Self::Input as InputKind>::Target,
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = Settle> + Send;

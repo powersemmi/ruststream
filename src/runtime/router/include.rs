@@ -1,8 +1,6 @@
 //! The `include` family on [`Router`]: mounting macro-generated definitions, in the
 //! default-codec form (`RouteCodec = ()`) and the chain-codec form (`RouteCodec: Codec`).
 
-use std::marker::PhantomData;
-
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -11,15 +9,13 @@ use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, SliceHandler};
 use crate::runtime::batch_publishing::BatchPublishingDef;
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, RawBytes};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::publish::{PublishTransform, ReplyWiring, TypedPublisher};
 use crate::runtime::publishing::PublishingDef;
-use crate::runtime::raw::{RawSubscriberDef, raw_metadata};
 use crate::runtime::subscriber_def::SubscriberDef;
 
 use super::builder::Router;
-use super::routes::SubscribeRoute;
 use super::{
     BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, PublishingRouter,
     SubscribedBatchRouter,
@@ -40,7 +36,7 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         Def: SubscriberDef,
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<crate::codec::DefaultCodec>,
         Def::Handler: 'static,
     {
         let source = def.source();
@@ -56,16 +52,16 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
     /// `source`. The router-level counterpart of
     /// [`BrokerScope::include_on`](crate::runtime::BrokerScope::include_on).
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-    pub fn include_on<S, Def>(
+    pub fn include_on<Source, Def>(
         self,
-        source: S,
+        source: Source,
         def: Def,
-    ) -> IncludedRouter<B, S, Def, crate::codec::DefaultCodec, (), RouteLayers, Routes>
+    ) -> IncludedRouter<B, Source, Def, crate::codec::DefaultCodec, (), RouteLayers, Routes>
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
         Def: SubscriberDef,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<crate::codec::DefaultCodec>,
         Def::Handler: 'static,
     {
         self.mount_subscriber(source, def, crate::codec::DefaultCodec::default())
@@ -190,20 +186,31 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
     /// The mounted handler joins the app's publish pipeline at mount time: the app-wide
     /// [`publish_layer`](crate::runtime::RustStream::publish_layer)s wrap each reply, and the
     /// publisher's own static [`PublishTransform`] stack runs closest to the value.
-    pub fn include_publishing<Def, P, PC, PL>(
+    pub fn include_publishing<Def, Leaf, ReplyCodec, Transforms>(
         self,
         def: Def,
-        publisher: TypedPublisher<P, PC, PL>,
-    ) -> PublishingRouter<B, Def::Source, Def, PC, P, PC, PL, (), RouteLayers, Routes>
+        publisher: TypedPublisher<Leaf, ReplyCodec, Transforms>,
+    ) -> PublishingRouter<
+        B,
+        Def::Source,
+        Def,
+        ReplyCodec,
+        Leaf,
+        ReplyCodec,
+        Transforms,
+        (),
+        RouteLayers,
+        Routes,
+    >
     where
         Def: PublishingDef + 'static,
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
-        Def::Input: DecodeWith<PC>,
+        Def::Input: DecodeWith<ReplyCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
-        P: 'static,
-        PC: Codec + Clone + 'static,
-        PL: PublishTransform<Def::Context> + 'static,
+        Leaf: 'static,
+        ReplyCodec: Codec + Clone + 'static,
+        Transforms: PublishTransform<Def::Context> + 'static,
     {
         let codec = publisher.codec().clone();
         let source = def.source();
@@ -212,79 +219,60 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on an explicit
     /// subscription `source`, decoding its input with the `publisher`'s own codec.
-    pub fn include_publishing_on<S, Def, P, PC, PL>(
+    pub fn include_publishing_on<Source, Def, Leaf, ReplyCodec, Transforms>(
         self,
-        source: S,
+        source: Source,
         def: Def,
-        publisher: TypedPublisher<P, PC, PL>,
-    ) -> PublishingRouter<B, S, Def, PC, P, PC, PL, (), RouteLayers, Routes>
+        publisher: TypedPublisher<Leaf, ReplyCodec, Transforms>,
+    ) -> PublishingRouter<
+        B,
+        Source,
+        Def,
+        ReplyCodec,
+        Leaf,
+        ReplyCodec,
+        Transforms,
+        (),
+        RouteLayers,
+        Routes,
+    >
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
-        Def::Input: DecodeWith<PC>,
+        Def::Input: DecodeWith<ReplyCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
-        P: 'static,
-        PC: Codec + Clone + 'static,
-        PL: PublishTransform<Def::Context> + 'static,
+        Leaf: 'static,
+        ReplyCodec: Codec + Clone + 'static,
+        Transforms: PublishTransform<Def::Context> + 'static,
     {
         let codec = publisher.codec().clone();
         self.mount_publishing(source, def, codec, publisher)
     }
 }
 
-/// The router that mounting a raw [`RawSubscriberDef`] `Def` onto `Routes` produces: the handler is
-/// registered as-is, with no `Typed` wrapper and no codec. `RouteCodec` / `RouteLayers` are the chain's codec and
-/// layer parameters, carried unchanged (raw mounts ignore the codec). Lives here rather than next
-/// to the sibling aliases in the module root because only [`Router::include_raw`] names it.
-type RawIncludedRouter<B, Def, RouteCodec, RouteLayers, Routes> = Router<
-    B,
-    (
-        SubscribeRoute<<Def as RawSubscriberDef>::Source, <Def as RawSubscriberDef>::Handler>,
-        Routes,
-    ),
-    RouteCodec,
-    RouteLayers,
->;
-
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     Router<B, Routes, RouteCodec, RouteLayers>
 {
     /// Mounts a `#[subscriber(.., raw)]`-generated definition on its own source.
     ///
-    /// No codec is involved: the handler receives each delivery's payload bytes, so this form
-    /// exists on every chain regardless of [`with_codec`](Self::with_codec) (which raw mounts
-    /// ignore). The router-level counterpart of mounting a raw definition with
+    /// No codec is involved: the byte input kind decodes with `()`, so this form exists on every
+    /// chain regardless of [`with_codec`](Self::with_codec) (which raw mounts ignore). The
+    /// router-level counterpart of mounting a raw definition with
     /// [`BrokerScope::include`](crate::runtime::BrokerScope::include).
     #[must_use]
     pub fn include_raw<Def>(
         self,
         def: Def,
-    ) -> RawIncludedRouter<B, Def, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedRouter<B, Def::Source, Def, (), RouteCodec, RouteLayers, Routes>
     where
-        Def: RawSubscriberDef,
+        Def: SubscriberDef<Input = RawBytes>,
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+        Def::Handler: 'static,
     {
         let source = def.source();
-        let meta = raw_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        Router {
-            routes: (
-                SubscribeRoute {
-                    source,
-                    handler: def.into_handler(),
-                    meta,
-                    policies,
-                    workers,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            _broker: PhantomData,
-        }
+        self.mount_subscriber(source, def, ())
     }
 }
 
@@ -301,7 +289,7 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
         Def: SubscriberDef,
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Handler: 'static,
     {
         let codec = self.codec.clone();
@@ -311,16 +299,16 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
 
     /// Mounts a `#[subscriber]`-generated definition on an explicit subscription `source`, decoding
     /// its input with the chain's codec (set by [`with_codec`](Self::with_codec)).
-    pub fn include_on<S, Def>(
+    pub fn include_on<Source, Def>(
         self,
-        source: S,
+        source: Source,
         def: Def,
-    ) -> IncludedRouter<B, S, Def, RouteCodec, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedRouter<B, Source, Def, RouteCodec, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
         Def: SubscriberDef,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Handler: 'static,
     {
         let codec = self.codec.clone();
@@ -429,20 +417,31 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on its own source,
     /// decoding its input with the chain's codec and replying through `publisher`.
-    pub fn include_publishing<Def, P, PC, PL>(
+    pub fn include_publishing<Def, Leaf, ReplyCodec, Transforms>(
         self,
         def: Def,
-        publisher: TypedPublisher<P, PC, PL>,
-    ) -> PublishingRouter<B, Def::Source, Def, RouteCodec, P, PC, PL, RouteCodec, RouteLayers, Routes>
+        publisher: TypedPublisher<Leaf, ReplyCodec, Transforms>,
+    ) -> PublishingRouter<
+        B,
+        Def::Source,
+        Def,
+        RouteCodec,
+        Leaf,
+        ReplyCodec,
+        Transforms,
+        RouteCodec,
+        RouteLayers,
+        Routes,
+    >
     where
         Def: PublishingDef + 'static,
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
         Def::Input: DecodeWith<RouteCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
-        P: 'static,
-        PC: Codec + 'static,
-        PL: PublishTransform<Def::Context> + 'static,
+        Leaf: 'static,
+        ReplyCodec: Codec + 'static,
+        Transforms: PublishTransform<Def::Context> + 'static,
     {
         let codec = self.codec.clone();
         let source = def.source();
@@ -451,21 +450,32 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
 
     /// Mounts a `#[subscriber(.., publish("name"))]`-generated definition on an explicit
     /// subscription `source`, decoding its input with the chain's codec.
-    pub fn include_publishing_on<S, Def, P, PC, PL>(
+    pub fn include_publishing_on<Source, Def, Leaf, ReplyCodec, Transforms>(
         self,
-        source: S,
+        source: Source,
         def: Def,
-        publisher: TypedPublisher<P, PC, PL>,
-    ) -> PublishingRouter<B, S, Def, RouteCodec, P, PC, PL, RouteCodec, RouteLayers, Routes>
+        publisher: TypedPublisher<Leaf, ReplyCodec, Transforms>,
+    ) -> PublishingRouter<
+        B,
+        Source,
+        Def,
+        RouteCodec,
+        Leaf,
+        ReplyCodec,
+        Transforms,
+        RouteCodec,
+        RouteLayers,
+        Routes,
+    >
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
         Def::Input: DecodeWith<RouteCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
-        P: 'static,
-        PC: Codec + 'static,
-        PL: PublishTransform<Def::Context> + 'static,
+        Leaf: 'static,
+        ReplyCodec: Codec + 'static,
+        Transforms: PublishTransform<Def::Context> + 'static,
     {
         let codec = self.codec.clone();
         self.mount_publishing(source, def, codec, publisher)

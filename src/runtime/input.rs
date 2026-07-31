@@ -3,8 +3,8 @@
 //! A definition names its input as a marker type: [`Decoded<T>`] decodes the payload with the
 //! scope codec and lends the handler `&T`, [`RawBytes`] lends the payload itself as `&[u8]` -
 //! no codec, no copy. The adapter owns the decode product for the duration of the call
-//! ([`InputKind::Owned`], held on its stack) and the handler borrows the view
-//! ([`InputKind::View`], a GAT), so no allocation, copying, or boxing appears on the delivery
+//! ([`InputKind::Owned`], held on its stack) and the handler borrows a reference to
+//! [`InputKind::Target`], so no allocation, copying, or boxing appears on the delivery
 //! path: the raw form borrows straight out of the broker's buffer on every broker. Adding an
 //! input kind is one pair of impls, not a new definition form.
 
@@ -24,11 +24,12 @@ pub trait InputKind: Send + Sync + 'static {
     /// The owned decode product, held by the adapter across the call.
     type Owned: Send + Sync;
 
-    /// The borrowed view the handler receives.
-    type View<'a>: Send;
+    /// What the handler borrows: `&T` for a decoded input, `[u8]` behind the reference for a
+    /// raw one.
+    type Target: ?Sized + Sync;
 
     /// Lends the handler its view of the decode product and the delivery payload.
-    fn view<'a>(owned: &'a Self::Owned, payload: &'a [u8]) -> Self::View<'a>;
+    fn view<'a>(owned: &'a Self::Owned, payload: &'a [u8]) -> &'a Self::Target;
 
     /// The label `AsyncAPI` metadata uses for this input.
     fn input_label() -> &'static str;
@@ -63,7 +64,7 @@ impl<T> std::fmt::Debug for Decoded<T> {
 
 impl<T: Send + Sync + 'static> InputKind for Decoded<T> {
     type Owned = T;
-    type View<'a> = &'a T;
+    type Target = T;
 
     fn view<'a>(owned: &'a T, _payload: &'a [u8]) -> &'a T {
         owned
@@ -88,7 +89,7 @@ pub struct RawBytes;
 
 impl InputKind for RawBytes {
     type Owned = ();
-    type View<'a> = &'a [u8];
+    type Target = [u8];
 
     fn view<'a>(_owned: &'a (), payload: &'a [u8]) -> &'a [u8] {
         payload

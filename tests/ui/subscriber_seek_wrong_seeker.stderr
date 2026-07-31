@@ -1,0 +1,8 @@
+error[E0271]: type mismatch resolving `<MemorySubscriber as Seekable>::Seeker == ForeignSeeker`
+  --> tests/ui/subscriber_seek_wrong_seeker.rs:22:11
+   |
+22 |         b.include(handle);
+   |           ^^^^^^^ expected `ForeignSeeker`, found `MemorySeeker`
+   |
+   = note: required for `(ruststream::runtime::Seek<ForeignSeeker>,)` to implement `FromStartup<MemoryBroker, MemorySubscriber, ()>`
+   = note: required for `ruststream::runtime::forms::Seek` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, handle>`

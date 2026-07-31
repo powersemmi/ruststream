@@ -27,7 +27,7 @@ use crate::runtime::publishing::{
 };
 use crate::runtime::router::{RouterDef, RouterSink};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
-use crate::runtime::typed::{Typed, typed};
+use crate::runtime::typed::Typed;
 
 use super::include::ScopeCodec;
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
@@ -202,27 +202,39 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
 impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC, State, Pipeline> {
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
     /// `include` / `include_on` forms.
-    pub(super) fn mount_subscriber<S, D, C>(&mut self, source: S, def: D, codec: C)
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        <S::Subscriber as Subscriber>::Message: 'static,
-        D: SubscriberDef,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
-        D::Handler: 'static,
-        C: Codec + 'static,
+    pub(super) fn mount_subscriber<Source, Def, DecodeCodec>(
+        &mut self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: 'static,
+        Def: SubscriberDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Context:
+            crate::BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + 'static,
+        Def::Handler: 'static,
+        DecodeCodec: Send + Sync + 'static,
         State: Send + Sync + 'static,
-        Layers: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>>,
+        Layers: Layer<
+            Typed<
+                <Source::Subscriber as Subscriber>::Message,
+                Def::Input,
+                DecodeCodec,
+                Def::Handler,
+            >,
+        >,
         Layers::Handler:
-            Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
+            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = self
             .global
-            .layer(typed(codec, def.into_handler()).on_decode_failure(policies.decode));
+            .layer(Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode));
         self.sink
             .push_subscribe_workers(source, handler, meta, policies, workers);
     }

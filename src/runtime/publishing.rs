@@ -176,7 +176,7 @@ pub trait PublishingCall<S>: PublishingDef {
     /// returned [`HandlerResult`] (for example [`HandlerResult::retry`] to ask for redelivery).
     fn call(
         &self,
-        input: <Self::Input as InputKind>::View<'_>,
+        input: &<Self::Input as InputKind>::Target,
         ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
 }
@@ -318,7 +318,7 @@ mod tests {
     impl<S: Send + Sync> PublishingCall<S> for ManualPub {
         async fn call(
             &self,
-            input: <Self::Input as crate::runtime::InputKind>::View<'_>,
+            input: &u32,
             _ctx: &mut Context<'_, (), S>,
         ) -> Result<u32, HandlerResult> {
             Ok(*input)

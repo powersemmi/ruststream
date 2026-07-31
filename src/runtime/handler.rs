@@ -243,8 +243,9 @@ impl<E> IntoSettle for Result<Settle, E> {
 /// A handler invoked on each input it is given.
 ///
 /// The same trait serves both pipeline levels: a raw delivery (`Handler<M>` where
-/// `M: IncomingMessage`) and a decoded value (`Handler<T>`). Implementations are `Send + Sync` so a
-/// single handler can be shared across many concurrent inputs.
+/// `M: IncomingMessage`) and a decoded value (`Handler<T>`). The input is only ever borrowed, so
+/// it may be unsized (`Handler<[u8]>` for a byte-level handler). Implementations are
+/// `Send + Sync` so a single handler can be shared across many concurrent inputs.
 ///
 /// # Examples
 ///
@@ -266,14 +267,14 @@ impl<E> IntoSettle for Result<Settle, E> {
 ///     assert_handler::<M, _>(|_msg: &M, _ctx: &mut Context| async { HandlerResult::Ack });
 /// }
 /// ```
-pub trait Handler<M, C = (), S = ()>: Send + Sync {
+pub trait Handler<M: ?Sized, C = (), S = ()>: Send + Sync {
     /// Handle one input, with the per-delivery [`Context`] (carrying the broker's typed context
     /// `C` and the shared application state `S`). The returned [`Settle`] carries the outcome the
     /// dispatcher settles by and any post-settle continuation.
     fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send;
 }
 
-impl<M, C, S, F, Fut> Handler<M, C, S> for F
+impl<M: ?Sized, C, S, F, Fut> Handler<M, C, S> for F
 where
     F: Fn(&M, &mut Context<'_, C, S>) -> Fut + Send + Sync,
     Fut: Future + Send,

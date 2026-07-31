@@ -29,13 +29,12 @@ use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, RawBytes};
 use crate::runtime::middleware::Layer;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
 use crate::runtime::publish::{PublishPipeline, ReplyPublisher};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
-use crate::runtime::raw::{RawSubscriberDef, raw_metadata};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -165,7 +164,7 @@ where
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
     Def::Handler: 'static,
     Def::Context: BuildContext<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
@@ -196,15 +195,15 @@ where
 }
 
 // ---------------------------------------------------------------------------------------------
-// Raw subscribing: eager, no builder, and no codec anywhere - the handler runs at the raw level
-// over the broker's message type, so the scope codec parameter `C` is left unconstrained and the
-// mount works without any codec feature.
+// Raw subscribing: eager, no builder, and no codec anywhere - the byte input kind decodes with
+// `()`, so the scope codec parameter `C` is left unconstrained and the mount works without any
+// codec feature.
 
 impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
     for forms::RawSubscribing
 where
     B: Broker + 'static,
-    Def: RawSubscriberDef,
+    Def: SubscriberDef<Input = RawBytes>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
@@ -214,7 +213,14 @@ where
         > + Send
         + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<Def::Handler>,
+    Layers: Layer<
+        Typed<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+            RawBytes,
+            (),
+            Def::Handler,
+        >,
+    >,
     Layers::Handler: Handler<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             Def::Context,
@@ -225,13 +231,7 @@ where
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
         let source = def.source();
-        let meta = raw_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        let handler = scope.global.layer(def.into_handler());
-        scope
-            .sink
-            .push_subscribe_workers(source, handler, meta, policies, workers);
+        scope.mount_subscriber(source, def, ());
     }
 }
 
@@ -848,7 +848,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         <Source::Subscriber as Subscriber>::Message: 'static,
         C: ScopeCodec,
         Def: SubscriberDef,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
         Def::Handler: 'static,
         Def::Context: BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + 'static,
         State: Send + Sync + 'static,

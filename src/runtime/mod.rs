@@ -19,7 +19,6 @@ mod publish;
 mod publish_source;
 mod publisher_registry;
 mod publishing;
-mod raw;
 mod router;
 mod subscriber_def;
 mod typed;
@@ -59,7 +58,6 @@ pub use publish::{
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
-pub use raw::RawSubscriberDef;
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

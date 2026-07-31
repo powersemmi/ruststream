@@ -1,6 +1,7 @@
 //! Expansion of the `#[subscriber]` forms: the handler signature is dissected into
-//! [`HandlerParts`], then one of the definition impls (plain, raw, publishing, raw publishing,
-//! out injection, batch, batch publishing) is generated around the original function body.
+//! [`HandlerParts`], then one of the definition impls (plain, publishing, injected, batch,
+//! batch publishing) is generated around the original function body; the input axis (typed vs
+//! raw bytes) is a flag on the plain, injected, and publishing expansions, not a form.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -22,7 +23,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
         match &args.publish_raw {
             Some(reply_topic) => expand_publishing(&parts, func, reply_topic, true, true)?,
             None if parts.out.is_some() || parts.seek.is_some() => expand_injected(&parts, true),
-            None => expand_raw(&parts),
+            None => expand_subscribing(&parts, true),
         }
     } else if let Some(reply_topic) = &args.publish_raw {
         expand_publishing(&parts, func, reply_topic, true, false)?
@@ -36,7 +37,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
             (false, None) if parts.out.is_some() || parts.seek.is_some() => {
                 expand_injected(&parts, false)
             }
-            (false, None) => expand_subscribing(&parts),
+            (false, None) => expand_subscribing(&parts, false),
         }
     };
     Ok(body.into())
@@ -995,15 +996,11 @@ fn expand_publishing(
             ::ruststream::runtime::PublishingCall<#state_in_ctx> for #name
             #where_clause
         {
-            // The parameter type repeats the trait's `View<'_>` projection verbatim so the
-            // lifetime binding structure matches the declaration; it normalizes to the
-            // concrete view bound to the user's pattern.
             async fn call(
                 &self,
-                __rs_input: <Self::Input as ::ruststream::runtime::InputKind>::View<'_>,
+                #pat: #input_param,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
-                let #pat: #input_param = __rs_input;
                 #prelude
                 #call_body
             }
@@ -1180,16 +1177,12 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
             ::ruststream::runtime::InjectCall<#state_in_ctx> for #name
             #where_clause
         {
-            // The parameter type repeats the trait's `View<'_>` projection verbatim so the
-            // lifetime binding structure matches the declaration; it normalizes to the
-            // concrete view (`&T`, or `&[u8]` for a raw input) bound to the user's pattern.
             async fn call(
                 &self,
-                __rs_input: <Self::Input as ::ruststream::runtime::InputKind>::View<'_>,
+                #pat: #input_param,
                 __rs_inj: &Self::Injections,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::ruststream::runtime::Settle {
-                let #pat: #input_param = __rs_input;
                 #prelude
                 let (#(#injection_pats,)*) = __rs_inj;
                 ::ruststream::runtime::IntoSettle::into_settle(
@@ -1200,107 +1193,7 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
     }
 }
 
-fn expand_raw(parts: &HandlerParts<'_>) -> TokenStream2 {
-    let HandlerParts {
-        vis,
-        name,
-        block,
-        pat,
-        input_ty: _,
-        description,
-        source_ty,
-        source_expr,
-        input_schema: _,
-        message_meta: _,
-        ctx_param,
-        ctx_ty,
-        state_ty,
-        extractors,
-        out: _,
-        seek: _,
-        workers_method,
-        failure_method,
-    } = parts;
-
-    // As for `expand_subscribing`, a handler naming a state type is bound to it; one that names
-    // none is generic over the state. The message type is generic too: the handler runs at the
-    // raw level (`Handler<M>` for any broker message), reading the payload straight off the
-    // delivery - no codec, no decode step.
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (
-            quote!(<__RsM: ::ruststream::IncomingMessage>),
-            quote!(#state_ty),
-        ),
-        None => (
-            quote! {
-                <
-                    __RsM: ::ruststream::IncomingMessage,
-                    __RsState: ::core::marker::Send + ::core::marker::Sync,
-                >
-            },
-            quote!(__RsState),
-        ),
-    };
-    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
-    let prelude = extractor_prelude(
-        extractors,
-        ctx_param,
-        ctx_ty,
-        &state_in_ctx,
-        &quote!(
-            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
-                ::ruststream::runtime::HandlerResult,
-            >::into(__rs_err),)
-        ),
-    );
-
-    quote! {
-        #[derive(Clone, Copy)]
-        #[allow(non_camel_case_types)]
-        #vis struct #name;
-
-        impl #impl_generics
-            ::ruststream::runtime::Handler<__RsM, #ctx_ty, #state_in_ctx> for #name
-            #where_clause
-        {
-            async fn handle(
-                &self,
-                __rs_msg: &__RsM,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> ::ruststream::runtime::Settle {
-                let #pat: &[u8] = ::ruststream::IncomingMessage::payload(__rs_msg);
-                #prelude
-                ::ruststream::runtime::IntoSettle::into_settle(
-                    (async move #block).await,
-                )
-            }
-        }
-
-        impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = ::ruststream::runtime::forms::RawSubscribing;
-        }
-
-        impl ::ruststream::runtime::RawSubscriberDef for #name {
-            type Context = #ctx_ty;
-            type Handler = Self;
-            type Source = #source_ty;
-
-            fn source(&self) -> Self::Source { #source_expr }
-
-            #workers_method
-
-            #failure_method
-
-            fn description(&self) -> ::core::option::Option<&str> {
-                #description
-            }
-
-            fn into_handler(self) -> Self { self }
-        }
-    }
-}
-
-fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
+fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
     let HandlerParts {
         vis,
         name,
@@ -1322,9 +1215,21 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         failure_method,
     } = parts;
 
+    let (input_kind, input_param, input_schema, message_meta) =
+        input_pieces(input_ty, input_schema, message_meta, raw);
+    // The handler runs over the input kind's borrowed target: `Handler<T>` for a typed
+    // parameter, `Handler<[u8]>` for a raw one - the mount adapter lends it the payload itself.
+    let input_target = if raw { quote!([u8]) } else { quote!(#input_ty) };
+    let form = if raw {
+        quote!(::ruststream::runtime::forms::RawSubscribing)
+    } else {
+        quote!(::ruststream::runtime::forms::Subscribing)
+    };
+
     // A handler that names a state type is bound to it; one that does not is generic over the
     // state, so it mounts on an app with any state type. Either shape satisfies the mount-site
-    // `Handler<Input, Context, St>` bound, the former only for its `St`, the latter for every `St`.
+    // `Handler<Target, Context, St>` bound, the former only for its `St`, the latter for every
+    // `St`.
     let (impl_generics, state_in_ctx) = match &state_ty {
         Some(state_ty) => (quote!(), quote!(#state_ty)),
         None => (
@@ -1344,37 +1249,34 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
             >::into(__rs_err),)
         ),
     );
-    let handler_impl = quote! {
-        impl #impl_generics
-            ::ruststream::runtime::Handler<#input_ty, #ctx_ty, #state_in_ctx> for #name
-            #where_clause
-        {
-            async fn handle(
-                &self,
-                #pat: &#input_ty,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> ::ruststream::runtime::Settle {
-                #prelude
-                ::ruststream::runtime::IntoSettle::into_settle(
-                    (async move #block).await,
-                )
-            }
-        }
-    };
 
     quote! {
             #[derive(Clone, Copy)]
             #[allow(non_camel_case_types)]
             #vis struct #name;
 
-            #handler_impl
+            impl #impl_generics
+                ::ruststream::runtime::Handler<#input_target, #ctx_ty, #state_in_ctx> for #name
+                #where_clause
+            {
+                async fn handle(
+                    &self,
+                    #pat: #input_param,
+                    #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
+                ) -> ::ruststream::runtime::Settle {
+                    #prelude
+                    ::ruststream::runtime::IntoSettle::into_settle(
+                        (async move #block).await,
+                    )
+                }
+            }
 
             impl ::ruststream::runtime::IncludeDef for #name {
-                type Form = ::ruststream::runtime::forms::Subscribing;
+                type Form = #form;
             }
 
             impl ::ruststream::runtime::SubscriberDef for #name {
-                type Input = #input_ty;
+                type Input = #input_kind;
                 type Context = #ctx_ty;
                 type Handler = Self;
                 type Source = #source_ty;
