@@ -166,6 +166,8 @@ where
                     error = %err,
                     "codec decode failed",
                 );
+                #[cfg(feature = "testing")]
+                ctx.mark_decode_failed();
                 return match self.decode {
                     FailurePolicy::FailFast => {
                         ctx.fail_fast(&format!("decode failed: {err}"));

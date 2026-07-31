@@ -2,6 +2,8 @@
 
 use std::{error::Error as StdError, future::Future};
 
+use thiserror::Error;
+
 use crate::{ConnectedBroker, OutgoingMessage};
 
 /// A producer that sends messages into the broker.
@@ -104,8 +106,9 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 /// Pairing runs once per publisher at startup (a cold path), and a cross-broker token pairs
 /// against a broker other than the including scope's, so the error is erased rather than typed
 /// to one broker.
-#[derive(Debug)]
-pub struct PairError(Box<dyn StdError + Send + Sync>);
+#[derive(Debug, Error)]
+#[error("pairing a publisher failed: {0}")]
+pub struct PairError(#[source] Box<dyn StdError + Send + Sync>);
 
 impl PairError {
     /// Wraps a broker's pairing failure.
@@ -118,18 +121,6 @@ impl PairError {
     #[must_use]
     pub fn from_boxed(source: Box<dyn StdError + Send + Sync>) -> Self {
         Self(source)
-    }
-}
-
-impl std::fmt::Display for PairError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "pairing a publisher failed: {}", self.0)
-    }
-}
-
-impl StdError for PairError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        Some(self.0.as_ref())
     }
 }
 

@@ -43,8 +43,14 @@ pub enum TestError {
         processed: usize,
     },
     /// A broker failed its consuming `connect` while starting the harness.
-    #[error("broker connect failed: {0}")]
-    Connect(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("broker {broker} failed to connect: {source}")]
+    Connect {
+        /// The broker's label, or its registration index for unlabeled brokers.
+        broker: String,
+        /// The broker's own connect error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     /// A publish was attempted after a fail-fast failure tore the service down.
     #[error("publish after the service shut down")]
     ShutDown,
@@ -296,8 +302,16 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
         parts.test_hooks.install(coordinator.clone());
         let mut entries = Vec::new();
-        for RegisteredBroker { lifecycle, label } in std::mem::take(&mut parts.brokers) {
-            let lifecycle = lifecycle.connect().await.map_err(TestError::Connect)?;
+        for (index, RegisteredBroker { lifecycle, label }) in
+            std::mem::take(&mut parts.brokers).into_iter().enumerate()
+        {
+            // The unconnected erased handle has no type name to report, so the label (or the
+            // registration index) is the identity available before connect succeeds.
+            let broker = label.clone().unwrap_or_else(|| format!("#{index}"));
+            let lifecycle = lifecycle
+                .connect()
+                .await
+                .map_err(|source| TestError::Connect { broker, source })?;
             let registration = recover_testable(lifecycle.as_ref(), &coordinator);
             entries.push(BrokerEntry {
                 label,

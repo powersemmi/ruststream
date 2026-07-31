@@ -175,7 +175,8 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             let handle = match starter(state.clone(), error_shutdown.clone(), token.clone()).await {
                 Ok(handle) => handle,
                 Err(err) => {
-                    unwind_started(&token, handles, shutdown_timeout, connected).await;
+                    unwind_started(&token, handles, shutdown_timeout, connected, continuations)
+                        .await;
                     return Err(RustStreamError::Subscribe(err));
                 }
             };
@@ -193,7 +194,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         }
         for hook in after_startup {
             if let Err(err) = hook(Arc::clone(&state)).await {
-                unwind_started(&token, handles, shutdown_timeout, connected).await;
+                unwind_started(&token, handles, shutdown_timeout, connected, continuations).await;
                 return Err(RustStreamError::Startup(err));
             }
         }
@@ -203,7 +204,9 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         let health = health::channel();
         // The watcher flips the probe on a fail-fast teardown even when nobody ever calls
         // `shutdown`: the process may stay alive serving healthz from a sibling task, which is
-        // exactly when the probe matters.
+        // exactly when the probe matters. Every transition uses `send_replace`, not `send`:
+        // `send` drops the value when no probe is subscribed yet, and a probe taken after the
+        // transition must still observe the terminal state.
         {
             let health = health.clone();
             let error_shutdown = error_shutdown.clone();
@@ -211,7 +214,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             tokio::spawn(async move {
                 token.cancelled().await;
                 if let Some(reason) = error_shutdown.peek_failure() {
-                    let _ = health.send(HealthState::Failed { reason });
+                    health.send_replace(HealthState::Failed { reason });
                 }
             });
         }
@@ -389,7 +392,7 @@ impl RunningApp {
             health,
         } = self;
 
-        let _ = health.send(HealthState::ShuttingDown);
+        health.send_replace(HealthState::ShuttingDown);
         let outcome = teardown(
             token,
             handles,
@@ -405,16 +408,16 @@ impl RunningApp {
                 // A fail-fast failure tore the service down: surface it so an orchestrator
                 // restarts the service and the operator sees a non-zero exit, not a silent stop.
                 if let Some(reason) = error_shutdown.taken_failure() {
-                    let _ = health.send(HealthState::Failed {
+                    health.send_replace(HealthState::Failed {
                         reason: reason.clone(),
                     });
                     return Err(RustStreamError::Dispatch(reason));
                 }
-                let _ = health.send(HealthState::Stopped);
+                health.send_replace(HealthState::Stopped);
                 Ok(())
             }
             Err(err) => {
-                let _ = health.send(HealthState::Failed {
+                health.send_replace(HealthState::Failed {
                     reason: err.to_string(),
                 });
                 Err(err)
@@ -424,13 +427,16 @@ impl RunningApp {
 }
 
 /// Best-effort unwind of a startup that failed after dispatch tasks were spawned: stops the
-/// tasks, then shuts the connected brokers down. Failures are logged, not returned, so the
-/// original startup error stays the caller's answer.
+/// tasks, drains their post-settle continuations, then shuts the connected brokers down - the
+/// same ordering the graceful teardown keeps, so continuations never run against a closed
+/// broker. Failures are logged, not returned, so the original startup error stays the caller's
+/// answer.
 async fn unwind_started(
     token: &CancellationToken,
     handles: Vec<JoinHandle<()>>,
     shutdown_timeout: Option<Duration>,
     brokers: Vec<ConnectedEntry>,
+    continuations: TaskTracker,
 ) {
     token.cancel();
     if let Err(err) = drain_handles(handles, shutdown_timeout).await {
@@ -440,6 +446,7 @@ async fn unwind_started(
             "draining dispatch tasks failed during the startup unwind",
         );
     }
+    drain_continuations(continuations, shutdown_timeout).await;
     unwind_connected(brokers).await;
 }
 

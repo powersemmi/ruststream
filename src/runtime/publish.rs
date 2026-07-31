@@ -996,9 +996,16 @@ where
     /// Returns the publisher's error when the broker rejects the commit. Per the
     /// [`TransactionalPublisher`] contract a failed commit closes the transaction, so the spent
     /// scope leaves the handle free for a fresh [`begin`](Transactional::begin).
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe: dropping the future mid-commit leaves the broker transaction in an
+    /// implementation-defined state. The scope treats itself as unsettled then - its drop
+    /// warning fires - which is why `open` clears only after the broker call completes.
     pub async fn commit(mut self) -> Result<(), P::Error> {
+        let result = self.publisher.commit().await;
         self.open = false;
-        self.publisher.commit().await
+        result
     }
 
     /// Aborts the transaction: nothing published through the scope becomes visible.
@@ -1006,9 +1013,15 @@ where
     /// # Errors
     ///
     /// Returns the publisher's error when the broker fails to abort.
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe, exactly like [`commit`](Self::commit): a future dropped mid-abort
+    /// leaves the scope unsettled and its drop warning fires.
     pub async fn abort(mut self) -> Result<(), P::Error> {
+        let result = self.publisher.abort().await;
         self.open = false;
-        self.publisher.abort().await
+        result
     }
 }
 

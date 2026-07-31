@@ -3,7 +3,7 @@
 //!
 //! The [`opentelemetry`](crate::opentelemetry) module is the propagation half: it carries the
 //! W3C trace context and emits plain `tracing` spans. This module is the export half:
-//! [`Otel::init`] installs the OpenTelemetry tracer and meter providers as the process **globals**
+//! [`OtelBuilder::init`] installs the OpenTelemetry tracer and meter providers as the process **globals**
 //! and bridges `tracing` spans into them, so the spans the propagation module already opens are
 //! exported without further wiring - and user-defined business metrics need no plumbing at all:
 //! `opentelemetry::global::meter("my-svc").u64_counter("orders_accepted").build()` rides the same
@@ -314,8 +314,11 @@ impl Otel {
     ///
     /// Returns the SDK error when a provider fails to flush or shut down.
     pub fn shutdown(self) -> Result<(), OTelSdkError> {
-        self.tracer_provider.shutdown()?;
-        self.meter_provider.shutdown()
+        // Both providers must get their flush even when the other fails, or a span-flush error
+        // silently discards every buffered metric point; the first error wins.
+        let traces = self.tracer_provider.shutdown();
+        let metrics = self.meter_provider.shutdown();
+        traces.and(metrics)
     }
 }
 
@@ -490,11 +493,18 @@ where
             }
             instruments.in_flight.add(1, &attrs);
             let started = Instant::now();
-            let settle = self.inner.handle(msg, ctx).await;
+            let settle = {
+                // The decrement rides Drop so an unwinding handler (caught one level up by the
+                // dispatch failure policy) or a cancelled dispatch cannot leak the increment.
+                let _in_flight = InFlightGuard {
+                    instruments,
+                    attrs: &attrs,
+                };
+                self.inner.handle(msg, ctx).await
+            };
             instruments
                 .process_duration
                 .record(started.elapsed().as_secs_f64(), &attrs);
-            instruments.in_flight.add(-1, &attrs);
             instruments.processed.add(
                 1,
                 &instruments.attrs(
@@ -504,6 +514,18 @@ where
             );
             settle
         }
+    }
+}
+
+/// Balances the `ruststream.messages.in_flight` up-down counter via `Drop`.
+struct InFlightGuard<'a> {
+    instruments: &'a Instruments,
+    attrs: &'a [KeyValue],
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.instruments.in_flight.add(-1, self.attrs);
     }
 }
 
@@ -550,9 +572,11 @@ impl PublishLayer for OtelPublishLayer {
                 .record(started.elapsed().as_secs_f64(), &attrs);
             let sent_attrs = match &result {
                 Ok(()) => attrs,
-                Err(err) => {
-                    instruments.attrs(&name, Some(KeyValue::new("error.type", err.to_string())))
-                }
+                // The error's own message is unbounded, remote-derived text: putting it in an
+                // attribute mints a fresh time series per distinct failure until the SDK's
+                // cardinality cap collapses the instrument. Semconv's `_OTHER` marks the failure
+                // dimension; the message itself belongs to logs and the publish span.
+                Err(_) => instruments.attrs(&name, Some(KeyValue::new("error.type", "_OTHER"))),
             };
             instruments.sent.add(1, &sent_attrs);
             result
