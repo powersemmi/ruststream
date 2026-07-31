@@ -14,14 +14,17 @@
 //!
 //! - [`Otel::consume_layer`] - per delivery: `messaging.client.consumed.messages`,
 //!   `messaging.process.duration`, `ruststream.messages.processed` (by settlement outcome),
-//!   `ruststream.messages.in_flight`, and `ruststream.message.queue_time` when the delivery
-//!   carries a publish timestamp.
+//!   `ruststream.messages.in_flight`, `ruststream.message.queue_time` when the delivery
+//!   carries a publish timestamp, `ruststream.messages.decode_failures` when the decode
+//!   adapter rejected the payload, and `ruststream.messages.panics` when the handler unwound.
 //! - [`Otel::publish_layer`] - per publish: `messaging.client.sent.messages`,
 //!   `messaging.client.operation.duration`, `ruststream.message.payload.size`, and the
 //!   [`PUBLISH_TIME_HEADER`] stamp the consume side turns into queue time.
 //!
-//! Metrics that need dispatch internals (decode failures, handler panics, batch sizes) are not
-//! covered by the middleware pair yet; they are tracked in the integration issue.
+//! Batch handlers bypass the per-message layer (the documented middleware exception), so the
+//! batch dispatch itself records `ruststream.batch.size` (a histogram of decoded batch sizes,
+//! per destination) through the global meter; it goes live once [`OtelBuilder::init`] installs
+//! the global providers.
 //!
 //! # Examples
 //!
@@ -51,6 +54,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use opentelemetry::metrics::{Counter, Histogram, Meter, MeterProvider as _, UpDownCounter};
@@ -334,6 +338,8 @@ struct Instruments {
     processed: Counter<u64>,
     in_flight: UpDownCounter<i64>,
     queue_time: Histogram<f64>,
+    decode_failures: Counter<u64>,
+    panics: Counter<u64>,
     sent: Counter<u64>,
     operation_duration: Histogram<f64>,
     payload_size: Histogram<u64>,
@@ -371,6 +377,16 @@ impl Instruments {
                     "Time from publish to handler start, where the publish stamped its \
                      timestamp header.",
                 )
+                .build(),
+            decode_failures: meter
+                .u64_counter("ruststream.messages.decode_failures")
+                .with_unit("{message}")
+                .with_description("Deliveries whose payload failed to decode, per handler.")
+                .build(),
+            panics: meter
+                .u64_counter("ruststream.messages.panics")
+                .with_unit("{message}")
+                .with_description("Handler invocations that panicked, per handler.")
                 .build(),
             sent: meter
                 .u64_counter("messaging.client.sent.messages")
@@ -506,6 +522,11 @@ where
                 };
                 self.inner.handle(msg, ctx).await
             };
+            // The decode adapter (wrapped by this layer) marks the context when the payload did
+            // not decode, so one bool read per delivery is the whole cost of this counter.
+            if ctx.decode_failed() {
+                instruments.decode_failures.add(1, &attrs);
+            }
             instruments
                 .process_duration
                 .record(started.elapsed().as_secs_f64(), &attrs);
@@ -530,6 +551,13 @@ struct InFlightGuard<'a> {
 impl Drop for InFlightGuard<'_> {
     fn drop(&mut self) {
         self.instruments.in_flight.add(-1, self.attrs);
+        // A panicking handler unwinds through this Drop (the handler future's live locals are
+        // dropped as part of the unwind) before the dispatch loop's catch_unwind resolves it, so
+        // this is exactly one panic per unwound delivery - and free on the success path, where
+        // the guard drops with no panic in flight.
+        if thread::panicking() {
+            self.instruments.panics.add(1, self.attrs);
+        }
     }
 }
 

@@ -83,10 +83,19 @@ The two middleware carry the dispatch metrics, labeled per handler
 | `ruststream.messages.processed` | counter, `outcome` attribute | settlements: `ack`, `nack_requeue`, `nack_drop`, `retry_after` |
 | `ruststream.messages.in_flight` | up-down counter | deliveries inside handlers (pool saturation vs `workers(n)`) |
 | `ruststream.message.queue_time` | histogram | publish-to-handler-start lag, from the stamped publish-time header |
+| `ruststream.messages.decode_failures` | counter | deliveries whose payload the codec rejected |
+| `ruststream.messages.panics` | counter | handler invocations that panicked |
 | `messaging.client.sent.messages` | counter, `error.type` on failure | publishes |
 | `messaging.client.operation.duration` | histogram | the publish operation |
 | `ruststream.message.payload.size` | histogram (`By`) | published payload sizes |
+| `ruststream.batch.size` | histogram | decoded batch sizes handed to batch handlers |
 | `ruststream.app.state` | observable gauge | the lifecycle state, from [`RunningApp::health`](http.md#a-healthz-endpoint) via `otel.observe_health(running.health())` |
+
+Batch handlers bypass the per-message consume layer (the documented
+[middleware](middleware.md) exception), so `ruststream.batch.size` is recorded by the batch
+dispatch itself through the global meter: it goes live once `init()` installs the global
+providers, and stays silent under a bare `attach()` unless you install your provider globally
+yourself.
 
 Because `init()` installs the global providers, business metrics need no exporter plumbing:
 build the instruments once at startup into one storage object, share it through the typed state
@@ -105,6 +114,4 @@ Call `otel.shutdown()` at the end of `main`, after the app's graceful shutdown, 
 spans and points. To compose the span bridge into your own subscriber stack (for example with the
 `logging` feature's fmt layer), build with `.tracing_bridge(false)` and install the bridge
 yourself; `.messaging_system("kafka")` stamps the semconv system attribute the core cannot derive
-broker-agnostically. Decode failures, handler panics, and batch sizes are not covered by the
-middleware pair yet - they need dispatch-internal hooks and stay tracked in the integration
-issue.
+broker-agnostically.

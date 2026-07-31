@@ -5,9 +5,10 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use opentelemetry::global;
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, HistogramDataPoint, MetricData, ResourceMetrics, ScopeMetrics, SumDataPoint,
@@ -20,7 +21,7 @@ use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
 use ruststream::testing::{TestApp, expect_published};
 use ruststream::{Broker, ConnectedBroker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Order {
@@ -50,6 +51,11 @@ async fn implode(order: &Order) -> HandlerResult {
 async fn confirm(order: &Order) -> Order {
     Order { id: order.id }
 }
+
+/// Serializes the tests that touch the process-global OpenTelemetry providers (`init()` and the
+/// batch test's `set_meter_provider`): interleaving them could rebind the global mid-test, and
+/// the batch-size instrument binds to whatever provider is global at its first use.
+static GLOBAL_PROVIDERS: Mutex<()> = Mutex::const_new(());
 
 /// An `Otel` wired to an in-memory exporter; returns the exporter to read points back.
 fn otel_with_memory_exporter() -> (Otel, SdkMeterProvider, InMemoryMetricExporter) {
@@ -125,6 +131,35 @@ fn sum_attr_values(exporter: &InMemoryMetricExporter, name: &str, key: &str) -> 
         .collect()
 }
 
+/// Every point of the u64 histogram `name`: its count, its value total, and the
+/// `messaging.destination.name` attribute when the point carries one.
+fn u64_histogram_points(
+    exporter: &InMemoryMetricExporter,
+    name: &str,
+) -> Vec<(u64, u64, Option<String>)> {
+    exporter
+        .get_finished_metrics()
+        .expect("exporter drained")
+        .iter()
+        .flat_map(ResourceMetrics::scope_metrics)
+        .flat_map(ScopeMetrics::metrics)
+        .filter(|metric| metric.name() == name)
+        .flat_map(|metric| match metric.data() {
+            AggregatedMetrics::U64(MetricData::Histogram(histogram)) => histogram
+                .data_points()
+                .map(|point| {
+                    let destination = point
+                        .attributes()
+                        .find(|kv| kv.key.as_str() == "messaging.destination.name")
+                        .map(|kv| kv.value.to_string());
+                    (point.count(), point.sum(), destination)
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
 /// How many points were recorded under the histogram `name`.
 fn histogram_count(exporter: &InMemoryMetricExporter, name: &str) -> u64 {
     exporter
@@ -174,6 +209,38 @@ async fn consume_layer_records_per_delivery_metrics() {
     assert_eq!(u64_sum(&exporter, "messaging.client.consumed.messages"), 2);
     assert_eq!(u64_sum(&exporter, "ruststream.messages.processed"), 2);
     assert_eq!(histogram_count(&exporter, "messaging.process.duration"), 2);
+    assert_eq!(
+        u64_sum(&exporter, "ruststream.messages.decode_failures"),
+        0,
+        "cleanly decoded deliveries must not count as decode failures",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_undecodable_payload_bumps_the_decode_failure_counter() {
+    let (otel, provider, exporter) = otel_with_memory_exporter();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .layer(otel.consume_layer())
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(consume);
+        });
+
+    let tb = TestApp::start(app).await.expect("harness start failed");
+    tb.broker::<MemoryBroker>()
+        .publish_raw("otel.orders", b"not json")
+        .await
+        .expect("publish failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("otel.orders")
+        .assert_called_once()
+        .assert_last_failed_to_decode();
+
+    provider.force_flush().expect("flush failed");
+    assert_eq!(
+        u64_sum(&exporter, "ruststream.messages.decode_failures"),
+        1,
+        "the rejected payload must be counted as a decode failure",
+    );
 }
 
 /// One point recorded under the u64 gauge `name` with `value` for the given state attribute.
@@ -189,6 +256,7 @@ fn gauge_reports(exporter: &InMemoryMetricExporter, name: &str) -> bool {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn init_installs_globals_and_shutdown_returns() {
+    let _globals = GLOBAL_PROVIDERS.lock().await;
     // Building the exporters performs no I/O, so a dead endpoint only shows up when flushing;
     // the test asserts init and shutdown return rather than hang. The bridge-less form runs
     // first inside the same test, keeping the single try_init deterministic.
@@ -237,6 +305,11 @@ async fn a_panicking_handler_does_not_leak_the_in_flight_gauge() {
         i64_sum(&exporter, "ruststream.messages.in_flight"),
         0,
         "a panic caught by the failure policy must still balance the in-flight gauge",
+    );
+    assert_eq!(
+        u64_sum(&exporter, "ruststream.messages.panics"),
+        1,
+        "the unwound handler must bump the panic counter exactly once",
     );
 }
 
@@ -387,5 +460,68 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     assert_eq!(
         histogram_count(&exporter, "messaging.client.operation.duration"),
         1
+    );
+}
+
+/// Elements the batch handler has consumed so far, to wait on without sleeping.
+static BATCHED_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
+
+#[subscriber(batch("otel.batches"))]
+async fn absorb(orders: &[Order]) -> HandlerResult {
+    BATCHED_ELEMENTS.fetch_add(orders.len(), Ordering::SeqCst);
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_dispatch_records_the_batch_size_histogram() {
+    let _globals = GLOBAL_PROVIDERS.lock().await;
+    let (_otel, provider, exporter) = otel_with_memory_exporter();
+    // Batch handlers bypass the per-message layer, so the batch-size histogram rides the global
+    // meter: the in-memory provider must be installed as the process global before the first
+    // batch is dispatched, which is when the lazily-built instrument binds its provider.
+    global::set_meter_provider(provider.clone());
+
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(absorb);
+    });
+
+    let running = app.start().await.expect("startup failed");
+    for id in 0..3u32 {
+        publisher
+            .publish(OutgoingMessage::new(
+                "otel.batches",
+                serde_json::to_vec(&Order { id }).unwrap().as_slice(),
+            ))
+            .await
+            .expect("publish failed");
+    }
+    common::wait_for(
+        || BATCHED_ELEMENTS.load(Ordering::SeqCst) >= 3,
+        Duration::from_secs(5),
+    )
+    .await;
+    running.shutdown().await.expect("graceful shutdown failed");
+
+    provider.force_flush().expect("flush failed");
+    let points = u64_histogram_points(&exporter, "ruststream.batch.size");
+    let (batches, elements) = points
+        .iter()
+        .fold((0, 0), |(count, total), (c, t, _)| (count + c, total + t));
+    assert!(
+        batches >= 1,
+        "at least one batch must be recorded: {points:?}",
+    );
+    // The three publishes may buffer into one batch or split, but the sizes always add up.
+    assert_eq!(
+        elements, 3,
+        "the recorded sizes must add up to every decoded element: {points:?}",
+    );
+    assert!(
+        points
+            .iter()
+            .all(|(_, _, dest)| dest.as_deref() == Some("otel.batches")),
+        "every point must carry the destination attribute: {points:?}",
     );
 }

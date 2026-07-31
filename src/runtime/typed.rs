@@ -83,7 +83,7 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                #[cfg(feature = "testing")]
+                #[cfg(any(feature = "testing", feature = "otel"))]
                 ctx.mark_decode_failed();
                 match self.decode {
                     FailurePolicy::FailFast => {
