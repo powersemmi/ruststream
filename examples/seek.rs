@@ -1,6 +1,7 @@
-//! Repositioning a live subscription with the `Seekable` capability: a `Seek` handler
-//! parameter injects the subscription's own seeker, so the handler can skip forward past a
-//! poison region without dropping the subscription.
+//! Repositioning live subscriptions with the `Seekable` capability: a `Seek` handler
+//! parameter injects the subscription's own seeker (skipping forward past a poison region),
+//! and a `StartAt` source opens a subscription at a chosen log position (replaying history
+//! into a fresh subscription, or starting from the latest).
 //!
 //! ```text
 //! cargo run --example seek --features macros,memory,json
@@ -11,13 +12,21 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Seek};
-use ruststream::{OutgoingMessage, Publisher, Seeker, subscriber};
+use ruststream::{OutgoingMessage, Publisher, Seeker, StartAt, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Job {
     id: u64,
+}
+
+/// The audit trail: its subscription is opened at the start of the log, so entries published
+/// before the service started are replayed into it.
+#[subscriber("audit")]
+async fn record(entry: &Job) -> HandlerResult {
+    println!("audit: entry {}", entry.id);
+    HandlerResult::Ack
 }
 
 // --8<-- [start:handler]
@@ -42,27 +51,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
 
+    // Published before the app even exists; only the chosen start position below makes these
+    // visible to the audit subscription.
+    for id in 1..=2u64 {
+        let payload = serde_json::to_vec(&Job { id })?;
+        ingress
+            .publish(OutgoingMessage::new("audit", payload.as_slice()))
+            .await?;
+    }
+
     // --8<-- [start:mount]
-    // Nothing is attached at the include site: the runtime mints the seeker off the
-    // subscription itself right after it opens.
+    // The seek handler mounts plainly (the runtime mints its seeker off the subscription
+    // right after it opens); the audit subscription opens at the start of the log.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
         b.include(work);
+        // --8<-- [start:start_at]
+        b.include_on(
+            StartAt::new(MemorySource::new("audit"), MemoryPosition::start()),
+            record,
+        );
+        // --8<-- [end:start_at]
     });
     // --8<-- [end:mount]
     let running = app.start().await?;
 
-    // The stream hits a poison marker at the second position; the handler's own seek jumps
-    // it to the fourth, so id 3 is never processed.
+    // The jobs stream hits a poison marker at the second position; the handler's own seek
+    // jumps it to the fourth, so id 3 is never processed.
     for id in [1, 999, 3, 4] {
         let payload = serde_json::to_vec(&Job { id })?;
         ingress
             .publish(OutgoingMessage::new("jobs", payload.as_slice()))
             .await?;
     }
-    // A demo-only pause so the dispatch loop drains; a real service reacts to its own signals.
+    // A demo-only pause so the dispatch loops drain; a real service reacts to its own signals.
     sleep(Duration::from_millis(100)).await;
 
     running.shutdown().await?;
-    println!("ok: skipped the poisoned region");
+    println!("ok: replayed the audit history and skipped the poisoned region");
     Ok(())
 }

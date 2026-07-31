@@ -269,6 +269,21 @@ a pinned contract - seeking to it redelivers exactly that message, then the rest
 order - while a position built with the broker's own constructors (earliest, a sequence number,
 a timestamp) keeps the semantics that broker documents.
 
+### Starting position
+
+A subscription can also open at a chosen position instead of the broker's default: `StartAt`
+wraps the subscription source and seeks before the first delivery, so "start from the latest
+on deploy" or "replay the whole log into a fresh subscription" is a declaration at the mount
+site, not an operational action afterwards:
+
+```rust
+--8<-- "examples/seek.rs:start_at"
+```
+
+`StartAt` forces the position on every startup. A conditional default - apply only when the
+broker holds no stored cursor for the group (Kafka's offset reset, a JetStream deliver
+policy) - stays on the broker's own subscription descriptor, which expresses it natively.
+
 What one seek covers differs per broker - repositioning a consumer instance (Kafka) moves that
 instance only, repositioning a shared group cursor (Redis streams) moves the whole group - and a
 reposition invalidates any ack bookkeeping the broker keeps for the subscription; the broker

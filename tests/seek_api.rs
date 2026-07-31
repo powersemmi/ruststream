@@ -10,7 +10,7 @@
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Seek};
 use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, Publisher, Seeker, WithSeeker, subscriber};
+use ruststream::{OutgoingMessage, Publisher, Seeker, StartAt, WithSeeker, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -118,6 +118,54 @@ async fn a_seek_parameter_repositions_from_inside_the_handler() {
         ids,
         [0, 2],
         "the in-handler seek must skip the queued message before the target",
+    );
+
+    tb.shutdown().await.expect("graceful shutdown");
+}
+
+#[subscriber("seek.history")]
+async fn replayer(_event: &Event) -> HandlerResult {
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_start_position_replays_history_into_a_fresh_subscription() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+
+    // Published before the app exists: only the chosen start position makes them visible.
+    for id in [1, 2] {
+        ingress
+            .publish(OutgoingMessage::new("seek.history", payload(id).as_slice()))
+            .await
+            .expect("publish");
+    }
+
+    let app = RustStream::new(AppInfo::new("history", "0.1.0")).with_broker(broker, |b| {
+        b.include_on(
+            StartAt::new(MemorySource::new("seek.history"), MemoryPosition::start()),
+            replayer,
+        );
+    });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    // The publish keeps the reaction in flight until the startup replay is applied, so
+    // `settle` waits for the history too.
+    ingress
+        .publish(OutgoingMessage::new("seek.history", payload(3).as_slice()))
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    let received: Vec<Event> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("seek.history")
+        .received();
+    let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
+    assert_eq!(
+        ids,
+        [1, 2, 3],
+        "a start position must replay pre-subscription history in order",
     );
 
     tb.shutdown().await.expect("graceful shutdown");

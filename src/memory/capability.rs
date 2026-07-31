@@ -449,6 +449,12 @@ impl MemoryPosition {
     pub const fn sequence(n: usize) -> Self {
         Self(n)
     }
+
+    /// The end of the log: seeking here skips everything published so far and resumes with
+    /// the next publish (the memory analog of a "latest" position).
+    pub const fn end() -> Self {
+        Self(usize::MAX)
+    }
 }
 
 /// A clonable handle repositioning one [`MemorySubscriber`], minted by
@@ -1014,6 +1020,69 @@ mod tests {
             .unwrap();
         let live = stream.next().await.unwrap().unwrap();
         assert_eq!(live.payload(), b"c");
+        live.ack().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_at_replays_the_log_into_a_fresh_subscription() {
+        use crate::{StartAt, SubscriptionSource};
+
+        let broker = MemoryBroker::new();
+        let connected = broker.connect().await.unwrap();
+        let publisher = connected.publisher();
+        for payload in [b"a", b"b"] {
+            publisher
+                .publish(OutgoingMessage::new("start.replay", payload.as_slice()))
+                .await
+                .unwrap();
+        }
+
+        // The subscription opens after both publishes; the start position replays them.
+        let mut sub = StartAt::new(
+            super::super::MemorySource::new("start.replay"),
+            MemoryPosition::start(),
+        )
+        .subscribe(&connected)
+        .await
+        .unwrap();
+        let mut stream = std::pin::pin!(sub.stream());
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.payload(), b"a");
+        first.ack().await.unwrap();
+        let second = stream.next().await.unwrap().unwrap();
+        assert_eq!(second.payload(), b"b");
+        second.ack().await.unwrap();
+        assert!(futures::poll!(stream.next()).is_pending());
+    }
+
+    #[tokio::test]
+    async fn start_at_end_skips_history_and_sees_the_next_publish() {
+        use crate::{StartAt, SubscriptionSource};
+
+        let broker = MemoryBroker::new();
+        let connected = broker.connect().await.unwrap();
+        let publisher = connected.publisher();
+        publisher
+            .publish(OutgoingMessage::new("start.end", b"old".as_slice()))
+            .await
+            .unwrap();
+
+        let mut sub = StartAt::new(
+            super::super::MemorySource::new("start.end"),
+            MemoryPosition::end(),
+        )
+        .subscribe(&connected)
+        .await
+        .unwrap();
+        let mut stream = std::pin::pin!(sub.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
+
+        publisher
+            .publish(OutgoingMessage::new("start.end", b"new".as_slice()))
+            .await
+            .unwrap();
+        let live = stream.next().await.unwrap().unwrap();
+        assert_eq!(live.payload(), b"new");
         live.ack().await.unwrap();
     }
 

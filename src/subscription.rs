@@ -183,6 +183,96 @@ where
     }
 }
 
+/// A source decorator opening the subscription at a chosen position instead of the broker's
+/// default.
+///
+/// Wraps any [`SubscriptionSource`] whose subscriber is [`Seekable`] and seeks to `position`
+/// before the first delivery, so the handler never sees a message from before the chosen
+/// point. The position is the broker's own type (its latest / earliest constructors, a
+/// sequence number, a captured [`Positioned`](crate::Positioned) value), which makes "start
+/// from the latest on deploy" or "replay the whole log into a fresh subscription" a
+/// declaration at the mount site rather than an operational action afterwards. On a broker
+/// without the [`Seekable`] capability the wrapped source does not implement
+/// [`SubscriptionSource`], so the mount fails to compile.
+///
+/// This is a forced position: it applies on every startup. A conditional default (only when
+/// the broker has no stored cursor for the group) remains the domain of the broker's own
+/// subscription descriptor.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "memory")]
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// use futures::StreamExt;
+/// use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
+/// use ruststream::{Broker, IncomingMessage, OutgoingMessage, Publisher, StartAt};
+/// use ruststream::{Subscriber, SubscriptionSource};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let publisher = connected.publisher();
+/// publisher.publish(OutgoingMessage::new("audit", b"one".as_slice())).await?;
+///
+/// // A fresh subscription opened at the start of the log replays the earlier publish.
+/// let mut subscriber = StartAt::new(MemorySource::new("audit"), MemoryPosition::start())
+///     .subscribe(&connected)
+///     .await?;
+/// let mut stream = std::pin::pin!(subscriber.stream());
+/// let replayed = stream.next().await.expect("replayed")?;
+/// assert_eq!(replayed.payload(), b"one");
+/// replayed.ack().await?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct StartAt<S, P> {
+    inner: S,
+    position: P,
+}
+
+impl<S, P> StartAt<S, P> {
+    /// Wraps `source` so its subscription opens at `position`.
+    #[must_use]
+    pub fn new(source: S, position: P) -> Self {
+        Self {
+            inner: source,
+            position,
+        }
+    }
+}
+
+impl<S, P> std::fmt::Debug for StartAt<S, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartAt").finish_non_exhaustive()
+    }
+}
+
+impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
+where
+    C: ConnectedBroker,
+    // `Send` on the pieces keeps the returned future `Send`, as the trait's RPITIT promises.
+    S: SubscriptionSource<C> + Send,
+    S::Subscriber: Seekable,
+    // A rejected reposition surfaces as this source's subscribe error, so the seeker must
+    // report the connected broker's error type (broker crates use one error type for both).
+    <S::Subscriber as Seekable>::Seeker: Seeker<Position = P, Error = C::Error>,
+    P: Send,
+{
+    type Subscriber = S::Subscriber;
+
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+        let subscriber = self.inner.subscribe(connected).await?;
+        // Sought before the subscriber leaves this call: per the `Seeker::seek` contract the
+        // next delivery reflects the position, so the dispatch loop never observes a message
+        // from before it.
+        subscriber.seeker().seek(self.position).await?;
+        Ok(subscriber)
+    }
+}
+
 /// Resolves the [`Seeker`] of a subscription mounted through [`WithSeeker::attach`].
 ///
 /// Clonable and cheap: hand one copy to an admin endpoint, keep another in the application
