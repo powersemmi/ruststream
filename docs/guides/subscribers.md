@@ -244,8 +244,23 @@ Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory
 publish log) implement the `Seekable` capability: a live subscription can be moved to another
 position - replaying a stream after fixing a handler bug, reprocessing from a known point, or
 skipping forward past a poison region - without dropping the subscription. Brokers without a
-replayable log simply do not implement it, and every mount below fails to compile against them
+replayable log simply do not implement it, and the mount below fails to compile against them
 instead of failing at runtime.
+
+A handler repositions its own subscription through a `Seek` parameter. The runtime mints the
+seeker off the subscription right after it opens, so the handler always holds a live handle;
+nothing is attached at the include site:
+
+```rust
+--8<-- "examples/seek.rs:handler"
+```
+
+```rust
+--8<-- "examples/seek.rs:mount"
+```
+
+A seek from inside the handler settles the current message as usual; deliveries queued before
+the target are dropped, and the stream resumes at the target position.
 
 Positions are broker-owned types (`MemoryPosition` here; a Kafka position carries partition
 offsets, a Redis position an entry id) and come from two places with different guarantees: a
@@ -253,39 +268,6 @@ position captured from a delivered message (the `Positioned` capability on the m
 a pinned contract - seeking to it redelivers exactly that message, then the rest of the log in
 order - while a position built with the broker's own constructors (earliest, a sequence number,
 a timestamp) keeps the semantics that broker documents.
-
-### Repositioning from outside
-
-The runtime owns the subscriber for the life of the service, so a subscription mounted through
-the app is repositioned through a token: `WithSeeker::attach` wraps any subscription source and
-returns a `SeekerToken` alongside it. Mount the wrapped source as usual; once the app starts,
-the token resolves to the live seeker:
-
-```rust
---8<-- "examples/seek.rs:attach"
-```
-
-The token is cheap to clone - keep one in the application state, hand another to an admin
-endpoint, or move it into an `after_startup` hook for reprocessing on deploy. Redeeming it
-before startup reports a pending error instead of a dangling handle:
-
-```rust
---8<-- "examples/seek.rs:redeem"
-```
-
-### Seeking from the handler
-
-A handler that decides to reposition its own subscription - typically skipping forward past a
-region it recognizes as poison - takes a `Seek` parameter, mounted with a plain
-`b.include(..)`. The runtime mints the seeker off the subscription right after it opens, so the
-handler always holds a live handle; nothing is attached at the include site:
-
-```rust
---8<-- "examples/seek.rs:handler"
-```
-
-A seek from inside the handler settles the current message as usual; deliveries queued before
-the target are dropped, and the stream resumes at the target position.
 
 What one seek covers differs per broker - repositioning a consumer instance (Kafka) moves that
 instance only, repositioning a shared group cursor (Redis streams) moves the whole group - and a
