@@ -75,7 +75,9 @@ use ruststream::memory::MemorySource;
 
 ## For testing
 
-`MemoryBroker` implements `TestableBroker` and is registered with `register_testable_broker!`, so the
-[`TestApp`](../guides/testing.md) harness drives it directly: build an app on a `MemoryBroker`, hand
-it to `TestApp::start`, publish, and assert on what the handlers received and published. See
+`ConnectedMemoryBroker` implements `TestableBroker` and is registered with
+`register_testable_broker!` (the harness connects every broker before recovering its in-process
+transport), so the [`TestApp`](../guides/testing.md) harness drives it directly: build an app on a
+`MemoryBroker`, hand it to `TestApp::start`, publish, and assert on what the handlers received and
+published. See
 [Testing](../guides/testing.md#unit-testing-a-service-with-testapp) for the full pattern.

@@ -22,8 +22,11 @@ messaging side tears itself down (a fail-fast failure), which plugs straight int
 `with_graceful_shutdown` so the process does not keep serving HTTP with a dead consumer; and
 `shutdown()` is the explicit graceful teardown - the `on_shutdown` hooks, a drain of in-flight
 handlers bounded by the [shutdown timeout](lifespan.md#shutdown-timeout), broker shutdown - once
-the HTTP server has stopped. A publisher is taken from the broker before the app consumes it; it
-is a plain value, safe to clone into whatever state the HTTP framework carries:
+the HTTP server has stopped. The publisher arrives through a bound token: `.bindable()` wraps the
+broker and `bind(..)` mints the token before the app consumes it, then `running.publisher(token)`
+pairs the token once `start()` has connected the broker - so the sibling task gets a live
+publisher, never a "not connected" state, and the live form is a plain value, safe to clone into
+whatever state the HTTP framework carries:
 
 ```rust
 --8<-- "examples/http_outbox.rs:wiring"

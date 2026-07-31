@@ -27,7 +27,7 @@ RustStream::new(info).with_broker(broker, |b| {
 ```
 
 Handlers that publish a reply register on the router the same way as on the scope, with a
-`TypedPublisher` built from the broker:
+`TypedPublisher` stack over a publish policy - a pure declaration, so the router needs no broker:
 
 ```rust title="routes.rs"
 --8<-- "examples/tutorial/routes.rs:routes"

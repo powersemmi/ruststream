@@ -30,11 +30,12 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// hands a scope bound to that broker; nothing connects or subscribes until [`run`]. Brokers are
 /// held type-erased (only their lifecycle), so a single service can mix broker types.
 ///
-/// The type parameter `Layers` is the global middleware stack applied to every handler registered
-/// directly on a broker scope; it defaults to the no-op [`Identity`] and grows as [`layer`] is
-/// called. Add all layers before [`with_broker`], since a layer only applies to handlers
-/// registered after it (and not to handlers brought in via
-/// [`include_router`](BrokerScope::include_router)).
+/// The type parameter `Layers` is the global middleware stack applied to every per-message
+/// handler registered on a broker scope, whether directly or via
+/// [`include_router`](BrokerScope::include_router) (batch handlers are the exception: a
+/// per-message layer cannot wrap a whole-batch handler); it defaults to the no-op [`Identity`]
+/// and grows as [`layer`] is called. Add all layers before [`with_broker`], since a layer only
+/// applies to handlers registered after it.
 ///
 /// The type parameter `Phase` tracks the builder phase at compile time: [`new`](Self::new)
 /// starts in [`Setup`], where the state ([`on_startup`]), the middleware stack ([`layer`]) and
@@ -427,9 +428,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// `build` receives a [`BrokerScope`] typed to this broker; use it to attach handlers. The
     /// broker is then held for lifecycle management. Call this once per broker.
     ///
-    /// The scope has no default codec, so macro handlers are mounted with an explicit one
-    /// (`b.include(handle, JsonCodec)`). To set a scope default and drop the per-call codec, use
-    /// [`with_broker_codec`](Self::with_broker_codec).
+    /// The scope carries no codec of its own, so macro handlers mounted with `b.include(handle)`
+    /// decode with the [`DefaultCodec`](crate::codec::DefaultCodec). To decode with another codec
+    /// scope-wide, use [`with_broker_codec`](Self::with_broker_codec).
     ///
     /// The first call moves the builder to the [`Wired`] phase: the state, the middleware stack,
     /// and the publish pipeline are fixed from here on, so a configuration call that could not
@@ -455,12 +456,11 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         this
     }
 
-    /// Registers a broker with a default `codec`, so its macro handlers are mounted without
-    /// repeating it: `b.include(handle)` instead of `b.include(handle, codec)`.
+    /// Registers a broker with a scope-wide `codec`, replacing the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec) a codec-less scope decodes with.
     ///
-    /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) and
-    /// [`include_publishing`](BrokerScope::include_publishing) take just the definition and decode
-    /// it with `codec`.
+    /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) family reads
+    /// the same as on a codec-less scope (`b.include(handle)`) but decodes with `codec`.
     #[must_use]
     pub fn with_broker_codec<R, C, F>(
         self,
@@ -492,8 +492,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// actually mounted, with no separate [`server`](Self::server) call. An explicit
     /// [`server(label, spec)`](Self::server) entry for the same label takes precedence.
     ///
-    /// Like [`with_broker`](Self::with_broker), the scope has no default codec; use
-    /// [`with_broker_labeled_codec`](Self::with_broker_labeled_codec) to set one.
+    /// Like [`with_broker`](Self::with_broker), the scope decodes with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec); use
+    /// [`with_broker_labeled_codec`](Self::with_broker_labeled_codec) to name another.
     ///
     /// # Examples
     ///
@@ -553,8 +554,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     ///
     /// Combines [`with_broker_labeled`](Self::with_broker_labeled) (the label is the broker's
     /// identity and `AsyncAPI` server name) with
-    /// [`with_broker_codec`](Self::with_broker_codec) (macro handlers mount without repeating the
-    /// codec).
+    /// [`with_broker_codec`](Self::with_broker_codec) (the scope's macro handlers decode with
+    /// `codec`).
     #[must_use]
     pub fn with_broker_labeled_codec<R, C, F>(
         self,

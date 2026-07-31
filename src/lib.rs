@@ -19,6 +19,9 @@
 //! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`
 //!   ([`logging::init`]). The generated `cli` `run` command installs it automatically.
+//! * `otel`: OpenTelemetry SDK integration: OTLP export for traces and metrics via
+//!   [`otel::OtelBuilder::init`], plus per-handler dispatch metrics middleware and W3C
+//!   trace-context propagation ([`opentelemetry`]).
 //! * `conformance`: the [`conformance::harness`] contract suite, per-capability suites in
 //!   [`conformance::capabilities`], and broker-agnostic [`conformance::helpers`] for application
 //!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker

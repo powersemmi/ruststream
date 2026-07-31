@@ -98,8 +98,10 @@ async fn relay_outbox(store: Arc<Mutex<Store>>, egress: MemoryPublisher) {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --8<-- [start:healthz]
-    /// The liveness endpoint: the probe outlives `shutdown`, so this route keeps answering with the
-    /// terminal state after the messaging side dies while the HTTP task keeps the process alive.
+    /// The liveness endpoint: the probe outlives `shutdown`, so this route reports the terminal
+    /// state for as long as requests still reach it. Here that window is the graceful drain: a
+    /// fail-fast also resolves the `stopping()` future below and stops the HTTP server. A host
+    /// that should keep serving after the messaging side dies would omit that select arm.
     async fn healthz(State(health): State<HealthProbe>) -> (StatusCode, String) {
         match health.state() {
             HealthState::Running => (StatusCode::OK, "running".to_owned()),
@@ -130,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/orders", post(place_order))
         .with_state(store)
         // The health probe is `Clone` and outlives the app handle; /healthz flips to 503 the
-        // moment the messaging side fail-fasts, even though the process stays up.
+        // moment the messaging side fail-fasts, answering through the graceful drain below.
         .route("/healthz", get(healthz).with_state(running.health()));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;

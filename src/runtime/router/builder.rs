@@ -344,9 +344,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        // Defer building the handler: the app's publish pipeline is only known at mount time, so the
-        // reply pipeline is injected then (see `BatchPublishingRoute`), letting a router-mounted
-        // batch publishing handler pick up the app-wide `publish_layer` chain.
+        // Defer building the handler: the app's publish pipeline is only known at mount time and
+        // the live reply publisher only exists once the broker connects, so mounting captures the
+        // pieces in a starter that pairs and builds at startup (see `BatchPublishingRoute`),
+        // letting a router-mounted batch publishing handler pick up the app-wide `publish_layer`
+        // chain.
         Router {
             routes: (
                 BatchPublishingRoute {
@@ -389,9 +391,10 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        // Defer building the handler: the app's publish pipeline is only known at mount time, so the
-        // reply pipeline is injected then (see `PublishingRoute`), letting a router-mounted
-        // publishing handler pick up the app-wide `publish_layer` chain.
+        // Defer building the handler: the app's publish pipeline is only known at mount time and
+        // the live reply publisher only exists once the broker connects, so mounting captures the
+        // pieces in a starter that pairs and builds at startup (see `PublishingRoute`), letting a
+        // router-mounted publishing handler pick up the app-wide `publish_layer` chain.
         Router {
             routes: (
                 PublishingRoute {

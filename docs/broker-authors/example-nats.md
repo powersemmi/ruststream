@@ -528,6 +528,34 @@ transactional publish, so `BatchSubscriber` and `TransactionalPublisher` are lef
 `ruststream-nats` also does not currently implement `DescribeServer`; add it if you want the broker
 reported as a server in the AsyncAPI document.
 
+## The publish policy
+
+`NatsPublisher` is the live half; `PublishPolicy` supplies its declaration half, so registrations
+can name a publisher before any connection exists. NATS publishing carries no options, so the
+policy is a unit marker (mirroring the in-memory broker's `MemoryPublish`), and pairing is just
+the connected form's own `publisher()` - infallible here; a broker that does real work bringing a
+publisher alive (a transactional producer) wraps its failure with `PairError::new`. Because the
+default configuration is usable as-is, the connected form can also implement `DefaultPublish`
+(see [the contract](index.md#publishpolicy)) so a `publish(..)` handler compiles without an
+explicit publisher.
+
+<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+```rust
+use ruststream::{PairError, PublishPolicy};
+
+#[derive(Debug, Clone, Copy, Default)]
+#[must_use]
+pub struct NatsPublish;
+
+impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
+    type Live = NatsPublisher;
+
+    async fn pair(self, connected: &ConnectedNatsBroker) -> Result<Self::Live, PairError> {
+        Ok(connected.publisher())
+    }
+}
+```
+
 ## Wiring it into an app
 
 With the broker in hand, an application looks exactly like any other; nothing about the handlers or

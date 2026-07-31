@@ -9,11 +9,15 @@ delivery that produced a reply.
 ruststream = { version = "0.5", features = ["macros", "memory", "json", "otel"] }
 ```
 
-It is dependency-light: it carries the [W3C Trace Context](https://www.w3.org/TR/trace-context/) and
-emits `tracing` spans, leaving the export to a collector to your subscriber (for example
+The feature has two halves. Propagation carries the
+[W3C Trace Context](https://www.w3.org/TR/trace-context/) and emits `tracing` spans; it is
+broker-agnostic and works with no exporter at all. Export ships with the feature: the
+[OpenTelemetry SDK and OTLP exporters](#the-otel-feature-sdk-otlp-and-the-metrics-inventory)
+behind `Otel::builder().init()`, which installs the global providers and bridges the spans into
+them - or
+assemble your own subscriber (for example
 [`tracing-opentelemetry`](https://docs.rs/tracing-opentelemetry)), exactly as the
-[logging](logging.md) guide leaves the subscriber to you. Propagation itself is broker-agnostic and
-works with no subscriber at all.
+[logging](logging.md) guide leaves the subscriber to you.
 
 ## Wiring it up
 
@@ -55,7 +59,7 @@ check whether the trace is `sampled()`.
 
 The propagation module stops at the W3C context and `tracing` spans; there are two ways to ship
 them to a collector. Assemble `tracing-opentelemetry` and an exporter yourself in the binary (the
-same split as [logging](logging.md)) - or let `Otel::init` below do it for you.
+same split as [logging](logging.md)) - or let `Otel::builder().init()` below do it for you.
 
 ## The otel feature: SDK, OTLP, and the metrics inventory
 

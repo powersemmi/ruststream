@@ -86,9 +86,12 @@ in-memory brokers, the shape is the same for any pair):
 --8<-- "tests/out_injection.rs:cross_broker"
 ```
 
-Being scope-minted is the token's proof of registration, so pairing cannot pick a wrong broker
-instance. The same shape works for reply publishing (`.publisher(token)` on a `publish("dest")`
-handler) and for the batch forms. Outside a registration, a token pairs itself once startup
+A token shares a slot with the `Bindable` wrapper it was minted from, and registering that same
+wrapper (`with_broker(bindable, ..)`) is what lets startup fill the slot with the connected
+broker - so pairing needs no lookup and cannot pick a wrong instance, and a token whose broker
+never registers fails fast at pairing with a clear error. The same shape works for reply
+publishing (`.publisher(token)` on a `publish("dest")` handler) and for the batch forms. Outside
+a registration, a token pairs itself once startup
 connected its broker: `running.publisher(token)` hands a sibling task its live publisher - see
 [Running beside another server](http.md). For the first publish at startup, no token is needed
 at all: the scope-level `b.after_startup(policy, hook)` runs the hook with an already-paired
@@ -137,9 +140,9 @@ Both levels compose on the application:
 --8<-- "examples/publishing.rs:pipeline"
 ```
 
-The pipeline runs on the reply path (the `publish(..)` form). A publisher held in the state is used
-directly, so compose any per-publisher transforms onto it with `TypedPublisher::transform` when you
-build it. The full program is
+The pipeline runs on the reply path (the `publish(..)` form). An injected `Out` publisher is the
+attached policy's live form, used directly, so compose any per-publisher transforms into the
+policy at the include site with `TypedPublisher::transform`. The full program is
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 
 ## Batch replies and transactions
@@ -154,7 +157,7 @@ transaction):
 --8<-- "examples/publishing.rs:batch_publishing"
 ```
 
-Mount it with `include_batch_publishing`, handing it the reply wiring:
+Mount it with `include_batch`, chaining the reply wiring with `.publisher(..)`:
 
 ```rust
 --8<-- "examples/publishing.rs:batch_publishing_mount"

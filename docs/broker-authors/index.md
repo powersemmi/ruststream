@@ -43,10 +43,13 @@ drop counts) in it as plain data, or use `()`.
 
 Construction is **synchronous and I/O-free**: `new(addrs)` only records configuration, all network
 work happens in `connect` (called once at startup by the runtime), and the connected form holds
-the live client directly - no "maybe connected" cell, because the unconnected type has no
-connection-bound surface at all. This contract is what lets a service compose with the
-synchronous `#[ruststream::app]` builder; the [conformance harness](conformance.md) proves it end
-to end.
+the live client directly - its own operations never check a "maybe connected" state. A broker may
+additionally keep a shared cell that `connect` fills (or a shareable in-process state, as the
+in-memory broker does) so publishers can be handed out while the app is still being assembled,
+before `connect` runs; the cell serves those early handles, not the connected form. The
+[NATS example](example-nats.md) shows the cell-backed variant. This contract is what lets a
+service compose with the synchronous `#[ruststream::app]` builder; the
+[conformance harness](conformance.md) proves it end to end.
 
 Consuming transitions make owner-side misuse unrepresentable: there is no publish or subscribe to
 call on a broker you already shut down. What remains a runtime rule is transport reality, not
@@ -136,9 +139,14 @@ constructor call.
 ```rust
 pub trait PublishPolicy<C: ConnectedBroker> {
     type Live; // the live publisher (or live wiring form, for combinator stacks)
-    async fn pair(self, connected: &C) -> Result<Self::Live, C::Error>;
+    async fn pair(self, connected: &C) -> Result<Self::Live, PairError>;
 }
 ```
+
+The error is the type-erased `PairError` (wrap your broker's failure with `PairError::new`)
+rather than `C::Error`: pairing runs once per publisher at startup, never on the hot path, and a
+cross-broker token pairs against a broker other than the including scope's, so a broker-typed
+error could not name one broker anyway.
 
 Ship one policy/live pair per genuine publishing **mode**, and make mode selection a policy type
 transition rather than a runtime flag: a plain policy pairs into the plain publisher, and a
@@ -147,6 +155,19 @@ implements `TransactionalPublisher` - so the plain publisher has no transactiona
 The in-memory broker's `MemoryPublish` / `MemoryRequest` are the minimal reference (no options, so
 they are unit markers); the core's typed combinators implement `PublishPolicy` functorially, which
 is what lets users compose codecs and transforms over your policy before it pairs.
+
+When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
+the connected form to name it. That is what lets the runtime build the default reply publisher
+when a `publish("dest")` handler is included without an explicit `.publisher(..)` - `b.include(def)`
+alone compiles. Brokers whose publishers always need explicit options simply do not implement it,
+and their users attach a policy at every registration.
+
+<!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+```rust
+pub trait DefaultPublish: ConnectedBroker {
+    type Policy: PublishPolicy<Self> + Default + Send + 'static;
+}
+```
 
 ## Subscription sources
 
@@ -246,7 +267,7 @@ subscribers and treats ack/nack as effectively a no-op. Do not simulate broker-s
 (durable cursors, redelivery timers, offsets, dead-letter routing) in it; those are verified end to
 end against a real server.
 
-The reference is `MemoryBroker`'s own implementation:
+The reference is the in-memory broker's own implementation (on `ConnectedMemoryBroker`):
 
 ```rust
 --8<-- "src/memory/mod.rs:testable"

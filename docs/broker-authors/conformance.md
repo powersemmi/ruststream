@@ -128,7 +128,7 @@ suite expects.
 Before publishing a broker crate:
 
 - [ ] `Broker`, `ConnectedBroker`, `Subscribe` (or a `SubscriptionSource`), `Subscriber`,
-      `IncomingMessage`, and `Publisher` are implemented.
+      `IncomingMessage`, `Publisher`, and a `PublishPolicy` pairing into it are implemented.
 - [ ] `shutdown` performs all fallible teardown and never blocks or panics.
 - [ ] Ack consumes `self`; nack honours the `requeue` flag.
 - [ ] The crate owns its `Config`; fields without a sane default do not get a `Default`.

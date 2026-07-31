@@ -1,6 +1,6 @@
 //! Expansion of the `#[subscriber]` forms: the handler signature is dissected into
-//! [`HandlerParts`], then one of the four definition impls (plain, publishing, batch, batch
-//! publishing) is generated around the original function body.
+//! [`HandlerParts`], then one of the five definition impls (plain, publishing, out injection,
+//! batch, batch publishing) is generated around the original function body.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -24,7 +24,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
     Ok(body.into())
 }
 
-/// The pieces of the handler shared by both expansion forms, extracted from the signature.
+/// The pieces of the handler shared by every expansion form, extracted from the signature.
 struct HandlerParts<'a> {
     vis: &'a syn::Visibility,
     name: &'a Ident,

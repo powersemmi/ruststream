@@ -19,10 +19,11 @@ use crate::{orders, payments};
 /// The order-lifecycle router: a publishing handler that replies to `confirmations`, plus the
 /// cancellation handler.
 ///
-/// `confirm` needs a publisher for its reply; `TypedPublisher::new` pairs the broker's publisher
-/// with the default codec, and `.layer(StampSource)` composes a static publish layer onto it that
-/// stamps a provenance header on every confirmation - publisher settings live here, on the
-/// `TypedPublisher`, not in the `publish("..")` decorator (which only names the destination).
+/// `confirm` needs a publisher for its reply; `TypedPublisher::new` pairs the `MemoryPublish`
+/// policy with the default codec, and `.transform(StampSource)` composes a static publish
+/// transform onto it that stamps a provenance header on every confirmation - publisher settings
+/// live here, on the `TypedPublisher`, not in the `publish("..")` decorator (which only names the
+/// destination).
 /// The reply wiring is a publish policy stack, pure declaration: the runtime pairs it with the
 /// connected broker at startup, so the router borrows no broker. `on_cancel` has no reply, so it
 /// is mounted with `include`. The router is a consuming builder, so the calls chain; the
@@ -42,9 +43,10 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
 /// The payments router: a charge handler spread across keyed worker lanes, plus a batch handler
 /// that settles cleared payments through a transactional publisher.
 ///
-/// `.transactional()` exists only because the in-memory `MemoryPublisher` implements
-/// `TransactionalPublisher`; with it, `include_batch_publishing` buffers a page's replies and
-/// commits them atomically.
+/// `.transactional()` marks the wiring: `include_batch_publishing` then publishes a page's
+/// replies inside one broker transaction, visible atomically on commit. It type-checks because
+/// the `MemoryPublish` policy pairs into a `MemoryPublisher`, which implements
+/// `TransactionalPublisher`; a broker without transactions fails to compile at the registration.
 pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
     let settlements = TypedPublisher::new(MemoryPublish).transactional();
 

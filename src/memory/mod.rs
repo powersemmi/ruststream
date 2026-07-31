@@ -220,9 +220,9 @@ impl MemoryBroker {
 
     /// Returns a request / reply-capable publisher bound to this broker.
     ///
-    /// Unlike [`MemoryBroker::publisher`], whose fire-and-forget operations cannot fail, a
-    /// requester awaits a correlated reply that may never arrive, so its operations report
-    /// [`RequestError`].
+    /// Unlike [`MemoryBroker::publisher`], which reports [`MemoryError`], a requester awaits a
+    /// correlated reply that may never arrive, so its operations report [`RequestError`]: the
+    /// shut-down case plus a reply timeout.
     #[must_use]
     pub fn requester(&self) -> MemoryRequester {
         MemoryRequester::new(Arc::clone(&self.state))
@@ -286,7 +286,8 @@ impl ConnectedMemoryBroker {
 
     /// Returns a request / reply-capable publisher bound to this broker.
     ///
-    /// See [`MemoryBroker::requester`] for the error semantics.
+    /// See [`MemoryBroker::requester`] for why its operations report [`RequestError`] rather
+    /// than [`MemoryError`].
     #[must_use]
     pub fn requester(&self) -> MemoryRequester {
         MemoryRequester::new(Arc::clone(&self.state))
@@ -323,7 +324,7 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 /// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
 ///
 /// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`]. Exists so the memory
-/// broker exercises the full [`PublishPolicy`](crate::PublishPolicy) surface the way richer
+/// broker exercises the full [`PublishPolicy`] surface the way richer
 /// brokers do with real options (an exchange, a queue timeout, a transactional id).
 ///
 /// # Examples
@@ -589,9 +590,12 @@ impl fmt::Debug for MemoryPublisher {
     }
 }
 
-/// Error returned by [`MemoryPublisher`].
+/// Error type of the in-memory broker: returned by [`MemoryPublisher`] and used as the error
+/// type of the [`Broker`] / [`ConnectedBroker`] lifecycle and the [`Subscribe`] capability.
 ///
-/// Publishing itself cannot fail (the bus is in-process); the variants cover transactional
+/// The bus is in-process, so there is no transport to fail: operations against a live bus
+/// succeed, and a publish, subscription, or transaction commit through a handle aliasing a
+/// shut-down bus reports [`ShutDown`](MemoryError::ShutDown). The transaction variants cover
 /// misuse, which the [`TransactionalPublisher`](crate::TransactionalPublisher) contract requires
 /// to surface as errors rather than silent no-ops.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]

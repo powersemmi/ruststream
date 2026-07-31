@@ -1,6 +1,7 @@
-//! The publishing forms from the Publishing guide: a reply handler, a publisher shared through the
-//! typed application state, and the two-level publish pipeline (a per-publisher transform and an
-//! app-wide publish layer).
+//! The publishing forms from the Publishing guide: reply handlers, a publisher injected into a
+//! handler with `Out`, the two-level publish pipeline (a per-publisher transform and an app-wide
+//! publish layer), transactional batch replies, and a first publish from the scope's
+//! `after_startup` hook.
 //!
 //! ```text
 //! cargo run --example publishing --features macros,memory,json -- run
@@ -129,7 +130,7 @@ where
 // --8<-- [end:manual_transaction]
 
 // `impl App` hides the composed pipeline type: the app-wide `publish_layer` would otherwise surface
-// in the return type as `RustStream<_, AppState, PublishStack<AuditPublish, PublishIdentity>>`.
+// in the return type as `RustStream<_, (), PublishStack<AuditPublish, PublishIdentity>>`.
 #[ruststream::app]
 fn app() -> impl App {
     let broker = MemoryBroker::new();

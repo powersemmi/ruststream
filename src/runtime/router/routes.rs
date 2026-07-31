@@ -157,11 +157,12 @@ where
 }
 
 /// One publishing registration, deferred. Unlike [`SubscribeRoute`], it stores the pieces of a
-/// [`PublishingHandler`] rather than a built one, because the app's publish pipeline is only known
-/// at mount time: [`mount_one`](MountRoute::mount_one) builds the handler with the real pipeline, so
-/// a router-mounted publishing handler picks up the app-wide
-/// [`publish_layer`](crate::runtime::RustStream::publish_layer) chain. An implementation detail of
-/// [`Router`](crate::runtime::Router)'s registration list.
+/// [`PublishingHandler`] rather than a built one: the app's publish pipeline is only known at
+/// mount time, and the live reply publisher only exists once the broker connects, so
+/// [`mount_one`](MountRoute::mount_one) captures the pieces in a starter closure that pairs the
+/// publisher and builds the handler at startup. A router-mounted publishing handler thus picks up
+/// the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer) chain. An
+/// implementation detail of [`Router`](crate::runtime::Router)'s registration list.
 #[doc(hidden)]
 pub struct PublishingRoute<S, D, C, P, PC, PL> {
     pub(super) source: S,
