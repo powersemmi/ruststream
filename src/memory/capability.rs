@@ -428,14 +428,19 @@ impl SeekControl {
 /// position redelivers exactly that message, and seeking at or past the end of the log skips
 /// everything published so far and resumes with the next publish.
 ///
+/// The [`Default`] position is the start of the log (used by
+/// [`StartAtDefault`](crate::StartAtDefault) and the argument-less `start_at()` clause): for an
+/// in-process broker, replaying the full history is the natural default of a forced reposition.
+///
 /// # Examples
 ///
 /// ```
 /// use ruststream::memory::MemoryPosition;
 ///
 /// assert_eq!(MemoryPosition::start(), MemoryPosition::sequence(0));
+/// assert_eq!(MemoryPosition::default(), MemoryPosition::start());
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[must_use]
 pub struct MemoryPosition(usize);
 
@@ -649,9 +654,13 @@ impl Positioned for MemoryMessage {
 mod tests {
     use futures::StreamExt;
 
-    use super::super::MemoryBroker;
+    use super::super::{MemoryBroker, MemorySource};
     use super::*;
-    use crate::{Broker, ConnectedBroker, Headers};
+    #[cfg(feature = "testing")]
+    use crate::Subscribe;
+    #[cfg(feature = "testing")]
+    use crate::testing::{TestableBroker, coordinator::Coordinator};
+    use crate::{Broker, ConnectedBroker, Headers, StartAt, StartAtDefault, SubscriptionSource};
 
     #[tokio::test]
     async fn batches_drain_buffered_deliveries() {
@@ -1025,8 +1034,6 @@ mod tests {
 
     #[tokio::test]
     async fn start_at_replays_the_log_into_a_fresh_subscription() {
-        use crate::{StartAt, SubscriptionSource};
-
         let broker = MemoryBroker::new();
         let connected = broker.connect().await.unwrap();
         let publisher = connected.publisher();
@@ -1038,13 +1045,10 @@ mod tests {
         }
 
         // The subscription opens after both publishes; the start position replays them.
-        let mut sub = StartAt::new(
-            super::super::MemorySource::new("start.replay"),
-            MemoryPosition::start(),
-        )
-        .subscribe(&connected)
-        .await
-        .unwrap();
+        let mut sub = StartAt::new(MemorySource::new("start.replay"), MemoryPosition::start())
+            .subscribe(&connected)
+            .await
+            .unwrap();
         let mut stream = std::pin::pin!(sub.stream());
         let first = stream.next().await.unwrap().unwrap();
         assert_eq!(first.payload(), b"a");
@@ -1056,9 +1060,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_at_end_skips_history_and_sees_the_next_publish() {
-        use crate::{StartAt, SubscriptionSource};
+    async fn start_at_default_replays_from_the_start() {
+        let broker = MemoryBroker::new();
+        let connected = broker.connect().await.unwrap();
+        let publisher = connected.publisher();
+        publisher
+            .publish(OutgoingMessage::new("start.default", b"a".as_slice()))
+            .await
+            .unwrap();
 
+        // The memory broker's default position is the start of the log.
+        let mut sub = StartAtDefault::new(MemorySource::new("start.default"))
+            .subscribe(&connected)
+            .await
+            .unwrap();
+        let mut stream = std::pin::pin!(sub.stream());
+        let replayed = stream.next().await.unwrap().unwrap();
+        assert_eq!(replayed.payload(), b"a");
+        replayed.ack().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_at_end_skips_history_and_sees_the_next_publish() {
         let broker = MemoryBroker::new();
         let connected = broker.connect().await.unwrap();
         let publisher = connected.publisher();
@@ -1067,13 +1090,10 @@ mod tests {
             .await
             .unwrap();
 
-        let mut sub = StartAt::new(
-            super::super::MemorySource::new("start.end"),
-            MemoryPosition::end(),
-        )
-        .subscribe(&connected)
-        .await
-        .unwrap();
+        let mut sub = StartAt::new(MemorySource::new("start.end"), MemoryPosition::end())
+            .subscribe(&connected)
+            .await
+            .unwrap();
         let mut stream = std::pin::pin!(sub.stream());
         assert!(futures::poll!(stream.next()).is_pending());
 
@@ -1246,10 +1266,6 @@ mod tests {
     #[cfg(feature = "testing")]
     #[tokio::test]
     async fn seek_keeps_the_coordinator_in_flight_count_balanced() {
-        use crate::Subscribe;
-        use crate::testing::TestableBroker;
-        use crate::testing::coordinator::Coordinator;
-
         let broker = MemoryBroker::new();
         let connected = broker.connect().await.unwrap();
         let coordinator = Coordinator::new(64);

@@ -92,6 +92,23 @@ use parse::{SubscriberArgs, doc_description};
 /// sequential lanes keyed by the message's partition key, preserving per-key ordering
 /// (single-message forms only). The default is the sequential loop.
 ///
+/// A `start_at(<position>)` clause opens the subscription at that position instead of the
+/// broker's default, seeking before the first delivery ("start from the latest on deploy",
+/// "replay the whole log"). The position is the broker's own type, named by its constructor
+/// (`MemoryPosition::start()`, a Kafka-style `latest()`); an argument-less `start_at()` uses
+/// the `Default` of the broker's position type, whose meaning the broker documents (the
+/// in-memory broker's default is the start of the log). The source's subscriber must
+/// implement the `Seekable` capability, so the clause does not compile against a broker
+/// without a replayable log. The position is forced on every startup; conditional defaults
+/// stay on the broker's own subscription descriptor.
+///
+/// ```ignore
+/// // Opens at the start of the log: entries published before the service started are
+/// // replayed into the fresh subscription.
+/// #[subscriber("audit", start_at(MemoryPosition::start()))]
+/// async fn record(entry: &Entry) -> HandlerResult { /* ... */ }
+/// ```
+///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
 /// `&mut Context`, to read app state or publish manually. Any further parameter is an extractor: its
 /// type must implement

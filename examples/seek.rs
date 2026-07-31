@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Seek};
-use ruststream::{OutgoingMessage, Publisher, Seeker, StartAt, subscriber};
+use ruststream::{OutgoingMessage, Publisher, Seeker, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
@@ -21,13 +21,15 @@ struct Job {
     id: u64,
 }
 
-/// The audit trail: its subscription is opened at the start of the log, so entries published
+// --8<-- [start:start_at]
+/// The audit trail: its subscription opens at the start of the log, so entries published
 /// before the service started are replayed into it.
-#[subscriber("audit")]
+#[subscriber("audit", start_at(MemoryPosition::start()))]
 async fn record(entry: &Job) -> HandlerResult {
     println!("audit: entry {}", entry.id);
     HandlerResult::Ack
 }
+// --8<-- [end:start_at]
 
 // --8<-- [start:handler]
 /// Skips forward when the producer marks a poison region: everything queued before the
@@ -61,16 +63,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --8<-- [start:mount]
-    // The seek handler mounts plainly (the runtime mints its seeker off the subscription
-    // right after it opens); the audit subscription opens at the start of the log.
+    // Both mount plainly: the runtime mints the seek handler's seeker off its subscription
+    // right after it opens, and the start_at clause seeks the audit one before its first
+    // delivery.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
         b.include(work);
-        // --8<-- [start:start_at]
-        b.include_on(
-            StartAt::new(MemorySource::new("audit"), MemoryPosition::start()),
-            record,
-        );
-        // --8<-- [end:start_at]
+        b.include(record);
     });
     // --8<-- [end:mount]
     let running = app.start().await?;

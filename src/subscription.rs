@@ -273,6 +273,72 @@ where
     }
 }
 
+/// [`StartAt`] without an explicit position: opens the subscription at the broker's default
+/// reposition point.
+///
+/// The position is the [`Default`] of the seeker's position type; a broker whose positions
+/// have a natural default implements it and documents what it means (the in-memory broker's
+/// default is the start of the log). A position type without a `Default` cannot be used here,
+/// so the mount fails to compile instead of guessing.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "memory")]
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// use ruststream::memory::{MemoryBroker, MemorySource};
+/// use ruststream::{Broker, StartAtDefault, SubscriptionSource};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// // For the memory broker the default position is the start of the log.
+/// let subscriber = StartAtDefault::new(MemorySource::new("audit"))
+///     .subscribe(&connected)
+///     .await?;
+/// # let _ = subscriber;
+/// # Ok(())
+/// # }
+/// ```
+pub struct StartAtDefault<S> {
+    inner: S,
+}
+
+impl<S> StartAtDefault<S> {
+    /// Wraps `source` so its subscription opens at the broker's default position.
+    #[must_use]
+    pub fn new(source: S) -> Self {
+        Self { inner: source }
+    }
+}
+
+impl<S> std::fmt::Debug for StartAtDefault<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartAtDefault").finish_non_exhaustive()
+    }
+}
+
+impl<C, S> SubscriptionSource<C> for StartAtDefault<S>
+where
+    C: ConnectedBroker,
+    S: SubscriptionSource<C> + Send,
+    S::Subscriber: Seekable,
+    <S::Subscriber as Seekable>::Seeker: Seeker<Error = C::Error>,
+    <<S::Subscriber as Seekable>::Seeker as Seeker>::Position: Default,
+{
+    type Subscriber = S::Subscriber;
+
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+        let subscriber = self.inner.subscribe(connected).await?;
+        // Same ordering guarantee as `StartAt`: sought before the subscriber leaves this
+        // call, so the dispatch loop never observes a message from before the position.
+        subscriber.seeker().seek(Default::default()).await?;
+        Ok(subscriber)
+    }
+}
+
 /// Resolves the [`Seeker`] of a subscription mounted through [`WithSeeker::attach`].
 ///
 /// Clonable and cheap: hand one copy to an admin endpoint, keep another in the application

@@ -10,7 +10,7 @@
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Seek};
 use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, Publisher, Seeker, StartAt, WithSeeker, subscriber};
+use ruststream::{OutgoingMessage, Publisher, Seeker, WithSeeker, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -123,7 +123,7 @@ async fn a_seek_parameter_repositions_from_inside_the_handler() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
-#[subscriber("seek.history")]
+#[subscriber("seek.history", start_at(MemoryPosition::start()))]
 async fn replayer(_event: &Event) -> HandlerResult {
     HandlerResult::Ack
 }
@@ -142,10 +142,7 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
     }
 
     let app = RustStream::new(AppInfo::new("history", "0.1.0")).with_broker(broker, |b| {
-        b.include_on(
-            StartAt::new(MemorySource::new("seek.history"), MemoryPosition::start()),
-            replayer,
-        );
+        b.include(replayer);
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -167,6 +164,44 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
         [1, 2, 3],
         "a start position must replay pre-subscription history in order",
     );
+
+    tb.shutdown().await.expect("graceful shutdown");
+}
+
+#[subscriber("seek.default", start_at())]
+async fn default_replayer(_event: &Event) -> HandlerResult {
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_argument_less_start_at_uses_the_brokers_default_position() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+
+    // The memory broker's default position is the start of the log, so pre-startup history
+    // must be replayed.
+    ingress
+        .publish(OutgoingMessage::new("seek.default", payload(1).as_slice()))
+        .await
+        .expect("publish");
+
+    let app = RustStream::new(AppInfo::new("default", "0.1.0")).with_broker(broker, |b| {
+        b.include(default_replayer);
+    });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    ingress
+        .publish(OutgoingMessage::new("seek.default", payload(2).as_slice()))
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    let received: Vec<Event> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("seek.default")
+        .received();
+    let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
+    assert_eq!(ids, [1, 2]);
 
     tb.shutdown().await.expect("graceful shutdown");
 }

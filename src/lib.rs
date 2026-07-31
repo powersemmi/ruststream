@@ -67,7 +67,7 @@ pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::Message;
 pub use subscriber::Subscriber;
 pub use subscription::{
-    Name, SeekerPendingError, SeekerToken, StartAt, SubscriptionSource, WithSeeker,
+    Name, SeekerPendingError, SeekerToken, StartAt, StartAtDefault, SubscriptionSource, WithSeeker,
 };
 
 pub mod codec;

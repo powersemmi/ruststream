@@ -8,8 +8,8 @@ use quote::quote;
 use syn::{FnArg, Ident, ItemFn, LitStr, PatType, ReturnType, Type, TypePath};
 
 use crate::parse::{
-    FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, publish_result_reply,
-    source_tokens, vec_element,
+    FailurePolicyArg, StartAtArg, SubscriberArgs, WorkersArg, doc_description, position_type,
+    publish_result_reply, source_tokens, vec_element,
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
@@ -587,6 +587,24 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     let input_ty = input_type(args, reference)?;
     let description = doc_description(&func.attrs);
     let (source_ty, source_expr) = source_tokens(&args.source)?;
+    // `start_at(<position>)` wraps the source in the core `StartAt` decorator (the empty form
+    // in `StartAtDefault`, deferring to the `Default` of the broker's position type), so the
+    // subscription is sought before the first delivery. Orthogonal to the definition form:
+    // every form carries a `Source`.
+    let (source_ty, source_expr) = match &args.start_at {
+        Some(StartAtArg::Position(position)) => {
+            let position_ty = position_type(position)?;
+            (
+                quote!(::ruststream::StartAt<#source_ty, #position_ty>),
+                quote!(::ruststream::StartAt::new(#source_expr, #position)),
+            )
+        }
+        Some(StartAtArg::BrokerDefault) => (
+            quote!(::ruststream::StartAtDefault<#source_ty>),
+            quote!(::ruststream::StartAtDefault::new(#source_expr)),
+        ),
+        None => (source_ty, source_expr),
+    };
 
     // Captures the input type's JSON Schema for AsyncAPI when it implements `JsonSchema` (and the
     // `asyncapi` feature is on), via the autoref-specialization probe; `None` otherwise. The
