@@ -60,6 +60,7 @@ use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkError;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use thiserror::Error;
 use tracing_subscriber::layer::SubscriberExt;
@@ -207,6 +208,9 @@ impl OtelBuilder {
                 .map_err(|err| OtelInitError::TracingInit(err.into()))?;
         }
 
+        // The global propagator defaults to a no-op: without this, user code propagating
+        // through `opentelemetry::global` would silently drop the W3C context.
+        global::set_text_map_propagator(TraceContextPropagator::new());
         global::set_tracer_provider(tracer_provider.clone());
         global::set_meter_provider(meter_provider.clone());
 

@@ -7,18 +7,20 @@
 //! Two pieces, wired like [`metrics`](crate::metrics):
 //!
 //! - [`OpenTelemetry::consume_layer`] - a consume-side [`Layer`] that, per delivery, reads the
-//!   incoming [W3C `traceparent`](https://www.w3.org/TR/trace-context/) header, opens a `tracing`
+//!   incoming [W3C trace context](https://www.w3.org/TR/trace-context/) headers, opens a `tracing`
 //!   span for the handler, and stamps the *consumer's* span onto the working headers so a reply
 //!   published from that handler becomes its child.
 //! - [`OpenTelemetry::propagation`] - a static [`PublishTransform`] that copies the working
 //!   `traceparent` onto every reply. Reuse it on a batch publisher with
 //!   [`for_batch`](crate::runtime::for_batch).
 //!
-//! This module is the propagation half of the story: it carries the W3C context and emits
-//! `tracing` spans. Export is the other half - [`OtelBuilder::init`](crate::otel::OtelBuilder::init) wires
-//! these spans into OTLP, or install your own subscriber, exactly as
-//! [`logging`](crate::logging) leaves the subscriber to the user. Propagation itself is
-//! broker-agnostic and works with no subscriber at all.
+//! The header parsing and formatting is the OpenTelemetry SDK's
+//! [`TraceContextPropagator`], so it follows the spec strictly (for example, uppercase hex ids are
+//! rejected). This module is the propagation half of the story: it carries the W3C context and
+//! emits `tracing` spans. Export is the other half -
+//! [`OtelBuilder::init`](crate::otel::OtelBuilder::init) wires these spans into OTLP, or install
+//! your own subscriber, exactly as [`logging`](crate::logging) leaves the subscriber to the user.
+//! Propagation itself is broker-agnostic and works with no subscriber at all.
 //!
 //! # Examples
 //!
@@ -37,13 +39,14 @@
 //! # }
 //! ```
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-use std::sync::LazyLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-
+use opentelemetry::Context as OtelContext;
+use opentelemetry::propagation::{Extractor, Injector, TextMapPropagator};
+use opentelemetry::trace::{SpanContext, TraceContextExt, TraceFlags, TraceState};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{IdGenerator, RandomIdGenerator};
 use tracing::Instrument;
 
+use crate::Headers;
 use crate::runtime::{
     BlanketLayer, Context, Handler, Layer, Outgoing, PublishContext, PublishTransform, Settle,
 };
@@ -53,197 +56,31 @@ const TRACEPARENT: &str = "traceparent";
 /// The HTTP header carrying vendor-specific trace state, propagated verbatim.
 const TRACESTATE: &str = "tracestate";
 
-/// A [W3C trace context](https://www.w3.org/TR/trace-context/): the `trace-id`, the current
-/// `span-id` (the `parent-id` field of the `traceparent` header), and the trace flags.
-///
-/// Parsed from and formatted to the `traceparent` header (`00-<trace-id>-<span-id>-<flags>`); the
-/// version is always `00`. A reply published from a handler carries the consumer's context, so a
-/// downstream service sees the consumer span as the reply's parent.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream::opentelemetry::TraceContext;
-///
-/// let tc = TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-///     .expect("valid traceparent");
-/// assert!(tc.sampled());
-/// assert_eq!(
-///     tc.to_header(),
-///     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-/// );
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TraceContext {
-    trace_id: [u8; 16],
-    span_id: [u8; 8],
-    flags: u8,
+/// Reads the W3C context headers off crate [`Headers`] for the SDK propagator.
+struct HeaderExtractor<'a>(&'a Headers);
+
+impl Extractor for HeaderExtractor<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get_str(key)
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        // `TraceContextPropagator` only calls `get`; this allocates solely under a composite
+        // propagator that actually walks the keys.
+        self.0.iter().map(|(name, _)| name).collect()
+    }
 }
 
-impl TraceContext {
-    /// Starts a fresh, sampled trace with a new `trace-id` and `span-id`.
-    ///
-    /// Used when an incoming message carries no (valid) `traceparent`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::opentelemetry::TraceContext;
-    ///
-    /// let root = TraceContext::root();
-    /// assert!(root.sampled());
-    /// assert_eq!(root.to_header().len(), "00-".len() + 32 + 1 + 16 + 1 + 2);
-    /// ```
-    #[must_use]
-    pub fn root() -> Self {
-        let mut trace_id = [0u8; 16];
-        let mut span_id = [0u8; 8];
-        fill_random(&mut trace_id);
-        fill_random(&mut span_id);
-        Self {
-            trace_id,
-            span_id,
-            flags: 0x01,
+/// Writes the W3C context headers the SDK propagator produces onto crate [`Headers`].
+struct HeaderInjector<'a>(&'a mut Headers);
+
+impl Injector for HeaderInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        // The SDK always writes `tracestate`, even when empty; skip the noise header so a
+        // delivery without one does not grow it.
+        if !value.is_empty() {
+            self.0.insert(key, value);
         }
-    }
-
-    /// The child of this context: the same trace, a fresh `span-id`. The consumer's own span.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::opentelemetry::TraceContext;
-    ///
-    /// let parent = TraceContext::root();
-    /// let child = parent.child();
-    /// assert_eq!(parent.trace_id(), child.trace_id());
-    /// assert_ne!(parent.span_id(), child.span_id());
-    /// ```
-    #[must_use]
-    pub fn child(&self) -> Self {
-        let mut span_id = [0u8; 8];
-        fill_random(&mut span_id);
-        Self {
-            trace_id: self.trace_id,
-            span_id,
-            flags: self.flags,
-        }
-    }
-
-    /// Parses a `traceparent` header value, or `None` if it is malformed or names the all-zero
-    /// (invalid) `trace-id` / `span-id`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::opentelemetry::TraceContext;
-    ///
-    /// assert!(TraceContext::parse("not-a-traceparent").is_none());
-    /// assert!(
-    ///     TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").is_some()
-    /// );
-    /// ```
-    #[must_use]
-    pub fn parse(header: &str) -> Option<Self> {
-        let mut parts = header.split('-');
-        let version = parts.next()?;
-        let trace = parts.next()?;
-        let span = parts.next()?;
-        let flags = parts.next()?;
-        if parts.next().is_some() || version != "00" {
-            return None;
-        }
-        let mut trace_id = [0u8; 16];
-        let mut span_id = [0u8; 8];
-        read_hex(trace, &mut trace_id)?;
-        read_hex(span, &mut span_id)?;
-        if trace_id == [0u8; 16] || span_id == [0u8; 8] {
-            return None;
-        }
-        let mut flag_byte = [0u8; 1];
-        read_hex(flags, &mut flag_byte)?;
-        Some(Self {
-            trace_id,
-            span_id,
-            flags: flag_byte[0],
-        })
-    }
-
-    /// Formats this context as a `traceparent` header value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::opentelemetry::TraceContext;
-    ///
-    /// let header = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-    /// assert_eq!(TraceContext::parse(header).unwrap().to_header(), header);
-    /// ```
-    #[must_use]
-    pub fn to_header(&self) -> String {
-        let mut out = String::with_capacity(55);
-        out.push_str("00-");
-        write_hex(&self.trace_id, &mut out);
-        out.push('-');
-        write_hex(&self.span_id, &mut out);
-        out.push('-');
-        write_hex(&[self.flags], &mut out);
-        out
-    }
-
-    /// The 16-byte `trace-id`, hex-encoded - the identity of the whole trace.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::opentelemetry::TraceContext;
-    ///
-    /// let tc = TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-    ///     .unwrap();
-    /// assert_eq!(tc.trace_id(), "4bf92f3577b34da6a3ce929d0e0e4736");
-    /// ```
-    #[must_use]
-    pub fn trace_id(&self) -> String {
-        let mut out = String::with_capacity(32);
-        write_hex(&self.trace_id, &mut out);
-        out
-    }
-
-    /// The 8-byte `span-id`, hex-encoded - the identity of this span within the trace.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::opentelemetry::TraceContext;
-    ///
-    /// let tc = TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-    ///     .unwrap();
-    /// assert_eq!(tc.span_id(), "00f067aa0ba902b7");
-    /// ```
-    #[must_use]
-    pub fn span_id(&self) -> String {
-        let mut out = String::with_capacity(16);
-        write_hex(&self.span_id, &mut out);
-        out
-    }
-
-    /// Whether the sampled flag (bit 0) is set.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::opentelemetry::TraceContext;
-    ///
-    /// let sampled = TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-    ///     .unwrap();
-    /// assert!(sampled.sampled());
-    /// let off = TraceContext::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00")
-    ///     .unwrap();
-    /// assert!(!off.sampled());
-    /// ```
-    #[must_use]
-    pub const fn sampled(&self) -> bool {
-        self.flags & 0x01 != 0
     }
 }
 
@@ -356,13 +193,33 @@ where
     H: Handler<M, C, S>,
 {
     fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send {
-        // Continue the incoming trace (or start one), then publish the consumer's own span as the
-        // working `traceparent` so a reply from this handler becomes its child.
-        let consumer = ctx
-            .headers()
-            .get_str(TRACEPARENT)
-            .and_then(TraceContext::parse)
-            .map_or_else(TraceContext::root, |incoming| incoming.child());
+        // The concrete propagator, not `opentelemetry::global`: the global defaults to a no-op
+        // until `Otel::init` installs one, and propagation must keep working with no SDK setup
+        // at all. The type is a ZST, so constructing it per delivery is free.
+        let propagator = TraceContextPropagator::new();
+        let extracted =
+            propagator.extract_with_context(&OtelContext::new(), &HeaderExtractor(ctx.headers()));
+        let parent = extracted.span().span_context().clone();
+        // Continue the incoming trace (or start one): same trace, fresh span id - the consumer's
+        // own span. The propagator already rejected any malformed / all-zero header.
+        let ids = RandomIdGenerator::default();
+        let consumer = if parent.is_valid() {
+            SpanContext::new(
+                parent.trace_id(),
+                ids.new_span_id(),
+                parent.trace_flags(),
+                false,
+                parent.trace_state().clone(),
+            )
+        } else {
+            SpanContext::new(
+                ids.new_trace_id(),
+                ids.new_span_id(),
+                TraceFlags::SAMPLED,
+                false,
+                TraceState::default(),
+            )
+        };
         let span = tracing::info_span!(
             "ruststream.consume",
             otel.kind = "consumer",
@@ -370,7 +227,12 @@ where
             trace_id = %consumer.trace_id(),
             span_id = %consumer.span_id(),
         );
-        ctx.headers_mut().insert(TRACEPARENT, consumer.to_header());
+        // Publish the consumer's span as the working `traceparent` so a reply from this handler
+        // becomes its child.
+        propagator.inject_context(
+            &OtelContext::new().with_remote_span_context(consumer),
+            &mut HeaderInjector(ctx.headers_mut()),
+        );
         self.inner.handle(msg, ctx).instrument(span)
     }
 }
@@ -395,84 +257,46 @@ impl<C> PublishTransform<C> for TracePropagation {
     }
 }
 
-/// Fills `buf` with unpredictable bytes for a fresh trace- or span-id.
-///
-/// Uses a per-process randomly seeded [`RandomState`] hashing a monotonic counter, so ids are
-/// well-distributed and unique within the process without pulling a random-number dependency (trace
-/// ids are identifiers, not secrets).
-fn fill_random(buf: &mut [u8]) {
-    static SEED: LazyLock<RandomState> = LazyLock::new(RandomState::new);
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    for chunk in buf.chunks_mut(8) {
-        let mut hasher = SEED.build_hasher();
-        hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
-        let bytes = hasher.finish().to_be_bytes();
-        chunk.copy_from_slice(&bytes[..chunk.len()]);
-    }
-}
-
-/// Writes `bytes` as lowercase hex into `out`.
-fn write_hex(bytes: &[u8], out: &mut String) {
-    for &byte in bytes {
-        out.push(char::from_digit(u32::from(byte >> 4), 16).expect("nibble is < 16"));
-        out.push(char::from_digit(u32::from(byte & 0x0f), 16).expect("nibble is < 16"));
-    }
-}
-
-/// Reads `out.len()` bytes of lowercase / uppercase hex from `s` into `out`, or `None` on a length
-/// or digit mismatch.
-fn read_hex(s: &str, out: &mut [u8]) -> Option<()> {
-    if s.len() != out.len() * 2 {
-        return None;
-    }
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(s.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn root_is_sampled_and_unique() {
-        let a = TraceContext::root();
-        let b = TraceContext::root();
-        assert!(a.sampled());
-        assert_ne!(a.trace_id(), b.trace_id());
-        assert_ne!(a.span_id(), b.span_id());
-    }
+    const HEADER: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
     #[test]
-    fn child_keeps_trace_changes_span() {
-        let parent = TraceContext::root();
-        let child = parent.child();
-        assert_eq!(parent.trace_id(), child.trace_id());
-        assert_ne!(parent.span_id(), child.span_id());
-        assert_eq!(parent.sampled(), child.sampled());
-    }
+    fn context_round_trips_through_headers() {
+        let mut headers = Headers::new();
+        headers.insert(TRACEPARENT, HEADER);
+        let propagator = TraceContextPropagator::new();
+        let cx = propagator.extract_with_context(&OtelContext::new(), &HeaderExtractor(&headers));
+        assert!(cx.span().span_context().is_valid());
 
-    #[test]
-    fn parse_rejects_malformed() {
-        assert!(TraceContext::parse("").is_none());
-        assert!(TraceContext::parse("00-tooshort-00f067aa0ba902b7-01").is_none());
-        // All-zero ids are invalid per the spec.
+        let mut out = Headers::new();
+        propagator.inject_context(&cx, &mut HeaderInjector(&mut out));
+        assert_eq!(out.get_str(TRACEPARENT), Some(HEADER));
         assert!(
-            TraceContext::parse("00-00000000000000000000000000000000-00f067aa0ba902b7-01")
-                .is_none()
-        );
-        // Unsupported version.
-        assert!(
-            TraceContext::parse("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-                .is_none()
+            !out.contains(TRACESTATE),
+            "an empty tracestate must not be written"
         );
     }
 
     #[test]
-    fn round_trips_through_the_header() {
-        let header = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-        let parsed = TraceContext::parse(header).expect("valid");
-        assert_eq!(parsed.to_header(), header);
+    fn tracestate_rides_extraction_and_injection() {
+        let mut headers = Headers::new();
+        headers.insert(TRACEPARENT, HEADER);
+        headers.insert(TRACESTATE, "vendor=opaque");
+        let propagator = TraceContextPropagator::new();
+        let cx = propagator.extract_with_context(&OtelContext::new(), &HeaderExtractor(&headers));
+
+        let mut out = Headers::new();
+        propagator.inject_context(&cx, &mut HeaderInjector(&mut out));
+        assert_eq!(out.get_str(TRACESTATE), Some("vendor=opaque"));
+    }
+
+    #[test]
+    fn extractor_lists_the_header_names() {
+        let mut headers = Headers::new();
+        headers.insert(TRACEPARENT, HEADER);
+        assert_eq!(HeaderExtractor(&headers).keys(), vec![TRACEPARENT]);
     }
 }

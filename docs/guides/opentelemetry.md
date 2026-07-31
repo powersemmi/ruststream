@@ -52,8 +52,9 @@ header is read - through the [context](context.md):
 let traceparent = ctx.headers().get_str("traceparent");
 ```
 
-Parse it into a `TraceContext` (`TraceContext::parse`) to read the `trace_id` / `span_id` or to
-check whether the trace is `sampled()`.
+Parse it with the OpenTelemetry SDK's `TraceContextPropagator` (the same parser the consume layer
+uses) into an `opentelemetry::trace::SpanContext` to read the `trace_id()` / `span_id()` or to
+check `is_sampled()`.
 
 ## Exporting to a collector
 
