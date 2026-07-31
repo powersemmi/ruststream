@@ -1,11 +1,11 @@
 //! Optional conformance suites, one per capability trait.
 //!
 //! A broker crate that implements a capability ([`RequestReply`], [`BatchSubscriber`],
-//! [`TransactionalPublisher`]) runs the matching suite to prove the implementation honours the
-//! trait contract; brokers without the capability simply do not call it. Like
-//! [`harness::lifecycle`](super::harness::lifecycle), every suite is built from caller-supplied
-//! factories so it stays broker-agnostic, and the in-memory broker is the executable reference
-//! that passes all of them.
+//! [`TransactionalPublisher`], [`Seekable`]) runs the matching suite to prove the
+//! implementation honours the trait contract; brokers without the capability simply do not call
+//! it. Like [`harness::lifecycle`](super::harness::lifecycle), every suite is built from
+//! caller-supplied factories so it stays broker-agnostic, and the in-memory broker is the
+//! executable reference that passes all of them.
 
 use std::time::Duration;
 
@@ -15,8 +15,8 @@ use tokio::time::timeout;
 use super::harness::{expect_next, expect_no_more};
 use crate::{
     AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, Headers, IncomingMessage,
-    OutgoingMessage, Publisher, RequestReply, Subscriber, SubscriptionSource,
-    TransactionalPublisher,
+    OutgoingMessage, Positioned, Publisher, RequestReply, Seekable, Seeker, Subscriber,
+    SubscriptionSource, TransactionalPublisher,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -354,6 +354,149 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         "a rejected double begin must leave the open transaction intact",
     );
     match third.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
+
+    connected
+        .shutdown()
+        .await
+        .expect("broker must shut down cleanly");
+}
+
+/// Verifies the [`Seekable`] contract.
+///
+/// Positions captured from delivered messages ([`Positioned::position`]) follow the pinned
+/// semantics: a seek back to a captured position redelivers exactly that message and the suffix
+/// after it in order, a seek forward past queued deliveries skips them, and the subscription
+/// keeps delivering new publishes after repositioning. The seeker is minted before the stream
+/// borrows the subscriber, which is the shape the capability exists for.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # async fn run() {
+/// use ruststream::conformance::capabilities;
+/// use ruststream::memory::{MemoryBroker, MemorySource};
+///
+/// capabilities::seeking(
+///     MemoryBroker::new,
+///     |name| MemorySource::new(name),
+///     |broker| broker.publisher(),
+/// )
+/// .await;
+/// # }
+/// ```
+///
+/// # Panics
+///
+/// Panics with a descriptive message if any step violates the contract.
+pub async fn seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
+    make_broker: MkBroker,
+    make_source: MkSrc,
+    make_publisher: MkPub,
+) where
+    B: Broker,
+    MkBroker: Fn() -> B,
+    Src: SubscriptionSource<Connected<B>> + Send,
+    Src::Subscriber: Seekable + Send,
+    <Src::Subscriber as Subscriber>::Message:
+        Positioned<Position = <<Src::Subscriber as Seekable>::Seeker as Seeker>::Position>,
+    MkSrc: Fn(&str) -> Src,
+    Pub: Publisher,
+    MkPub: Fn(&Connected<B>) -> Pub,
+{
+    const SUBJECT: &str = "conformance.seeking";
+    const COUNT: u8 = 5;
+
+    let connected = make_broker().connect().await.expect("broker must connect");
+
+    let mut subscriber = make_source(SUBJECT)
+        .subscribe(&connected)
+        .await
+        .expect("subscription must open after connect");
+    // Minted before `stream` borrows the subscriber; usable while the stream runs.
+    let seeker = subscriber.seeker();
+    let publisher = make_publisher(&connected);
+
+    for i in 0..COUNT {
+        publisher
+            .publish(OutgoingMessage::new(SUBJECT, &[i]))
+            .await
+            .expect("publish failed");
+    }
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut positions = Vec::new();
+    for i in 0..COUNT {
+        let msg = expect_next(&mut stream, "seeking: initial delivery").await;
+        assert_eq!(
+            msg.payload(),
+            &[i],
+            "initial deliveries must arrive in publish order",
+        );
+        positions.push(msg.position());
+        match msg.ack().await {
+            Ok(()) | Err(AckError::Unsupported) => {}
+            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+        }
+    }
+    expect_no_more(&mut stream, "seeking: after the initial drain").await;
+
+    // Extraction order matters: swap_remove(4) pops the last element, which leaves the value
+    // at index 1 in place for the second extraction.
+    let forward_to = positions.swap_remove(4);
+    let back_to = positions.swap_remove(1);
+
+    seeker.seek(back_to).await.expect("seek back failed");
+    let redelivered = expect_next(&mut stream, "seeking: after the seek back").await;
+    assert_eq!(
+        redelivered.payload(),
+        &[1],
+        "a seek back must redeliver the message at the captured position",
+    );
+    match redelivered.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
+    // One more delivery pins the suffix: replaying only the sought message is not enough.
+    let suffix = expect_next(&mut stream, "seeking: suffix after the seek back").await;
+    assert_eq!(
+        suffix.payload(),
+        &[2],
+        "a seek back must redeliver the ordered suffix after the captured position",
+    );
+    match suffix.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
+
+    // Delivery 3 is pending now; jumping to the captured position of 4 must skip it.
+    seeker.seek(forward_to).await.expect("seek forward failed");
+    let skipped_to = expect_next(&mut stream, "seeking: after the seek forward").await;
+    assert_eq!(
+        skipped_to.payload(),
+        &[4],
+        "a seek forward must skip the queued deliveries before the target",
+    );
+    match skipped_to.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
+    expect_no_more(&mut stream, "seeking: after the forward target").await;
+
+    publisher
+        .publish(OutgoingMessage::new(SUBJECT, &[COUNT]))
+        .await
+        .expect("publish failed");
+    let live = expect_next(&mut stream, "seeking: after a new publish").await;
+    assert_eq!(
+        live.payload(),
+        &[COUNT],
+        "the subscription must keep delivering new publishes after repositioning",
+    );
+    match live.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
     }

@@ -45,6 +45,10 @@ name = "subscribers"
 required-features = ["macros", "memory", "json"]
 
 [[example]]
+name = "seek"
+required-features = ["memory"]
+
+[[example]]
 name = "publishing"
 required-features = ["macros", "memory", "json"]
 

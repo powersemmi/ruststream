@@ -202,7 +202,17 @@ Implement only the capabilities your broker supports; none are part of the manda
 | `TransactionalPublisher` | begin / commit / abort around publishes |
 | `RequestReply` | native request-reply (NATS yes, Kafka no) |
 | `Partitioned` | a partition key on outgoing messages |
+| `Seekable` / `Seeker` | repositioning a live subscription in a replayable log |
+| `Positioned` | deliveries that report their own log position |
 | `DescribeServer` | reporting a `ServerSpec` for AsyncAPI |
+
+`Seekable` mints its `Seeker` handle before the stream borrows the subscriber, so a running
+subscription can be repositioned from outside the dispatch loop. Positions are broker-owned
+(`KafkaPosition`-style constructors on your own type); a position captured from a delivered
+message via `Positioned::position` carries a pinned contract - seeking to it redelivers exactly
+that message - while constructed positions keep the semantics your position type documents.
+Document what one seek covers (a consumer instance, or a shared group cursor) and reset any ack
+bookkeeping the reposition invalidates.
 
 ## Per-delivery context and `Ctx` keys
 

@@ -32,6 +32,97 @@ pub trait BatchSubscriber: Subscriber {
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_;
 }
 
+/// A subscriber whose position in a replayable log can be moved.
+///
+/// Implemented only by brokers whose transport can replay (`Kafka` seeks per partition, `Redis`
+/// streams move a group cursor, file-backed logs seek by offset); brokers without a replayable
+/// log simply do not implement it. [`Subscriber::stream`] borrows the subscriber mutably for the
+/// life of the returned stream, and the runtime holds that stream for the life of the service,
+/// so repositioning goes through a [`Seeker`] handle minted before the stream is opened, the
+/// same way publishers are handed out at build time.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Seekable, Seeker};
+///
+/// async fn rewind<S: Seekable>(
+///     subscriber: &S,
+///     to: <S::Seeker as Seeker>::Position,
+/// ) -> Result<(), <S::Seeker as Seeker>::Error> {
+///     subscriber.seeker().seek(to).await
+/// }
+/// ```
+pub trait Seekable: Subscriber {
+    /// The handle usable while this subscriber's stream is running.
+    type Seeker: Seeker;
+
+    /// Mints a handle for repositioning this subscription.
+    fn seeker(&self) -> Self::Seeker;
+}
+
+/// A clonable handle that repositions one subscription, minted by [`Seekable::seeker`].
+///
+/// What one seek covers differs between brokers: a broker whose position lives on the consumer
+/// instance (`Kafka`) moves that instance only, while a broker whose position is a shared group
+/// cursor (`Redis` streams) moves the whole consumer group. Repositioning also invalidates any
+/// acknowledgement bookkeeping the broker keeps for the subscription (a contiguous-watermark
+/// commit tracker must reset). Broker implementations document both.
+pub trait Seeker: Clone + Send + Sync + 'static {
+    /// The broker's own position type (`Kafka` partition offsets, a `Redis` entry id, a byte
+    /// offset), constructed by the broker crate or captured from a delivered message via
+    /// [`Positioned::position`].
+    type Position: Send;
+
+    /// The error returned when the broker rejects the reposition.
+    type Error: StdError + Send + Sync + 'static;
+
+    /// Moves the subscription to `to`; subsequent deliveries resume from there.
+    ///
+    /// Once the returned future resolves, the next delivery yielded by the subscription
+    /// reflects the new position. For a position captured from a delivered message the resume
+    /// point is fixed by the [`Positioned`] contract: that message is delivered again. For a
+    /// position built by a broker constructor (earliest, a timestamp) the resume point is
+    /// defined by the broker's own position documentation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Self::Error` when the broker rejects the reposition or the transport fails.
+    fn seek(&self, to: Self::Position) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+/// A delivered message that knows its own position in the broker's replayable log.
+///
+/// The captured half of the seek capability, next to broker-constructed positions:
+/// [`position`](Self::position) returns a value [`Seeker::seek`] accepts, with pinned
+/// semantics - seeking to it redelivers this exact message. Generic replay code and the
+/// conformance suite rely on that contract; positions built by broker constructors keep
+/// broker-documented semantics instead.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Positioned, Seekable, Seeker};
+///
+/// async fn replay_from<S>(
+///     subscriber: &S,
+///     msg: &S::Message,
+/// ) -> Result<(), <S::Seeker as Seeker>::Error>
+/// where
+///     S: Seekable,
+///     S::Message: Positioned<Position = <S::Seeker as Seeker>::Position>,
+/// {
+///     subscriber.seeker().seek(msg.position()).await
+/// }
+/// ```
+pub trait Positioned: IncomingMessage {
+    /// The position type, matching the subscription's [`Seeker::Position`].
+    type Position: Send;
+
+    /// Returns the position of this delivery; seeking to it redelivers this message.
+    fn position(&self) -> Self::Position;
+}
+
 /// A publisher that supports broker-side transactions.
 ///
 /// Implementations must guarantee that messages published between [`begin_transaction`] and

@@ -21,7 +21,8 @@ let broker = MemoryBroker::new();
   wildcard or pattern matching (those are broker-specific; the NATS test broker has real subject
   matching).
 - **Fan-out.** Every subscriber of a name receives every message published to it after the
-  subscription opened; messages published earlier are not buffered.
+  subscription opened; messages published earlier are not delivered by default, though the
+  `Seekable` capability can replay them from the publish log.
 - **Ack is a no-op; `nack(requeue: true)` redelivers** the same payload to the same subscriber.
 - **Cheap to clone.** Clones share state, so a clone held by a test observes everything the app
   publishes.
@@ -49,6 +50,13 @@ in-process semantics, not a simulation of another broker's:
   share its transaction.
 - **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
   well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).
+- **Seeking.** `MemorySubscriber` implements `Seekable` over the broker's per-name publish log:
+  mint a `MemorySeeker` before opening the stream, then `seek` to a `MemoryPosition` - captured
+  from a delivered message (`Positioned::position`, which redelivers exactly that message) or
+  constructed (`MemoryPosition::start()` / `sequence(n)`). Seeking forward skips the queued
+  deliveries before the target; seeking at or past the end of the log skips everything published
+  so far. The scope is one subscriber instance, and a seek through a handle aliasing a shut-down
+  bus errors with `MemoryError::ShutDown`.
 - **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
   `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
   reporting how many subscriber registrations the teardown dropped. The bus itself is a single

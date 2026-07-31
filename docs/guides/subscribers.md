@@ -238,6 +238,51 @@ way it does for a single-message nack (the crate of that broker documents it). R
 vector whose length does not match the batch is a bug in the handler: the unmatched remainder is
 retried (an extra redelivery beats a silently lost message) and the mismatch is logged.
 
+## Seeking
+
+Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory broker's
+publish log) implement the `Seekable` capability: a live subscription can be moved to another
+position - replaying a stream after fixing a handler bug, reprocessing from a known point, or
+skipping forward past a poison region - without dropping the subscription. Brokers without a
+replayable log simply do not implement it.
+
+The subscription's stream borrows the subscriber for as long as it runs, so repositioning goes
+through a separate handle: mint a `Seeker` **before** opening the stream, the same way
+publishers are handed out at build time. The handle is cheap to clone and usable while the
+stream runs:
+
+```rust
+--8<-- "examples/seek.rs:seeker"
+```
+
+Positions are broker-owned types (`MemoryPosition` here; a Kafka position carries partition
+offsets, a Redis position an entry id) and come from two places with different guarantees.
+A position captured from a delivered message (the `Positioned` capability on the message)
+carries a pinned contract - seeking to it redelivers exactly that message, then the rest of the
+log in order:
+
+```rust
+--8<-- "examples/seek.rs:capture"
+```
+
+```rust
+--8<-- "examples/seek.rs:seek"
+```
+
+A position built with the broker's own constructors keeps the semantics that broker documents
+(earliest, a sequence number, a timestamp). Seeking forward skips everything queued before the
+target:
+
+```rust
+--8<-- "examples/seek.rs:skip"
+```
+
+What one seek covers differs per broker - repositioning a consumer instance (Kafka) moves that
+instance only, repositioning a shared group cursor (Redis streams) moves the whole group - and a
+reposition invalidates any ack bookkeeping the broker keeps for the subscription; the broker
+crate documents both. Broker authors prove the contract with the
+[`capabilities::seeking` conformance suite](../broker-authors/conformance.md#capability-suites).
+
 ## Raw subscribers
 
 When the payload is not a serialized value at all (a binary frame, a foreign wire format you
