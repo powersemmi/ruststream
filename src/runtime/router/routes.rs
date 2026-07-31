@@ -226,7 +226,7 @@ where
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
     Def: PublishingCall<State> + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: crate::runtime::DecodeWith<DecodeCodec>,
     Def::Reply: Serialize + Send + Sync + 'static,
     Def::Context: crate::BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     DecodeCodec: Codec + Send + 'static,

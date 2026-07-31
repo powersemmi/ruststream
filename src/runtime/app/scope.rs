@@ -252,25 +252,33 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     /// runtime after connect. Decode uses the scope codec; how the reply leaves (encoded
     /// through a typed stack, or byte-for-byte through a bare publisher) is the source's live
     /// form, per its [`ReplySink`] wiring.
-    pub(super) fn mount_publishing_source<S, D, Src>(&mut self, source: S, def: D, reply: Src)
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        <S::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        D: PublishingCall<State> + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Send + Sync + 'static,
-        D::Context:
-            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
-        Src: PublishPolicy<Connected<B>> + Send + 'static,
-        Src::Live: ReplySink<D::Reply, D::Context, Pipeline> + 'static,
+    pub(super) fn mount_publishing_source<Source, Def, ReplySource>(
+        &mut self,
+        source: Source,
+        def: Def,
+        reply: ReplySource,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
+        Def: PublishingCall<State> + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
+        Def::Reply: Send + Sync + 'static,
+        Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
+            + Send
+            + Sync
+            + 'static,
+        ReplySource: PublishPolicy<Connected<B>> + Send + 'static,
+        ReplySource::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
-        Layers:
-            Layer<PublishingHandler<D, SC::Codec, Src::Live, Pipeline>> + Clone + Send + 'static,
+        Layers: Layer<PublishingHandler<Def, SC::Codec, ReplySource::Live, Pipeline>>
+            + Clone
+            + Send
+            + 'static,
         Layers::Handler:
-            Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
+            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
         B::Connected: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);

@@ -11,6 +11,7 @@ use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, SliceHandler};
 use crate::runtime::batch_publishing::BatchPublishingDef;
+use crate::runtime::input::DecodeWith;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::publish::{PublishTransform, ReplyWiring, TypedPublisher};
 use crate::runtime::publishing::PublishingDef;
@@ -198,7 +199,7 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         Def: PublishingDef + 'static,
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<PC>,
         Def::Reply: Serialize + Send + Sync + 'static,
         P: 'static,
         PC: Codec + Clone + 'static,
@@ -221,7 +222,7 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<PC>,
         Def::Reply: Serialize + Send + Sync + 'static,
         P: 'static,
         PC: Codec + Clone + 'static,
@@ -437,7 +438,7 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
         Def: PublishingDef + 'static,
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         P: 'static,
         PC: Codec + 'static,
@@ -460,7 +461,7 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         P: 'static,
         PC: Codec + 'static,

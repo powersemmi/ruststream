@@ -11,7 +11,7 @@
 
 use std::future::Future;
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use tracing::warn;
 
 use crate::codec::Codec;
@@ -21,6 +21,7 @@ use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
+use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
 use super::publish::{
     PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
@@ -100,8 +101,9 @@ where
 /// reply is encoded (codec) and *through which* connection it is sent come from the
 /// [`TypedPublisher`] passed at wiring time.
 pub trait PublishingDef: Send + Sync {
-    /// The decoded message type the handler consumes.
-    type Input;
+    /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`
+    /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
+    type Input: InputKind;
 
     /// The reply type the handler produces, encoded and published.
     type Reply;
@@ -174,21 +176,23 @@ pub trait PublishingCall<S>: PublishingDef {
     /// returned [`HandlerResult`] (for example [`HandlerResult::retry`] to ask for redelivery).
     fn call(
         &self,
-        input: &Self::Input,
+        input: <Self::Input as InputKind>::View<'_>,
         ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
 }
 
 /// Builds the registration metadata for a publishing definition mounted under `name`.
 pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> HandlerMetadata {
-    HandlerMetadata::typed::<D::Input>(name)
+    let mut meta = HandlerMetadata::raw(name)
         .with_output_type(std::any::type_name::<D::Reply>())
         .with_def_details(
             def.description(),
             def.input_schema(),
             def.message_name(),
             def.message_description(),
-        )
+        );
+    meta.input_type = <D::Input as InputKind>::input_label();
+    meta
 }
 
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, deliver the reply, ack.
@@ -219,7 +223,7 @@ impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> Handler<Msg, Def::Context, 
 where
     Msg: IncomingMessage,
     Def: PublishingCall<State>,
-    Def::Input: DeserializeOwned + Send + Sync,
+    Def::Input: DecodeWith<DecodeCodec>,
     Def::Reply: Send + Sync,
     Def::Context: Send + Sync,
     DecodeCodec: Codec,
@@ -229,32 +233,35 @@ where
 {
     async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {
         // The publishing path settles by a bare outcome (no per-element continuation): decode,
-        // run, publish the reply, then ack. It converts to `Settle` with no `and_after`.
-        let input = match self.codec.decode::<Def::Input>(msg.payload()) {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %ctx.name(),
-                    message_type = std::any::type_name::<Def::Input>(),
-                    error = %err,
-                    "codec decode failed",
-                );
-                #[cfg(any(feature = "testing", feature = "otel"))]
-                ctx.mark_decode_failed();
-                return match self.decode {
-                    FailurePolicy::FailFast => {
-                        ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerResult::drop().into()
-                    }
-                    other => other
-                        .settlement()
-                        .unwrap_or_else(HandlerResult::drop)
-                        .into(),
-                };
-            }
-        };
-        let reply = match self.def.call(&input, ctx).await {
+        // run, publish the reply, then ack. It converts to `Settle` with no `and_after`. The
+        // decode product lives on this stack frame and the handler borrows its view.
+        let owned =
+            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload()) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(
+                        target: "ruststream::dispatch",
+                        subscription = %ctx.name(),
+                        message_type = <Def::Input as InputKind>::input_label(),
+                        error = %err,
+                        "codec decode failed",
+                    );
+                    #[cfg(any(feature = "testing", feature = "otel"))]
+                    ctx.mark_decode_failed();
+                    return match self.decode {
+                        FailurePolicy::FailFast => {
+                            ctx.fail_fast(&format!("decode failed: {err}"));
+                            HandlerResult::drop().into()
+                        }
+                        other => other
+                            .settlement()
+                            .unwrap_or_else(HandlerResult::drop)
+                            .into(),
+                    };
+                }
+            };
+        let view = <Def::Input as InputKind>::view(&owned, msg.payload());
+        let reply = match self.def.call(view, ctx).await {
             Ok(reply) => reply,
             Err(result) => return result.into(),
         };
@@ -290,7 +297,7 @@ mod tests {
     struct ManualPub;
 
     impl PublishingDef for ManualPub {
-        type Input = u32;
+        type Input = crate::runtime::Decoded<u32>;
         type Reply = u32;
         type Context = ();
         type Source = Name;
@@ -311,7 +318,7 @@ mod tests {
     impl<S: Send + Sync> PublishingCall<S> for ManualPub {
         async fn call(
             &self,
-            input: &u32,
+            input: <Self::Input as crate::runtime::InputKind>::View<'_>,
             _ctx: &mut Context<'_, (), S>,
         ) -> Result<u32, HandlerResult> {
             Ok(*input)

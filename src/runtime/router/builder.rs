@@ -13,6 +13,7 @@ use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_meta
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
+use crate::runtime::input::DecodeWith;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::{PublishPipeline, PublishTransform, TypedPublisher};
@@ -381,7 +382,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
         D: PublishingDef + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
+        D::Input: DecodeWith<C>,
         D::Reply: Serialize + Send + Sync + 'static,
         C: Codec + 'static,
         P: 'static,
