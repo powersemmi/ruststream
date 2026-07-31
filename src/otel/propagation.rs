@@ -28,7 +28,7 @@
 //! # #[cfg(all(feature = "memory", feature = "json"))]
 //! # {
 //! use ruststream::memory::MemoryBroker;
-//! use ruststream::opentelemetry::OpenTelemetry;
+//! use ruststream::otel::OpenTelemetry;
 //! use ruststream::runtime::TypedPublisher;
 //!
 //! let otel = OpenTelemetry::new();
@@ -92,7 +92,7 @@ impl Injector for HeaderInjector<'_> {
 /// # Examples
 ///
 /// ```
-/// use ruststream::opentelemetry::OpenTelemetry;
+/// use ruststream::otel::OpenTelemetry;
 ///
 /// let otel = OpenTelemetry::new();
 /// let _consume = otel.consume_layer();
@@ -107,7 +107,7 @@ impl OpenTelemetry {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::opentelemetry::OpenTelemetry;
+    /// use ruststream::otel::OpenTelemetry;
     ///
     /// let _otel = OpenTelemetry::new();
     /// ```
@@ -123,7 +123,7 @@ impl OpenTelemetry {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::opentelemetry::OpenTelemetry;
+    /// use ruststream::otel::OpenTelemetry;
     ///
     /// let _layer = OpenTelemetry::new().consume_layer();
     /// ```
@@ -140,7 +140,7 @@ impl OpenTelemetry {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::opentelemetry::OpenTelemetry;
+    /// use ruststream::otel::OpenTelemetry;
     ///
     /// let _propagation = OpenTelemetry::new().propagation();
     /// ```

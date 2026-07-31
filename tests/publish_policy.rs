@@ -9,12 +9,12 @@
 
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryRequest};
+use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemoryRequest};
 use ruststream::runtime::{
     AppInfo, Outgoing, PublishContext, PublishTransform, RustStream, TypedPublisher,
 };
 use ruststream::testing::expect_published;
-use ruststream::{Broker, OutgoingMessage, PublishPolicy, Publisher, subscriber};
+use ruststream::{Broker, OutgoingMessage, PublishPolicy, Publisher, RequestReply, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,7 +69,7 @@ async fn a_request_policy_pairs_into_a_requester() {
         .expect("memory pairing is infallible");
     // No responder is subscribed; the requester must fail fast on timeout, proving it is live
     // and bound to this broker's bus.
-    let unanswered = ruststream::RequestReply::request(
+    let unanswered = RequestReply::request(
         &requester,
         OutgoingMessage::new("policy.void", b"ping".as_slice()),
         Duration::from_millis(50),
@@ -100,7 +100,7 @@ async fn a_typed_policy_stack_pairs_functorially() {
         .pair(&connected)
         .await
         .expect("memory pairing is infallible");
-    let _type_check: TypedPublisher<ruststream::memory::MemoryPublisher, _, _> = paired;
+    let _type_check: TypedPublisher<MemoryPublisher, _, _> = paired;
 
     // ...while the registration takes the unpaired stack and the runtime pairs it at startup.
     let replies = TypedPublisher::new(MemoryPublish).transform(Envelope);

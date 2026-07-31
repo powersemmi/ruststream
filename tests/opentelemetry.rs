@@ -15,7 +15,7 @@ use opentelemetry::propagation::{Extractor, TextMapPropagator};
 use opentelemetry::trace::{SpanContext, TraceContextExt};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::opentelemetry::OpenTelemetry;
+use ruststream::otel::OpenTelemetry;
 use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
 use ruststream::{Headers, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};

@@ -12,8 +12,8 @@ use std::error::Error;
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    App, AppInfo, HandlerResult, Out, Outgoing, PublishLayer, PublishNext, PublishTransform,
-    RustStream, Transactional, TypedPublisher,
+    App, AppInfo, HandlerResult, Out, Outgoing, PublishLayer, PublishNext, PublishPipeline,
+    PublishTransform, RustStream, Transactional, TypedPublisher,
 };
 use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -87,7 +87,7 @@ impl<C> PublishTransform<C> for EnvelopeTransform {
 struct AuditPublish;
 
 impl PublishLayer for AuditPublish {
-    async fn on_publish<'a, N: ruststream::runtime::PublishPipeline, P: Publisher>(
+    async fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,

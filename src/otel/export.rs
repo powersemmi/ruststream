@@ -1,7 +1,7 @@
 //! OpenTelemetry SDK integration (`otel` feature): OTLP export for traces and metrics, messaging
 //! semantic conventions, and per-handler dispatch metrics.
 //!
-//! The [`opentelemetry`](crate::opentelemetry) module is the propagation half: it carries the
+//! The [`propagation`](crate::otel::propagation) submodule is the propagation half: it carries the
 //! W3C trace context and emits plain `tracing` spans. This module is the export half:
 //! [`OtelBuilder::init`] installs the OpenTelemetry tracer and meter providers as the process **globals**
 //! and bridges `tracing` spans into them, so the spans the propagation module already opens are
@@ -269,7 +269,7 @@ impl Otel {
 
     /// A consume-side [`Layer`] recording the per-delivery metrics; add it with
     /// [`RustStream::layer`](crate::runtime::RustStream::layer). Pair it with
-    /// [`OpenTelemetry::consume_layer`](crate::opentelemetry::OpenTelemetry::consume_layer) for
+    /// [`OpenTelemetry::consume_layer`](crate::otel::propagation::OpenTelemetry::consume_layer) for
     /// the trace-context propagation half.
     #[must_use]
     pub fn consume_layer(&self) -> OtelConsumeLayer {
