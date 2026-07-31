@@ -7,13 +7,15 @@
     feature = "testing"
 ))]
 
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Seek};
+use ruststream::memory::{
+    MemoryBroker, MemoryPosition, MemoryPublish, MemoryPublisher, MemorySeeker, MemorySource,
+};
+use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream, Seek};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, Publisher, Seeker, WithSeeker, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Event {
     id: u64,
 }
@@ -164,6 +166,66 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
         [1, 2, 3],
         "a start position must replay pre-subscription history in order",
     );
+
+    tb.shutdown().await.expect("graceful shutdown");
+}
+
+/// Forwards good events through the injected publisher and skips a poison region through the
+/// injected seeker: the two startup injections compose in one handler.
+#[subscriber("seek.combo")]
+async fn forward_skipping(
+    event: &Event,
+    Out(out): Out<MemoryPublisher>,
+    Seek(seeker): Seek<MemorySeeker>,
+) -> HandlerResult {
+    if event.id == 0 {
+        // The poison marker: resume from the third message.
+        if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
+            return HandlerResult::retry();
+        }
+        return HandlerResult::Ack;
+    }
+    let payload = serde_json::to_vec(event).expect("serializable");
+    if out
+        .publish(OutgoingMessage::new("seek.combo.out", payload.as_slice()))
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_out_and_a_seek_parameter_combine_in_one_handler() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("combo", "0.1.0")).with_broker(broker, |b| {
+        b.include(forward_skipping).publisher(MemoryPublish);
+    });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    // All three land before the first is handled: the seek skips the queued second message,
+    // and only the third reaches the forwarding branch.
+    for id in [0, 1, 2] {
+        ingress
+            .publish(OutgoingMessage::new("seek.combo", payload(id).as_slice()))
+            .await
+            .expect("publish");
+    }
+    tb.settle().await.expect("settle");
+
+    let received: Vec<Event> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("seek.combo")
+        .received();
+    let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
+    assert_eq!(ids, [0, 2]);
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("seek.combo.out")
+        .assert_called_once()
+        .with(&Event { id: 2 });
 
     tb.shutdown().await.expect("graceful shutdown");
 }

@@ -19,16 +19,16 @@ use crate::codec::Codec;
 use crate::codec::DefaultCodec;
 use crate::{
     BatchSubscriber, Broker, BuildContext, Connected, DefaultPublish, PublishPolicy, Publisher,
-    Seekable, Subscriber, SubscriptionSource,
+    Subscriber, SubscriptionSource,
 };
 
 use crate::runtime::SliceHandler;
 use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
+use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::middleware::Layer;
-use crate::runtime::out::{OutCall, OutDef, OutHandler};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::PublishTransformIdentity;
 use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
@@ -37,7 +37,6 @@ use crate::runtime::raw::{
     RawPublishingCall, RawPublishingHandler, RawReplyCall, RawReplyHandler, RawSubscriberDef,
     raw_metadata, raw_publishing_metadata, raw_reply_metadata,
 };
-use crate::runtime::seek::{SeekCall, SeekHandler};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -72,10 +71,15 @@ pub mod forms {
     /// A reply-publishing subscriber (`#[subscriber("in", publish("out"))]`).
     #[derive(Debug, Clone, Copy)]
     pub struct Publishing;
-    /// A subscriber with an injected publisher (`Out(out): Out<P>`).
+    /// A subscriber whose startup injections need a publisher attachment.
+    ///
+    /// The signature carries an `Out(out): Out<P>` parameter (optionally next to a `Seek`
+    /// one), so the include site must chain `.publisher(..)`.
     #[derive(Debug, Clone, Copy)]
     pub struct Out;
-    /// A subscriber with an injected seeker (`Seek(seeker): Seek<K>`).
+    /// A subscriber whose startup injections need nothing from the include site.
+    ///
+    /// The signature carries a `Seek(seeker): Seek<K>` parameter (and no `Out`).
     #[derive(Debug, Clone, Copy)]
     pub struct Seek;
     /// A batch subscriber (`#[subscriber(batch("in"))]`).
@@ -237,18 +241,18 @@ where
 }
 
 // ---------------------------------------------------------------------------------------------
-// Seek injection: eager, no builder - nothing is attached at the include site, because the
-// injected seeker comes from the subscription's own subscriber.
+// Attachment-free injections: eager, no builder - a definition whose startup injections need
+// nothing from the include site (a Seek parameter without an Out one) resolves against the
+// subscription itself.
 
 impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
     for forms::Seek
 where
     B: Broker + 'static,
     C: ScopeCodec,
-    Def: SeekCall<State> + 'static,
+    Def: InjectCall<State> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
-        Seekable<Seeker = Def::Seeker> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
     Def::Input: DeserializeOwned + Send + Sync + 'static,
@@ -257,9 +261,12 @@ where
         > + Send
         + Sync
         + 'static,
-    Def::Seeker: Send + Sync + 'static,
+    Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ()>
+        + Send
+        + Sync
+        + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<SeekHandler<Def, <C as ScopeCodec>::Codec, Def::Seeker>> + Clone + Send + 'static,
+    Layers: Layer<InjectHandler<Def, <C as ScopeCodec>::Codec>> + Clone + Send + 'static,
     Layers::Handler: Handler<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             Def::Context,
@@ -270,7 +277,7 @@ where
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
         let source = def.source();
-        scope.mount_seek(source, def);
+        scope.mount_inject(source, def, ());
     }
 }
 
@@ -923,9 +930,9 @@ impl<B, Layers, C, State, Pipeline, Def, Source> CommitOut<B, Layers, C, State, 
 where
     B: Broker + 'static,
     C: ScopeCodec,
-    Def: OutCall<State> + 'static,
+    Def: InjectCall<State> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
     Def::Input: DeserializeOwned + Send + Sync + 'static,
@@ -934,10 +941,13 @@ where
         > + Send
         + Sync
         + 'static,
-    Def::Out: Send + Sync + 'static,
-    Source: PublishPolicy<Connected<B>, Live = Def::Out> + Send + 'static,
+    Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, Source>
+        + Send
+        + Sync
+        + 'static,
+    Source: Send + Sync + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<OutHandler<Def, <C as ScopeCodec>::Codec, Def::Out>> + Clone + Send + 'static,
+    Layers: Layer<InjectHandler<Def, <C as ScopeCodec>::Codec>> + Clone + Send + 'static,
     Layers::Handler: Handler<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             Def::Context,
@@ -946,7 +956,7 @@ where
 {
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
         let source = def.source();
-        scope.mount_out_source(source, def, self.0);
+        scope.mount_inject(source, def, self.0);
     }
 }
 
@@ -1032,7 +1042,7 @@ where
     C: 's,
     State: 's,
     Pipeline: 's,
-    Def: OutDef,
+    Def: InjectDef,
 {
     type Out = IncludeOut<'s, B, Layers, C, State, Pipeline, Def, MissingOut>;
 

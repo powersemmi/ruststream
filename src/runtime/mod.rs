@@ -10,17 +10,16 @@ mod dynstack;
 mod extract;
 mod failure;
 mod handler;
+mod inject;
 mod lifecycle;
 mod metadata;
 mod middleware;
-mod out;
 mod publish;
 mod publish_source;
 mod publisher_registry;
 mod publishing;
 mod raw;
 mod router;
-mod seek;
 mod subscriber_def;
 mod typed;
 
@@ -40,13 +39,13 @@ pub use extract::{Ctx, FromContext, FromRef, State};
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
+pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out, Seek};
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::ConnectedLifecycle;
 #[doc(hidden)]
 pub use lifecycle::ConnectedSlot;
 pub use metadata::HandlerMetadata;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
-pub use out::{Out, OutCall, OutDef, OutHandler};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
@@ -63,6 +62,5 @@ pub use raw::{
     RawReplyHandler, RawSubscriberDef,
 };
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
-pub use seek::{Seek, SeekCall, SeekDef, SeekHandler};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

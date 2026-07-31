@@ -29,8 +29,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
             (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
             (true, None) => expand_batch(&parts, func),
             (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
-            (false, None) if parts.out.is_some() => expand_out(&parts),
-            (false, None) if parts.seek.is_some() => expand_seek(&parts),
+            (false, None) if parts.out.is_some() || parts.seek.is_some() => expand_injected(&parts),
             (false, None) => expand_subscribing(&parts),
         }
     };
@@ -471,7 +470,6 @@ fn split_seek<'a>(
     args: &SubscriberArgs,
     func: &ItemFn,
     extractors: &mut Vec<(&'a Pat, &'a Type)>,
-    out: Option<(&'a Pat, &'a Type)>,
 ) -> syn::Result<Option<(&'a Pat, &'a Type)>> {
     let mut seek = None;
     extractors.retain(|(pat, ty)| {
@@ -491,13 +489,6 @@ fn split_seek<'a>(
         return Err(Error::new_spanned(
             dup,
             "a #[subscriber] handler takes at most one Seek parameter",
-        ));
-    }
-    if seek.is_some() && out.is_some() {
-        return Err(Error::new_spanned(
-            &func.sig,
-            "a Seek parameter is not supported together with an Out parameter yet; reposition \
-             from outside through a WithSeeker token instead",
         ));
     }
     if seek.is_some() && (args.batch || args.publish.is_some() || args.publish_raw.is_some()) {
@@ -643,7 +634,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     };
     let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
     let out = split_out(args, func, &mut extractors)?;
-    let seek = split_seek(args, func, &mut extractors, out)?;
+    let seek = split_seek(args, func, &mut extractors)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
@@ -1029,7 +1020,9 @@ fn expand_publishing(
     })
 }
 
-fn expand_out(parts: &HandlerParts<'_>) -> TokenStream2 {
+/// The startup-injection form: `Out` / `Seek` parameters travel as one tuple resolved by the
+/// runtime after the subscription opens, so any combination shares this single expansion.
+fn expand_injected(parts: &HandlerParts<'_>) -> TokenStream2 {
     let HandlerParts {
         vis,
         name,
@@ -1046,104 +1039,32 @@ fn expand_out(parts: &HandlerParts<'_>) -> TokenStream2 {
         state_ty,
         extractors,
         out,
-        seek: _,
-        workers_method,
-        failure_method,
-    } = parts;
-    let (out_pat, out_ty) = out.expect("expand_out runs only with an Out param");
-
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty)),
-        None => (
-            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
-            quote!(__RsState),
-        ),
-    };
-    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
-    let prelude = extractor_prelude(
-        extractors,
-        ctx_param,
-        ctx_ty,
-        &state_in_ctx,
-        &quote!(
-            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
-                ::ruststream::runtime::HandlerResult,
-            >::into(__rs_err),)
-        ),
-    );
-
-    quote! {
-        #[derive(Clone, Copy)]
-        #[allow(non_camel_case_types)]
-        #vis struct #name;
-
-        impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = ::ruststream::runtime::forms::Out;
-        }
-
-        impl ::ruststream::runtime::OutDef for #name {
-            type Input = #input_ty;
-            type Context = #ctx_ty;
-            type Source = #source_ty;
-            type Out = #out_ty;
-
-            fn source(&self) -> Self::Source { #source_expr }
-
-            #workers_method
-
-            #failure_method
-
-            fn description(&self) -> ::core::option::Option<&str> {
-                #description
-            }
-
-            #input_schema
-
-            #message_meta
-        }
-
-        impl #impl_generics
-            ::ruststream::runtime::OutCall<#state_in_ctx> for #name
-            #where_clause
-        {
-            async fn call(
-                &self,
-                #pat: &#input_ty,
-                __rs_out: &#out_ty,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> ::ruststream::runtime::Settle {
-                #prelude
-                let #out_pat = ::ruststream::runtime::Out(__rs_out);
-                ::ruststream::runtime::IntoSettle::into_settle(
-                    (async move #block).await,
-                )
-            }
-        }
-    }
-}
-
-fn expand_seek(parts: &HandlerParts<'_>) -> TokenStream2 {
-    let HandlerParts {
-        vis,
-        name,
-        block,
-        pat,
-        input_ty,
-        description,
-        source_ty,
-        source_expr,
-        input_schema,
-        message_meta,
-        ctx_param,
-        ctx_ty,
-        state_ty,
-        extractors,
-        out: _,
         seek,
         workers_method,
         failure_method,
     } = parts;
-    let (seek_pat, seeker_ty) = seek.expect("expand_seek runs only with a Seek param");
+
+    // The tuple order is canonical (Out first, then Seek) and the bindings below mirror it,
+    // so the handler's own parameter order stays free.
+    let mut injection_tys = Vec::new();
+    let mut injection_pats = Vec::new();
+    if let Some((out_pat, out_ty)) = out {
+        injection_tys.push(quote!(::ruststream::runtime::Out<#out_ty>));
+        // The user's parameter pattern is already `Out(..)`-shaped; it destructures the
+        // tuple element directly.
+        injection_pats.push(quote!(#out_pat));
+    }
+    if let Some((seek_pat, seeker_ty)) = seek {
+        injection_tys.push(quote!(::ruststream::runtime::Seek<#seeker_ty>));
+        injection_pats.push(quote!(#seek_pat));
+    }
+    // An Out parameter needs a publisher attachment at the include site, so it selects the
+    // builder form; injections resolved off the subscription alone mount eagerly.
+    let form = if out.is_some() {
+        quote!(::ruststream::runtime::forms::Out)
+    } else {
+        quote!(::ruststream::runtime::forms::Seek)
+    };
 
     let (impl_generics, state_in_ctx) = match &state_ty {
         Some(state_ty) => (quote!(), quote!(#state_ty)),
@@ -1171,14 +1092,14 @@ fn expand_seek(parts: &HandlerParts<'_>) -> TokenStream2 {
         #vis struct #name;
 
         impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = ::ruststream::runtime::forms::Seek;
+            type Form = #form;
         }
 
-        impl ::ruststream::runtime::SeekDef for #name {
+        impl ::ruststream::runtime::InjectDef for #name {
             type Input = #input_ty;
             type Context = #ctx_ty;
             type Source = #source_ty;
-            type Seeker = #seeker_ty;
+            type Injections = (#(#injection_tys,)*);
 
             fn source(&self) -> Self::Source { #source_expr }
 
@@ -1196,17 +1117,17 @@ fn expand_seek(parts: &HandlerParts<'_>) -> TokenStream2 {
         }
 
         impl #impl_generics
-            ::ruststream::runtime::SeekCall<#state_in_ctx> for #name
+            ::ruststream::runtime::InjectCall<#state_in_ctx> for #name
             #where_clause
         {
             async fn call(
                 &self,
                 #pat: &#input_ty,
-                __rs_seeker: &#seeker_ty,
+                __rs_inj: &Self::Injections,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::ruststream::runtime::Settle {
                 #prelude
-                let #seek_pat = ::ruststream::runtime::Seek(__rs_seeker);
+                let (#(#injection_pats,)*) = __rs_inj;
                 ::ruststream::runtime::IntoSettle::into_settle(
                     (async move #block).await,
                 )

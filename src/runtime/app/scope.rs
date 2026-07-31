@@ -6,9 +6,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{
-    BatchSubscriber, Broker, Connected, Publisher, Seekable, Subscriber, SubscriptionSource,
-};
+use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::PublishPolicy;
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
@@ -17,17 +15,16 @@ use crate::runtime::batch_publishing::{
 };
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
+use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler, inject_metadata};
 use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
-use crate::runtime::out::{OutCall, OutHandler, out_metadata};
 use crate::runtime::publish::{
     PublishIdentity, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
 use crate::runtime::publisher_registry::ErasedPublisher;
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
 use crate::runtime::router::{RouterDef, RouterSink};
-use crate::runtime::seek::{SeekCall, SeekHandler, seek_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::{Typed, typed};
 
@@ -307,95 +304,52 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         );
     }
 
-    /// Mounts an out definition: the handler's injected publisher comes from `out`, a policy
-    /// source paired by the runtime after connect. Decode uses the scope codec.
-    pub(super) fn mount_out_source<Source, Def, OutSource>(
+    /// Mounts an injected definition: its startup injections (an attached publish policy
+    /// pairing into an `Out` parameter, the subscription's own seeker for a `Seek` parameter)
+    /// resolve right after the subscription opens, before the first delivery, so the handler
+    /// holds live handles by construction. Decode uses the scope codec.
+    pub(super) fn mount_inject<Source, Def, Extra>(
         &mut self,
         source: Source,
         def: Def,
-        out: OutSource,
+        extra: Extra,
     ) where
-        // The subscription side, as in mount_publishing_source.
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source::Subscriber: Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        Def: OutCall<State> + 'static,
+        Def: InjectCall<State> + 'static,
         Def::Input: DeserializeOwned + Send + Sync + 'static,
         Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
             + Send
             + Sync
             + 'static,
-        Def::Out: Send + Sync + 'static,
-        // The injected publisher: the source pairs at startup into exactly the type the
-        // handler's Out parameter names.
-        OutSource: PublishPolicy<Connected<B>, Live = Def::Out> + Send + 'static,
+        Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
+        Extra: Send + Sync + 'static,
         SC: ScopeCodec,
         State: Send + Sync + 'static,
-        Layers: Layer<OutHandler<Def, SC::Codec, Def::Out>> + Clone + Send + 'static,
+        Layers: Layer<InjectHandler<Def, SC::Codec>> + Clone + Send + 'static,
         Layers::Handler:
             Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
         B::Connected: 'static,
     {
-        let meta = out_metadata(source.name().to_owned(), &def);
+        let meta = inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
         let codec = self.codec.scope_codec();
         let global = self.global.clone();
-        self.sink.push_paired_workers(
+        self.sink.push_injected_workers(
             source,
-            async move |connected: Arc<Connected<B>>| {
-                let live = out
-                    .pair(connected.as_ref())
+            async move |connected: Arc<Connected<B>>, subscriber| {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(global.layer(OutHandler {
+                let handler = global.layer(InjectHandler {
                     def,
                     codec,
-                    out: live,
+                    injections,
                     decode: policies.decode,
-                }))
-            },
-            meta,
-            policies,
-            workers,
-        );
-    }
-
-    /// Mounts a seek definition: the handler's injected seeker is minted off the subscription's
-    /// own subscriber right after it opens, before the first delivery, so the handler holds a
-    /// live handle by construction. Decode uses the scope codec.
-    pub(super) fn mount_seek<Source, Def>(&mut self, source: Source, def: Def)
-    where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Seekable<Seeker = Def::Seeker> + Send + 'static,
-        <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        Def: SeekCall<State> + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
-        Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
-            + Send
-            + Sync
-            + 'static,
-        Def::Seeker: Send + Sync + 'static,
-        SC: ScopeCodec,
-        State: Send + Sync + 'static,
-        Layers: Layer<SeekHandler<Def, SC::Codec, Def::Seeker>> + Clone + Send + 'static,
-        Layers::Handler:
-            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
-    {
-        let meta = seek_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        let codec = self.codec.scope_codec();
-        let global = self.global.clone();
-        self.sink.push_seek_workers(
-            source,
-            move |subscriber| {
-                global.layer(SeekHandler {
-                    def,
-                    codec,
-                    seeker: subscriber.seeker(),
-                    decode: policies.decode,
-                })
+                });
+                Ok((subscriber, handler))
             },
             meta,
             policies,
