@@ -249,13 +249,36 @@ each delivery's bytes exactly as the broker handed them over.
 ```
 
 The message parameter must be `&[u8]` - a serde-typed parameter under `raw` is a compile error,
-as is `raw` combined with `batch(..)`, `publish(..)`, an injected `Out` publisher, or an
+as is `raw` combined with `batch(..)`, an injected `Out` publisher, or an
 `on_failure(decode = ..)` policy (there is no decode step to fail). Extractors, `&mut Context`,
 `workers(..)`, and `on_failure(panic = ..)` work unchanged, and a raw subscriber mounts with the
 same `include` as every other definition - a scope codec, when one is set, simply does not apply
 to it. Because no codec is involved, raw subscribers are also the one subscriber form available
 with no codec feature enabled at all. For a custom serialization format you want *typed*
 handlers for, implement [`Codec`](codecs.md) instead and keep the typed path.
+
+A raw subscriber can also reply in kind: the `publish_raw("dest")` clause publishes the
+returned bytes (`-> Vec<u8>`, or `-> Result<Vec<u8>, HandlerResult>` for the same explicit ack
+control as the typed reply form) as-is to the reply name, through the bare publisher attached
+at the include site (`b.include(relay).publisher(policy)`, or the broker's default publish
+policy without the call) - no codec on either side, and a failed reply publish nacks the
+delivery with requeue:
+
+```rust
+--8<-- "tests/raw_subscriber.rs:raw_reply"
+```
+
+`publish_raw` is not tied to a raw input: on a typed handler it makes only the *reply* raw - the
+input still decodes with the scope codec (and keeps the decode failure policy), while the
+returned bytes go out unencoded. That is the gateway shape, consuming structured messages and
+emitting a wire format the handler produced itself:
+
+```rust
+--8<-- "tests/raw_subscriber.rs:raw_reply_typed"
+```
+
+The encoded `publish(..)` clause under `raw` is rejected (a raw handler's reply is bytes -
+`publish_raw` is the fix the error names), as is combining both reply clauses on one handler.
 
 ## Worker pools
 

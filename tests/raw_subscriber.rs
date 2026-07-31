@@ -7,13 +7,18 @@
 #![cfg(all(feature = "macros", feature = "memory", feature = "testing"))]
 
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ruststream::memory::{MemoryBroker, MemoryMessage};
+use ruststream::memory::{
+    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish, MemoryPublisher,
+};
 use ruststream::runtime::{AppInfo, Ctx, HandlerResult, Router, RustStream, State};
 use ruststream::testing::TestApp;
-use ruststream::{BuildContext, ContextField, FromRef, IncomingMessage, subscriber};
+use ruststream::{
+    BuildContext, ContextField, FromRef, IncomingMessage, OutgoingMessage, PairError,
+    PublishPolicy, Publisher, subscriber,
+};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
@@ -51,6 +56,311 @@ async fn raw_handler_receives_exact_bytes() {
         &[FRAME.to_vec()],
         "the handler saw the published bytes untouched"
     );
+}
+
+// --- the reply form: raw, publish_raw("dest") republishes the returned bytes as-is ---
+
+// --8<-- [start:raw_reply]
+#[subscriber("relay-in", raw, publish_raw("relay-out"))]
+async fn relay(frame: &[u8]) -> Vec<u8> {
+    let mut reply = frame.to_vec();
+    reply.reverse();
+    reply
+}
+// --8<-- [end:raw_reply]
+
+#[subscriber("relay-out", raw)]
+async fn relay_capture(_frame: &[u8]) -> HandlerResult {
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_reply_round_trips_exact_bytes() {
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(relay).publisher(MemoryPublish);
+        b.include(relay_capture);
+    });
+
+    let tb = TestApp::start(app).await.expect("start");
+    tb.broker::<MemoryBroker>()
+        .publish_raw("relay-in", FRAME)
+        .await
+        .expect("publish");
+
+    let mut expected = FRAME.to_vec();
+    expected.reverse();
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-in")
+        .assert_called_once()
+        .with_raw(FRAME)
+        .settled(HandlerResult::Ack);
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-out")
+        .assert_called_once()
+        .with_raw(&expected)
+        .settled(HandlerResult::Ack);
+}
+
+// --- without .publisher(..) the reply commits with the broker's default publish policy ---
+
+#[subscriber("relay-default-in", raw, publish_raw("relay-default-out"))]
+async fn relay_default(frame: &[u8]) -> Vec<u8> {
+    frame.to_vec()
+}
+
+#[subscriber("relay-default-out", raw)]
+async fn relay_default_capture(_frame: &[u8]) -> HandlerResult {
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_reply_defaults_to_the_brokers_publish_policy() {
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(relay_default);
+        b.include(relay_default_capture);
+    });
+
+    let tb = TestApp::start(app).await.expect("start");
+    tb.broker::<MemoryBroker>()
+        .publish_raw("relay-default-in", FRAME)
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-default-out")
+        .assert_called_once()
+        .with_raw(FRAME)
+        .settled(HandlerResult::Ack);
+}
+
+// --- the Result form: Err skips the publish and settles by the returned HandlerResult ---
+
+#[subscriber("relay-checked-in", raw, publish_raw("relay-checked-out"))]
+async fn relay_checked(frame: &[u8]) -> Result<Vec<u8>, HandlerResult> {
+    if frame.is_empty() {
+        return Err(HandlerResult::drop());
+    }
+    Ok(frame.to_vec())
+}
+
+#[subscriber("relay-checked-out", raw)]
+async fn relay_checked_capture(_frame: &[u8]) -> HandlerResult {
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_reply_result_form_controls_the_publish() {
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(relay_checked).publisher(MemoryPublish);
+        b.include(relay_checked_capture);
+    });
+
+    let tb = TestApp::start(app).await.expect("start");
+
+    // The Err arm: nothing is published and the delivery settles by the returned result.
+    tb.broker::<MemoryBroker>()
+        .publish_raw("relay-checked-in", b"")
+        .await
+        .expect("publish empty");
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-checked-in")
+        .assert_called_once()
+        .settled(HandlerResult::drop());
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-checked-out")
+        .assert_called(0);
+
+    // The Ok arm publishes the bytes as-is.
+    tb.broker::<MemoryBroker>()
+        .publish_raw("relay-checked-in", FRAME)
+        .await
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-checked-in")
+        .assert_called(2)
+        .settled(HandlerResult::Ack);
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-checked-out")
+        .assert_called_once()
+        .with_raw(FRAME)
+        .settled(HandlerResult::Ack);
+}
+
+// --- a failed reply publish nacks the delivery with requeue, like the typed reply form ---
+
+/// A policy whose live publisher fails its first publish, then delegates to the real one:
+/// exercises the reply-publish failure path without tearing a broker down.
+struct FlakyPublish(Arc<AtomicBool>);
+
+struct FlakyPublisher {
+    inner: MemoryPublisher,
+    fail_next: Arc<AtomicBool>,
+}
+
+impl Publisher for FlakyPublisher {
+    type Error = MemoryError;
+
+    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), MemoryError> {
+        if self.fail_next.swap(false, Ordering::SeqCst) {
+            return Err(MemoryError::ShutDown);
+        }
+        self.inner.publish(msg).await
+    }
+}
+
+impl PublishPolicy<ConnectedMemoryBroker> for FlakyPublish {
+    type Live = FlakyPublisher;
+
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<FlakyPublisher, PairError> {
+        Ok(FlakyPublisher {
+            inner: connected.publisher(),
+            fail_next: self.0,
+        })
+    }
+}
+
+#[subscriber("relay-flaky-in", raw, publish_raw("relay-flaky-out"))]
+async fn relay_flaky(frame: &[u8]) -> Vec<u8> {
+    frame.to_vec()
+}
+
+#[subscriber("relay-flaky-out", raw)]
+async fn relay_flaky_capture(_frame: &[u8]) -> HandlerResult {
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_raw_reply_publish_nacks_and_redelivers() {
+    let fail_next = Arc::new(AtomicBool::new(true));
+    let publisher_flag = Arc::clone(&fail_next);
+    let app =
+        RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), move |b| {
+            b.include(relay_flaky)
+                .publisher(FlakyPublish(publisher_flag));
+            b.include(relay_flaky_capture);
+        });
+
+    let tb = TestApp::start(app).await.expect("start");
+    tb.broker::<MemoryBroker>()
+        .publish_raw("relay-flaky-in", FRAME)
+        .await
+        .expect("publish");
+
+    // The first delivery's reply publish fails, so it nacks with requeue; the redelivery
+    // publishes and acks. The reply reaches the capture exactly once.
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-flaky-in")
+        .assert_called(2)
+        .settled(HandlerResult::Ack);
+    tb.broker::<MemoryBroker>()
+        .subscriber("relay-flaky-out")
+        .assert_called_once()
+        .with_raw(FRAME)
+        .settled(HandlerResult::Ack);
+    assert!(
+        !fail_next.load(Ordering::SeqCst),
+        "the flaky publisher consumed its failure"
+    );
+}
+
+// --- publish_raw with a TYPED input: decode with the scope codec, reply bytes as-is ---
+
+#[cfg(feature = "json")]
+mod typed_in {
+    use serde::Deserialize;
+
+    use super::{
+        AppInfo, FRAME, HandlerResult, MemoryBroker, MemoryPublish, RustStream, TestApp, subscriber,
+    };
+
+    #[derive(Debug, Deserialize)]
+    struct Wrap {
+        id: u32,
+    }
+
+    // --8<-- [start:raw_reply_typed]
+    /// The gateway shape: a structured message in, a self-produced wire format out.
+    #[subscriber("gateway-in", publish_raw("gateway-out"))]
+    async fn gateway(wrap: &Wrap) -> Vec<u8> {
+        wrap.id.to_be_bytes().to_vec()
+    }
+    // --8<-- [end:raw_reply_typed]
+
+    /// The Result form keeps ack control: an odd id skips the publish and drops.
+    #[subscriber("gateway-checked-in", publish_raw("gateway-checked-out"))]
+    async fn gateway_checked(wrap: &Wrap) -> Result<Vec<u8>, HandlerResult> {
+        if wrap.id % 2 == 1 {
+            return Err(HandlerResult::drop());
+        }
+        Ok(wrap.id.to_be_bytes().to_vec())
+    }
+
+    #[subscriber("gateway-out", raw)]
+    async fn gateway_capture(frame: &[u8]) -> HandlerResult {
+        assert_eq!(frame, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
+        HandlerResult::Ack
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn typed_input_replies_raw_bytes() {
+        let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(gateway).publisher(MemoryPublish);
+                b.include(gateway_capture);
+            },
+        );
+
+        let tb = TestApp::start(app).await.expect("start");
+        tb.broker::<MemoryBroker>()
+            .publish("gateway-in", &serde_json::json!({"id": 7}))
+            .await
+            .expect("publish");
+
+        tb.broker::<MemoryBroker>()
+            .subscriber("gateway-in")
+            .assert_called_once()
+            .settled(HandlerResult::Ack);
+        tb.broker::<MemoryBroker>()
+            .subscriber("gateway-out")
+            .assert_called_once()
+            .with_raw(7_u32.to_be_bytes().as_slice())
+            .settled(HandlerResult::Ack);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn typed_input_decode_and_result_control_apply() {
+        let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                // The default publish policy commits without an explicit .publisher call.
+                b.include(gateway_checked);
+            },
+        );
+
+        let tb = TestApp::start(app).await.expect("start");
+        // Not valid JSON: the typed input side keeps the decode failure policy, unlike raw.
+        tb.broker::<MemoryBroker>()
+            .publish_raw("gateway-checked-in", FRAME)
+            .await
+            .expect("publish");
+        tb.broker::<MemoryBroker>()
+            .subscriber("gateway-checked-in")
+            .assert_last_failed_to_decode();
+
+        // An odd id decodes but the handler skips the publish via Err(drop()).
+        tb.broker::<MemoryBroker>()
+            .publish("gateway-checked-in", &serde_json::json!({"id": 3}))
+            .await
+            .expect("publish");
+        tb.broker::<MemoryBroker>()
+            .subscriber("gateway-checked-in")
+            .settled(HandlerResult::drop());
+        // A skipped reply must not publish.
+        tb.broker::<MemoryBroker>()
+            .subscriber("gateway-checked-out")
+            .assert_not_called();
+    }
 }
 
 // --- extractors and the ctx parameter keep working next to the raw payload ---
