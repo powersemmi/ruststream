@@ -8,7 +8,7 @@
 //! router to keep metrics local and to exercise `Router::layer`.) The publish-side metric is added
 //! once on the application in [`main`](crate::main).
 
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{Router, RouterDef, TypedPublisher};
 
@@ -19,22 +19,20 @@ use crate::{orders, payments};
 /// The order-lifecycle router: a publishing handler that replies to `confirmations`, plus the
 /// cancellation handler.
 ///
-/// `confirm` needs a publisher for its reply; `TypedPublisher::new` pairs the broker's publisher
-/// with the default codec, and `.layer(StampSource)` composes a static publish layer onto it that
-/// stamps a provenance header on every confirmation - publisher settings live here, on the
-/// `TypedPublisher`, not in the `publish("..")` decorator (which only names the destination).
-/// `include_publishing` reuses the publisher's codec to decode the order. `on_cancel` has no reply,
-/// so it is mounted with `include`. The router is a consuming builder, so the calls chain; the
+/// `confirm` needs a publisher for its reply; `TypedPublisher::new` pairs the `MemoryPublish`
+/// policy with the default codec, and `.transform(StampSource)` composes a static publish
+/// transform onto it that stamps a provenance header on every confirmation - publisher settings
+/// live here, on the `TypedPublisher`, not in the `publish("..")` decorator (which only names the
+/// destination).
+/// The reply wiring is a publish policy stack, pure declaration: the runtime pairs it with the
+/// connected broker at startup, so the router borrows no broker. `on_cancel` has no reply, so it
+/// is mounted with `include`. The router is a consuming builder, so the calls chain; the
 /// registration list is opaque, hence `impl RouterDef`.
 ///
-/// `use<>` opts out of capturing the `broker`/`metrics` borrows: the router owns its publisher and
-/// layer (both `Arc`-backed), so it borrows neither argument past this call, and the caller can
-/// still mutate the scope to mount it.
-pub(crate) fn orders(
-    broker: &MemoryBroker,
-    metrics: &Metrics,
-) -> impl RouterDef<MemoryBroker, Repository> + use<> {
-    let confirmations = TypedPublisher::new(broker.publisher()).transform(StampSource);
+/// `use<>` opts out of capturing the `metrics` borrow: the router owns its layer (`Arc`-backed),
+/// so the caller can still mutate the scope to mount it.
+pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
+    let confirmations = TypedPublisher::new(MemoryPublish).transform(StampSource);
 
     Router::new()
         .layer(metrics.consume_layer())
@@ -45,14 +43,12 @@ pub(crate) fn orders(
 /// The payments router: a charge handler spread across keyed worker lanes, plus a batch handler
 /// that settles cleared payments through a transactional publisher.
 ///
-/// `.transactional()` exists only because the in-memory `MemoryPublisher` implements
-/// `TransactionalPublisher`; with it, `include_batch_publishing` buffers a page's replies and
-/// commits them atomically.
-pub(crate) fn payments(
-    broker: &MemoryBroker,
-    metrics: &Metrics,
-) -> impl RouterDef<MemoryBroker, Repository> + use<> {
-    let settlements = TypedPublisher::new(broker.publisher()).transactional();
+/// `.transactional()` marks the wiring: `include_batch_publishing` then publishes a page's
+/// replies inside one broker transaction, visible atomically on commit. It type-checks because
+/// the `MemoryPublish` policy pairs into a `MemoryPublisher`, which implements
+/// `TransactionalPublisher`; a broker without transactions fails to compile at the registration.
+pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
+    let settlements = TypedPublisher::new(MemoryPublish).transactional();
 
     Router::new()
         .layer(metrics.consume_layer())

@@ -8,8 +8,14 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
+#[cfg(feature = "otel")]
+use std::sync::LazyLock;
 use std::{future::Future, marker::PhantomData};
 
+#[cfg(feature = "otel")]
+use opentelemetry::metrics::Histogram;
+#[cfg(feature = "otel")]
+use opentelemetry::{KeyValue, global};
 use serde::de::DeserializeOwned;
 use tracing::{error, warn};
 
@@ -346,6 +352,39 @@ where
     }
 }
 
+/// The `ruststream.batch.size` histogram: decoded batch sizes, per destination. Batch handlers
+/// bypass the per-message otel layer (the documented middleware exception), so the metric is
+/// recorded at the batch decode choke point every batch form passes through instead.
+///
+/// Built off the process-global meter rather than an `Otel` handle: threading instruments into
+/// the dispatch would couple the runtime to the otel wiring for a per-batch (not per-message)
+/// record. Until `Otel::builder().init()` installs the SDK's global provider the global meter is
+/// a no-op, so an app without the exporters records nothing; the instrument binds to whatever
+/// provider is global at the first dispatched batch, and the documented wiring runs `init()`
+/// before `app.start()`.
+#[cfg(feature = "otel")]
+static BATCH_SIZE: LazyLock<Histogram<u64>> = LazyLock::new(|| {
+    global::meter("ruststream")
+        .u64_histogram("ruststream.batch.size")
+        .with_unit("{message}")
+        .with_description("Decoded batch sizes handed to batch handlers.")
+        .build()
+});
+
+/// Records one decoded batch's size under its destination.
+#[cfg(feature = "otel")]
+fn record_batch_size(destination: &str, len: usize) {
+    // Batches beyond u64 elements do not exist.
+    #[allow(clippy::cast_possible_truncation)]
+    BATCH_SIZE.record(
+        len as u64,
+        &[KeyValue::new(
+            "messaging.destination.name",
+            destination.to_owned(),
+        )],
+    );
+}
+
 /// Decodes each element of one raw batch independently: failures are settled per the `decode`
 /// [`FailurePolicy`] and never reach the handler; the rest pass through, each decoded value paired
 /// with its delivery (`values[i]` decodes `accepted[i]`). A `fail_fast` decode policy tears the
@@ -395,6 +434,12 @@ where
                 settle(msg, outcome, &subscription).await;
             }
         }
+    }
+    // Only batches that reach a handler count: a fully-rejected batch is short-circuited by the
+    // callers and would skew the size distribution with zeros.
+    #[cfg(feature = "otel")]
+    if !accepted.is_empty() {
+        record_batch_size(&subscription, values.len());
     }
     (values, accepted)
 }

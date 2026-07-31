@@ -3,6 +3,7 @@
 //! [`RustStream`](super::RustStream) can own task spawning directly.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,22 +84,22 @@ impl Workers {
         }
     }
 
-    /// A pool of up to `count` concurrent deliveries. Zero behaves like one (sequential).
+    /// A pool of up to `count` concurrent deliveries. One behaves like sequential dispatch.
     #[must_use]
-    pub const fn pool(count: usize) -> Self {
+    pub const fn pool(count: NonZeroUsize) -> Self {
         Self {
-            count: if count == 0 { 1 } else { count },
+            count: count.get(),
             by_key: false,
         }
     }
 
     /// `count` sequential lanes keyed by the message
     /// [`partition_key`](crate::IncomingMessage::partition_key): per-key ordering is preserved.
-    /// Zero or one lane behaves like sequential dispatch.
+    /// One lane behaves like sequential dispatch.
     #[must_use]
-    pub const fn keyed(count: usize) -> Self {
+    pub const fn keyed(count: NonZeroUsize) -> Self {
         Self {
-            count: if count == 0 { 1 } else { count },
+            count: count.get(),
             by_key: true,
         }
     }

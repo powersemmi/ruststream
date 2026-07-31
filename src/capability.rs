@@ -4,11 +4,11 @@
 //! depends on a capability adds it as a bound, leaving brokers that do not support it free of
 //! emulation cost.
 
-use std::{future::Future, time::Duration};
+use std::{error::Error as StdError, future::Future, time::Duration};
 
 use futures::Stream;
 
-use crate::{Broker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
+use crate::{Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
 
 /// A subscriber that natively delivers messages in batches.
 ///
@@ -37,8 +37,23 @@ pub trait BatchSubscriber: Subscriber {
 /// Implementations must guarantee that messages published between [`begin_transaction`] and
 /// [`commit`] either all become visible to subscribers or none of them do.
 ///
+/// Misuse is an error, never a silent no-op: a [`commit`] or [`abort`] with no open transaction,
+/// and a [`begin_transaction`] while one is open, must return `Self::Error`. A caller can
+/// therefore trust that `Ok` from `commit` means "an open transaction committed", not "there was
+/// nothing to commit". The [`conformance`](crate::conformance) transactional suite checks these
+/// paths.
+///
+/// This is the borrowed kind of the two transaction capabilities: the handle carries at most one
+/// broker-side transaction, and [`begin_transaction`] takes an exclusive claim on it - which is
+/// why a second begin while one is open must error. Kafka-like brokers, whose client object
+/// holds exactly one transaction per producer, implement only this kind. Brokers whose
+/// transactions are client buffers can additionally implement [`OwnedTransactions`], the owned
+/// kind: every call there opens an independent buffer-owning [`Transaction`] value, so
+/// concurrent transactions on one handle are legal.
+///
 /// [`begin_transaction`]: Self::begin_transaction
 /// [`commit`]: Self::commit
+/// [`abort`]: Self::abort
 pub trait TransactionalPublisher: Publisher {
     /// Begins a new transaction on this publisher.
     ///
@@ -47,8 +62,9 @@ pub trait TransactionalPublisher: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns `Self::Error` when the broker refuses to start a transaction, for example
-    /// because transactions are already in progress or the broker is misconfigured.
+    /// Returns `Self::Error` when a transaction is already open on this handle (a second begin
+    /// must not silently join or restart it), or when the broker refuses to start one. A
+    /// rejected begin must leave an already-open transaction untouched.
     ///
     /// [`commit`]: Self::commit
     /// [`abort`]: Self::abort
@@ -58,16 +74,138 @@ pub trait TransactionalPublisher: Publisher {
     ///
     /// # Errors
     ///
-    /// Returns `Self::Error` when the broker rejects the commit. The transaction state after
-    /// a failed commit is implementation-defined; implementors must document it.
+    /// Returns `Self::Error` when no transaction is open on this handle, or when the broker
+    /// rejects the commit. After a failed commit the transaction is closed: the implementation
+    /// discards or aborts the broker-side transaction rather than leaving it open, and a
+    /// subsequent [`begin_transaction`](Self::begin_transaction) either starts a fresh
+    /// transaction or returns an error - the handle must never wedge permanently. Messages of a
+    /// failed transaction are lost to this handle; redelivery of the inputs, not resubmission of
+    /// the buffer, is the recovery path.
     fn commit(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// Aborts the active transaction, discarding all buffered messages.
     ///
     /// # Errors
     ///
-    /// Returns `Self::Error` when the broker rejects the abort.
+    /// Returns `Self::Error` when no transaction is open on this handle, or when the broker
+    /// fails to abort.
     fn abort(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+/// A client-buffered transaction that owns its buffer, opened by
+/// [`OwnedTransactions::transaction`].
+///
+/// [`publish`] appends to the buffer; nothing is visible to subscribers until [`commit`] flushes
+/// the whole buffer atomically, and [`abort`] discards it. Both settle the transaction by
+/// consuming `self`, so a double commit, a commit after an abort, or a publish after settling
+/// are compile errors, not runtime checks. Dropping an unsettled transaction discards the buffer
+/// like an abort (destructors cannot run async work); implementations log a warning, because a
+/// silently vanishing buffer is almost always a missing `commit`.
+///
+/// This is the transaction value of the owned kind; see [`OwnedTransactions`] for the contrast
+/// with the borrowed [`TransactionalPublisher`] kind.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{OutgoingMessage, Transaction};
+///
+/// async fn settle_pair<T: Transaction>(mut txn: T) -> Result<(), T::Error> {
+///     txn.publish(OutgoingMessage::new("orders", b"{}".as_slice())).await?;
+///     txn.publish(OutgoingMessage::new("audit", b"{}".as_slice())).await?;
+///     txn.commit().await
+/// }
+/// ```
+///
+/// [`publish`]: Self::publish
+/// [`commit`]: Self::commit
+/// [`abort`]: Self::abort
+#[must_use = "a transaction does nothing until settled with commit() or abort()"]
+pub trait Transaction: Send {
+    /// The error type returned by transaction operations.
+    type Error: StdError + Send + Sync + 'static;
+
+    /// Publishes `msg` into the transaction: buffered, not visible before [`commit`](Self::commit).
+    ///
+    /// A failed publish does not settle the transaction; the caller decides between retrying
+    /// and [`abort`](Self::abort).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the message cannot be buffered. For a pure client buffer
+    /// this is infallible in practice; implementations that stage broker-side state may reject
+    /// here.
+    fn publish(
+        &mut self,
+        msg: OutgoingMessage<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the flush fails. A failed commit has still consumed the
+    /// transaction and its buffer is lost; redelivery of the inputs, not resubmission of the
+    /// buffer, is the recovery path (the same rule as [`TransactionalPublisher::commit`]).
+    fn commit(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// Aborts the transaction, discarding the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the implementation fails to discard staged broker-side
+    /// state; for a pure client buffer this is infallible in practice.
+    fn abort(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+/// A publisher that opens caller-owned, client-buffered transactions.
+///
+/// This is the owned kind of the two transaction capabilities, the counterpart of the borrowed
+/// [`TransactionalPublisher`]:
+///
+/// * owned (this trait): every [`transaction`](Self::transaction) call opens its own independent
+///   transaction, and the returned [`Transaction`] value owns the buffer. Double-begin is
+///   unrepresentable - there is no shared "the transaction" to collide on - and concurrent
+///   transactions on one handle are legal.
+/// * borrowed ([`TransactionalPublisher`]): the handle carries the broker's single transaction
+///   and a begin claims it exclusively, so a second begin while one is open errors.
+///
+/// Implement it when the broker's transactions are client buffers flushed at commit (an AMQP
+/// confirms buffer, a Redis pipeline, the in-memory broker). Kafka-like brokers, whose client
+/// object holds exactly one transaction per producer, implement only the borrowed kind.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{OutgoingMessage, OwnedTransactions, Transaction};
+///
+/// async fn dual_write<P: OwnedTransactions>(
+///     publisher: &P,
+/// ) -> Result<(), Box<dyn std::error::Error>> {
+///     let mut orders = publisher.transaction().await?;
+///     let mut audit = publisher.transaction().await?; // concurrent with `orders`
+///     orders.publish(OutgoingMessage::new("orders", b"{}".as_slice())).await?;
+///     audit.publish(OutgoingMessage::new("audit", b"{}".as_slice())).await?;
+///     orders.commit().await?;
+///     audit.commit().await?;
+///     Ok(())
+/// }
+/// ```
+pub trait OwnedTransactions: Publisher {
+    /// The buffer-owning transaction opened by [`transaction`](Self::transaction).
+    type Transaction: Transaction;
+
+    /// Opens a new transaction owned by the returned value.
+    ///
+    /// Every call opens its own independent transaction: settling one never affects another,
+    /// and the handle keeps publishing directly ([`Publisher::publish`]) while any number of
+    /// them are open.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Publisher::Error`] when the broker refuses to open a transaction; pure
+    /// client-buffer implementations are infallible in practice.
+    fn transaction(&self) -> impl Future<Output = Result<Self::Transaction, Self::Error>> + Send;
 }
 
 /// A publisher that supports synchronous request / reply messaging.
@@ -102,7 +240,7 @@ pub trait Partitioned {
     fn partition_key(&self) -> Option<&[u8]>;
 }
 
-/// A broker whose subscriptions are fully determined by a name string.
+/// A connected broker whose subscriptions are fully determined by a name string.
 ///
 /// This is the common case (`NATS` core subjects, the in-memory broadcast broker, `Redis` pub/sub
 /// channels): no consumer group, partition, or durable-consumer configuration is needed to open a
@@ -111,26 +249,28 @@ pub trait Partitioned {
 /// implement `Subscribe`; callers describe those with a broker-specific
 /// [`SubscriptionSource`](crate::SubscriptionSource) instead.
 ///
+/// Implemented on the [`ConnectedBroker`](crate::ConnectedBroker) form: a subscription needs a
+/// live connection, and the ladder makes that requirement a type, not a runtime check.
+///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Broker, Subscribe};
+/// use ruststream::Subscribe;
 ///
-/// async fn open<B: Subscribe>(broker: &B) -> Result<B::Subscriber, B::Error> {
-///     broker.subscribe("orders").await
+/// async fn open<C: Subscribe>(connected: &C) -> Result<C::Subscriber, C::Error> {
+///     connected.subscribe("orders").await
 /// }
 /// ```
-pub trait Subscribe: Broker {
+pub trait Subscribe: ConnectedBroker {
     /// The subscriber type opened by a by-name subscription.
     type Subscriber: Subscriber;
 
     /// Opens a subscription to `name`, producing this broker's [`Subscriber`](Self::Subscriber).
     ///
-    /// Called after [`Broker::connect`]; implementations may assume a live connection.
-    ///
     /// # Errors
     ///
-    /// Returns [`Broker::Error`] when the broker rejects the subscription or the transport fails.
+    /// Returns [`ConnectedBroker::Error`](crate::ConnectedBroker::Error) when the broker rejects
+    /// the subscription or the transport fails.
     fn subscribe(
         &self,
         name: &str,

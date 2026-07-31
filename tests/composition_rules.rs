@@ -15,10 +15,10 @@ use std::{
 };
 
 use common::wait_for;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Buffered, Name, OutgoingMessage, Publisher, subscriber};
+use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,11 +50,18 @@ async fn tx_confirm(orders: &[Order]) -> Vec<Receipt> {
 async fn transactional_replies_compose_with_a_batch_pool() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker.clone();
+    // The observing side needs the TestableBroker surface, which lives on the connected form;
+    // the shared in-process bus makes this clone observe the app's broker.
+    let observer = broker
+        .clone()
+        .connect()
+        .await
+        .expect("memory connect is infallible");
 
-    let replies = TypedPublisher::new(broker.publisher()).transactional();
-    let app = RustStream::new(AppInfo::new("tx", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch_publishing(tx_confirm, replies));
+    let replies = TypedPublisher::new(MemoryPublish).transactional();
+    let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(tx_confirm).publisher(replies);
+    });
 
     let running = app.start().await.expect("startup failed");
 
@@ -88,7 +95,7 @@ static BUF_BATCHES: AtomicUsize = AtomicUsize::new(0);
 
 /// Client-side batching under a pool: the size cap or deadline (not the pool) closes a batch.
 #[subscriber(batch(Buffered::<Name>::new(Name::new("buf-in"))
-    .max_size(2)
+    .max_size(nonzero!(2))
     .max_wait(Duration::from_millis(10))), workers(2))]
 async fn buffered_drain(orders: &[Order]) -> HandlerResult {
     BUF_SEEN.fetch_add(orders.len(), Ordering::SeqCst);
@@ -150,7 +157,7 @@ async fn publishing_replies_compose_with_a_worker_pool() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("pub", "0.1.0")).with_broker(broker, |b| {
-        b.include_publishing(pooled_relay, TypedPublisher::new(b.broker().publisher()));
+        b.include(pooled_relay);
         b.include(pooled_check);
     });
 

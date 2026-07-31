@@ -7,7 +7,9 @@ scope.
 ## Building a router
 
 A `Router` mirrors the broker scope: alongside `include` / `include_on` and `include_publishing` /
-`include_publishing_on` it has `with_codec` (switches the chain's decode codec, see
+`include_publishing_on` (which take the reply wiring positionally - a `TypedPublisher` stack over
+a publish policy, since a consuming builder cannot chain a postfix `.publisher(..)`) it has
+`with_codec` (switches the chain's decode codec, see
 [Codecs](codecs.md#per-handler)) and the manual `handle` / `subscribe` registrations. Every call
 consumes the router and returns a new one, so registrations chain:
 
@@ -25,7 +27,7 @@ RustStream::new(info).with_broker(broker, |b| {
 ```
 
 Handlers that publish a reply register on the router the same way as on the scope, with a
-`TypedPublisher` built from the broker:
+`TypedPublisher` stack over a publish policy - a pure declaration, so the router needs no broker:
 
 ```rust title="routes.rs"
 --8<-- "examples/tutorial/routes.rs:routes"

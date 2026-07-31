@@ -15,8 +15,8 @@ use ruststream::runtime::{App, AppInfo, RustStream};
 /// Builds the service: one in-memory broker with the orders router mounted.
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("{{project-name}}", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let router = routes::orders(b.broker());
-        b.include_router(router);
-    })
+    RustStream::new(AppInfo::new("{{project-name}}", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include_router(routes::orders());
+        })
 }

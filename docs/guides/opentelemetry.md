@@ -1,19 +1,23 @@
 # OpenTelemetry
 
-The `opentelemetry` feature gives a service distributed tracing: a trace flows from an incoming
+The `otel` feature gives a service distributed tracing: a trace flows from an incoming
 message onto the replies it produces, so one trace spans the whole consume-transform-produce chain.
 It is built on the typed publish-path context - the same seam that lets a publish transform read the
 delivery that produced a reply.
 
 ```toml
-ruststream = { version = "0.5", features = ["macros", "memory", "json", "opentelemetry"] }
+ruststream = { version = "0.5", features = ["macros", "memory", "json", "otel"] }
 ```
 
-It is dependency-light: it carries the [W3C Trace Context](https://www.w3.org/TR/trace-context/) and
-emits `tracing` spans, leaving the export to a collector to your subscriber (for example
+The feature has two halves. Propagation carries the
+[W3C Trace Context](https://www.w3.org/TR/trace-context/) and emits `tracing` spans; it is
+broker-agnostic and works with no exporter at all. Export ships with the feature: the
+[OpenTelemetry SDK and OTLP exporters](#the-otel-feature-sdk-otlp-and-the-metrics-inventory)
+behind `Otel::builder().init()`, which installs the global providers and bridges the spans into
+them - or
+assemble your own subscriber (for example
 [`tracing-opentelemetry`](https://docs.rs/tracing-opentelemetry)), exactly as the
-[logging](logging.md) guide leaves the subscriber to you. Propagation itself is broker-agnostic and
-works with no subscriber at all.
+[logging](logging.md) guide leaves the subscriber to you.
 
 ## Wiring it up
 
@@ -48,13 +52,66 @@ header is read - through the [context](context.md):
 let traceparent = ctx.headers().get_str("traceparent");
 ```
 
-Parse it into a `TraceContext` (`TraceContext::parse`) to read the `trace_id` / `span_id` or to
-check whether the trace is `sampled()`.
+Parse it with the OpenTelemetry SDK's `TraceContextPropagator` (the same parser the consume layer
+uses) into an `opentelemetry::trace::SpanContext` to read the `trace_id()` / `span_id()` or to
+check `is_sampled()`.
 
 ## Exporting to a collector
 
-This crate stops at the W3C context and `tracing` spans; turning those into OTLP and shipping them to
-a collector is the binary's job, the same split as [logging](logging.md). Add
-`tracing-opentelemetry` and an exporter in your binary, install it as a `tracing` subscriber, and the
-`ruststream.consume` spans flow through it. The propagation layer keeps the trace linked across every
-broker hop regardless of which exporter you choose.
+The propagation module stops at the W3C context and `tracing` spans; there are two ways to ship
+them to a collector. Assemble `tracing-opentelemetry` and an exporter yourself in the binary (the
+same split as [logging](logging.md)) - or let `Otel::builder().init()` below do it for you.
+
+## The otel feature: SDK, OTLP, and the metrics inventory
+
+`Otel::builder().init()` builds the OTLP exporters, installs the OpenTelemetry tracer and meter
+providers as the process **globals**, and bridges `tracing` spans into them - so the spans the
+propagation layer already opens are exported with no further wiring:
+
+```rust
+--8<-- "examples/otel_export.rs:init"
+```
+
+The two middleware carry the dispatch metrics, labeled per handler
+(`messaging.destination.name`), following the messaging semantic conventions plus a
+`ruststream.*` namespace:
+
+| Instrument | Kind | What it measures |
+|---|---|---|
+| `messaging.client.consumed.messages` | counter | deliveries received |
+| `messaging.process.duration` | histogram (semconv buckets) | handler processing time |
+| `ruststream.messages.processed` | counter, `outcome` attribute | settlements: `ack`, `nack_requeue`, `nack_drop`, `retry_after` |
+| `ruststream.messages.in_flight` | up-down counter | deliveries inside handlers (pool saturation vs `workers(n)`) |
+| `ruststream.message.queue_time` | histogram | publish-to-handler-start lag, from the stamped publish-time header |
+| `ruststream.messages.decode_failures` | counter | deliveries whose payload the codec rejected |
+| `ruststream.messages.panics` | counter | handler invocations that panicked |
+| `messaging.client.sent.messages` | counter, `error.type` on failure | publishes |
+| `messaging.client.operation.duration` | histogram | the publish operation |
+| `ruststream.message.payload.size` | histogram (`By`) | published payload sizes |
+| `ruststream.batch.size` | histogram | decoded batch sizes handed to batch handlers |
+| `ruststream.app.state` | observable gauge | the lifecycle state, from [`RunningApp::health`](http.md#a-healthz-endpoint) via `otel.observe_health(running.health())` |
+
+Batch handlers bypass the per-message consume layer (the documented
+[middleware](middleware.md) exception), so `ruststream.batch.size` is recorded by the batch
+dispatch itself through the global meter: it goes live once `init()` installs the global
+providers, and stays silent under a bare `attach()` unless you install your provider globally
+yourself.
+
+Because `init()` installs the global providers, business metrics need no exporter plumbing:
+build the instruments once at startup into one storage object, share it through the typed state
+(injectable with `State<..>` via `FromRef`), and everything in it rides the same OTLP pipeline:
+
+```rust
+--8<-- "examples/otel_export.rs:business_metric"
+```
+
+A ready-made Grafana dashboard over exactly this inventory lives in
+[`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana): import
+`dashboards/ruststream.json`, point it at any Prometheus-compatible backend receiving the OTLP
+metrics, and the panels light up per handler; its README doubles as the metrics contract.
+
+Call `otel.shutdown()` at the end of `main`, after the app's graceful shutdown, to flush the last
+spans and points. To compose the span bridge into your own subscriber stack (for example with the
+`logging` feature's fmt layer), build with `.tracing_bridge(false)` and install the bridge
+yourself; `.messaging_system("kafka")` stamps the semconv system attribute the core cannot derive
+broker-agnostically.

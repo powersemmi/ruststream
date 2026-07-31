@@ -6,22 +6,28 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
 
-use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};
+use std::{borrow::Cow, fmt, future::Future, pin::Pin, sync::Arc};
 
 use bytes::BytesMut;
 use serde::Serialize;
+use thiserror::Error;
 use tracing::warn;
 
 use super::lifecycle::BoxError;
-use super::publisher_registry::ErasedPublisher;
-use crate::codec::Codec;
+use crate::codec::{Codec, CodecError};
 // `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
 // way, so an ungated import would break `--no-default-features`.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
-use crate::{Headers, Publisher, TransactionalPublisher};
+use crate::{
+    ConnectedBroker, Headers, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
+    Publisher, Transaction, TransactionalPublisher,
+};
 
+// The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
+// The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
+// pays this allocation.
 type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
 
 /// A mutable outgoing message flowing through the publish pipeline.
@@ -106,11 +112,11 @@ impl<'a> Outgoing<'a> {
 /// this contract.)
 pub trait PublishPipeline: Send + Sync {
     /// Runs `out` through the remaining middleware, then sends it via `send`.
-    fn run<'a>(
+    fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        send: &'a dyn ErasedPublisher,
-    ) -> PublishFut<'a>;
+        send: &'a P,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
 }
 
 /// The terminal [`PublishPipeline`]: no middleware, just the broker send. The default for an app
@@ -119,12 +125,14 @@ pub trait PublishPipeline: Send + Sync {
 pub struct PublishIdentity;
 
 impl PublishPipeline for PublishIdentity {
-    fn run<'a>(
+    async fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        send: &'a dyn ErasedPublisher,
-    ) -> PublishFut<'a> {
-        send.publish_message(out.name(), out.payload(), out.headers())
+        send: &'a P,
+    ) -> Result<(), BoxError> {
+        let msg =
+            OutgoingMessage::new(out.name(), out.payload()).with_headers(out.headers().clone());
+        send.publish(msg).await.map_err(|e| Box::new(e) as BoxError)
     }
 }
 
@@ -144,11 +152,11 @@ impl<Head, Tail> PublishStack<Head, Tail> {
 }
 
 impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack<Head, Tail> {
-    fn run<'a>(
+    fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        send: &'a dyn ErasedPublisher,
-    ) -> PublishFut<'a> {
+        send: &'a P,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         self.head.on_publish(
             out,
             PublishNext {
@@ -167,30 +175,32 @@ impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack
 /// [`RustStream::publish_layer`](super::RustStream::publish_layer).
 pub trait PublishLayer: Send + Sync {
     /// Handle the outgoing message, calling `next` to continue the pipeline.
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PublishFut<'a>;
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
 }
 
 /// A cursor over the rest of the publish pipeline, ending in the broker send. Handed to a
 /// [`PublishLayer`]; call [`run`](Self::run) to continue.
-pub struct PublishNext<'a, N> {
+pub struct PublishNext<'a, N, P> {
     tail: &'a N,
-    send: &'a dyn ErasedPublisher,
+    send: &'a P,
 }
 
-impl<'a, N: PublishPipeline> PublishNext<'a, N> {
+impl<'a, N: PublishPipeline, P: Publisher> PublishNext<'a, N, P> {
     /// Runs the rest of the pipeline (the remaining middleware, then the send).
-    #[must_use]
-    pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
+    pub fn run(
+        self,
+        out: &'a mut Outgoing<'a>,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         self.tail.run(out, self.send)
     }
 }
 
-impl<N> std::fmt::Debug for PublishNext<'_, N> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<N, P> fmt::Debug for PublishNext<'_, N, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishNext").finish_non_exhaustive()
     }
 }
@@ -239,8 +249,8 @@ impl<'a> PublishDynNext<'a> {
     }
 }
 
-impl std::fmt::Debug for PublishDynNext<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for PublishDynNext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishDynNext")
             .field("remaining", &self.rest.len())
             .finish_non_exhaustive()
@@ -285,8 +295,8 @@ impl PublishDynStack {
     }
 }
 
-impl std::fmt::Debug for PublishDynStack {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for PublishDynStack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishDynStack")
             .field("middleware", &self.0.len())
             .finish_non_exhaustive()
@@ -294,16 +304,17 @@ impl std::fmt::Debug for PublishDynStack {
 }
 
 impl PublishLayer for PublishDynStack {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PublishFut<'a> {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         // Erase the static continuation into a one-shot closure so the object-safe walker can end
-        // by handing control back to the surrounding static pipeline.
+        // by handing control back to the surrounding static pipeline. Boxing starts here: only
+        // the dynamic list pays it.
         PublishDynNext {
             rest: &self.0,
-            tail: Box::new(move |out| next.run(out)),
+            tail: Box::new(move |out| Box::pin(next.run(out)) as PublishFut<'a>),
         }
         .run(out)
     }
@@ -349,8 +360,8 @@ impl<'a, C> PublishContext<'a, C> {
     }
 }
 
-impl<C> std::fmt::Debug for PublishContext<'_, C> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<C> fmt::Debug for PublishContext<'_, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishContext")
             .field("name", &self.name)
             .finish_non_exhaustive()
@@ -588,17 +599,15 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// `#[subscriber(batch(..), publish(..))]` handler all become visible atomically on commit,
     /// or none of them do.
     ///
-    /// Exists only when the underlying publisher implements
-    /// [`TransactionalPublisher`](crate::TransactionalPublisher); for brokers without
-    /// transactions, the method does not exist and the compiler enforces it. The returned wiring
-    /// is accepted by the batch publishing mounts only: a one-message transaction adds broker
-    /// round-trips for no atomicity gain, so the single-message `include_publishing` forms keep
-    /// taking a plain [`TypedPublisher`].
+    /// The leaf may be a live publisher or a publish policy; either way the transactional
+    /// requirement is enforced where the wiring is consumed (the batch publishing mounts bound
+    /// the live form by [`TransactionalPublisher`](crate::TransactionalPublisher), and pairing a
+    /// policy stack requires the same), so a broker without transactions still fails to compile,
+    /// at the registration instead of here. The returned wiring is accepted by the batch
+    /// publishing mounts only: a one-message transaction adds broker round-trips for no
+    /// atomicity gain, so the single-message forms keep taking a plain [`TypedPublisher`].
     #[must_use]
-    pub fn transactional(self) -> Transactional<P, C, PL, BL>
-    where
-        P: TransactionalPublisher,
-    {
+    pub fn transactional(self) -> Transactional<P, C, PL, BL> {
         Transactional { inner: self }
     }
 }
@@ -655,9 +664,32 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     }
 }
 
-impl<P, C, PL, BL> std::fmt::Debug for TypedPublisher<P, C, PL, BL> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P, C, PL, BL> fmt::Debug for TypedPublisher<P, C, PL, BL> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedPublisher").finish_non_exhaustive()
+    }
+}
+
+// Pairing is functorial over the combinator stack: a typed publisher whose leaf is a policy is
+// itself a policy, and pairing swaps the leaf for its live form while the codec and transform
+// stacks travel unchanged. Fully monomorphized; no erasure anywhere on this path.
+impl<CB, P, C, PL, BL> PublishPolicy<CB> for TypedPublisher<P, C, PL, BL>
+where
+    CB: ConnectedBroker,
+    P: PublishPolicy<CB> + Send,
+    C: Send,
+    PL: Send,
+    BL: Send,
+{
+    type Live = TypedPublisher<P::Live, C, PL, BL>;
+
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
+        Ok(TypedPublisher {
+            publisher: self.publisher.pair(connected).await?,
+            codec: self.codec,
+            layers: self.layers,
+            batch_layers: self.batch_layers,
+        })
     }
 }
 
@@ -671,9 +703,29 @@ pub struct Transactional<P, C, PL = PublishTransformIdentity, BL = BatchTransfor
     inner: TypedPublisher<P, C, PL, BL>,
 }
 
-impl<P, C, PL, BL> std::fmt::Debug for Transactional<P, C, PL, BL> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P, C, PL, BL> fmt::Debug for Transactional<P, C, PL, BL> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Transactional").finish_non_exhaustive()
+    }
+}
+
+// The transactional wiring is a policy over a policy: pairing resolves the inner stack and keeps
+// the transactional marker, provided the leaf's live form actually is transactional.
+impl<CB, P, C, PL, BL> PublishPolicy<CB> for Transactional<P, C, PL, BL>
+where
+    CB: ConnectedBroker,
+    P: PublishPolicy<CB> + Send,
+    P::Live: TransactionalPublisher,
+    C: Send,
+    PL: Send,
+    BL: Send,
+{
+    type Live = Transactional<P::Live, C, PL, BL>;
+
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
+        Ok(Transactional {
+            inner: self.inner.pair(connected).await?,
+        })
     }
 }
 
@@ -684,6 +736,36 @@ mod sealed {
 
     impl<P, C, PL, BL> Sealed for super::TypedPublisher<P, C, PL, BL> {}
     impl<P, C, PL, BL> Sealed for super::Transactional<P, C, PL, BL> {}
+}
+
+/// The decode-codec view of a reply wiring, readable before pairing.
+///
+/// Both wrapper shapes carry their codec as a field, whatever the leaf (a live publisher or a
+/// publish policy), so the batch publishing mounts can reuse the reply codec for decoding
+/// without requiring a live leaf at include time. Sealed like [`ReplyPublisher`].
+pub trait ReplyWiring: Sealed {
+    /// The codec replies are encoded with.
+    type Codec: Codec + Clone;
+
+    /// Returns the reply codec.
+    #[doc(hidden)]
+    fn decode_codec(&self) -> &Self::Codec;
+}
+
+impl<P, C: Codec + Clone, PL, BL> ReplyWiring for TypedPublisher<P, C, PL, BL> {
+    type Codec = C;
+
+    fn decode_codec(&self) -> &C {
+        self.codec()
+    }
+}
+
+impl<P, C: Codec + Clone, PL, BL> ReplyWiring for Transactional<P, C, PL, BL> {
+    type Codec = C;
+
+    fn decode_codec(&self) -> &C {
+        self.inner.codec()
+    }
 }
 
 /// The reply wiring accepted by the `include_batch_publishing` mounts.
@@ -788,11 +870,12 @@ where
                 return Err(err);
             }
         }
-        if let Err(err) = publisher.commit().await {
-            abort_quietly(publisher).await;
-            return Err(Box::new(err) as BoxError);
-        }
-        Ok(())
+        // Per the TransactionalPublisher contract a failed commit closes the transaction, so
+        // there is nothing left to abort here; the error alone settles the batch as failed.
+        publisher
+            .commit()
+            .await
+            .map_err(|err| Box::new(err) as BoxError)
     }
 }
 
@@ -804,9 +887,483 @@ async fn abort_quietly<P: TransactionalPublisher>(publisher: &P) {
     }
 }
 
+impl<P, C, PL, BL> Transactional<P, C, PL, BL>
+where
+    P: TransactionalPublisher,
+    C: Sync,
+    PL: Sync,
+    BL: Sync,
+{
+    /// Opens a broker transaction and returns the [`TransactionScope`] that owns it.
+    ///
+    /// The scope is the only handle on the transaction: publishes go through it, and it is
+    /// consumed by [`commit`](TransactionScope::commit) or [`abort`](TransactionScope::abort).
+    /// A second `begin` on this wrapper, a commit without a begin, or a publish after the commit
+    /// are not expressible - the methods do not exist on the types those states leave behind.
+    ///
+    /// This is the typed sugar over the borrowed transaction kind
+    /// ([`TransactionalPublisher`]): the scope claims the handle's single broker-side
+    /// transaction, so one scope per wrapper is open at a time. Brokers whose transactions are
+    /// client buffers additionally offer the owned kind through
+    /// [`TypedPublisher::transaction`], where every call opens an independent buffer-owning
+    /// [`TypedTransaction`].
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::TypedPublisher;
+    ///
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let broker = MemoryBroker::new();
+    /// let publisher = TypedPublisher::new(broker.publisher()).transactional();
+    ///
+    /// let mut scope = publisher.begin().await?;
+    /// scope.publish("orders.settled", &42_u32).await?;
+    /// scope.commit().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to start a transaction.
+    pub async fn begin(&self) -> Result<TransactionScope<'_, P, C>, P::Error> {
+        self.inner.publisher.begin_transaction().await?;
+        Ok(TransactionScope {
+            publisher: &self.inner.publisher,
+            codec: &self.inner.codec,
+            open: true,
+        })
+    }
+}
+
+/// A live broker transaction, opened by [`Transactional::begin`].
+///
+/// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
+/// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
+/// publish after settling is a compile error. This is the manual counterpart of the per-batch
+/// transaction the runtime drives for `include_batch_publishing` mounts.
+///
+/// The scope encodes values with the wrapper's codec and sends them directly: the reply
+/// [`PublishTransform`] stack and the app-wide [`publish_layer`](super::RustStream::publish_layer)
+/// middleware do not run here - both belong to the dispatch path, where a delivery context
+/// exists.
+///
+/// Dropping an unsettled scope logs a warning and leaves the broker transaction open (destructors
+/// cannot run async work); always settle explicitly.
+#[must_use = "a transaction scope must be settled with commit() or abort()"]
+pub struct TransactionScope<'a, P, C> {
+    publisher: &'a P,
+    codec: &'a C,
+    open: bool,
+}
+
+impl<P, C> TransactionScope<'_, P, C>
+where
+    P: TransactionalPublisher,
+    C: Codec,
+{
+    /// Encodes `value` with the wrapper's codec and publishes it to `name` inside the
+    /// transaction.
+    ///
+    /// A failed publish does not settle the scope: the caller decides between retrying and
+    /// [`abort`](Self::abort). Aborting is the safe default - after an error the broker-side
+    /// transaction state is implementation-defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
+    /// [`TransactionPublishError::Publish`] when the broker rejects the message.
+    ///
+    /// # Cancel safety
+    ///
+    /// As with [`Publisher::publish`], cancel safety is broker-defined: dropping the future
+    /// mid-flight may leave the message in an indeterminate state inside the transaction.
+    pub async fn publish<T: Serialize + Sync>(
+        &mut self,
+        name: &str,
+        value: &T,
+    ) -> Result<(), TransactionPublishError<P::Error>> {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(TransactionPublishError::Encode)?;
+        self.publisher
+            .publish(OutgoingMessage::new(name, &payload))
+            .await
+            .map_err(TransactionPublishError::Publish)
+    }
+
+    /// Commits the transaction: every publish issued through the scope becomes visible at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker rejects the commit. Per the
+    /// [`TransactionalPublisher`] contract a failed commit closes the transaction, so the spent
+    /// scope leaves the handle free for a fresh [`begin`](Transactional::begin).
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe: dropping the future mid-commit leaves the broker transaction in an
+    /// implementation-defined state. The scope treats itself as unsettled then - its drop
+    /// warning fires - which is why `open` clears only after the broker call completes.
+    pub async fn commit(mut self) -> Result<(), P::Error> {
+        let result = self.publisher.commit().await;
+        self.open = false;
+        result
+    }
+
+    /// Aborts the transaction: nothing published through the scope becomes visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker fails to abort.
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe, exactly like [`commit`](Self::commit): a future dropped mid-abort
+    /// leaves the scope unsettled and its drop warning fires.
+    pub async fn abort(mut self) -> Result<(), P::Error> {
+        let result = self.publisher.abort().await;
+        self.open = false;
+        result
+    }
+}
+
+impl<P, C> Drop for TransactionScope<'_, P, C> {
+    fn drop(&mut self) {
+        if self.open {
+            warn!(
+                target: "ruststream::dispatch",
+                "transaction scope dropped without commit or abort; the broker transaction stays \
+                 open on this publisher handle until it is settled or the handle is dropped"
+            );
+        }
+    }
+}
+
+impl<P, C> fmt::Debug for TransactionScope<'_, P, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TransactionScope")
+            .field("open", &self.open)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL>
+where
+    P: OwnedTransactions,
+    C: Sync,
+    PL: Sync,
+    BL: Sync,
+{
+    /// Opens an owned broker transaction and returns the [`TypedTransaction`] that owns it.
+    ///
+    /// This is the typed sugar over the owned transaction kind ([`OwnedTransactions`]), the
+    /// counterpart of the borrowed [`Transactional::begin`]: every call opens its own
+    /// independent transaction and the returned value owns its buffer, so any number can be
+    /// open on one publisher at a time - settling one never touches another. Kafka-like
+    /// brokers, whose client holds exactly one transaction per producer, offer only the
+    /// borrowed kind.
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::TypedPublisher;
+    ///
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let broker = MemoryBroker::new();
+    /// let publisher = TypedPublisher::new(broker.publisher());
+    ///
+    /// let mut orders = publisher.transaction().await?;
+    /// let mut audit = publisher.transaction().await?; // concurrent with `orders`
+    /// orders.publish("orders.settled", &42_u32).await?;
+    /// audit.publish("audit.trail", &7_u32).await?;
+    /// orders.commit().await?;
+    /// audit.commit().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to open a transaction; pure
+    /// client-buffer implementations are infallible in practice.
+    pub async fn transaction(&self) -> Result<TypedTransaction<'_, P::Transaction, C>, P::Error> {
+        Ok(TypedTransaction {
+            txn: self.publisher.transaction().await?,
+            codec: &self.codec,
+        })
+    }
+}
+
+/// An owned broker transaction carrying the publisher's codec, opened by
+/// [`TypedPublisher::transaction`].
+///
+/// The owned counterpart of [`TransactionScope`]: the scope borrows the handle's single
+/// broker-side transaction, while this value owns an independent one
+/// ([`OwnedTransactions::Transaction`]), so any number can be open on one publisher and driven
+/// concurrently. Publishes encode with the publisher's codec and buffer into the transaction;
+/// the whole buffer becomes visible atomically on [`commit`](Self::commit) and is discarded by
+/// [`abort`](Self::abort), both of which consume the value, so a double commit or a publish
+/// after settling is a compile error.
+///
+/// Like the scope, it encodes values and sends them directly: the reply [`PublishTransform`]
+/// stack and the app-wide [`publish_layer`](super::RustStream::publish_layer) middleware belong
+/// to the dispatch path, where a delivery context exists, and do not run here.
+///
+/// Dropping an unsettled value discards the client buffer like an abort - unlike the scope, no
+/// broker-side transaction is left open on the handle. The missed-settle warning comes from the
+/// underlying [`Transaction`] value's own drop (per its contract), so this wrapper does not add
+/// a second one.
+#[must_use = "a transaction does nothing until settled with commit() or abort()"]
+pub struct TypedTransaction<'a, Txn, C> {
+    txn: Txn,
+    codec: &'a C,
+}
+
+impl<Txn, C> TypedTransaction<'_, Txn, C>
+where
+    Txn: Transaction,
+    C: Codec,
+{
+    /// Encodes `value` with the publisher's codec and publishes it into the transaction:
+    /// buffered, not visible before [`commit`](Self::commit).
+    ///
+    /// A failed publish does not settle the transaction; the caller decides between retrying
+    /// and [`abort`](Self::abort).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
+    /// [`TransactionPublishError::Publish`] when the message cannot be buffered (a pure client
+    /// buffer is infallible in practice).
+    ///
+    /// # Cancel safety
+    ///
+    /// As with [`Transaction::publish`], cancel safety is implementation-defined: dropping the
+    /// future mid-flight may leave the message in an indeterminate state inside the
+    /// transaction.
+    pub async fn publish<T>(
+        &mut self,
+        name: &str,
+        value: &T,
+    ) -> Result<(), TransactionPublishError<Txn::Error>>
+    where
+        T: Serialize + Sync,
+    {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(TransactionPublishError::Encode)?;
+        self.txn
+            .publish(OutgoingMessage::new(name, &payload))
+            .await
+            .map_err(TransactionPublishError::Publish)
+    }
+
+    /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the transaction's error when the flush fails. A failed commit has still consumed
+    /// the transaction and its buffer is lost; redelivery of the inputs, not resubmission of the
+    /// buffer, is the recovery path (the [`Transaction::commit`] contract).
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe: the future owns the transaction, so dropping it mid-commit discards
+    /// what is left of the buffer with the flush incomplete - which messages became visible is
+    /// implementation-defined, as for a [`TransactionScope::commit`] dropped mid-flight.
+    pub async fn commit(self) -> Result<(), Txn::Error> {
+        self.txn.commit().await
+    }
+
+    /// Aborts the transaction, discarding the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns the transaction's error when staged broker-side state cannot be discarded; for a
+    /// pure client buffer this is infallible in practice.
+    ///
+    /// # Cancel safety
+    ///
+    /// Dropping the future mid-abort still discards the buffer - the future owns the
+    /// transaction, and an unsettled drop is itself the discard (the underlying value may log
+    /// its missed-settle warning).
+    pub async fn abort(self) -> Result<(), Txn::Error> {
+        self.txn.abort().await
+    }
+}
+
+impl<Txn, C> fmt::Debug for TypedTransaction<'_, Txn, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TypedTransaction").finish_non_exhaustive()
+    }
+}
+
+/// Error returned by [`TransactionScope::publish`].
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TransactionPublishError<E> {
+    /// The codec rejected the value.
+    #[error("failed to encode the value for a transactional publish")]
+    Encode(#[source] CodecError),
+    /// The broker rejected the message.
+    #[error("failed to publish inside the transaction")]
+    Publish(#[source] E),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A cancelled commit leaves the broker transaction genuinely unsettled, so the scope's
+    // drop warning must still fire (needs a tracing subscriber, hence the `logging` gate; the
+    // stub's pending commit is the cancellation window the single-poll memory broker lacks).
+    #[cfg(all(feature = "json", feature = "logging"))]
+    #[tokio::test]
+    async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
+        use std::sync::{Arc, Mutex};
+
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
+
+        use crate::{OutgoingMessage, Publisher, TransactionalPublisher};
+
+        struct PendingCommit;
+
+        impl Publisher for PendingCommit {
+            type Error = std::convert::Infallible;
+
+            async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        impl TransactionalPublisher for PendingCommit {
+            async fn begin_transaction(&self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            async fn commit(&self) -> Result<(), Self::Error> {
+                std::future::pending().await
+            }
+
+            async fn abort(&self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        struct Capture(Arc<Mutex<Vec<String>>>);
+
+        impl<S: tracing::Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
+                struct Grab(Option<String>);
+                impl tracing::field::Visit for Grab {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn fmt::Debug,
+                    ) {
+                        if field.name() == "message" {
+                            self.0 = Some(format!("{value:?}"));
+                        }
+                    }
+                }
+                let mut grab = Grab(None);
+                event.record(&mut grab);
+                if let Some(message) = grab.0 {
+                    self.0.lock().unwrap().push(message);
+                }
+            }
+        }
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
+        );
+
+        let wrapper = TypedPublisher::new(PendingCommit).transactional();
+        let scope = wrapper.begin().await.expect("begin failed");
+        {
+            let mut commit = std::pin::pin!(scope.commit());
+            assert!(
+                futures::poll!(commit.as_mut()).is_pending(),
+                "the stub commit must hold the cancellation window open",
+            );
+        }
+        drop(guard);
+
+        let warned = {
+            let captured = events.lock().unwrap();
+            captured
+                .iter()
+                .any(|message| message.contains("transaction scope dropped without commit"))
+        };
+        assert!(
+            warned,
+            "a commit cancelled mid-flight leaves the broker transaction unsettled and must \
+             keep the drop warning",
+        );
+    }
+
+    #[cfg(all(feature = "memory", feature = "json"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dyn_stack_walks_its_layers_then_the_static_tail() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use futures::StreamExt;
+
+        use crate::codec::JsonCodec;
+        use crate::memory::MemoryBroker;
+        use crate::{IncomingMessage, Subscriber};
+
+        /// Adds its weight on every pass, proving order and that each layer ran exactly once.
+        struct Mark(Arc<AtomicUsize>, usize);
+        impl PublishDynLayer for Mark {
+            fn on_publish<'a>(
+                &'a self,
+                out: &'a mut Outgoing<'a>,
+                next: PublishDynNext<'a>,
+            ) -> PublishFut<'a> {
+                self.0.fetch_add(self.1, Ordering::SeqCst);
+                next.run(out)
+            }
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let stack = PublishDynStack::new([
+            Arc::new(Mark(Arc::clone(&hits), 1)) as Arc<dyn PublishDynLayer>,
+            Arc::new(Mark(Arc::clone(&hits), 10)),
+        ]);
+        assert!(format!("{stack:?}").contains("middleware"));
+        let pipeline = PublishStack::new(stack.clone(), PublishIdentity);
+
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("dyn");
+        let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
+        let headers = Headers::new();
+        let cx = PublishContext::new("dyn", &headers, &());
+        publisher
+            .publish("dyn", &5_u32, &pipeline, &cx)
+            .await
+            .expect("publish through the dynamic stack failed");
+
+        assert_eq!(hits.load(Ordering::SeqCst), 11, "each layer must run once");
+        let mut stream = std::pin::pin!(subscriber.stream());
+        let msg = stream
+            .next()
+            .await
+            .expect("delivery missing")
+            .expect("memory subscriber never errors");
+        assert_eq!(msg.payload(), b"5", "the static tail must still send");
+        msg.ack().await.expect("ack failed");
+    }
 
     #[test]
     fn borrowed_name_is_not_owned() {

@@ -25,7 +25,6 @@
 //! ```
 
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use prometheus::{
@@ -41,9 +40,6 @@ use crate::runtime::{
 const DURATION_BUCKETS: &[f64] = &[
     0.000_5, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
 ];
-
-type PublishFut<'a> =
-    Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
 
 struct Inner {
     registry: Registry,
@@ -258,13 +254,14 @@ impl std::fmt::Debug for MetricsPublish {
 }
 
 impl PublishLayer for MetricsPublish {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: crate::Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PublishFut<'a> {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
+    {
         let name = out.name().to_owned();
-        Box::pin(async move {
+        async move {
             let result = next.run(out).await;
             let status = if result.is_ok() { "ok" } else { "error" };
             self.inner
@@ -272,7 +269,7 @@ impl PublishLayer for MetricsPublish {
                 .with_label_values(&[name.as_str(), status])
                 .inc();
             result
-        })
+        }
     }
 }
 

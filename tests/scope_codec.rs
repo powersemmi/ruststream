@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use common::wait_for;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
 use ruststream::{Name, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -106,24 +106,25 @@ async fn bpout_on_check(_r: &Receipt) -> HandlerResult {
 async fn scope_codec_include_family_dispatches() {
     let broker = MemoryBroker::new();
     let driver = broker.clone().publisher();
-    let reply_broker = broker.clone();
 
     let app =
         RustStream::new(AppInfo::new("sc", "0.1.0")).with_broker_codec(broker, JsonCodec, |b| {
             b.include_on(Name::new("sc-plain-on"), plain_on);
             b.include_batch(batch);
             b.include_batch_on(Name::new("sc-batch-on"), batch_on);
-            b.include_publishing(relay, TypedPublisher::new(reply_broker.publisher()));
+            b.include(relay)
+                .publisher(TypedPublisher::new(MemoryPublish));
             b.include_publishing_on(
                 Name::new("sc-pin-on"),
                 relay_on,
-                TypedPublisher::new(reply_broker.publisher()),
+                TypedPublisher::new(MemoryPublish),
             );
-            b.include_batch_publishing(batch_relay, TypedPublisher::new(reply_broker.publisher()));
+            b.include_batch(batch_relay)
+                .publisher(TypedPublisher::new(MemoryPublish));
             b.include_batch_publishing_on(
                 Name::new("sc-bpin-on"),
                 batch_relay_on,
-                TypedPublisher::new(reply_broker.publisher()),
+                TypedPublisher::new(MemoryPublish),
             );
             b.include(pout_check);
             b.include(pout_on_check);
@@ -209,7 +210,6 @@ async fn d_bpout_on_check(_r: &Receipt) -> HandlerResult {
 async fn default_codec_include_on_family_dispatches() {
     let broker = MemoryBroker::new();
     let driver = broker.clone().publisher();
-    let reply_broker = broker.clone();
 
     let app = RustStream::new(AppInfo::new("dsc", "0.1.0")).with_broker(broker, |b| {
         b.include_on(Name::new("d-plain-on"), d_plain_on);
@@ -217,12 +217,12 @@ async fn default_codec_include_on_family_dispatches() {
         b.include_publishing_on(
             Name::new("d-pin-on"),
             d_relay_on,
-            TypedPublisher::new(reply_broker.publisher()),
+            TypedPublisher::new(MemoryPublish),
         );
         b.include_batch_publishing_on(
             Name::new("d-bpin-on"),
             d_batch_relay_on,
-            TypedPublisher::new(reply_broker.publisher()),
+            TypedPublisher::new(MemoryPublish),
         );
         b.include(d_pout_on_check);
         b.include(d_bpout_on_check);

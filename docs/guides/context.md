@@ -172,12 +172,12 @@ Two boundaries to keep in mind:
 
 ## Publishing from a handler
 
-To publish from inside a handler (beyond the `publish(..)` reply form), put the publisher in the
-typed application state and reach it with `ctx.state()` - it stays typed, so the handler uses its
-own API directly. A closure handler cannot return a future that borrows the context across
-`.await`; publish from a `#[subscriber]` handler or a struct handler with `async fn handle`, both
-of which own the borrow. The full pattern and its snippet live in
-[Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
+To publish from inside a handler (beyond the `publish(..)` reply form), do not put the publisher
+in the state: take it as a handler parameter with `Out` - the pattern `Out(out): Out<P>` binds
+`out` to a live publisher inside the body. The source is attached where the handler is included,
+and the runtime pairs it after the broker connects, so the handler never sees a "not connected"
+publisher and the state stays free of connection-bound values. The full pattern and its snippet
+live in [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ## Post-settle hooks
 

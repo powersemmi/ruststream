@@ -39,6 +39,23 @@ use parse::{SubscriberArgs, doc_description};
 /// // subscriber must implement BatchSubscriber. Mounted with include_batch.
 /// #[subscriber(batch("orders"))]
 /// async fn bill(orders: &[Order]) -> HandlerResult { /* settles the whole batch */ }
+///
+/// // raw form: no codec, no serde - the handler receives the payload bytes as-is. The
+/// // message parameter must be `&[u8]`; a serde-typed parameter under `raw` is an error.
+/// #[subscriber("frames", raw)]
+/// async fn on_frame(frame: &[u8]) -> HandlerResult { /* parse it yourself */ }
+///
+/// // raw reply form: the returned bytes are published as-is to "frames-out" through the bare
+/// // publisher attached at the include site (b.include(mirror).publisher(policy), or the
+/// // broker's default publish policy without the call) - no codec on either side. Returning
+/// // Result<Vec<u8>, HandlerResult> gives the same explicit ack control as the typed form.
+/// #[subscriber("frames", raw, publish_raw("frames-out"))]
+/// async fn mirror(frame: &[u8]) -> Vec<u8> { frame.to_vec() }
+///
+/// // publish_raw also composes with a typed input (the gateway shape): the input decodes with
+/// // the scope codec, the returned bytes still go out unencoded.
+/// #[subscriber("orders", publish_raw("orders-wire"))]
+/// async fn encode(order: &Order) -> Vec<u8> { /* your wire format */ }
 /// ```
 ///
 /// Without `publish(..)` the handler returns any `Into<Settle>` (a `Settle`, a `HandlerResult`,
@@ -47,7 +64,11 @@ use parse::{SubscriberArgs, doc_description};
 /// reply value to publish, or `Result<Reply, HandlerResult>` to control acknowledgement:
 /// `Err(result)` publishes nothing and returns `result` to the dispatcher. The `Result` form is
 /// detected syntactically, so spell it out in the signature (a type alias is treated as a plain
-/// reply type).
+/// reply type). `publish_raw(..)` is the byte reply clause: the handler returns `Vec<u8>` (any
+/// owned `AsRef<[u8]>` type) and the bytes are published unencoded through the bare publisher
+/// paired at the include site; a failed reply publish nacks the delivery with requeue, exactly
+/// like the typed reply form. It composes with both a `raw` and a typed input; `raw` with the
+/// encoded `publish(..)` is rejected (a raw handler's reply is bytes).
 ///
 /// Wrapping the source in `batch(..)` switches the definition to a `BatchDef`: the handler takes
 /// `&[T]` and runs once per batch pulled from the broker's `BatchSubscriber` (use the `Buffered`

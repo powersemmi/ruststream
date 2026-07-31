@@ -17,11 +17,12 @@
 
 mod capability;
 
-pub use capability::{MemoryRequester, PARTITION_KEY_HEADER, RequestError};
+pub use capability::{MemoryRequester, MemoryTransaction, PARTITION_KEY_HEADER, RequestError};
 
 use std::{
     collections::HashMap,
     convert::Infallible,
+    fmt,
     sync::{Arc, Mutex, OnceLock, atomic::AtomicU64},
     time::Duration,
 };
@@ -29,12 +30,15 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, DescribeServer, Headers, IncomingMessage, OutgoingMessage, Publisher,
-    RawMessage, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Headers, IncomingMessage,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec, Subscribe,
+    Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
+use thiserror::Error;
 use tokio::sync::{Notify, mpsc};
+use tokio::time::sleep;
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
@@ -45,9 +49,25 @@ struct MemoryDelivery {
     headers: Headers,
 }
 
+/// The subscriber bus: alive with its registrations, or terminally shut down.
+///
+/// One value instead of a map beside a flag, so the lifecycle state and the registrations
+/// cannot disagree: every bus operation matches on the variant and reports
+/// [`MemoryError::ShutDown`] against a dead bus instead of silently succeeding.
+enum Bus {
+    Live(HashMap<String, Vec<Sender>>),
+    ShutDown,
+}
+
+impl Default for Bus {
+    fn default() -> Self {
+        Self::Live(HashMap::new())
+    }
+}
+
 #[derive(Default)]
 struct MemoryState {
-    subscribers: Mutex<HashMap<String, Vec<Sender>>>,
+    subscribers: Mutex<Bus>,
     published: Mutex<HashMap<String, Vec<RawMessage>>>,
     notify: Notify,
     inbox_seq: AtomicU64,
@@ -58,25 +78,59 @@ struct MemoryState {
 }
 
 impl MemoryState {
-    fn register(&self, name: String, tx: Sender) {
-        let mut subs = self
+    /// Registers a subscriber sender on the live bus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus; the caller decides whether
+    /// that is an error (the `Subscribe` path) or a silent no-registration (the infallible
+    /// inherent constructor).
+    fn register(&self, name: String, tx: Sender) -> Result<(), MemoryError> {
+        match &mut *self
             .subscribers
             .lock()
-            .expect("memory broker mutex poisoned");
-        subs.entry(name).or_default().push(tx);
+            .expect("memory broker mutex poisoned")
+        {
+            Bus::Live(subscribers) => {
+                subscribers.entry(name).or_default().push(tx);
+                Ok(())
+            }
+            Bus::ShutDown => Err(MemoryError::ShutDown),
+        }
     }
 
     // Request inboxes are single-use; dropping the whole entry keeps the subscriber map from
-    // accumulating one dead sender per completed request.
+    // accumulating one dead sender per completed request. A shut-down bus has nothing to drop.
     fn unregister(&self, name: &str) {
-        let mut subs = self
+        if let Bus::Live(subscribers) = &mut *self
             .subscribers
             .lock()
-            .expect("memory broker mutex poisoned");
-        subs.remove(name);
+            .expect("memory broker mutex poisoned")
+        {
+            subscribers.remove(name);
+        }
     }
 
-    fn fanout(&self, delivery: &MemoryDelivery) {
+    /// Fans `delivery` out to the live bus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus: nothing is delivered and
+    /// nothing is recorded in the published log.
+    // significant_drop_tightening misfires here: `subscribers` borrows the guard, which already
+    // drops at the end of its minimal block right after the last use.
+    #[allow(clippy::significant_drop_tightening)]
+    fn fanout(&self, delivery: &MemoryDelivery) -> Result<(), MemoryError> {
+        {
+            let bus = self
+                .subscribers
+                .lock()
+                .expect("memory broker mutex poisoned");
+            let Bus::Live(subscribers) = &*bus else {
+                return Err(MemoryError::ShutDown);
+            };
+            self.send_to(subscribers, delivery);
+        }
         let snapshot = RawMessage::new(delivery.name.clone(), delivery.payload.clone())
             .with_headers(delivery.headers.clone());
         {
@@ -84,12 +138,12 @@ impl MemoryState {
             log.entry(delivery.name.clone()).or_default().push(snapshot);
         }
         self.notify.notify_waiters();
+        Ok(())
+    }
 
-        let subs = self
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned");
-        if let Some(senders) = subs.get(&delivery.name) {
+    /// Enqueues `delivery` to every subscriber registered under its name.
+    fn send_to(&self, subscribers: &HashMap<String, Vec<Sender>>, delivery: &MemoryDelivery) {
+        if let Some(senders) = subscribers.get(&delivery.name) {
             for tx in senders {
                 let sent = tx.send(delivery.clone());
                 // Count every live enqueue so the harness can drive to quiescence. Request inboxes
@@ -136,11 +190,15 @@ impl MemoryBroker {
 
     /// Opens a subscription to `name`. The returned subscriber starts receiving messages
     /// published after this call; messages published earlier are not buffered.
+    ///
+    /// On a shut-down broker the registration is refused and the subscriber simply never
+    /// receives anything, matching this constructor's infallible signature; the
+    /// [`Subscribe`] path reports [`MemoryError::ShutDown`] instead.
     #[must_use]
     pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber {
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.into();
-        self.state.register(name.clone(), tx.clone());
+        let _ = self.state.register(name.clone(), tx.clone());
         MemorySubscriber {
             name,
             rx,
@@ -162,35 +220,182 @@ impl MemoryBroker {
 
     /// Returns a request / reply-capable publisher bound to this broker.
     ///
-    /// Unlike [`MemoryBroker::publisher`], whose fire-and-forget operations cannot fail, a
-    /// requester awaits a correlated reply that may never arrive, so its operations report
-    /// [`RequestError`].
+    /// Unlike [`MemoryBroker::publisher`], which reports [`MemoryError`], a requester awaits a
+    /// correlated reply that may never arrive, so its operations report [`RequestError`]: the
+    /// shut-down case plus a reply timeout.
     #[must_use]
     pub fn requester(&self) -> MemoryRequester {
         MemoryRequester::new(Arc::clone(&self.state))
     }
 }
 
-impl std::fmt::Debug for MemoryBroker {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemoryBroker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryBroker").finish_non_exhaustive()
     }
 }
 
 impl Broker for MemoryBroker {
-    type Error = Infallible;
+    type Error = MemoryError;
+    type Connected = ConnectedMemoryBroker;
 
-    async fn connect(&self) -> Result<(), Self::Error> {
-        Ok(())
+    /// Connecting is free for an in-process bus. A shut-down bus (a clone lineage may have shut
+    /// the shared state down) is revived with a fresh, empty registration map, so the connected
+    /// form always starts live; a live bus keeps its registrations.
+    async fn connect(self) -> Result<Self::Connected, Self::Error> {
+        {
+            let mut bus = self
+                .state
+                .subscribers
+                .lock()
+                .expect("memory broker mutex poisoned");
+            if matches!(*bus, Bus::ShutDown) {
+                *bus = Bus::Live(HashMap::new());
+            }
+        }
+        Ok(ConnectedMemoryBroker { state: self.state })
+    }
+}
+
+/// The connected form of [`MemoryBroker`]: the typed witness that [`Broker::connect`] ran.
+///
+/// Cheap to clone: the in-memory bus is shared state by nature, so the connected form is a
+/// shareable handle on it, exactly like the unconnected broker. Subscriptions (the
+/// [`Subscribe`] capability, [`MemorySource`]) resolve against this form.
+#[derive(Clone)]
+pub struct ConnectedMemoryBroker {
+    state: Arc<MemoryState>,
+}
+
+impl fmt::Debug for ConnectedMemoryBroker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectedMemoryBroker")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ConnectedMemoryBroker {
+    /// Returns a publisher bound to this broker.
+    #[must_use]
+    pub fn publisher(&self) -> MemoryPublisher {
+        MemoryPublisher {
+            state: Arc::clone(&self.state),
+            txn: Mutex::new(None),
+        }
     }
 
-    async fn shutdown(&self) -> Result<(), Self::Error> {
-        self.state
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned")
-            .clear();
-        Ok(())
+    /// Returns a request / reply-capable publisher bound to this broker.
+    ///
+    /// See [`MemoryBroker::requester`] for why its operations report [`RequestError`] rather
+    /// than [`MemoryError`].
+    #[must_use]
+    pub fn requester(&self) -> MemoryRequester {
+        MemoryRequester::new(Arc::clone(&self.state))
+    }
+}
+
+impl ConnectedBroker for ConnectedMemoryBroker {
+    type Error = MemoryError;
+    type Closed = ClosedMemoryBroker;
+
+    /// Enters the terminal shut-down state: the bus itself flips to its `ShutDown` variant, so
+    /// every aliased handle that would touch it (a publisher's publish or transaction commit, a
+    /// request) errors with [`MemoryError::ShutDown`]. Consuming `self` makes any further use
+    /// of this handle a compile error; the returned witness reports how many subscriber
+    /// registrations the teardown dropped.
+    async fn shutdown(self) -> Result<Self::Closed, Self::Error> {
+        let dropped = {
+            let mut bus = self
+                .state
+                .subscribers
+                .lock()
+                .expect("memory broker mutex poisoned");
+            match std::mem::replace(&mut *bus, Bus::ShutDown) {
+                Bus::Live(subscribers) => subscribers.values().map(Vec::len).sum(),
+                Bus::ShutDown => 0,
+            }
+        };
+        Ok(ClosedMemoryBroker {
+            subscribers_dropped: dropped,
+        })
+    }
+}
+
+/// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
+///
+/// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`]. Exists so the memory
+/// broker exercises the full [`PublishPolicy`] surface the way richer
+/// brokers do with real options (an exchange, a queue timeout, a transactional id).
+///
+/// # Examples
+///
+/// ```
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// use ruststream::memory::{MemoryBroker, MemoryPublish};
+/// use ruststream::{Broker, PublishPolicy};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let publisher = MemoryPublish.pair(&connected).await?;
+/// # let _ = publisher;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct MemoryPublish;
+
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
+    type Live = MemoryPublisher;
+
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
+        Ok(connected.publisher())
+    }
+}
+
+impl DefaultPublish for ConnectedMemoryBroker {
+    type Policy = MemoryPublish;
+}
+
+/// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
+///
+/// # Examples
+///
+/// ```
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// use ruststream::memory::{MemoryBroker, MemoryRequest};
+/// use ruststream::{Broker, PublishPolicy};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let requester = MemoryRequest.pair(&connected).await?;
+/// # let _ = requester;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct MemoryRequest;
+
+impl PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
+    type Live = MemoryRequester;
+
+    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
+        Ok(connected.requester())
+    }
+}
+
+/// The terminal witness returned by shutting down a [`ConnectedMemoryBroker`].
+///
+/// Has no publish or subscribe surface; it carries the teardown diagnostics as plain data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClosedMemoryBroker {
+    subscribers_dropped: usize,
+}
+
+impl ClosedMemoryBroker {
+    /// How many subscriber registrations were dropped when the bus shut down.
+    #[must_use]
+    pub fn subscribers_dropped(&self) -> usize {
+        self.subscribers_dropped
     }
 }
 
@@ -206,18 +411,24 @@ impl DescribeServer for MemoryBroker {
 }
 
 // --8<-- [start:testable]
+// The harness drives the connected form: TestApp connects every registered broker before it
+// recovers the in-process transport, and run_suite scenarios receive connected brokers.
 #[cfg(feature = "testing")]
-impl crate::testing::TestableBroker for MemoryBroker {
+impl crate::testing::TestableBroker for ConnectedMemoryBroker {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.state.install_coordinator(coordinator);
     }
 
     fn inject(&self, message: OutgoingMessage<'_>) {
-        self.state.fanout(&MemoryDelivery {
-            name: message.name().to_owned(),
-            payload: Bytes::copy_from_slice(message.payload()),
-            headers: message.headers().clone(),
-        });
+        // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
+        // the bus strictly before shutdown), so fail loudly instead of losing the message.
+        self.state
+            .fanout(&MemoryDelivery {
+                name: message.name().to_owned(),
+                payload: Bytes::copy_from_slice(message.payload()),
+                headers: message.headers().clone(),
+            })
+            .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
     fn published(&self, name: &str) -> Vec<RawMessage> {
@@ -232,17 +443,24 @@ impl crate::testing::TestableBroker for MemoryBroker {
 }
 
 #[cfg(feature = "testing")]
-crate::register_testable_broker!(MemoryBroker);
+crate::register_testable_broker!(ConnectedMemoryBroker);
 // --8<-- [end:testable]
 
-// `Self::subscribe` would read as a recursive call into this trait method; spell out the broker
-// type so it resolves to the inherent constructor (inherent methods win in path syntax anyway).
-#[allow(clippy::use_self)]
-impl Subscribe for MemoryBroker {
+impl Subscribe for ConnectedMemoryBroker {
     type Subscriber = MemorySubscriber;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
-        Ok(MemoryBroker::subscribe(self, name))
+        let (tx, rx) = mpsc::unbounded_channel();
+        let name = name.to_owned();
+        self.state.register(name.clone(), tx.clone())?;
+        Ok(MemorySubscriber {
+            name,
+            rx,
+            requeue: tx,
+            batch_limit: DEFAULT_BATCH_LIMIT,
+            #[cfg(feature = "testing")]
+            coordinator: self.state.coordinator(),
+        })
     }
 }
 
@@ -250,7 +468,7 @@ impl Subscribe for MemoryBroker {
 ///
 /// The broker-owned counterpart to the generic [`Name`](crate::Name) source: it carries no extra
 /// configuration (the in-memory broker has none), but giving every broker its own
-/// [`SubscriptionSource`] keeps the macro-subscriber and lazy-startup paths uniform across brokers.
+/// [`SubscriptionSource`] keeps the macro-subscriber and startup paths uniform across brokers.
 /// Pass it to the descriptor form of the macro, `#[subscriber(MemorySource::new("orders"))]`, the
 /// way a NATS service passes `SubscribeOptions`.
 #[derive(Debug, Clone)]
@@ -266,15 +484,18 @@ impl MemorySource {
     }
 }
 
-impl SubscriptionSource<MemoryBroker> for MemorySource {
+impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
     type Subscriber = MemorySubscriber;
 
     fn name(&self) -> &str {
         &self.name
     }
 
-    async fn subscribe(self, broker: &MemoryBroker) -> Result<Self::Subscriber, Infallible> {
-        Ok(broker.subscribe(self.name))
+    async fn subscribe(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> Result<Self::Subscriber, MemoryError> {
+        Subscribe::subscribe(connected, &self.name).await
     }
 }
 
@@ -308,8 +529,8 @@ impl MemorySubscriber {
     }
 }
 
-impl std::fmt::Debug for MemorySubscriber {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemorySubscriber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemorySubscriber")
             .field("name", &self.name)
             .finish_non_exhaustive()
@@ -363,14 +584,38 @@ impl Clone for MemoryPublisher {
     }
 }
 
-impl std::fmt::Debug for MemoryPublisher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemoryPublisher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryPublisher").finish_non_exhaustive()
     }
 }
 
+/// Error type of the in-memory broker: returned by [`MemoryPublisher`] and used as the error
+/// type of the [`Broker`] / [`ConnectedBroker`] lifecycle and the [`Subscribe`] capability.
+///
+/// The bus is in-process, so there is no transport to fail: operations against a live bus
+/// succeed, and a publish, subscription, or transaction commit through a handle aliasing a
+/// shut-down bus reports [`ShutDown`](MemoryError::ShutDown). The transaction variants cover
+/// misuse, which the [`TransactionalPublisher`](crate::TransactionalPublisher) contract requires
+/// to surface as errors rather than silent no-ops.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MemoryError {
+    /// `begin_transaction` was called while a transaction is already open on this handle.
+    #[error("a transaction is already open on this publisher handle")]
+    TransactionBusy,
+    /// `commit` or `abort` was called with no open transaction on this handle.
+    #[error("no transaction is open on this publisher handle")]
+    NoTransaction,
+    /// The operation (a publish, subscribe, transaction commit, or request) ran through a handle
+    /// aliasing a bus that was shut down ([`ConnectedBroker::shutdown`]) and not revived by a
+    /// sibling clone's [`Broker::connect`].
+    #[error("the memory broker is shut down")]
+    ShutDown,
+}
+
 impl Publisher for MemoryPublisher {
-    type Error = Infallible;
+    type Error = MemoryError;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
         let delivery = MemoryDelivery {
@@ -381,12 +626,13 @@ impl Publisher for MemoryPublisher {
         {
             let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
             if let Some(buffered) = txn.as_mut() {
+                // Buffering is local to this handle and never touches the bus; a commit against
+                // a shut-down bus is what reports the error.
                 buffered.push(delivery);
                 return Ok(());
             }
         }
-        self.state.fanout(&delivery);
-        Ok(())
+        self.state.fanout(&delivery)
     }
 }
 
@@ -417,8 +663,8 @@ impl Drop for MemoryMessage {
     }
 }
 
-impl std::fmt::Debug for MemoryMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemoryMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryMessage")
             .field("name", &self.delivery.as_ref().map(|d| d.name.as_str()))
             .finish_non_exhaustive()
@@ -515,7 +761,7 @@ impl IncomingMessage for MemoryMessage {
             return Ok(());
         }
         tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
+            sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.
             let _ = requeue.send(delivery);
         });
@@ -557,6 +803,33 @@ mod tests {
         let raw = msg.into_raw();
         assert_eq!(raw.name(), "dbg");
         assert_eq!(raw.payload(), b"payload");
+    }
+
+    #[tokio::test]
+    async fn shutdown_reports_dropped_registrations() {
+        let broker = MemoryBroker::new();
+        let connected = broker
+            .connect()
+            .await
+            .expect("memory connect is infallible");
+        let _first = connected.subscribe("orders").await.unwrap();
+        let _second = connected.subscribe("orders").await.unwrap();
+        let _third = connected.subscribe("billing").await.unwrap();
+
+        let closed = connected.shutdown().await.unwrap();
+        assert_eq!(closed.subscribers_dropped(), 3);
+    }
+
+    #[tokio::test]
+    async fn shutdown_after_a_sibling_shutdown_reports_nothing_dropped() {
+        let broker = MemoryBroker::new();
+        let first = broker.clone().connect().await.unwrap();
+        let second = broker.connect().await.unwrap();
+        let _sub = first.subscribe("orders").await.unwrap();
+
+        assert_eq!(first.shutdown().await.unwrap().subscribers_dropped(), 1);
+        // The sibling shares the bus, which is already terminal: nothing left to drop.
+        assert_eq!(second.shutdown().await.unwrap().subscribers_dropped(), 0);
     }
 
     // Paused time needs the current-thread runtime; the redelivery timer auto-advances instead

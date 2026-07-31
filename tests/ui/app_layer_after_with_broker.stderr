@@ -1,0 +1,12 @@
+error[E0599]: no method named `layer` found for struct `RustStream` in the current scope
+  --> tests/ui/app_layer_after_with_broker.rs:10:10
+   |
+ 8 |       let _app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+   |  ________________-
+ 9 | |         .with_broker(MemoryBroker::new(), |_b| {})
+10 | |         .layer(TracingLayer::default());
+   | |         -^^^^^ method not found in `RustStream`
+   | |_________|
+   |
+   |
+   = note: the method was found for `RustStream<Layers, State, Pipeline, Setup>`

@@ -6,13 +6,15 @@
 //! robbing broker crates of their native implementations (coherence), hence the explicit
 //! wrapper.
 
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
+use tokio::time::sleep;
 
-use crate::{BatchSubscriber, Broker, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, ConnectedBroker, Subscriber, SubscriptionSource};
 
-const DEFAULT_MAX_SIZE: usize = 64;
+const DEFAULT_MAX_SIZE: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 
 /// A [`SubscriptionSource`] adapter that buffers the wrapped source's subscriber into a
@@ -27,17 +29,17 @@ const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 /// ```
 /// use std::time::Duration;
 ///
-/// use ruststream::{Buffered, Name};
+/// use ruststream::{Buffered, Name, nonzero};
 ///
 /// let source = Buffered::new(Name::new("orders"))
-///     .max_size(128)
+///     .max_size(nonzero!(128))
 ///     .max_wait(Duration::from_millis(20));
 /// # let _ = source;
 /// ```
 #[derive(Debug, Clone)]
 pub struct Buffered<S> {
     source: S,
-    max_size: usize,
+    max_size: NonZeroUsize,
     max_wait: Duration,
 }
 
@@ -52,10 +54,9 @@ impl<S> Buffered<S> {
         }
     }
 
-    /// Caps how many deliveries one batch may carry. A batch always carries at least one
-    /// delivery, so zero behaves like one.
+    /// Caps how many deliveries one batch may carry.
     #[must_use]
-    pub fn max_size(mut self, max_size: usize) -> Self {
+    pub fn max_size(mut self, max_size: NonZeroUsize) -> Self {
         self.max_size = max_size;
         self
     }
@@ -68,10 +69,10 @@ impl<S> Buffered<S> {
     }
 }
 
-impl<B, S> SubscriptionSource<B> for Buffered<S>
+impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
-    B: Broker,
-    S: SubscriptionSource<B> + Send,
+    C: ConnectedBroker,
+    S: SubscriptionSource<C> + Send,
     S::Subscriber: Send,
 {
     type Subscriber = BufferedSubscriber<S::Subscriber>;
@@ -80,10 +81,10 @@ where
         self.source.name()
     }
 
-    async fn subscribe(self, broker: &B) -> Result<Self::Subscriber, B::Error> {
+    async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
         Ok(BufferedSubscriber {
-            inner: self.source.subscribe(broker).await?,
-            max_size: self.max_size.max(1),
+            inner: self.source.subscribe(connected).await?,
+            max_size: self.max_size,
             max_wait: self.max_wait,
         })
     }
@@ -96,7 +97,7 @@ where
 #[derive(Debug)]
 pub struct BufferedSubscriber<S> {
     inner: S,
-    max_size: usize,
+    max_size: NonZeroUsize,
     max_wait: Duration,
 }
 
@@ -128,7 +129,7 @@ impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
     fn batches(
         &mut self,
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
-        let max_size = self.max_size.max(1);
+        let max_size = self.max_size.get();
         let max_wait = self.max_wait;
         let inner = Box::pin(self.inner.stream());
         futures::stream::unfold(
@@ -149,7 +150,7 @@ impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
                 batch.push(first);
                 let mut carry = Carry::Nothing;
                 if max_size > 1 {
-                    let deadline = tokio::time::sleep(max_wait);
+                    let deadline = sleep(max_wait);
                     tokio::pin!(deadline);
                     loop {
                         tokio::select! {
@@ -184,18 +185,23 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::memory::MemoryBroker;
-    use crate::{IncomingMessage, Name, OutgoingMessage, Publisher};
+    use crate::memory::{MemoryBroker, MemorySubscriber};
+    use crate::{Broker, IncomingMessage, Name, OutgoingMessage, Publisher};
 
     async fn buffered(
         broker: &MemoryBroker,
         max_size: usize,
         max_wait: Duration,
-    ) -> BufferedSubscriber<crate::memory::MemorySubscriber> {
+    ) -> BufferedSubscriber<MemorySubscriber> {
+        let connected = broker
+            .clone()
+            .connect()
+            .await
+            .expect("memory connect is infallible");
         Buffered::new(Name::new("buffered"))
-            .max_size(max_size)
+            .max_size(NonZeroUsize::new(max_size).expect("test sizes are nonzero"))
             .max_wait(max_wait)
-            .subscribe(broker)
+            .subscribe(&connected)
             .await
             .unwrap()
     }

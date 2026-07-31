@@ -16,37 +16,55 @@ traits for the features your broker supports, and prove the result with the
 
 ## The required traits
 
-### `Broker`
+### `Broker` and `ConnectedBroker`
 
-The broker is pure lifecycle: connect and shut down. It carries no subscriber or publisher type, so a
-single application can mix broker kinds.
+The broker is pure lifecycle, and the lifecycle is a ladder of consuming transitions: each state
+is a distinct type, so out-of-order calls do not compile. The broker carries no subscriber or
+publisher type, so a single application can mix broker kinds.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/broker.rs (which carries Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
 ```rust
-pub trait Broker: Send + Sync {
+pub trait Broker: Send + Sync + Sized {
     type Error: std::error::Error + Send + Sync + 'static;
-    async fn connect(&self) -> Result<(), Self::Error>;
-    async fn shutdown(&self) -> Result<(), Self::Error>;
+    type Connected: ConnectedBroker;
+    async fn connect(self) -> Result<Self::Connected, Self::Error>;
+}
+
+pub trait ConnectedBroker: Send + Sync + Sized + 'static {
+    type Error: std::error::Error + Send + Sync + 'static;
+    type Closed: Send;
+    async fn shutdown(self) -> Result<Self::Closed, Self::Error>;
 }
 ```
 
-`shutdown` must never block or panic; do all fallible teardown here and return a `Result`.
+`shutdown` must never block or panic; do all fallible teardown here and return a `Result`. The
+`Closed` witness has no publish or subscribe surface; carry teardown diagnostics (flush results,
+drop counts) in it as plain data, or use `()`.
 
 Construction is **synchronous and I/O-free**: `new(addrs)` only records configuration, all network
-work happens in `connect` (idempotent, called once at startup by the runtime). Keep the live
-connection behind interior mutability (for example `Arc<tokio::sync::OnceCell<_>>`) so a publisher
-handed out before `connect` resolves the connection on first use; operations that need it earlier
-return a clear "not connected" error. This lazy-startup contract is what lets a service compose
-with the synchronous `#[ruststream::app]` builder; the
+work happens in `connect` (called once at startup by the runtime), and the connected form holds
+the live client directly - its own operations never check a "maybe connected" state. A broker may
+additionally keep a shared cell that `connect` fills (or a shareable in-process state, as the
+in-memory broker does) so publishers can be handed out while the app is still being assembled,
+before `connect` runs; the cell serves those early handles, not the connected form. The
+[NATS example](example-nats.md) shows the cell-backed variant. This contract is what lets a
+service compose with the synchronous `#[ruststream::app]` builder; the
 [conformance harness](conformance.md) proves it end to end.
+
+Consuming transitions make owner-side misuse unrepresentable: there is no publish or subscribe to
+call on a broker you already shut down. What remains a runtime rule is transport reality, not
+contract bookkeeping: handles that alias the connection (publishers handed out from the connected
+form, clones of a shareable broker) must surface an error when used after shutdown - never a
+silent success against a dead connection. The lifecycle check drives that path too.
 
 ### `Subscribe`
 
-Implement `Subscribe` to support subscribing by name. This is what `#[subscriber("name")]` uses.
+Implement `Subscribe` on the connected form to support subscribing by name. This is what
+`#[subscriber("name")]` uses.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
-pub trait Subscribe: Broker {
+pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
@@ -108,6 +126,49 @@ pub trait Publisher: Send + Sync {
 
 `OutgoingMessage` borrows its name and payload, so publishing does not force an allocation.
 
+### `PublishPolicy`
+
+A broker publisher is a bundle of policy (an exchange, a queue timeout, a transactional id) plus
+the live connection. Split it along that seam: ship a freely constructible **policy** type with
+the builder options and no publish surface, and implement `PublishPolicy` to pair it with the
+connected form into the live publisher. Pairing is async and fallible for brokers that do real
+work when a publisher comes alive (initializing a transactional producer); for most it is a cheap
+constructor call.
+
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+```rust
+pub trait PublishPolicy<C: ConnectedBroker> {
+    type Live; // the live publisher (or live wiring form, for combinator stacks)
+    async fn pair(self, connected: &C) -> Result<Self::Live, PairError>;
+}
+```
+
+The error is the type-erased `PairError` (wrap your broker's failure with `PairError::new`)
+rather than `C::Error`: pairing runs once per publisher at startup, never on the hot path, and a
+cross-broker token pairs against a broker other than the including scope's, so a broker-typed
+error could not name one broker anyway.
+
+Ship one policy/live pair per genuine publishing **mode**, and make mode selection a policy type
+transition rather than a runtime flag: a plain policy pairs into the plain publisher, and a
+`transactional_id(..)` builder step moves to a distinct transactional policy type whose live form
+implements `TransactionalPublisher` - so the plain publisher has no transactional surface at all.
+The in-memory broker's `MemoryPublish` / `MemoryRequest` are the minimal reference (no options, so
+they are unit markers); the core's typed combinators implement `PublishPolicy` functorially, which
+is what lets users compose codecs and transforms over your policy before it pairs.
+
+When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
+the connected form to name it. That is what lets the runtime build the default reply publisher
+when a `publish("dest")` handler is included without an explicit `.publisher(..)` - `b.include(def)`
+alone compiles. Brokers whose publishers always need explicit options simply do not implement it,
+and their users attach a policy at every registration.
+
+<!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+```rust
+pub trait DefaultPublish: ConnectedBroker {
+    type Policy: PublishPolicy<Self> + Default + Send + 'static;
+}
+```
+
 ## Subscription sources
 
 `Subscribe` covers the by-name case. When a subscription needs broker-specific options (a consumer
@@ -116,10 +177,10 @@ group, a durable name, a delivery policy), expose a descriptor type that impleme
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
-pub trait SubscriptionSource<B: Broker> {
+pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
     fn name(&self) -> &str;
-    fn subscribe(self, broker: &B) -> impl Future<Output = Result<Self::Subscriber, B::Error>> + Send;
+    fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
 }
 ```
 
@@ -198,14 +259,15 @@ enums `#[non_exhaustive]`. Never use `anyhow` in a library crate.
 
 ## Test support
 
-Ship an in-process transport implementing `TestableBroker` under a `testing` feature (registered with
-`register_testable_broker!`) so users can unit-test handlers against your broker with the `TestApp`
-harness. The transport does **core routing only**: it dispatches published messages to matching
+Ship an in-process transport implementing `TestableBroker` on its **connected form** under a
+`testing` feature (registered with `register_testable_broker!` for that connected type, since the
+harness connects every broker before recovering its transport) so users can unit-test handlers
+against your broker with the `TestApp` harness. The transport does **core routing only**: it dispatches published messages to matching
 subscribers and treats ack/nack as effectively a no-op. Do not simulate broker-specific semantics
 (durable cursors, redelivery timers, offsets, dead-letter routing) in it; those are verified end to
 end against a real server.
 
-The reference is `MemoryBroker`'s own implementation:
+The reference is the in-memory broker's own implementation (on `ConnectedMemoryBroker`):
 
 ```rust
 --8<-- "src/memory/mod.rs:testable"
@@ -216,4 +278,4 @@ The transport calls `Coordinator::enqueued` on every enqueue into a subscriber a
 reaction has settled), and routes delayed redeliveries through `Coordinator::schedule_redelivery`.
 That one type then works with both `TestApp` and the conformance suite. See
 [Testing](../guides/testing.md) for the user-facing side, and [Conformance](conformance.md) to
-prove the implementation with `run_suite` and the lazy-startup `lifecycle` check.
+prove the implementation with `run_suite` and the `lifecycle` ladder check.

@@ -19,6 +19,9 @@
 //! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`
 //!   ([`logging::init`]). The generated `cli` `run` command installs it automatically.
+//! * `otel`: OpenTelemetry SDK integration: OTLP export for traces and metrics via
+//!   [`otel::OtelBuilder::init`], plus per-handler dispatch metrics middleware and W3C
+//!   trace-context propagation ([`otel::propagation`]).
 //! * `conformance`: the [`conformance::harness`] contract suite, per-capability suites in
 //!   [`conformance::capabilities`], and broker-agnostic [`conformance::helpers`] for application
 //!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker
@@ -49,17 +52,18 @@ pub mod testing;
 #[doc(hidden)]
 pub use inventory;
 
-pub use broker::Broker;
+pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
-    ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, Partitioned, RequestReply,
-    SecurityScheme, ServerSpec, Subscribe, TransactionalPublisher,
+    ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, OwnedTransactions,
+    Partitioned, RequestReply, SecurityScheme, ServerSpec, Subscribe, Transaction,
+    TransactionalPublisher,
 };
 pub use error::AckError;
 pub use field::{BuildContext, ContextField, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
-pub use publisher::Publisher;
+pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::Message;
 pub use subscriber::Subscriber;
 pub use subscription::{Name, SubscriptionSource};
@@ -119,8 +123,8 @@ pub mod metrics;
 #[cfg(feature = "logging")]
 pub mod logging;
 
-#[cfg(feature = "opentelemetry")]
-pub mod opentelemetry;
+#[cfg(feature = "otel")]
+pub mod otel;
 
 /// Implementation detail used by the `#[subscriber]` macro to capture a payload's JSON Schema.
 ///
@@ -209,4 +213,38 @@ pub mod __private {
             T::DESCRIPTION
         }
     }
+}
+
+/// Builds a [`NonZero`](core::num::NonZero) integer from a literal, rejecting zero at compile
+/// time.
+///
+/// The expansion is an inline `const` block, so `nonzero!(0)` fails the build instead of
+/// panicking at runtime, and the `NonZero` width is inferred from the call site - the same
+/// literal works for [`Buffered::max_size`](crate::Buffered::max_size) (`NonZeroUsize`) and any
+/// other `NonZero` parameter.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Buffered, Name, nonzero};
+///
+/// let source = Buffered::new(Name::new("orders")).max_size(nonzero!(128));
+/// # let _ = source;
+/// ```
+///
+/// Zero does not compile:
+///
+/// ```compile_fail
+/// let _: core::num::NonZeroUsize = ruststream::nonzero!(0);
+/// ```
+#[macro_export]
+macro_rules! nonzero {
+    ($value:expr) => {
+        const {
+            match ::core::num::NonZero::new($value) {
+                ::core::option::Option::Some(value) => value,
+                ::core::option::Option::None => panic!("nonzero!(..) requires a non-zero value"),
+            }
+        }
+    };
 }

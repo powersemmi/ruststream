@@ -3,14 +3,19 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use std::sync::Arc;
+
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Publisher, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, Connected, PublishPolicy, Publisher, Subscriber, SubscriptionSource,
+};
 
 use crate::runtime::batch::BatchHandler;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingHandler};
-use crate::runtime::dispatch::Workers;
-use crate::runtime::failure::FailurePolicies;
+use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
+use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::handler::Handler;
+use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
@@ -55,15 +60,13 @@ pub struct BatchRoute<S, H> {
 }
 
 /// One mountable registration: applies the global blanket layer to its handler and registers it.
-/// `St` is the app's shared-state type, threaded so a route only mounts on a sink whose state type
+/// `State` is the app's shared-state type, threaded so a route only mounts on a sink whose state type
 /// its handler matches (a state-agnostic handler matches any).
-pub(super) trait MountRoute<B, St> {
-    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    );
+pub(super) trait MountRoute<B: Broker, State> {
+    fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static;
 }
 
 /// One registration's `AsyncAPI` metadata, collected independently of the app state type (so
@@ -90,41 +93,39 @@ impl<S, H> RouteMeta for HandleRoute<S, H> {
     }
 }
 
-impl<B, S, H, St> MountRoute<B, St> for SubscribeRoute<S, H>
+impl<B, S, H, State> MountRoute<B, State> for SubscribeRoute<S, H>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: Send + 'static,
     SourceMessage<B, S>: Send + Sync + 'static,
-    St: Send + Sync + 'static,
-    H: Handler<SourceMessage<B, S>, (), St> + 'static,
+    State: Send + Sync + 'static,
+    H: Handler<SourceMessage<B, S>, (), State> + 'static,
 {
-    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        _pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    ) {
-        let handler = global.apply::<SourceMessage<B, S>, (), St, H>(self.handler);
+    fn mount_one<G, PP>(self, global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
+        let handler = global.apply::<SourceMessage<B, S>, (), State, H>(self.handler);
         sink.push_subscribe_workers(self.source, handler, self.meta, self.policies, self.workers);
     }
 }
 
-impl<B, S, H, St> MountRoute<B, St> for BatchRoute<S, H>
+impl<B, S, H, State> MountRoute<B, State> for BatchRoute<S, H>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: BatchSubscriber + Send + 'static,
     SourceMessage<B, S>: Send + 'static,
-    St: Send + Sync + 'static,
-    H: BatchHandler<SourceMessage<B, S>, St> + 'static,
+    State: Send + Sync + 'static,
+    H: BatchHandler<SourceMessage<B, S>, State> + 'static,
 {
-    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        _global: &G,
-        _pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    ) {
+    fn mount_one<G, PP>(self, _global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
         // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
         // nor the router's own layers apply to batch registrations.
         sink.push_subscribe_batch(
@@ -137,31 +138,31 @@ where
     }
 }
 
-impl<B, S, H, St> MountRoute<B, St> for HandleRoute<S, H>
+impl<B, S, H, State> MountRoute<B, State> for HandleRoute<S, H>
 where
     B: Broker + 'static,
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
-    St: Send + Sync + 'static,
-    H: Handler<S::Message, (), St> + 'static,
+    State: Send + Sync + 'static,
+    H: Handler<S::Message, (), State> + 'static,
 {
-    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        _pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    ) {
-        let handler = global.apply::<S::Message, (), St, H>(self.handler);
+    fn mount_one<G, PP>(self, global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
+        let handler = global.apply::<S::Message, (), State, H>(self.handler);
         sink.push_handle(self.subscriber, handler, self.meta, self.policies);
     }
 }
 
 /// One publishing registration, deferred. Unlike [`SubscribeRoute`], it stores the pieces of a
-/// [`PublishingHandler`] rather than a built one, because the app's publish pipeline is only known
-/// at mount time: [`mount_one`](MountRoute::mount_one) builds the handler with the real pipeline, so
-/// a router-mounted publishing handler picks up the app-wide
-/// [`publish_layer`](crate::runtime::RustStream::publish_layer) chain. An implementation detail of
-/// [`Router`](crate::runtime::Router)'s registration list.
+/// [`PublishingHandler`] rather than a built one: the app's publish pipeline is only known at
+/// mount time, and the live reply publisher only exists once the broker connects, so
+/// [`mount_one`](MountRoute::mount_one) captures the pieces in a starter closure that pairs the
+/// publisher and builds the handler at startup. A router-mounted publishing handler thus picks up
+/// the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer) chain. An
+/// implementation detail of [`Router`](crate::runtime::Router)'s registration list.
 #[doc(hidden)]
 pub struct PublishingRoute<S, D, C, P, PC, PL> {
     pub(super) source: S,
@@ -214,70 +215,141 @@ impl<S, D, C, R> RouteMeta for BatchPublishingRoute<S, D, C, R> {
     }
 }
 
-impl<B, S, D, C, P, PC, PL, St> MountRoute<B, St> for PublishingRoute<S, D, C, P, PC, PL>
+impl<B, Source, Def, DecodeCodec, Leaf, ReplyCodec, Transforms, State> MountRoute<B, State>
+    for PublishingRoute<Source, Def, DecodeCodec, Leaf, ReplyCodec, Transforms>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
-    S::Subscriber: Send + 'static,
-    SourceMessage<B, S>: Send + Sync + 'static,
-    St: Send + Sync + 'static,
-    D: PublishingCall<St> + 'static,
-    D::Input: DeserializeOwned + Send + Sync + 'static,
-    D::Reply: Serialize + Send + Sync + 'static,
-    D::Context: crate::BuildContext<SourceMessage<B, S>> + Send + Sync + 'static,
-    C: Codec + 'static,
-    P: Publisher + 'static,
-    PC: Codec + 'static,
-    PL: PublishTransform<D::Context> + 'static,
+    // The subscription side: the source opens against the connected form, and the definition's
+    // handler runs over the messages it yields.
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Subscriber: Send + 'static,
+    SourceMessage<B, Source>: Send + Sync + 'static,
+    State: Send + Sync + 'static,
+    Def: PublishingCall<State> + 'static,
+    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Context: crate::BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
+    DecodeCodec: Codec + Send + 'static,
+    // The reply side: a typed stack over a policy leaf, paired at startup into the live wiring.
+    Leaf: PublishPolicy<Connected<B>> + Send + 'static,
+    Leaf::Live: Publisher + 'static,
+    ReplyCodec: Codec + Send + 'static,
+    Transforms: PublishTransform<Def::Context> + Send + 'static,
 {
-    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    ) {
-        // Build the handler now that the app's pipeline is known, then wrap it with the global
-        // blanket layer (as a directly-mounted publishing handler is).
-        let handler = global.apply::<SourceMessage<B, S>, D::Context, St, _>(PublishingHandler {
-            def: self.def,
-            codec: self.codec,
-            publisher: self.publisher,
-            pipeline: pipeline.clone(),
-            decode: self.policies.decode,
-        });
-        sink.push_subscribe_workers(self.source, handler, self.meta, self.policies, self.workers);
+    fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
+        // The reply wiring is a policy stack: the runtime pairs it against the connected broker
+        // at startup, then builds the handler with the app's pipeline and the global stack.
+        let global = global.clone();
+        let pipeline = pipeline.clone();
+        let Self {
+            source,
+            def,
+            codec,
+            publisher,
+            meta,
+            policies,
+            workers,
+        } = self;
+        // Not the paired-factory helper: `BlanketLayer::apply` is an RPITIT whose hidden type
+        // captures the layer borrow, so the applied handler cannot be returned out of a factory
+        // closure; apply and spawn stay in one block instead.
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        sink.push_raw(
+            Box::new(move |connected, state, delivery, shutdown, token| {
+                Box::pin(async move {
+                    let publisher = publisher
+                        .pair(connected.as_ref())
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let subscriber = source
+                        .subscribe(connected.as_ref())
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
+                        PublishingHandler {
+                            def,
+                            codec,
+                            publisher,
+                            pipeline,
+                            decode: policies.decode,
+                        },
+                    );
+                    let failure = DispatchFailure::new(policies, shutdown);
+                    Ok(spawn_dispatch_workers(
+                        subscriber,
+                        Arc::new(handler),
+                        token,
+                        name,
+                        state,
+                        delivery,
+                        failure,
+                        workers,
+                    ))
+                })
+            }),
+            meta,
+        );
     }
 }
 
-impl<B, S, D, C, R, St> MountRoute<B, St> for BatchPublishingRoute<S, D, C, R>
+impl<B, Source, Def, DecodeCodec, ReplySource, BatchReply, State> MountRoute<B, State>
+    for BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<B> + Send + 'static,
-    S::Subscriber: BatchSubscriber + Send + 'static,
-    SourceMessage<B, S>: Send + Sync + 'static,
-    St: Send + Sync + 'static,
-    D: BatchPublishingCall<St> + 'static,
-    D::Input: DeserializeOwned + Send + Sync + 'static,
-    D::Reply: Serialize + Send + Sync + 'static,
-    C: Codec + 'static,
-    R: ReplyPublisher + 'static,
+    // The subscription side: batches open against the connected form.
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Subscriber: BatchSubscriber + Send + 'static,
+    SourceMessage<B, Source>: Send + 'static,
+    State: Send + Sync + 'static,
+    Def: BatchPublishingCall<State> + 'static,
+    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Reply: Serialize + Send + Sync + 'static,
+    DecodeCodec: Codec + Send + 'static,
+    // The reply side: the source pairs at startup into a batch reply wiring (plain or
+    // transactional).
+    ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
+    BatchReply: ReplyPublisher + 'static,
 {
-    fn mount_one<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        _global: &G,
-        pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    ) {
+    fn mount_one<G, PP>(self, _global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
         // Batch handlers are not wrapped by the per-message global stack, but they do pick up the
-        // app's publish pipeline for their replies.
-        let handler = BatchPublishingHandler {
-            def: self.def,
-            codec: self.codec,
-            publisher: self.publisher,
-            pipeline: pipeline.clone(),
-            decode: self.policies.decode,
-        };
-        sink.push_subscribe_batch(self.source, handler, self.meta, self.policies, self.workers);
+        // app's publish pipeline for their replies. The reply wiring pairs at startup.
+        let pipeline = pipeline.clone();
+        let Self {
+            source,
+            def,
+            codec,
+            publisher,
+            meta,
+            policies,
+            workers,
+        } = self;
+        sink.push_paired_batch(
+            source,
+            async move |connected: Arc<Connected<B>>| {
+                let publisher = publisher
+                    .pair(connected.as_ref())
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                Ok(BatchPublishingHandler {
+                    def,
+                    codec,
+                    publisher,
+                    pipeline,
+                    decode: policies.decode,
+                })
+            },
+            meta,
+            policies,
+            workers,
+        );
     }
 }
 
@@ -289,18 +361,16 @@ where
 /// obtain one from a builder and pass it to
 /// [`include_router`](crate::runtime::BrokerScope::include_router). You do not implement it.
 ///
-/// `St` is the app's shared-state type: a router whose handlers read typed state is
-/// `RouterDef<B, St>` only for that `St`, while a state-agnostic router is generic over it, so it
+/// `State` is the app's shared-state type: a router whose handlers read typed state is
+/// `RouterDef<B, State>` only for that `State`, while a state-agnostic router is generic over it, so it
 /// mounts on any app.
-pub trait RouterDef<B, St = ()> {
+pub trait RouterDef<B: Broker, State = ()> {
     /// Applies `global` to every registration and pushes it into `sink`. Called by `include_router`.
     #[doc(hidden)]
-    fn mount<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    );
+    fn mount<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static;
 }
 
 /// Metadata collection over a router's registration list, independent of the app state type.
@@ -313,13 +383,12 @@ pub trait RouterHandlers {
     fn collect_handlers(&self, out: &mut Vec<HandlerMetadata>);
 }
 
-impl<B: Broker + 'static, St> RouterDef<B, St> for () {
-    fn mount<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        _global: &G,
-        _pipeline: &PP,
-        _sink: &mut RouterSink<B, St>,
-    ) {
+impl<B: Broker + 'static, State> RouterDef<B, State> for () {
+    fn mount<G, PP>(self, _global: &G, _pipeline: &PP, _sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
     }
 }
 
@@ -327,18 +396,17 @@ impl RouterHandlers for () {
     fn collect_handlers(&self, _out: &mut Vec<HandlerMetadata>) {}
 }
 
-impl<B, Head, Tail, St> RouterDef<B, St> for (Head, Tail)
+impl<B, Head, Tail, State> RouterDef<B, State> for (Head, Tail)
 where
     B: Broker + 'static,
-    Head: MountRoute<B, St>,
-    Tail: RouterDef<B, St>,
+    Head: MountRoute<B, State>,
+    Tail: RouterDef<B, State>,
 {
-    fn mount<G: BlanketLayer, PP: PublishPipeline + Clone + 'static>(
-        self,
-        global: &G,
-        pipeline: &PP,
-        sink: &mut RouterSink<B, St>,
-    ) {
+    fn mount<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
+    where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
         // Registrations are prepended, so the tail holds the earlier ones; mount it first to keep
         // registration order.
         self.1.mount(global, pipeline, sink);

@@ -10,11 +10,13 @@
 use std::time::Duration;
 
 use futures::StreamExt;
+use tokio::time::timeout;
 
 use super::harness::{expect_next, expect_no_more};
 use crate::{
-    AckError, BatchSubscriber, Broker, Headers, IncomingMessage, OutgoingMessage, Publisher,
-    RequestReply, Subscriber, SubscriptionSource, TransactionalPublisher,
+    AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, Headers, IncomingMessage,
+    OutgoingMessage, Publisher, RequestReply, Subscriber, SubscriptionSource,
+    TransactionalPublisher,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -58,25 +60,24 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<B> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Req: RequestReply,
-    MkReq: Fn(&B) -> Req,
+    MkReq: Fn(&Connected<B>) -> Req,
     Pub: Publisher,
-    MkPub: Fn(&B) -> Pub,
+    MkPub: Fn(&Connected<B>) -> Pub,
 {
     const SUBJECT: &str = "conformance.request_reply";
 
-    let broker = make_broker();
-    Broker::connect(&broker).await.expect("broker must connect");
+    let connected = make_broker().connect().await.expect("broker must connect");
 
     let mut responder = make_source(SUBJECT)
-        .subscribe(&broker)
+        .subscribe(&connected)
         .await
         .expect("responder subscription must open after connect");
-    let publisher = make_publisher(&broker);
-    let requester = make_requester(&broker);
+    let publisher = make_publisher(&connected);
+    let requester = make_requester(&connected);
 
     let respond = async {
         let mut stream = std::pin::pin!(responder.stream());
@@ -131,7 +132,8 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
         "a request nobody answers must fail once its timeout elapses",
     );
 
-    Broker::shutdown(&broker)
+    connected
+        .shutdown()
         .await
         .expect("broker must shut down cleanly");
 }
@@ -168,23 +170,22 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<B> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
-    MkPub: Fn(&B) -> Pub,
+    MkPub: Fn(&Connected<B>) -> Pub,
 {
     const SUBJECT: &str = "conformance.batches";
     const COUNT: u32 = 10;
 
-    let broker = make_broker();
-    Broker::connect(&broker).await.expect("broker must connect");
+    let connected = make_broker().connect().await.expect("broker must connect");
 
     let mut subscriber = make_source(SUBJECT)
-        .subscribe(&broker)
+        .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
-    let publisher = make_publisher(&broker);
+    let publisher = make_publisher(&connected);
 
     for i in 0..COUNT {
         publisher
@@ -196,7 +197,7 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     let mut received = Vec::new();
     let mut stream = std::pin::pin!(subscriber.batches());
     while received.len() < COUNT as usize {
-        let batch = tokio::time::timeout(DEFAULT_TIMEOUT, stream.next())
+        let batch = timeout(DEFAULT_TIMEOUT, stream.next())
             .await
             .expect("batches: stream timed out")
             .expect("batches: stream ended unexpectedly")
@@ -219,7 +220,8 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         "batched deliveries must preserve publish order across batches",
     );
 
-    Broker::shutdown(&broker)
+    connected
+        .shutdown()
         .await
         .expect("broker must shut down cleanly");
 }
@@ -227,7 +229,10 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 /// Verifies the [`TransactionalPublisher`] contract.
 ///
 /// Nothing published inside a transaction is visible before `commit`, a commit makes every
-/// buffered message visible in publish order, and an abort discards the buffer.
+/// buffered message visible in publish order, and an abort discards the buffer. Misuse must
+/// error rather than silently succeed: `commit` / `abort` with no open transaction, and a
+/// second `begin_transaction` while one is open (which must also leave the open transaction
+/// untouched).
 ///
 /// # Examples
 ///
@@ -256,22 +261,21 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<B> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: TransactionalPublisher,
-    MkPub: Fn(&B) -> Pub,
+    MkPub: Fn(&Connected<B>) -> Pub,
 {
     const SUBJECT: &str = "conformance.transactions";
 
-    let broker = make_broker();
-    Broker::connect(&broker).await.expect("broker must connect");
+    let connected = make_broker().connect().await.expect("broker must connect");
 
     let mut subscriber = make_source(SUBJECT)
-        .subscribe(&broker)
+        .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
-    let publisher = make_publisher(&broker);
+    let publisher = make_publisher(&connected);
     let mut stream = std::pin::pin!(subscriber.stream());
 
     publisher
@@ -317,7 +321,45 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     publisher.abort().await.expect("abort failed");
     expect_no_more(&mut stream, "transactions: after abort").await;
 
-    Broker::shutdown(&broker)
+    // Misuse must surface as errors, never as silent success.
+    assert!(
+        publisher.commit().await.is_err(),
+        "commit with no open transaction must error",
+    );
+    assert!(
+        publisher.abort().await.is_err(),
+        "abort with no open transaction must error",
+    );
+    publisher
+        .begin_transaction()
+        .await
+        .expect("begin_transaction failed");
+    assert!(
+        publisher.begin_transaction().await.is_err(),
+        "begin_transaction while a transaction is open must error",
+    );
+    // The rejected second begin must not have disturbed the open transaction.
+    publisher
+        .publish(OutgoingMessage::new(SUBJECT, b"third".as_slice()))
+        .await
+        .expect("publish inside transaction failed");
+    publisher
+        .commit()
+        .await
+        .expect("commit after a rejected double begin failed");
+    let third = expect_next(&mut stream, "transactions: after rejected double begin").await;
+    assert_eq!(
+        third.payload(),
+        b"third",
+        "a rejected double begin must leave the open transaction intact",
+    );
+    match third.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
+
+    connected
+        .shutdown()
         .await
         .expect("broker must shut down cleanly");
 }

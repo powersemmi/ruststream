@@ -6,24 +6,35 @@ use std::{future::Future, sync::Arc, time::Duration};
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
 use crate::runtime::failure::ErrorShutdown;
-use crate::runtime::lifecycle::{BoxError, BoxFuture};
+use crate::runtime::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
+use crate::runtime::publish_source::Bound;
+use crate::{Broker, Connected, PairError, PublishPolicy};
 
+use super::health::{self, HealthProbe, HealthState};
 use super::service::RegisteredBroker;
 use super::{LifecycleHook, RustStream, RustStreamError};
+
+/// A broker that finished [`Broker::connect`](crate::Broker::connect), held erased for the
+/// consuming teardown, paired with its optional label.
+pub(crate) struct ConnectedEntry {
+    pub(crate) lifecycle: Box<dyn ConnectedLifecycle>,
+    pub(crate) label: Option<String>,
+}
 
 /// A lifecycle hook with the state already bound, so [`RunningApp`] stays non-generic.
 type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// Binds the shared state into each hook, erasing the state type from the hook list.
-fn bind_hooks<St: Send + Sync + 'static>(
-    hooks: Vec<LifecycleHook<St>>,
-    state: &Arc<St>,
+fn bind_hooks<State: Send + Sync + 'static>(
+    hooks: Vec<LifecycleHook<State>>,
+    state: &Arc<State>,
 ) -> Vec<BoundHook> {
     hooks
         .into_iter()
@@ -35,12 +46,14 @@ fn bind_hooks<St: Send + Sync + 'static>(
 }
 
 // `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
-// `block_on`), so their futures must be `Send`: the shared state is held as `Arc<St>` across the
-// startup awaits (needs `St: Sync`) and the global stack `L` is carried in `self` (needs `L: Send`).
-// `St: 'static` is what every constructible app already satisfies (the `on_startup` producer
+// `block_on`), so their futures must be `Send`: the shared state is held as `Arc<State>` across the
+// startup awaits (needs `State: Sync`) and the global stack `Layers` is carried in `self` (needs `Layers: Send`).
+// `State: 'static` is what every constructible app already satisfies (the `on_startup` producer
 // returns the state from a `'static` boxed future); naming it here lets `start` box the shutdown
 // hooks with the state bound in.
-impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
+impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
+    RustStream<Layers, State, Pipeline, Phase>
+{
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///
@@ -90,7 +103,9 @@ impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
     /// # Errors
     ///
     /// Returns [`RustStreamError`] if the state producer or an `after_startup` hook fails, a
-    /// broker fails to connect, or a subscription fails to open.
+    /// broker fails to connect, or a subscription fails to open. Brokers that had already
+    /// connected are shut down (best effort, failures logged) before the error is returned, so
+    /// a failed startup does not leak live connections.
     ///
     /// # Examples
     ///
@@ -134,17 +149,21 @@ impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
         let state = state_init().await.map_err(RustStreamError::Startup)?;
         let state = Arc::new(state);
 
-        for broker in &brokers {
-            broker
-                .lifecycle
-                .connect()
-                .await
-                .map_err(RustStreamError::Connect)?;
+        let mut connected = Vec::with_capacity(brokers.len());
+        for RegisteredBroker { lifecycle, label } in brokers {
+            let lifecycle = match lifecycle.connect().await {
+                Ok(lifecycle) => lifecycle,
+                Err(err) => {
+                    unwind_connected(connected).await;
+                    return Err(RustStreamError::Connect(err));
+                }
+            };
             info!(
                 target: "ruststream::lifecycle",
-                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
+                broker = label.as_deref().unwrap_or_else(|| lifecycle.name()),
                 "broker connected",
             );
+            connected.push(ConnectedEntry { lifecycle, label });
         }
 
         let token = CancellationToken::new();
@@ -153,9 +172,14 @@ impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
         let error_shutdown = ErrorShutdown::new(token.clone());
         let mut handles = Vec::with_capacity(starters.len());
         for (starter, meta) in starters.into_iter().zip(handlers) {
-            let handle = starter(state.clone(), error_shutdown.clone(), token.clone())
-                .await
-                .map_err(RustStreamError::Subscribe)?;
+            let handle = match starter(state.clone(), error_shutdown.clone(), token.clone()).await {
+                Ok(handle) => handle,
+                Err(err) => {
+                    unwind_started(&token, handles, shutdown_timeout, connected, continuations)
+                        .await;
+                    return Err(RustStreamError::Subscribe(err));
+                }
+            };
             info!(
                 target: "ruststream::dispatch",
                 subscriber = %meta.name,
@@ -169,12 +193,31 @@ impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
             debug!(target: "ruststream::lifecycle", count = after_startup.len(), "running after_startup hooks");
         }
         for hook in after_startup {
-            hook(Arc::clone(&state))
-                .await
-                .map_err(RustStreamError::Startup)?;
+            if let Err(err) = hook(Arc::clone(&state)).await {
+                unwind_started(&token, handles, shutdown_timeout, connected, continuations).await;
+                return Err(RustStreamError::Startup(err));
+            }
         }
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
+
+        let health = health::channel();
+        // The watcher flips the probe on a fail-fast teardown even when nobody ever calls
+        // `shutdown`: the process may stay alive serving healthz from a sibling task, which is
+        // exactly when the probe matters. Every transition uses `send_replace`, not `send`:
+        // `send` drops the value when no probe is subscribed yet, and a probe taken after the
+        // transition must still observe the terminal state.
+        {
+            let health = health.clone();
+            let error_shutdown = error_shutdown.clone();
+            let token = token.clone();
+            tokio::spawn(async move {
+                token.cancelled().await;
+                if let Some(reason) = error_shutdown.peek_failure() {
+                    health.send_replace(HealthState::Failed { reason });
+                }
+            });
+        }
 
         Ok(RunningApp {
             token,
@@ -182,9 +225,10 @@ impl<L: Send, St: Send + Sync + 'static, PP> RustStream<L, St, PP> {
             handles,
             on_shutdown: bind_hooks(on_shutdown, &state),
             after_shutdown: bind_hooks(after_shutdown, &state),
-            brokers,
+            brokers: connected,
             shutdown_timeout,
             continuations,
+            health,
         })
     }
 }
@@ -217,9 +261,10 @@ pub struct RunningApp {
     handles: Vec<JoinHandle<()>>,
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
-    brokers: Vec<RegisteredBroker>,
+    brokers: Vec<ConnectedEntry>,
     shutdown_timeout: Option<Duration>,
     continuations: TaskTracker,
+    health: watch::Sender<HealthState>,
 }
 
 impl fmt::Debug for RunningApp {
@@ -248,6 +293,81 @@ impl RunningApp {
         self.token.clone().cancelled_owned()
     }
 
+    /// Hands out a [`HealthProbe`]: a cheap, cloneable view of the service's lifecycle state for
+    /// a sibling task (typically an HTTP healthz endpoint).
+    ///
+    /// The probe outlives [`shutdown`](Self::shutdown) and keeps reporting the terminal state
+    /// ([`HealthState::Stopped`], or [`HealthState::Failed`] with the fail-fast diagnostic), so
+    /// an orchestrator stops routing traffic to a process whose messaging side died while
+    /// another task keeps the process alive.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "memory")]
+    /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, HealthState, RustStream};
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new());
+    /// let running = app.start().await?;
+    /// let health = running.health();
+    /// assert!(health.is_running());
+    /// // hand `health` to the HTTP task's /healthz route, then later:
+    /// running.shutdown().await?;
+    /// assert_eq!(health.state(), HealthState::Stopped);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn health(&self) -> HealthProbe {
+        HealthProbe::new(self.health.subscribe())
+    }
+
+    /// Pairs a [`Bound`](crate::runtime::Bound) token against its broker, for sending from a
+    /// sibling task while the service runs (the third home of a publisher, next to reply
+    /// wiring and [`Out`](crate::runtime::Out) injection).
+    ///
+    /// Sugar over [`Bound::live`](crate::runtime::Bound::live), anchored here because the handle
+    /// existing is the witness that startup connected every registered broker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PairError`] when the token's policy fails to pair.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::Broker;
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    ///
+    /// let broker = MemoryBroker::new().bindable();
+    /// let egress = broker.bind(MemoryPublish);
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |_b| {});
+    /// let running = app.start().await?;
+    /// let publisher = running.publisher(egress).await?;
+    /// // hand `publisher` to the sibling task (an outbox relay, a timer) ...
+    /// # let _ = publisher;
+    /// running.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    // Not `async fn`: the future must not capture `&self` (the handle holds non-Sync hook
+    // boxes), and pairing only needs the token.
+    pub fn publisher<B2, S>(
+        &self,
+        token: Bound<B2, S>,
+    ) -> impl Future<Output = Result<S::Live, PairError>> + Send
+    where
+        B2: Broker + 'static,
+        S: PublishPolicy<Connected<B2>> + Send,
+    {
+        token.live()
+    }
+
     /// Shuts the service down gracefully.
     ///
     /// Runs the `on_shutdown` hooks, stops the dispatch loops, drains in-flight handlers and
@@ -269,50 +389,134 @@ impl RunningApp {
             brokers,
             shutdown_timeout,
             continuations,
+            health,
         } = self;
 
-        for hook in on_shutdown {
-            if let Err(err) = hook().await {
-                warn!(target: "ruststream::lifecycle", error = %err, "on_shutdown hook failed");
+        health.send_replace(HealthState::ShuttingDown);
+        let outcome = teardown(
+            token,
+            handles,
+            on_shutdown,
+            after_shutdown,
+            brokers,
+            shutdown_timeout,
+            continuations,
+        )
+        .await;
+        match outcome {
+            Ok(()) => {
+                // A fail-fast failure tore the service down: surface it so an orchestrator
+                // restarts the service and the operator sees a non-zero exit, not a silent stop.
+                if let Some(reason) = error_shutdown.taken_failure() {
+                    health.send_replace(HealthState::Failed {
+                        reason: reason.clone(),
+                    });
+                    return Err(RustStreamError::Dispatch(reason));
+                }
+                health.send_replace(HealthState::Stopped);
+                Ok(())
+            }
+            Err(err) => {
+                health.send_replace(HealthState::Failed {
+                    reason: err.to_string(),
+                });
+                Err(err)
             }
         }
-
-        token.cancel();
-        debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
-        drain_handles(handles, shutdown_timeout).await?;
-
-        // Handlers have stopped, so no new post-settle continuations can be spawned: close the
-        // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
-        // at-most-once, so timing one out only abandons follow-up work, never a settlement.
-        drain_continuations(continuations, shutdown_timeout).await;
-
-        for broker in brokers.iter().rev() {
-            broker
-                .lifecycle
-                .shutdown()
-                .await
-                .map_err(RustStreamError::Shutdown)?;
-            debug!(
-                target: "ruststream::lifecycle",
-                broker = broker.label.as_deref().unwrap_or_else(|| broker.lifecycle.name()),
-                "broker shut down",
-            );
-        }
-
-        for hook in after_shutdown {
-            if let Err(err) = hook().await {
-                warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
-            }
-        }
-        info!(target: "ruststream::lifecycle", "service stopped");
-
-        // A fail-fast failure tore the service down: surface it so an orchestrator restarts the
-        // service and the operator sees a non-zero exit, not a silent stop.
-        if let Some(reason) = error_shutdown.taken_failure() {
-            return Err(RustStreamError::Dispatch(reason));
-        }
-        Ok(())
     }
+}
+
+/// Best-effort unwind of a startup that failed after dispatch tasks were spawned: stops the
+/// tasks, drains their post-settle continuations, then shuts the connected brokers down - the
+/// same ordering the graceful teardown keeps, so continuations never run against a closed
+/// broker. Failures are logged, not returned, so the original startup error stays the caller's
+/// answer.
+async fn unwind_started(
+    token: &CancellationToken,
+    handles: Vec<JoinHandle<()>>,
+    shutdown_timeout: Option<Duration>,
+    brokers: Vec<ConnectedEntry>,
+    continuations: TaskTracker,
+) {
+    token.cancel();
+    if let Err(err) = drain_handles(handles, shutdown_timeout).await {
+        warn!(
+            target: "ruststream::lifecycle",
+            error = %err,
+            "draining dispatch tasks failed during the startup unwind",
+        );
+    }
+    drain_continuations(continuations, shutdown_timeout).await;
+    unwind_connected(brokers).await;
+}
+
+/// Shuts down the brokers a failed startup had already connected, in reverse connect order,
+/// logging shutdown failures instead of returning them.
+async fn unwind_connected(brokers: Vec<ConnectedEntry>) {
+    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+        let name = lifecycle.name();
+        match lifecycle.shutdown().await {
+            Ok(()) => debug!(
+                target: "ruststream::lifecycle",
+                broker = label.as_deref().unwrap_or(name),
+                "broker shut down after a startup failure",
+            ),
+            Err(err) => warn!(
+                target: "ruststream::lifecycle",
+                broker = label.as_deref().unwrap_or(name),
+                error = %err,
+                "broker shutdown failed during the startup unwind",
+            ),
+        }
+    }
+}
+
+/// The fallible half of the graceful teardown, factored out so [`RunningApp::shutdown`] can map
+/// its outcome onto the health probe's terminal state in one place.
+async fn teardown(
+    token: CancellationToken,
+    handles: Vec<JoinHandle<()>>,
+    on_shutdown: Vec<BoundHook>,
+    after_shutdown: Vec<BoundHook>,
+    brokers: Vec<ConnectedEntry>,
+    shutdown_timeout: Option<Duration>,
+    continuations: TaskTracker,
+) -> Result<(), RustStreamError> {
+    for hook in on_shutdown {
+        if let Err(err) = hook().await {
+            warn!(target: "ruststream::lifecycle", error = %err, "on_shutdown hook failed");
+        }
+    }
+
+    token.cancel();
+    debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
+    drain_handles(handles, shutdown_timeout).await?;
+
+    // Handlers have stopped, so no new post-settle continuations can be spawned: close the
+    // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
+    // at-most-once, so timing one out only abandons follow-up work, never a settlement.
+    drain_continuations(continuations, shutdown_timeout).await;
+
+    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+        let name = lifecycle.name();
+        lifecycle
+            .shutdown()
+            .await
+            .map_err(RustStreamError::Shutdown)?;
+        debug!(
+            target: "ruststream::lifecycle",
+            broker = label.as_deref().unwrap_or(name),
+            "broker shut down",
+        );
+    }
+
+    for hook in after_shutdown {
+        if let Err(err) = hook().await {
+            warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
+        }
+    }
+    info!(target: "ruststream::lifecycle", "service stopped");
+    Ok(())
 }
 
 /// Awaits all handler tasks, bounded by `timeout` if set. On timeout the remaining tasks are

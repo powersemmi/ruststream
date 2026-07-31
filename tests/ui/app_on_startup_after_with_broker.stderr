@@ -1,0 +1,17 @@
+error[E0599]: no method named `on_startup` found for struct `RustStream` in the current scope
+ --> tests/ui/app_on_startup_after_with_broker.rs:9:10
+  |
+7 |       let _app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+  |                  ---------------------------------------------
+  |                  |
+  |  ________________method `on_startup` is available on `RustStream<Identity, (), PublishIdentity, Setup>`
+  | |
+8 | |         .with_broker(MemoryBroker::new(), |_b| {})
+9 | |         .on_startup(async move |()| Ok::<_, std::io::Error>(42_u32));
+  | |_________-^^^^^^^^^^
+  |
+help: there is a method `start` with a similar name, but with different arguments
+ --> src/runtime/app/run.rs
+  |
+  |     pub async fn start(self) -> Result<RunningApp, RustStreamError> {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

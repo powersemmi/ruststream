@@ -75,8 +75,9 @@ pub struct Context<'a, C = (), S = ()> {
     failfast: Option<&'a ErrorShutdown>,
     /// Set by the [`Typed`](super::typed::Typed) decode adapter when the payload fails to decode,
     /// so the dispatcher can record the outcome as a decode failure (otherwise indistinguishable
-    /// from a handler drop). Only present under the `testing` feature.
-    #[cfg(feature = "testing")]
+    /// from a handler drop). Present under the `testing` feature (harness classification) and the
+    /// `otel` feature (the consume layer's decode-failure counter).
+    #[cfg(any(feature = "testing", feature = "otel"))]
     decode_failed: bool,
 }
 
@@ -109,16 +110,24 @@ impl<'a, C, S> Context<'a, C, S> {
             delivery,
             after: Vec::new(),
             failfast: None,
-            #[cfg(feature = "testing")]
+            #[cfg(any(feature = "testing", feature = "otel"))]
             decode_failed: false,
         }
     }
 
     /// Records that the payload failed to decode for this delivery. Called by the decode adapter so
-    /// the harness can classify the outcome as a decode failure.
-    #[cfg(feature = "testing")]
+    /// the harness and the otel consume layer can classify the outcome as a decode failure.
+    #[cfg(any(feature = "testing", feature = "otel"))]
     pub(crate) fn mark_decode_failed(&mut self) {
         self.decode_failed = true;
+    }
+
+    /// Reads the decode-failure flag without clearing it. The otel consume layer runs inside the
+    /// dispatch (before the harness's clearing [`took_decode_failed`](Self::took_decode_failed)
+    /// read), so its read must leave the flag in place.
+    #[cfg(feature = "otel")]
+    pub(crate) fn decode_failed(&self) -> bool {
+        self.decode_failed
     }
 
     /// Returns and clears the decode-failure flag for this delivery.

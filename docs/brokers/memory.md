@@ -43,17 +43,26 @@ in-process semantics, not a simulation of another broker's:
   batches ship immediately, so no deadline timer is involved.
 - **Transactions.** `MemoryPublisher` implements `TransactionalPublisher`: publishes between
   `begin_transaction` and `commit` are buffered and fan out together in publish order; `abort`
-  discards them. Clones of a publisher handle do not share its transaction.
+  discards them. Misuse errors with `MemoryError` per the trait contract: a second
+  `begin_transaction` returns `TransactionBusy` (the open transaction is untouched), and
+  `commit` / `abort` without one return `NoTransaction`. Clones of a publisher handle do not
+  share its transaction.
 - **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
   well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).
+- **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
+  `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
+  reporting how many subscriber registrations the teardown dropped. The bus itself is a single
+  enum (so the lifecycle and the registrations cannot disagree): aliased handles used after the
+  shutdown - publishers, transaction commits, requests - error with `MemoryError::ShutDown` /
+  `RequestError::ShutDown` instead of silently succeeding.
 
 `DescribeServer` stays deliberately unimplemented: the in-memory broker has no network
 coordinates, and that asymmetry is part of the contract documentation.
 
 ## Subscription source
 
-`MemoryBroker` implements `Subscribe`, so `#[subscriber("orders")]` works directly. Its descriptor
-type is `MemorySource` - it carries no extra options (the in-memory broker has none) but keeps the
+`ConnectedMemoryBroker` implements `Subscribe`, so `#[subscriber("orders")]` works directly. The
+descriptor type is `MemorySource` - it carries no extra options (the in-memory broker has none) but keeps the
 descriptor form uniform across brokers. From the
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:
@@ -66,7 +75,9 @@ use ruststream::memory::MemorySource;
 
 ## For testing
 
-`MemoryBroker` implements `TestableBroker` and is registered with `register_testable_broker!`, so the
-[`TestApp`](../guides/testing.md) harness drives it directly: build an app on a `MemoryBroker`, hand
-it to `TestApp::start`, publish, and assert on what the handlers received and published. See
+`ConnectedMemoryBroker` implements `TestableBroker` and is registered with
+`register_testable_broker!` (the harness connects every broker before recovering its in-process
+transport), so the [`TestApp`](../guides/testing.md) harness drives it directly: build an app on a
+`MemoryBroker`, hand it to `TestApp::start`, publish, and assert on what the handlers received and
+published. See
 [Testing](../guides/testing.md#unit-testing-a-service-with-testapp) for the full pattern.

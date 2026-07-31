@@ -7,14 +7,14 @@ use std::pin::Pin;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryMessage};
+use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
     PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream, TypedPublisher,
     for_batch,
 };
 use ruststream::{
-    BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
+    Broker, BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -87,14 +87,16 @@ async fn delivery_context_propagates_to_the_reply() {
     let ingress = MemoryBroker::new();
     let egress = MemoryBroker::new();
     let ingress_pub = ingress.publisher();
-    let egress_pub = TypedPublisher::new(egress.publisher()).transform(PropagateCorrelation);
 
+    let egress = egress.bindable();
+    let egress_pub =
+        egress.bind(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation));
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(ingress, |b| {
-            b.include_publishing(echo, egress_pub);
-        })
         .with_broker(egress, |b| {
             b.include(capture);
+        })
+        .with_broker(ingress, |b| {
+            b.include(echo).publisher(egress_pub);
         });
 
     let running = app.start().await.expect("startup failed");
@@ -148,10 +150,10 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let ingress_pub = broker.publisher();
     // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
     // single-message mounts would reject a publisher carrying it.
-    let reply_pub = TypedPublisher::new(broker.publisher()).batch_transform(for_batch(MarkBatched));
+    let reply_pub = TypedPublisher::new(MemoryPublish).batch_transform(for_batch(MarkBatched));
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch_publishing(batch_echo, reply_pub);
+        b.include_batch(batch_echo).publisher(reply_pub);
         b.include(batch_capture);
     });
 
@@ -217,8 +219,7 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(stack)
         .with_broker(broker, |b| {
-            let reply_pub = TypedPublisher::new(b.broker().publisher());
-            b.include_publishing(dyn_echo, reply_pub);
+            b.include(dyn_echo);
             b.include(dyn_capture);
         });
 
@@ -244,9 +245,6 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
 
 // Two app-wide publish middleware, each appending its letter to an "order" header, pin the
 // documented composition: the LAST `publish_layer` added runs OUTERMOST (so it appends first).
-type PubFut<'a> =
-    Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
-
 fn append_order(out: &mut Outgoing<'_>, letter: &str) {
     let mut order = out
         .headers()
@@ -261,11 +259,12 @@ fn append_order(out: &mut Outgoing<'_>, letter: &str) {
 struct AppendA;
 
 impl PublishLayer for AppendA {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PubFut<'a> {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
+    {
         append_order(out, "A");
         next.run(out)
     }
@@ -275,11 +274,12 @@ impl PublishLayer for AppendA {
 struct AppendB;
 
 impl PublishLayer for AppendB {
-    fn on_publish<'a, N: PublishPipeline>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: PublishNext<'a, N>,
-    ) -> PubFut<'a> {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
+    {
         append_order(out, "B");
         next.run(out)
     }
@@ -308,7 +308,7 @@ async fn publish_layer_last_added_runs_outermost() {
         .publish_layer(AppendA)
         .publish_layer(AppendB)
         .with_broker(broker, |b| {
-            b.include_publishing(ord_echo, TypedPublisher::new(b.broker().publisher()));
+            b.include(ord_echo);
             b.include(ord_capture);
         });
 

@@ -1,7 +1,7 @@
 //! End-to-end W3C trace context propagation: the consume layer stamps the consumer span and the
 //! publish layer carries it onto the reply (the `opentelemetry` feature, built on #103).
 #![cfg(all(
-    feature = "opentelemetry",
+    feature = "otel",
     feature = "macros",
     feature = "memory",
     feature = "json"
@@ -10,8 +10,12 @@
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::opentelemetry::{OpenTelemetry, TraceContext};
+use opentelemetry::Context as OtelContext;
+use opentelemetry::propagation::{Extractor, TextMapPropagator};
+use opentelemetry::trace::{SpanContext, TraceContextExt};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::otel::OpenTelemetry;
 use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
 use ruststream::{Headers, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
@@ -45,23 +49,42 @@ async fn capture(_resp: &Resp, ctx: &mut Context<'_>) {
 /// must not run concurrently (cargo runs a file's tests in parallel by default).
 static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+/// Parses a `traceparent` header value through the SDK propagator, the way a downstream service
+/// would, and returns the span context it names.
+fn parse_traceparent(header: &str) -> SpanContext {
+    struct Single<'a>(&'a str);
+    impl Extractor for Single<'_> {
+        fn get(&self, key: &str) -> Option<&str> {
+            (key == "traceparent").then_some(self.0)
+        }
+        fn keys(&self) -> Vec<&str> {
+            vec!["traceparent"]
+        }
+    }
+    TraceContextPropagator::new()
+        .extract_with_context(&OtelContext::new(), &Single(header))
+        .span()
+        .span_context()
+        .clone()
+}
+
 /// Drives one request through the app (`start()` resolves with subscriptions already open, so a
-/// single publish lands) and returns the captured reply `traceparent`.
-async fn run_and_capture(incoming: Option<&'static str>) -> TraceContext {
+/// single publish lands) and returns the captured reply `traceparent`, parsed.
+async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
     let _serial = SERIAL.lock().await;
     *CAPTURED.lock().expect("poisoned") = None;
     // --8<-- [start:wiring]
     let otel = OpenTelemetry::new();
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    // The publisher propagates the delivery's trace context onto each reply.
-    let reply_pub = TypedPublisher::new(broker.publisher()).transform(otel.propagation());
+    // The reply wiring propagates the delivery's trace context onto each reply.
+    let reply_pub = TypedPublisher::new(MemoryPublish).transform(otel.propagation());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         // The consume layer opens a span per delivery and records the consumer's trace context.
         .layer(otel.consume_layer())
         .with_broker(broker, |b| {
-            b.include_publishing(echo, reply_pub);
+            b.include(echo).publisher(reply_pub);
             b.include(capture);
         });
     // --8<-- [end:wiring]
@@ -88,13 +111,15 @@ async fn run_and_capture(incoming: Option<&'static str>) -> TraceContext {
         .expect("poisoned")
         .clone()
         .expect("reply carried a traceparent");
-    TraceContext::parse(&header).expect("reply traceparent is valid")
+    let reply = parse_traceparent(&header);
+    assert!(reply.is_valid(), "reply traceparent is valid");
+    reply
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn incoming_trace_continues_onto_the_reply() {
     let incoming = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-    let parsed = TraceContext::parse(incoming).unwrap();
+    let parsed = parse_traceparent(incoming);
 
     let reply = run_and_capture(Some(incoming)).await;
 
@@ -108,13 +133,13 @@ async fn incoming_trace_continues_onto_the_reply() {
         parsed.span_id(),
         "the reply's parent is the consumer span, not the upstream one"
     );
-    assert!(reply.sampled());
+    assert!(reply.is_sampled());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_trace_is_started_when_none_arrives() {
     let reply = run_and_capture(None).await;
-    // A fresh, sampled root trace was started for the untraced delivery.
-    assert!(reply.sampled());
-    assert_eq!(reply.trace_id().len(), 32);
+    // A fresh, sampled root trace was started for the untraced delivery (`run_and_capture`
+    // already asserted the ids are valid, that is, non-zero).
+    assert!(reply.is_sampled());
 }

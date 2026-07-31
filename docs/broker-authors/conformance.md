@@ -5,10 +5,10 @@ which panic with a descriptive message on the first failure:
 
 - `harness::run_suite` checks the **routing surface** against your in-process transport (the
   [`TestableBroker`](index.md#test-support) you ship).
-- `harness::lifecycle` checks the **lazy-startup contract** end to end against a connected broker.
+- `harness::lifecycle` checks the **lifecycle ladder** end to end against the real broker.
 
-Run both: `run_suite` for the dispatch guarantees, `lifecycle` to prove `new` -> `connect` ->
-subscribe -> publish -> ack -> `shutdown` works on the real transport.
+Run both: `run_suite` for the dispatch guarantees, `lifecycle` to prove `new` -> `connect(self)`
+-> subscribe -> publish -> ack -> `shutdown(self)` works on the real transport.
 
 ```toml
 [dev-dependencies]
@@ -21,9 +21,10 @@ both `run_suite` here and the [`TestApp`](../guides/testing.md) harness users wr
 ## The routing suite
 
 `harness::run_suite` takes a synchronous factory (`Fn() -> B`) that builds a fresh in-process
-transport per scenario, so scenarios cannot leak state into each other. `B` is your
-`TestableBroker` (it also implements `Subscribe`). This is the in-memory reference broker's own suite
-run, verbatim; substitute your transport's constructor in the factory:
+transport per scenario, so scenarios cannot leak state into each other. Each scenario connects the
+broker and drives its connected form, which is your `TestableBroker` (it also implements
+`Subscribe`). This is the in-memory reference broker's own suite run, verbatim; substitute your
+transport's constructor in the factory:
 
 ```rust
 use ruststream::conformance::harness;
@@ -50,10 +51,13 @@ not part of the contract and are verified in your own end-to-end suite against a
 ## The lifecycle check
 
 `run_suite` exercises routing through the in-process transport; `harness::lifecycle` exercises the
-**lazy-startup contract** through the real `Broker`: synchronous construction with no I/O, then
-`connect`, a subscription opened through the broker's own `SubscriptionSource`, a publish the
-subscription receives and acks, and finally `shutdown`. It takes three factories that keep it
-broker-agnostic:
+**lifecycle ladder** through the real `Broker`: synchronous construction with no I/O, then the
+consuming `connect` producing the typed connected form, a subscription opened through the broker's
+own `SubscriptionSource`, a publish the subscription receives and acks, and the consuming
+`shutdown` producing the terminal witness. Owner-side misuse after shutdown does not compile under
+the ladder, so the runtime rule the check keeps verifying is the **aliased-handle contract**: a
+publisher created before the shutdown must error afterwards, never silently succeed against a
+dead connection. It takes three factories that keep it broker-agnostic:
 
 <!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
@@ -67,16 +71,16 @@ async fn passes_lifecycle() {
     harness::lifecycle(
         || NatsBroker::new(url.clone()), // sync construction (no I/O)
         |subject| SubscribeOptions::new(subject), // the broker's SubscriptionSource
-        |broker| broker.publisher(),     // a publisher from the connected broker
+        |connected| connected.publisher(), // a publisher from the connected form
     )
     .await;
 }
 ```
 
 - **`make_broker`** is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
-  cannot satisfy it - which is the point: construct cheaply, connect lazily in `Broker::connect`.
+  cannot satisfy it - which is the point: construct cheaply, connect in `Broker::connect`.
 - **`make_source`** builds the subscription descriptor for a subject (the macro-subscriber path).
-- **`make_publisher`** produces a publisher from the connected broker.
+- **`make_publisher`** produces a publisher from the connected form.
 
 A broker with no ack semantics (Core NATS) passes by returning `AckError::Unsupported` from `ack`;
 the check accepts that as well as a successful ack. Because `lifecycle` performs a real `connect`,
@@ -94,7 +98,7 @@ without the capability simply do not call it. Each suite takes the same factory 
 |---|---|---|
 | `capabilities::request_reply` | `RequestReply` | the request reaches a responder with a usable `reply-to` header, the correlated reply resolves the request, an unanswered request fails after its timeout |
 | `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
-| `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it |
+| `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it; misuse errors - `commit` / `abort` with no open transaction, a second `begin_transaction` while one is open (which must leave it untouched) |
 
 <!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
@@ -108,8 +112,8 @@ async fn passes_request_reply() {
     capabilities::request_reply(
         || NatsBroker::new(url.clone()),
         |subject| SubscribeOptions::new(subject),
-        |broker| broker.publisher(), // the RequestReply publisher under test
-        |broker| broker.publisher(), // the plain publisher the responder replies through
+        |connected| connected.publisher(), // the RequestReply publisher under test
+        |connected| connected.publisher(), // the plain publisher the responder replies through
     )
     .await;
 }
@@ -123,18 +127,19 @@ suite expects.
 
 Before publishing a broker crate:
 
-- [ ] `Broker`, `Subscribe` (or a `SubscriptionSource`), `Subscriber`, `IncomingMessage`, and
-      `Publisher` are implemented.
+- [ ] `Broker`, `ConnectedBroker`, `Subscribe` (or a `SubscriptionSource`), `Subscriber`,
+      `IncomingMessage`, `Publisher`, and a `PublishPolicy` pairing into it are implemented.
 - [ ] `shutdown` performs all fallible teardown and never blocks or panics.
 - [ ] Ack consumes `self`; nack honours the `requeue` flag.
 - [ ] The crate owns its `Config`; fields without a sane default do not get a `Default`.
 - [ ] Capability traits are implemented only where the broker genuinely supports them, and each
       implemented capability passes its `conformance::capabilities` suite.
-- [ ] An in-process transport implementing `TestableBroker` is shipped under a `testing` feature
-      (core routing only) and registered with `register_testable_broker!`.
+- [ ] An in-process transport implementing `TestableBroker` on its connected form is shipped under
+      a `testing` feature (core routing only) and registered with `register_testable_broker!`.
 - [ ] `harness::run_suite` passes (the routing surface).
 - [ ] `harness::lifecycle` passes against a real server, gated behind an environment variable (the
-      lazy-startup contract: sync `new`, lazy `connect`, subscribe, ack, `shutdown`).
+      ladder: sync `new`, consuming `connect`, subscribe, ack, consuming `shutdown`, and the
+      aliased-handle error after it).
 - [ ] An end-to-end suite covers broker-specific semantics, also gated behind that variable.
 - [ ] `Cargo.toml` metadata is complete (`description`, `license`, `repository`, `keywords`,
       `categories`), and CI checks `--no-default-features` and `--all-features`.

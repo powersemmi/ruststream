@@ -17,12 +17,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::routing::post;
+use axum::http::StatusCode;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::memory::{MemoryBroker, MemoryPublisher};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
+use ruststream::runtime::{AppInfo, HandlerResult, HealthProbe, HealthState, RustStream};
+use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -96,23 +97,43 @@ async fn relay_outbox(store: Arc<Mutex<Store>>, egress: MemoryPublisher) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // --8<-- [start:healthz]
+    /// The liveness endpoint: the probe outlives `shutdown`, so this route reports the terminal
+    /// state for as long as requests still reach it. Here that window is the graceful drain: a
+    /// fail-fast also resolves the `stopping()` future below and stops the HTTP server. A host
+    /// that should keep serving after the messaging side dies would omit that select arm.
+    async fn healthz(State(health): State<HealthProbe>) -> (StatusCode, String) {
+        match health.state() {
+            HealthState::Running => (StatusCode::OK, "running".to_owned()),
+            state => (StatusCode::SERVICE_UNAVAILABLE, format!("{state:?}")),
+        }
+    }
+    // --8<-- [end:healthz]
+
     // --8<-- [start:wiring]
-    let broker = MemoryBroker::new();
-    // Taken from the broker before the app consumes it; resolves its connection on first use.
-    let egress = broker.publisher();
-    let app =
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| b.include(fulfil));
+    let broker = MemoryBroker::new().bindable();
+    // A token, not a publisher: minted before registration, paired after start.
+    let egress = broker.bind(MemoryPublish);
+    let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+        b.include(fulfil);
+    });
 
     // The messaging side starts in the background; a startup failure (a broker refusing to
     // connect, a subscription failing to open) surfaces here, before HTTP accepts traffic.
     let running = app.start().await?;
+    // The handle existing witnesses that startup connected the broker, so the relay task gets a
+    // live publisher, never a "not connected" state.
+    let egress = running.publisher(egress).await?;
 
     let store = Arc::new(Mutex::new(Store::default()));
     tokio::spawn(relay_outbox(store.clone(), egress));
 
     let router = Router::new()
         .route("/orders", post(place_order))
-        .with_state(store);
+        .with_state(store)
+        // The health probe is `Clone` and outlives the app handle; /healthz flips to 503 the
+        // moment the messaging side fail-fasts, answering through the graceful drain below.
+        .route("/healthz", get(healthz).with_state(running.health()));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
     println!("orders API on http://127.0.0.1:8080/orders");
