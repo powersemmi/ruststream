@@ -271,17 +271,19 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     /// runtime after connect. Decode uses the scope codec; how the reply leaves (encoded
     /// through a typed stack, or byte-for-byte through a bare publisher) is the source's live
     /// form, per its [`ReplySink`] wiring.
-    pub(super) fn mount_publishing_source<Source, Def, ReplySource>(
+    pub(super) fn mount_publishing_source<Source, Def, ReplySource, OutExtra>(
         &mut self,
         source: Source,
         def: Def,
         reply: ReplySource,
+        extra: OutExtra,
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source::Subscriber: Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
         Def: PublishingCall<State> + 'static,
         Def::Input: DecodeWith<SC::Codec>,
+        Def::Injections: FromStartup<B, Source::Subscriber, OutExtra> + Send + Sync + 'static,
         Def::Reply: Send + Sync + 'static,
         Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
             + Send
@@ -289,6 +291,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
             + 'static,
         ReplySource: PublishPolicy<Connected<B>> + Send + 'static,
         ReplySource::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
+        OutExtra: Send + Sync + 'static,
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
@@ -306,20 +309,28 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let codec = self.codec.scope_codec();
         let pipeline = self.pipeline.clone();
         let global = self.global.clone();
-        self.sink.push_paired_workers(
+        // The injected primitive: the reply source pairs against the connected broker and the
+        // startup injections resolve against the opened subscriber, both before the first
+        // delivery.
+        self.sink.push_injected_workers(
             source,
-            async move |connected: Arc<Connected<B>>| {
+            async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = reply
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(global.layer(PublishingHandler {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = global.layer(PublishingHandler {
                     def,
                     codec,
                     publisher,
                     pipeline,
+                    injections,
                     decode: policies.decode,
-                }))
+                });
+                Ok((subscriber, handler))
             },
             meta,
             policies,

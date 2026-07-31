@@ -14,6 +14,8 @@ use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingHandl
 use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::handler::Handler;
+use crate::runtime::inject::FromStartup;
+use crate::runtime::input::DecodeWith;
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
@@ -221,11 +223,12 @@ where
     // The subscription side: the source opens against the connected form, and the definition's
     // handler runs over the messages it yields.
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Subscriber: Send + 'static,
+    Source::Subscriber: Sync + Send + 'static,
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
     Def: PublishingCall<State> + 'static,
-    Def::Input: crate::runtime::DecodeWith<DecodeCodec>,
+    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Injections: FromStartup<B, Source::Subscriber, ()> + Send + Sync + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
     Def::Context: crate::BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     DecodeCodec: Codec + Send + 'static,
@@ -268,12 +271,19 @@ where
                         .subscribe(connected.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
+                    // A router mount has no `.publisher(..)`-style attachment surface, so the
+                    // startup injections resolve with no extra: a Seek parameter works, an Out
+                    // one needs the scope's include form.
+                    let injections = Def::Injections::resolve(&(), connected.as_ref(), &subscriber)
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         PublishingHandler {
                             def,
                             codec,
                             publisher,
                             pipeline,
+                            injections,
                             decode: policies.decode,
                         },
                     );
@@ -305,7 +315,7 @@ where
     SourceMessage<B, Source>: Send + 'static,
     State: Send + Sync + 'static,
     Def: BatchPublishingCall<State> + 'static,
-    Def::Input: crate::runtime::DecodeWith<DecodeCodec>,
+    Def::Input: DecodeWith<DecodeCodec>,
     Def::Reply: Serialize + Send + Sync + 'static,
     DecodeCodec: Send + Sync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or

@@ -76,6 +76,13 @@ pub mod forms {
     /// The signature carries a `Seek(seeker): Seek<K>` parameter (and no `Out`).
     #[derive(Debug, Clone, Copy)]
     pub struct Seek;
+    /// A reply-publishing subscriber whose handler also takes an `Out` parameter, so the
+    /// include site must chain `.out(..)` next to the (optional) `.publisher(..)`.
+    #[derive(Debug, Clone, Copy)]
+    pub struct PublishingOut;
+    /// A byte-reply subscriber whose handler also takes an `Out` parameter.
+    #[derive(Debug, Clone, Copy)]
+    pub struct RawReplyOut;
     /// A batch subscriber (`#[subscriber(batch("in"))]`).
     #[derive(Debug, Clone, Copy)]
     pub struct Batch;
@@ -362,10 +369,14 @@ where
     C: ScopeCodec,
     Def: PublishingCall<State> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
     Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ()>
+        + Send
+        + Sync
+        + 'static,
     Def::Reply: Send + Sync + 'static,
     Def::Context: BuildContext<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
@@ -388,7 +399,7 @@ where
 {
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
         let source = def.source();
-        scope.mount_publishing_source(source, def, self.0);
+        scope.mount_publishing_source(source, def, self.0, ());
     }
 }
 
@@ -532,6 +543,282 @@ where
         IncludePublishing {
             scope: Some(scope),
             parts: Some((def, DefaultBareReply)),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reply publishing with an Out parameter: two attachment axes on one builder. The reply side
+// keeps its default commits (typed or bare policy); the out side has no default, exactly like
+// the plain Out form, so committing without `.out(..)` is a build-time panic.
+
+/// One commit strategy of a publishing-with-Out registration builder, implemented for
+/// (reply state, out state) pairs. Machinery; never named directly.
+#[doc(hidden)]
+pub trait CommitPublishingOut<B: Broker, Layers, C, State, Pipeline, Def>: Sized {
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>);
+}
+
+impl<B, Layers, C, State, Pipeline, Def, Reply>
+    CommitPublishingOut<B, Layers, C, State, Pipeline, Def> for (Reply, MissingOut)
+where
+    B: Broker + 'static,
+{
+    fn commit(self, _def: Def, _scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        // Same contract as the plain Out form: the out source is required at the include site,
+        // and the miss fires at application build time.
+        panic!(
+            "a publishing handler with an Out parameter was included without its publisher \
+             source: chain .out(<policy or bound token>) on b.include(..)"
+        );
+    }
+}
+
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+impl<B, Layers, C, State, Pipeline, Def, OutSource>
+    CommitPublishingOut<B, Layers, C, State, Pipeline, Def>
+    for (DefaultReply, WithSource<OutSource>)
+where
+    B: Broker + 'static,
+    B::Connected: DefaultPublish,
+    (
+        WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>,
+        WithSource<OutSource>,
+    ): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        // The typed default reply, as if the user had chained `.publisher(..)` themselves.
+        CommitPublishingOut::commit(
+            (
+                WithSource(TypedPublisher::new(
+                    <B::Connected as DefaultPublish>::Policy::default(),
+                )),
+                self.1,
+            ),
+            def,
+            scope,
+        );
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, Def, OutSource>
+    CommitPublishingOut<B, Layers, C, State, Pipeline, Def>
+    for (DefaultBareReply, WithSource<OutSource>)
+where
+    B: Broker + 'static,
+    B::Connected: DefaultPublish,
+    (
+        WithSource<<B::Connected as DefaultPublish>::Policy>,
+        WithSource<OutSource>,
+    ): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        CommitPublishingOut::commit(
+            (
+                WithSource(<B::Connected as DefaultPublish>::Policy::default()),
+                self.1,
+            ),
+            def,
+            scope,
+        );
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, Def, Source, OutSource>
+    CommitPublishingOut<B, Layers, C, State, Pipeline, Def>
+    for (WithSource<Source>, WithSource<OutSource>)
+where
+    B: Broker + 'static,
+    C: ScopeCodec,
+    Def: PublishingCall<State> + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
+    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
+        Send + Sync + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, OutSource>
+        + Send
+        + Sync
+        + 'static,
+    Def::Reply: Send + Sync + 'static,
+    Def::Context: BuildContext<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+        > + Send
+        + Sync
+        + 'static,
+    Source: PublishPolicy<Connected<B>> + Send + 'static,
+    Source::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
+    OutSource: Send + Sync + 'static,
+    Pipeline: PublishPipeline + Clone + Send + 'static,
+    State: Send + Sync + 'static,
+    Layers: Layer<PublishingHandler<Def, <C as ScopeCodec>::Codec, Source::Live, Pipeline>>
+        + Clone
+        + Send
+        + 'static,
+    Layers::Handler: Handler<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+            Def::Context,
+            State,
+        > + 'static,
+{
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let source = def.source();
+        scope.mount_publishing_source(source, def, self.0.0, self.1.0);
+    }
+}
+
+/// The registration builder [`BrokerScope::include`] returns for a `publish("dest")` /
+/// `publish_raw("dest")` definition whose handler also takes an [`Out`](crate::runtime::Out)
+/// parameter.
+///
+/// Commits when dropped. The reply side defaults like the plain publishing builder (override
+/// with [`publisher`](Self::publisher)); the out side has no default, so committing without an
+/// [`out`](Self::out) call panics at application build time, naming the fix.
+pub struct IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, OutSource>
+where
+    B: Broker + 'static,
+    (Reply, OutSource): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    scope: Option<&'s mut BrokerScope<B, Layers, C, State, Pipeline>>,
+    parts: Option<(Def, Reply, OutSource)>,
+}
+
+impl<'s, B, Layers, C, State, Pipeline, Def, Reply, OutSource>
+    IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, OutSource>
+where
+    B: Broker + 'static,
+    (Reply, OutSource): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    /// Attaches the reply source, like
+    /// [`IncludePublishing::publisher`](IncludePublishing::publisher).
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit or this replacement.
+    pub fn publisher<NewSource>(
+        mut self,
+        source: NewSource,
+    ) -> IncludePublishingOut<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        WithSource<NewSource>,
+        OutSource,
+    >
+    where
+        (WithSource<NewSource>, OutSource): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+    {
+        let (def, _default, out) = self
+            .parts
+            .take()
+            .expect("builder parts are present until commit or replacement");
+        let scope = self
+            .scope
+            .take()
+            .expect("builder scope is present until commit or replacement");
+        IncludePublishingOut {
+            scope: Some(scope),
+            parts: Some((def, WithSource(source), out)),
+        }
+    }
+
+    /// Attaches the source the handler's [`Out`](crate::runtime::Out) parameter pairs from,
+    /// like [`IncludeOut::publisher`](IncludeOut::publisher).
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit or this replacement.
+    pub fn out<NewSource>(
+        mut self,
+        source: NewSource,
+    ) -> IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, WithSource<NewSource>>
+    where
+        (Reply, WithSource<NewSource>): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+    {
+        let (def, reply, _missing) = self
+            .parts
+            .take()
+            .expect("builder parts are present until commit or replacement");
+        let scope = self
+            .scope
+            .take()
+            .expect("builder scope is present until commit or replacement");
+        IncludePublishingOut {
+            scope: Some(scope),
+            parts: Some((def, reply, WithSource(source))),
+        }
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, Def, Reply, OutSource> std::fmt::Debug
+    for IncludePublishingOut<'_, B, Layers, C, State, Pipeline, Def, Reply, OutSource>
+where
+    B: Broker + 'static,
+    (Reply, OutSource): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncludePublishingOut")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<B, Layers, C, State, Pipeline, Def, Reply, OutSource> Drop
+    for IncludePublishingOut<'_, B, Layers, C, State, Pipeline, Def, Reply, OutSource>
+where
+    B: Broker + 'static,
+    (Reply, OutSource): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    fn drop(&mut self) {
+        if let (Some((def, reply, out)), Some(scope)) = (self.parts.take(), self.scope.take()) {
+            (reply, out).commit(def, scope);
+        }
+    }
+}
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::PublishingOut
+where
+    B: Broker + 'static,
+    Layers: 's,
+    C: 's,
+    State: 's,
+    Pipeline: 's,
+    (DefaultReply, MissingOut): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    type Out =
+        IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, DefaultReply, MissingOut>;
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
+        IncludePublishingOut {
+            scope: Some(scope),
+            parts: Some((def, DefaultReply, MissingOut)),
+        }
+    }
+}
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::RawReplyOut
+where
+    B: Broker + 'static,
+    Layers: 's,
+    C: 's,
+    State: 's,
+    Pipeline: 's,
+    (DefaultBareReply, MissingOut): CommitPublishingOut<B, Layers, C, State, Pipeline, Def>,
+{
+    type Out =
+        IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, DefaultBareReply, MissingOut>;
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
+        IncludePublishingOut {
+            scope: Some(scope),
+            parts: Some((def, DefaultBareReply, MissingOut)),
         }
     }
 }
@@ -1068,11 +1355,12 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         publisher: ReplySource,
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source::Subscriber: Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
         C: ScopeCodec,
         Def: PublishingCall<State> + 'static,
         Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+        Def::Injections: FromStartup<B, Source::Subscriber, ()> + Send + Sync + 'static,
         Def::Reply: Send + Sync + 'static,
         Def::Context:
             BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
@@ -1087,7 +1375,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Layers::Handler:
             Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
     {
-        self.mount_publishing_source(source, def, publisher);
+        self.mount_publishing_source(source, def, publisher, ());
     }
 
     /// Mounts a `batch(.., publish("dest"))` definition on an explicit subscription `source`,

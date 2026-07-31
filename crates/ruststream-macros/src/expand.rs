@@ -457,11 +457,11 @@ fn split_out<'a>(
             "a #[subscriber] handler takes at most one Out parameter",
         ));
     }
-    if out.is_some() && (args.publish.is_some() || args.publish_raw.is_some()) {
+    if out.is_some() && args.batch && args.publish.is_some() {
         return Err(Error::new_spanned(
             &func.sig,
-            "an Out parameter is not supported together with publish(..) or publish_raw(..) \
-             yet; use the plain or batch subscriber form",
+            "an Out parameter is not supported together with the batch publishing form yet; \
+             publish per message or drop the Out parameter",
         ));
     }
     Ok(out)
@@ -494,11 +494,11 @@ fn split_seek<'a>(
             "a #[subscriber] handler takes at most one Seek parameter",
         ));
     }
-    if seek.is_some() && (args.publish.is_some() || args.publish_raw.is_some()) {
+    if seek.is_some() && args.batch && args.publish.is_some() {
         return Err(Error::new_spanned(
             &func.sig,
-            "a Seek parameter is not supported together with publish(..) or publish_raw(..) \
-             yet; use the plain or batch subscriber form",
+            "a Seek parameter is not supported together with the batch publishing form yet; \
+             publish per message or drop the Seek parameter",
         ));
     }
     Ok(seek)
@@ -1036,17 +1036,21 @@ fn expand_publishing(
         ctx_ty,
         state_ty,
         extractors,
-        out: _,
-        seek: _,
+        out,
+        seek,
         workers_method,
         failure_method,
     } = parts;
 
     let (reply_ty, call_body) = publishing_reply(func, block, bare)?;
-    let form = if bare {
-        quote!(::ruststream::runtime::forms::RawReply)
-    } else {
-        quote!(::ruststream::runtime::forms::Publishing)
+    // The injection tuple is shared with the plain forms; the form token additionally selects
+    // the Out-taking builder (which grows the `.out(..)` attachment next to `.publisher(..)`).
+    let (injection_tys, injection_pats, _single_form) = injection_pieces(*out, *seek);
+    let form = match (bare, out.is_some()) {
+        (false, false) => quote!(::ruststream::runtime::forms::Publishing),
+        (false, true) => quote!(::ruststream::runtime::forms::PublishingOut),
+        (true, false) => quote!(::ruststream::runtime::forms::RawReply),
+        (true, true) => quote!(::ruststream::runtime::forms::RawReplyOut),
     };
     let (input_kind, input_param, input_schema, message_meta) =
         input_pieces(input_ty, input_schema, message_meta, raw_input);
@@ -1083,6 +1087,7 @@ fn expand_publishing(
 
         impl ::ruststream::runtime::PublishingDef for #name {
             type Input = #input_kind;
+            type Injections = (#(#injection_tys,)*);
             type Reply = #reply_ty;
             type Context = #ctx_ty;
             type Source = #source_ty;
@@ -1110,9 +1115,11 @@ fn expand_publishing(
             async fn call(
                 &self,
                 #pat: #input_param,
+                __rs_inj: &Self::Injections,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
                 #prelude
+                let (#(#injection_pats,)*) = __rs_inj;
                 #call_body
             }
         }

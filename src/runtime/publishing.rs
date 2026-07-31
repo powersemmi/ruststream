@@ -105,6 +105,11 @@ pub trait PublishingDef: Send + Sync {
     /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
     type Input: InputKind;
 
+    /// The tuple of startup-injected parameters ([`Out`](super::Out), [`Seek`](super::Seek),
+    /// ...; `()` when the signature carries none), resolved like
+    /// [`InjectDef::Injections`](super::InjectDef::Injections).
+    type Injections;
+
     /// The reply type the handler produces, encoded and published.
     type Reply;
 
@@ -177,6 +182,7 @@ pub trait PublishingCall<S>: PublishingDef {
     fn call(
         &self,
         input: &<Self::Input as InputKind>::Target,
+        injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
 }
@@ -202,15 +208,16 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 /// definition's [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)`
 /// skips the publish; a failed reply publish nacks the incoming message with `requeue = true`,
 /// so the broker redelivers it instead of silently losing the reply.
-pub struct PublishingHandler<Def, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
+pub struct PublishingHandler<Def: PublishingDef, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
     pub(crate) publisher: Wiring,
     pub(crate) pipeline: Pipeline,
+    pub(crate) injections: Def::Injections,
     pub(crate) decode: FailurePolicy,
 }
 
-impl<Def, DecodeCodec, Wiring, Pipeline> std::fmt::Debug
+impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline> std::fmt::Debug
     for PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -224,6 +231,7 @@ where
     Msg: IncomingMessage,
     Def: PublishingCall<State>,
     Def::Input: DecodeWith<DecodeCodec>,
+    Def::Injections: Send + Sync,
     Def::Reply: Send + Sync,
     Def::Context: Send + Sync,
     DecodeCodec: Codec,
@@ -261,7 +269,7 @@ where
                 }
             };
         let view = <Def::Input as InputKind>::view(&owned, msg.payload());
-        let reply = match self.def.call(view, ctx).await {
+        let reply = match self.def.call(view, &self.injections, ctx).await {
             Ok(reply) => reply,
             Err(result) => return result.into(),
         };
@@ -298,6 +306,7 @@ mod tests {
 
     impl PublishingDef for ManualPub {
         type Input = crate::runtime::Decoded<u32>;
+        type Injections = ();
         type Reply = u32;
         type Context = ();
         type Source = Name;
@@ -319,6 +328,7 @@ mod tests {
         async fn call(
             &self,
             input: &u32,
+            (): &(),
             _ctx: &mut Context<'_, (), S>,
         ) -> Result<u32, HandlerResult> {
             Ok(*input)
@@ -343,6 +353,6 @@ mod tests {
         let delivery = Delivery::empty();
         let headers = Headers::new();
         let mut ctx = Context::new("in", &headers, &state, (), &delivery);
-        assert_eq!(def.call(&5, &mut ctx).await.unwrap(), 5);
+        assert_eq!(def.call(&5, &(), &mut ctx).await.unwrap(), 5);
     }
 }

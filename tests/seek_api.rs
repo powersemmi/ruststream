@@ -348,3 +348,52 @@ async fn a_batch_handler_composes_with_a_seek_parameter() {
 
     running.shutdown().await.expect("graceful shutdown failed");
 }
+
+/// A publishing handler with an injected seeker: the reply form composes with startup
+/// injections. The poison marker skips its own reply and repositions the subscription
+/// instead; only the post-seek event is answered.
+#[subscriber("seek.gate", publish("seek.gate.out"))]
+async fn gate(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> Result<Event, HandlerResult> {
+    if event.id == 0 {
+        // The poison marker: resume from the third message, publishing nothing.
+        if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
+            return Err(HandlerResult::retry());
+        }
+        return Err(HandlerResult::Ack);
+    }
+    Ok(Event { id: event.id * 10 })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publishing_handler_composes_with_a_seek_parameter() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+
+    let app = RustStream::new(AppInfo::new("gate", "0.1.0")).with_broker(broker, |b| {
+        b.include(gate);
+    });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    // All three land before the first is handled: the seek skips the queued second message,
+    // and only the third reaches the replying branch.
+    for id in [0, 1, 2] {
+        ingress
+            .publish(OutgoingMessage::new("seek.gate", payload(id).as_slice()))
+            .await
+            .expect("publish");
+    }
+    tb.settle().await.expect("settle");
+
+    let received: Vec<Event> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("seek.gate")
+        .received();
+    let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
+    assert_eq!(ids, [0, 2]);
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("seek.gate.out")
+        .assert_called_once()
+        .with(&Event { id: 20 });
+
+    tb.shutdown().await.expect("graceful shutdown");
+}
