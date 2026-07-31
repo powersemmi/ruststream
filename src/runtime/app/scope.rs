@@ -6,7 +6,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
-use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, Connected, Publisher, Seekable, Subscriber, SubscriptionSource,
+};
 
 use crate::PublishPolicy;
 use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
@@ -25,6 +27,7 @@ use crate::runtime::publish::{
 use crate::runtime::publisher_registry::ErasedPublisher;
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
 use crate::runtime::router::{RouterDef, RouterSink};
+use crate::runtime::seek::{SeekCall, SeekHandler, seek_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::{Typed, typed};
 
@@ -351,6 +354,48 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
                     out: live,
                     decode: policies.decode,
                 }))
+            },
+            meta,
+            policies,
+            workers,
+        );
+    }
+
+    /// Mounts a seek definition: the handler's injected seeker is minted off the subscription's
+    /// own subscriber right after it opens, before the first delivery, so the handler holds a
+    /// live handle by construction. Decode uses the scope codec.
+    pub(super) fn mount_seek<Source, Def>(&mut self, source: Source, def: Def)
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Seekable<Seeker = Def::Seeker> + Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
+        Def: SeekCall<State> + 'static,
+        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
+            + Send
+            + Sync
+            + 'static,
+        Def::Seeker: Send + Sync + 'static,
+        SC: ScopeCodec,
+        State: Send + Sync + 'static,
+        Layers: Layer<SeekHandler<Def, SC::Codec, Def::Seeker>> + Clone + Send + 'static,
+        Layers::Handler:
+            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
+    {
+        let meta = seek_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let codec = self.codec.scope_codec();
+        let global = self.global.clone();
+        self.sink.push_seek_workers(
+            source,
+            move |subscriber| {
+                global.layer(SeekHandler {
+                    def,
+                    codec,
+                    seeker: subscriber.seeker(),
+                    decode: policies.decode,
+                })
             },
             meta,
             policies,

@@ -20,6 +20,7 @@ mod publisher_registry;
 mod publishing;
 mod raw;
 mod router;
+mod seek;
 mod subscriber_def;
 mod typed;
 
@@ -62,5 +63,6 @@ pub use raw::{
     RawReplyHandler, RawSubscriberDef,
 };
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
+pub use seek::{Seek, SeekCall, SeekDef, SeekHandler};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

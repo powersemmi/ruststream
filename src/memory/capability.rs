@@ -593,6 +593,19 @@ impl MemorySubscriber {
             .lock()
             .expect("memory broker mutex poisoned");
 
+        let entries = log.get(&self.name).map(Vec::as_slice).unwrap_or_default();
+
+        // The replay is counted in flight BEFORE the drain releases the queued deliveries:
+        // decrementing first would let the in-flight count touch zero mid-swap, and a
+        // concurrent quiescence wait (`TestApp::settle`) could observe that instant and return
+        // before the replayed deliveries were processed.
+        #[cfg(feature = "testing")]
+        if let Some(coordinator) = &self.coordinator {
+            for _ in target..entries.len() {
+                coordinator.enqueued();
+            }
+        }
+
         while self.rx.try_recv().is_ok() {
             // Every drained delivery was counted in flight when it was enqueued.
             #[cfg(feature = "testing")]
@@ -601,7 +614,6 @@ impl MemorySubscriber {
             }
         }
 
-        let entries = log.get(&self.name).map(Vec::as_slice).unwrap_or_default();
         for (seq, raw) in entries.iter().enumerate().skip(target) {
             let delivery = MemoryDelivery {
                 name: self.name.clone(),
@@ -609,16 +621,8 @@ impl MemorySubscriber {
                 headers: raw.headers().clone(),
                 seq,
             };
-            let sent = self.requeue.send(delivery);
-            // Mirror fanout's accounting: the replayed copy is consumed like any delivery.
-            #[cfg(feature = "testing")]
-            if sent.is_ok() {
-                if let Some(coordinator) = &self.coordinator {
-                    coordinator.enqueued();
-                }
-            }
-            #[cfg(not(feature = "testing"))]
-            let _ = sent;
+            // The send cannot fail: this subscriber holds both ends of its own channel.
+            let _ = self.requeue.send(delivery);
         }
         drop(log);
         drop(bus);

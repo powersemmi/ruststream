@@ -30,6 +30,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
             (true, None) => expand_batch(&parts, func),
             (false, Some(reply_topic)) => expand_publishing(&parts, func, reply_topic)?,
             (false, None) if parts.out.is_some() => expand_out(&parts),
+            (false, None) if parts.seek.is_some() => expand_seek(&parts),
             (false, None) => expand_subscribing(&parts),
         }
     };
@@ -102,6 +103,7 @@ struct HandlerParts<'a> {
     state_ty: Option<TokenStream2>,
     extractors: Vec<(&'a syn::Pat, &'a Type)>,
     out: Option<(&'a syn::Pat, &'a Type)>,
+    seek: Option<(&'a syn::Pat, &'a Type)>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
 }
@@ -173,6 +175,31 @@ fn out_param_type(ty: &Type) -> Option<&Type> {
         return None;
     }
     Some(publisher)
+}
+
+/// The seeker type `K` of a `Seek<K>`-shaped parameter type, when the type has that shape.
+/// Purely syntactic (the last path segment `Seek` with exactly one type argument), like the
+/// `Out<P>` probe above.
+fn seek_param_type(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Seek" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let seeker = types.next()?;
+    if types.next().is_some() {
+        return None;
+    }
+    Some(seeker)
 }
 
 /// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
@@ -438,6 +465,58 @@ fn split_out<'a>(
     Ok(out)
 }
 
+/// Splits the (at most one) `Seek<K>` parameter out of the extractor list, rejecting a
+/// duplicate and the unsupported form combinations.
+fn split_seek<'a>(
+    args: &SubscriberArgs,
+    func: &ItemFn,
+    extractors: &mut Vec<(&'a syn::Pat, &'a Type)>,
+    out: Option<(&'a syn::Pat, &'a Type)>,
+) -> syn::Result<Option<(&'a syn::Pat, &'a Type)>> {
+    let mut seek = None;
+    extractors.retain(|(pat, ty)| {
+        if let Some(seeker_ty) = seek_param_type(ty) {
+            // Only the first Seek parameter is kept; a duplicate is rejected below.
+            if seek.is_none() {
+                seek = Some((*pat, seeker_ty));
+                return false;
+            }
+        }
+        true
+    });
+    if let Some((_, dup)) = extractors
+        .iter()
+        .find(|(_, ty)| seek_param_type(ty).is_some())
+    {
+        return Err(syn::Error::new_spanned(
+            dup,
+            "a #[subscriber] handler takes at most one Seek parameter",
+        ));
+    }
+    if seek.is_some() && out.is_some() {
+        return Err(syn::Error::new_spanned(
+            &func.sig,
+            "a Seek parameter is not supported together with an Out parameter yet; reposition \
+             from outside through a WithSeeker token instead",
+        ));
+    }
+    if seek.is_some() && (args.batch || args.publish.is_some() || args.publish_raw.is_some()) {
+        return Err(syn::Error::new_spanned(
+            &func.sig,
+            "a Seek parameter is not supported together with batch(..), publish(..) or \
+             publish_raw(..) yet; use the plain subscriber form",
+        ));
+    }
+    if seek.is_some() && args.raw.is_some() {
+        return Err(syn::Error::new_spanned(
+            &func.sig,
+            "a Seek parameter is not supported together with raw yet; use the plain subscriber \
+             form",
+        ));
+    }
+    Ok(seek)
+}
+
 /// Resolves the message parameter's referent into the def's input type per form: batch unwraps
 /// the `&[T]` slice to its element, raw accepts only `&[u8]` (its type is never emitted), and the
 /// plain form takes `&T`. Each misuse gets an error naming the fix.
@@ -551,6 +630,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     };
     let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
     let out = split_out(args, func, &mut extractors)?;
+    let seek = split_seek(args, func, &mut extractors, out)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
@@ -573,6 +653,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         state_ty,
         extractors,
         out,
+        seek,
         workers_method,
         failure_method,
     })
@@ -630,6 +711,7 @@ fn expand_batch_publishing(
         state_ty,
         extractors,
         out: _,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;
@@ -735,6 +817,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         state_ty,
         extractors,
         out: _,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;
@@ -840,6 +923,7 @@ fn expand_publishing(
         state_ty,
         extractors,
         out: _,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;
@@ -949,6 +1033,7 @@ fn expand_out(parts: &HandlerParts<'_>) -> TokenStream2 {
         state_ty,
         extractors,
         out,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;
@@ -1024,6 +1109,99 @@ fn expand_out(parts: &HandlerParts<'_>) -> TokenStream2 {
     }
 }
 
+fn expand_seek(parts: &HandlerParts<'_>) -> TokenStream2 {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        input_ty,
+        description,
+        source_ty,
+        source_expr,
+        input_schema,
+        message_meta,
+        ctx_param,
+        ctx_ty,
+        state_ty,
+        extractors,
+        out: _,
+        seek,
+        workers_method,
+        failure_method,
+    } = parts;
+    let (seek_pat, seeker_ty) = seek.expect("expand_seek runs only with a Seek param");
+
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
+    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        ctx_ty,
+        &state_in_ctx,
+        &quote!(
+            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
+                ::ruststream::runtime::HandlerResult,
+            >::into(__rs_err),)
+        ),
+    );
+
+    quote! {
+        #[derive(Clone, Copy)]
+        #[allow(non_camel_case_types)]
+        #vis struct #name;
+
+        impl ::ruststream::runtime::IncludeDef for #name {
+            type Form = ::ruststream::runtime::forms::Seek;
+        }
+
+        impl ::ruststream::runtime::SeekDef for #name {
+            type Input = #input_ty;
+            type Context = #ctx_ty;
+            type Source = #source_ty;
+            type Seeker = #seeker_ty;
+
+            fn source(&self) -> Self::Source { #source_expr }
+
+            #workers_method
+
+            #failure_method
+
+            fn description(&self) -> ::core::option::Option<&str> {
+                #description
+            }
+
+            #input_schema
+
+            #message_meta
+        }
+
+        impl #impl_generics
+            ::ruststream::runtime::SeekCall<#state_in_ctx> for #name
+            #where_clause
+        {
+            async fn call(
+                &self,
+                #pat: &#input_ty,
+                __rs_seeker: &#seeker_ty,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
+            ) -> ::ruststream::runtime::Settle {
+                #prelude
+                let #seek_pat = ::ruststream::runtime::Seek(__rs_seeker);
+                ::ruststream::runtime::IntoSettle::into_settle(
+                    (async move #block).await,
+                )
+            }
+        }
+    }
+}
+
 fn expand_raw(parts: &HandlerParts<'_>) -> TokenStream2 {
     let HandlerParts {
         vis,
@@ -1041,6 +1219,7 @@ fn expand_raw(parts: &HandlerParts<'_>) -> TokenStream2 {
         state_ty,
         extractors,
         out: _,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;
@@ -1144,6 +1323,7 @@ fn expand_raw_publishing(
         state_ty,
         extractors,
         out: _,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;
@@ -1257,6 +1437,7 @@ fn expand_raw_reply(
         state_ty,
         extractors,
         out: _,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;
@@ -1364,6 +1545,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>) -> TokenStream2 {
         state_ty,
         extractors,
         out: _,
+        seek: _,
         workers_method,
         failure_method,
     } = parts;

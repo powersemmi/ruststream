@@ -1,69 +1,91 @@
-//! Repositioning a live subscription with the `Seekable` capability, on the memory broker.
-//!
-//! The seeker handle is minted before the subscription's stream is opened; while the stream
-//! runs, it can replay the log from a position captured off a delivered message or jump
-//! forward past a region that should be skipped.
+//! Repositioning live subscriptions with the `Seekable` capability: a `WithSeeker` token
+//! repositions a runtime-owned subscription from outside (replay after a fix, reprocessing),
+//! and a `Seek` handler parameter repositions its own subscription from inside (skipping
+//! forward past a poison region).
 //!
 //! ```text
-//! cargo run --example seek --features memory
+//! cargo run --example seek --features macros,memory,json
 //! ```
 
 use std::error::Error;
+use std::time::Duration;
 
-use futures::StreamExt;
-use ruststream::memory::{MemoryBroker, MemoryPosition};
-use ruststream::{
-    IncomingMessage, OutgoingMessage, Positioned, Publisher, Seekable, Seeker, Subscriber,
-};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
+use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Seek};
+use ruststream::{OutgoingMessage, Publisher, Seeker, WithSeeker, subscriber};
+use serde::{Deserialize, Serialize};
+use tokio::time::sleep;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Entry {
+    id: u64,
+}
+
+/// The audit trail: a plain subscriber whose subscription is repositioned from outside.
+#[subscriber(MemorySource::new("audit"))]
+async fn record(entry: &Entry) -> HandlerResult {
+    println!("audit: entry {}", entry.id);
+    HandlerResult::Ack
+}
+
+// --8<-- [start:handler]
+/// Skips forward when the producer marks a poison region: everything queued before the
+/// resume point is dropped without touching the subscription itself.
+#[subscriber(MemorySource::new("jobs"))]
+async fn work(job: &Entry, Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+    if job.id == 999 {
+        // The poison marker carries the resume point: skip to the fourth log entry.
+        if seeker.seek(MemoryPosition::sequence(3)).await.is_err() {
+            return HandlerResult::retry();
+        }
+        return HandlerResult::Ack;
+    }
+    println!("jobs: processed {}", job.id);
+    HandlerResult::Ack
+}
+// --8<-- [end:handler]
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
 
-    // --8<-- [start:seeker]
-    let mut subscriber = broker.subscribe("audit");
-    // Minted before `stream` borrows the subscriber; clonable and usable while the stream runs.
-    let seeker = subscriber.seeker();
-    // --8<-- [end:seeker]
+    // --8<-- [start:attach]
+    // Wrap the source before mounting; the token resolves to the live seeker at startup.
+    let (audit_source, audit_token) = WithSeeker::attach(MemorySource::new("audit"));
+    let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
+        b.include_on(audit_source, record);
+        b.include(work);
+    });
+    let running = app.start().await?;
+    // --8<-- [end:attach]
 
-    let publisher = broker.publisher();
-    for i in 0..4u8 {
-        publisher
-            .publish(OutgoingMessage::new("audit", &[i]))
+    // The audit trail sees three entries; the jobs stream hits a poison marker at the second
+    // position and the handler's own seek jumps it to the fourth.
+    for id in 1..=3u64 {
+        let payload = serde_json::to_vec(&Entry { id })?;
+        ingress
+            .publish(OutgoingMessage::new("audit", payload.as_slice()))
             .await?;
     }
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-
-    // --8<-- [start:capture]
-    // Capture the position of a delivery worth returning to; seeking to a captured position
-    // redelivers exactly that message.
-    let first = stream.next().await.expect("delivered")?;
-    let replay_from = first.position();
-    first.ack().await?;
-    // --8<-- [end:capture]
-
-    for _ in 0..3 {
-        let msg = stream.next().await.expect("delivered")?;
-        msg.ack().await?;
+    for id in [1, 999, 3, 4] {
+        let payload = serde_json::to_vec(&Entry { id })?;
+        ingress
+            .publish(OutgoingMessage::new("jobs", payload.as_slice()))
+            .await?;
     }
+    // A demo-only pause so the dispatch loops drain; a real service reacts to its own signals.
+    sleep(Duration::from_millis(100)).await;
 
-    // --8<-- [start:seek]
-    // Replay: the captured message is delivered again, then the rest of the log in order.
-    seeker.seek(replay_from).await?;
-    let replayed = stream.next().await.expect("replayed")?;
-    assert_eq!(replayed.payload(), &[0]);
-    replayed.ack().await?;
-    // --8<-- [end:seek]
+    // --8<-- [start:redeem]
+    // Ops-style replay from outside the handlers: rewind the audit subscription to the start
+    // of its log. The token resolves only after startup; before that it reports pending.
+    let seeker = audit_token.seeker()?;
+    seeker.seek(MemoryPosition::start()).await?;
+    // --8<-- [end:redeem]
+    sleep(Duration::from_millis(100)).await;
 
-    // --8<-- [start:skip]
-    // Jump forward with a constructed position: everything queued before it is skipped.
-    seeker.seek(MemoryPosition::sequence(3)).await?;
-    let skipped_to = stream.next().await.expect("delivered")?;
-    assert_eq!(skipped_to.payload(), &[3]);
-    skipped_to.ack().await?;
-    // --8<-- [end:skip]
-
-    println!("ok: replayed from a captured position and skipped forward");
+    running.shutdown().await?;
+    println!("ok: replayed the audit log and skipped the poisoned job region");
     Ok(())
 }

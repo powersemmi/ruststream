@@ -19,7 +19,7 @@ use crate::codec::Codec;
 use crate::codec::DefaultCodec;
 use crate::{
     BatchSubscriber, Broker, BuildContext, Connected, DefaultPublish, PublishPolicy, Publisher,
-    Subscriber, SubscriptionSource,
+    Seekable, Subscriber, SubscriptionSource,
 };
 
 use crate::runtime::SliceHandler;
@@ -37,6 +37,7 @@ use crate::runtime::raw::{
     RawPublishingCall, RawPublishingHandler, RawReplyCall, RawReplyHandler, RawSubscriberDef,
     raw_metadata, raw_publishing_metadata, raw_reply_metadata,
 };
+use crate::runtime::seek::{SeekCall, SeekHandler};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -74,6 +75,9 @@ pub mod forms {
     /// A subscriber with an injected publisher (`Out(out): Out<P>`).
     #[derive(Debug, Clone, Copy)]
     pub struct Out;
+    /// A subscriber with an injected seeker (`Seek(seeker): Seek<K>`).
+    #[derive(Debug, Clone, Copy)]
+    pub struct Seek;
     /// A batch subscriber (`#[subscriber(batch("in"))]`).
     #[derive(Debug, Clone, Copy)]
     pub struct Batch;
@@ -229,6 +233,44 @@ where
         scope
             .sink
             .push_subscribe_workers(source, handler, meta, policies, workers);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Seek injection: eager, no builder - nothing is attached at the include site, because the
+// injected seeker comes from the subscription's own subscriber.
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::Seek
+where
+    B: Broker + 'static,
+    C: ScopeCodec,
+    Def: SeekCall<State> + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+        Seekable<Seeker = Def::Seeker> + Send + 'static,
+    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
+        Send + Sync + 'static,
+    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Context: BuildContext<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+        > + Send
+        + Sync
+        + 'static,
+    Def::Seeker: Send + Sync + 'static,
+    State: Send + Sync + 'static,
+    Layers: Layer<SeekHandler<Def, <C as ScopeCodec>::Codec, Def::Seeker>> + Clone + Send + 'static,
+    Layers::Handler: Handler<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+            Def::Context,
+            State,
+        > + 'static,
+{
+    type Out = ();
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let source = def.source();
+        scope.mount_seek(source, def);
     }
 }
 

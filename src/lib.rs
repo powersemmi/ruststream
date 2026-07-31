@@ -66,7 +66,7 @@ pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::Message;
 pub use subscriber::Subscriber;
-pub use subscription::{Name, SubscriptionSource};
+pub use subscription::{Name, SeekerPendingError, SeekerToken, SubscriptionSource, WithSeeker};
 
 pub mod codec;
 
