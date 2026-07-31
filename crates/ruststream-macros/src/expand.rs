@@ -758,7 +758,7 @@ fn expand_batch_publishing(
         }
 
         impl ::ruststream::runtime::BatchPublishingDef for #name {
-            type Input = #input_ty;
+            type Input = ::ruststream::runtime::Decoded<#input_ty>;
             type Reply = #reply_elem;
             type Source = #source_ty;
 
@@ -876,7 +876,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
             }
 
             impl ::ruststream::runtime::BatchDef for #name {
-                type Input = #input_ty;
+                type Input = ::ruststream::runtime::Decoded<#input_ty>;
                 type Handler = Self;
                 type Source = #source_ty;
 

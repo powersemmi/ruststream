@@ -83,7 +83,7 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
             BatchSubscriber + Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<crate::codec::DefaultCodec>,
         Def::Handler: 'static,
     {
         let source = def.source();
@@ -103,7 +103,7 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchDef,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<crate::codec::DefaultCodec>,
         Def::Handler: 'static,
     {
         self.mount_batch(source, def, crate::codec::DefaultCodec::default())
@@ -151,7 +151,7 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
             BatchSubscriber + Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RP::Codec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyWiring + 'static,
     {
@@ -172,7 +172,7 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchPublishingDef + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RP::Codec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         RP: ReplyWiring + 'static,
     {
@@ -326,7 +326,7 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
             BatchSubscriber + Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Handler: 'static,
     {
         let codec = self.codec.clone();
@@ -346,7 +346,7 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchDef,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Handler: 'static,
     {
         let codec = self.codec.clone();
@@ -386,7 +386,7 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
         Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
         <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
             BatchSubscriber + Send + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         RP: 'static,
     {
@@ -407,7 +407,7 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchPublishingDef + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         RP: 'static,
     {

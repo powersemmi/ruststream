@@ -3,20 +3,18 @@
 use std::{error::Error as StdError, fmt, future::Future, sync::Arc};
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
-use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::PublishPolicy;
-use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
+use crate::runtime::batch::{BatchDef, TypedBatch, batch_metadata};
 use crate::runtime::batch_publishing::{
     BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
 };
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler, inject_metadata};
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, InputKind};
 use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
@@ -242,20 +240,28 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
     /// tail of the `include_batch` / `include_batch_on` forms. Batch handlers are not wrapped by
     /// the global stack: per-message layers cannot wrap a whole-batch handler.
-    pub(super) fn mount_batch<S, D, C>(&mut self, source: S, def: D, codec: C)
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchDef,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: crate::runtime::SliceHandler<D::Input, State> + 'static,
-        C: Codec + 'static,
+    pub(super) fn mount_batch<Source, Def, DecodeCodec>(
+        &mut self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Handler:
+            crate::runtime::SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
+        DecodeCodec: Send + Sync + 'static,
         State: Send + Sync + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed_batch(codec, def.into_handler()).with_decode(policies.decode);
+        // The handler bound alone cannot pin the kind (two kinds may share an owned type), so
+        // the adapter names the def's input kind explicitly.
+        let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
+            .with_decode(policies.decode);
         self.sink
             .push_subscribe_batch(source, handler, meta, policies, workers);
     }
@@ -386,7 +392,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Source::Subscriber: BatchSubscriber + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + 'static,
         Def: BatchPublishingCall<State> + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         // The reply side: the source pairs at startup into a batch reply wiring (plain or
         // transactional).

@@ -26,6 +26,7 @@ use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{HandlerResult, Settle};
+use super::input::{DecodeWith, Decoded, InputKind};
 use super::metadata::HandlerMetadata;
 
 /// The settlement of one dispatched batch.
@@ -174,14 +175,16 @@ where
 /// [`BatchSubscriber::batches`](crate::BatchSubscriber::batches) instead of
 /// [`Subscriber::stream`](crate::Subscriber::stream).
 pub trait BatchDef: Sized {
-    /// The decoded element type; the handler consumes `&[Input]`.
-    type Input;
+    /// The input kind of one batch element ([`Decoded<T>`](super::Decoded); the byte kind does
+    /// not batch - a borrowed multi-payload view has no owned form to lend it from). The handler
+    /// consumes a slice of the kind's owned decode product, `&[T]`.
+    type Input: InputKind;
 
-    /// The concrete handler type over batches of [`Input`](Self::Input).
+    /// The concrete handler type over batches of the element type.
     ///
     /// As for [`SubscriberDef::Handler`](super::SubscriberDef::Handler), the state-typed bound is
     /// enforced where the def is mounted, not on the trait: a batch handler that reads typed state
-    /// is [`SliceHandler<Input, St>`](SliceHandler) only for its declared `St`, while one that
+    /// is [`SliceHandler<T, St>`](SliceHandler) only for its declared `St`, while one that
     /// ignores state is generic over it.
     type Handler;
 
@@ -235,12 +238,14 @@ pub trait BatchDef: Sized {
 
 /// Builds the registration metadata for a batch definition mounted under `name`.
 pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetadata {
-    HandlerMetadata::typed::<D::Input>(name).with_def_details(
+    let mut meta = HandlerMetadata::raw(name).with_def_details(
         def.description(),
         def.input_schema(),
         def.message_name(),
         def.message_description(),
-    )
+    );
+    meta.input_type = <D::Input as InputKind>::input_label();
+    meta
 }
 
 /// The dispatch-side consumer of one raw batch: decode, run the handler, settle every delivery.
@@ -256,10 +261,10 @@ pub(crate) trait BatchHandler<M, S = ()>: Send + Sync {
 
 /// Build a [`TypedBatch`] that decodes each element with `codec` into `T` and forwards the batch
 /// as `&[T]` to `inner`.
-pub(crate) fn typed_batch<M, T, C, H>(codec: C, inner: H) -> TypedBatch<M, T, C, H>
+pub(crate) fn typed_batch<M, T, C, H>(codec: C, inner: H) -> TypedBatch<M, Decoded<T>, C, H>
 where
     M: IncomingMessage,
-    T: DeserializeOwned + Send + Sync,
+    T: DeserializeOwned + Send + Sync + 'static,
     C: Codec,
 {
     TypedBatch {
@@ -270,20 +275,35 @@ where
     }
 }
 
-/// The decode adapter for batches, the [`Typed`](super::Typed) counterpart.
+/// The decode adapter for batches, the [`Typed`](super::Typed) counterpart, generic over the
+/// element's input kind.
 ///
 /// Each element decodes independently: failures are settled individually per the `decode`
 /// [`FailurePolicy`] and never reach the handler; the rest are passed on as one slice. The
 /// [`BatchResult`] the handler returns settles the deliveries behind that slice - uniformly, or
 /// element by element.
-pub struct TypedBatch<M, T, C, H> {
-    codec: C,
-    inner: H,
+pub struct TypedBatch<M, Input, DecodeCodec, Inner> {
+    codec: DecodeCodec,
+    inner: Inner,
     decode: FailurePolicy,
-    _phantom: PhantomData<fn(M, T)>,
+    _phantom: PhantomData<fn(M, Input)>,
 }
 
-impl<M, T, C, H> TypedBatch<M, T, C, H> {
+impl<M, Input, DecodeCodec, Inner> TypedBatch<M, Input, DecodeCodec, Inner> {
+    /// Builds the adapter for any element input kind, like [`Typed::over`](super::Typed::over).
+    #[must_use]
+    pub(crate) fn over(codec: DecodeCodec, inner: Inner) -> Self
+    where
+        Input: DecodeWith<DecodeCodec>,
+    {
+        Self {
+            codec,
+            inner,
+            decode: FailurePolicy::Drop,
+            _phantom: PhantomData,
+        }
+    }
+
     /// Sets the policy applied when the codec fails to decode an element.
     #[must_use]
     pub(crate) fn with_decode(mut self, decode: FailurePolicy) -> Self {
@@ -292,7 +312,7 @@ impl<M, T, C, H> TypedBatch<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H> std::fmt::Debug for TypedBatch<M, T, C, H> {
+impl<M, Input, DecodeCodec, Inner> std::fmt::Debug for TypedBatch<M, Input, DecodeCodec, Inner> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TypedBatch")
             .field("decode", &self.decode)
@@ -300,17 +320,19 @@ impl<M, T, C, H> std::fmt::Debug for TypedBatch<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H, S> BatchHandler<M, S> for TypedBatch<M, T, C, H>
+impl<M, Input, DecodeCodec, Inner, S> BatchHandler<M, S>
+    for TypedBatch<M, Input, DecodeCodec, Inner>
 where
     M: IncomingMessage,
-    T: DeserializeOwned + Send + Sync,
-    C: Codec,
-    H: SliceHandler<T, S>,
+    Input: DecodeWith<DecodeCodec>,
+    DecodeCodec: Send + Sync,
+    Inner: SliceHandler<Input::Owned, S>,
     S: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
         let subscription = ctx.name().to_owned();
-        let (values, accepted) = decode_batch(batch, &self.codec, self.decode, ctx).await;
+        let (values, accepted) =
+            decode_batch::<M, Input, DecodeCodec, S>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }
@@ -395,23 +417,23 @@ fn record_batch_size(destination: &str, len: usize) {
 /// across an `.await` would wrongly require `Context: Sync`.
 // The `&mut` is for Send-ness, not mutation (only `&self` methods are called), so the lint fires.
 #[allow(clippy::needless_pass_by_ref_mut)]
-pub(crate) async fn decode_batch<M, T, C, S>(
+pub(crate) async fn decode_batch<M, Input, DecodeCodec, S>(
     batch: Vec<M>,
-    codec: &C,
+    codec: &DecodeCodec,
     decode: FailurePolicy,
     ctx: &mut Context<'_, (), S>,
-) -> (Vec<T>, Vec<M>)
+) -> (Vec<Input::Owned>, Vec<M>)
 where
     M: IncomingMessage,
-    T: DeserializeOwned,
-    C: Codec,
+    Input: DecodeWith<DecodeCodec>,
+    DecodeCodec: Sync,
     S: Send + Sync,
 {
     let subscription = ctx.name().to_owned();
     let mut values = Vec::with_capacity(batch.len());
     let mut accepted = Vec::with_capacity(batch.len());
     for msg in batch {
-        match codec.decode::<T>(msg.payload()) {
+        match Input::decode(codec, msg.payload()) {
             Ok(value) => {
                 values.push(value);
                 accepted.push(msg);
@@ -420,7 +442,7 @@ where
                 warn!(
                     target: "ruststream::dispatch",
                     subscription = %subscription,
-                    message_type = std::any::type_name::<T>(),
+                    message_type = Input::input_label(),
                     error = %err,
                     "codec decode failed",
                 );

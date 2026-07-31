@@ -8,7 +8,6 @@
 //! publish policy (or a [`Bound`](crate::runtime::Bound) token for a cross-broker target).
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
 // The typed default-reply commits need a default codec, so that import is gated the same way;
@@ -29,7 +28,7 @@ use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
-use crate::runtime::input::{DecodeWith, RawBytes};
+use crate::runtime::input::{DecodeWith, InputKind, RawBytes};
 use crate::runtime::middleware::Layer;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
@@ -287,8 +286,8 @@ where
     Def: BatchDef,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
-    Def::Handler: SliceHandler<Def::Input, State> + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Handler: SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
     State: Send + Sync + 'static,
 {
     type Out = ();
@@ -708,7 +707,7 @@ where
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
     Def::Reply: Serialize + Send + Sync + 'static,
     <<B::Connected as DefaultPublish>::Policy as PublishPolicy<Connected<B>>>::Live:
         Publisher + 'static,
@@ -732,7 +731,7 @@ where
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
     Def::Reply: Serialize + Send + Sync + 'static,
     Source: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
     BatchReply: ReplyPublisher + 'static,
@@ -870,8 +869,8 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Source::Subscriber: BatchSubscriber + Send + 'static,
         C: ScopeCodec,
         Def: BatchDef,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
-        Def::Handler: SliceHandler<Def::Input, State> + 'static,
+        Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+        Def::Handler: SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
         State: Send + Sync + 'static,
     {
         let codec = self.codec.scope_codec();
@@ -927,7 +926,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         <Source::Subscriber as Subscriber>::Message: Send + 'static,
         C: ScopeCodec,
         Def: BatchPublishingCall<State> + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
         Def::Reply: Serialize + Send + Sync + 'static,
         ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
         BatchReply: ReplyPublisher + 'static,

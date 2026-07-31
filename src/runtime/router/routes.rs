@@ -1,7 +1,6 @@
 //! The registration list: route types, the per-route mount trait and [`RouterDef`].
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 use std::sync::Arc;
 
@@ -306,9 +305,9 @@ where
     SourceMessage<B, Source>: Send + 'static,
     State: Send + Sync + 'static,
     Def: BatchPublishingCall<State> + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: crate::runtime::DecodeWith<DecodeCodec>,
     Def::Reply: Serialize + Send + Sync + 'static,
-    DecodeCodec: Codec + Send + 'static,
+    DecodeCodec: Send + Sync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
     // transactional).
     ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,

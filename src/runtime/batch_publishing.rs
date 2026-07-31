@@ -13,17 +13,17 @@
 
 use std::future::Future;
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use tracing::warn;
 
 use crate::IncomingMessage;
-use crate::codec::Codec;
 
 use super::batch::{BatchHandler, decode_batch, settle};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
+use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
 
@@ -35,8 +35,9 @@ use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPubl
 /// half-nacked batch; handlers needing both publish manually from a plain batch handler through a
 /// publisher held in the typed application state.
 pub trait BatchPublishingDef: Send + Sync {
-    /// The decoded element type; the handler consumes `&[Input]`.
-    type Input;
+    /// The input kind of one batch element ([`Decoded<T>`](super::Decoded); see
+    /// [`BatchDef::Input`](super::BatchDef::Input)). The handler consumes `&[T]`.
+    type Input: InputKind;
 
     /// The reply element type; each entry of the returned `Vec` is encoded and published.
     type Reply;
@@ -102,7 +103,7 @@ pub trait BatchPublishingCall<S>: BatchPublishingDef {
     /// acks the batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
     fn call(
         &self,
-        batch: &[Self::Input],
+        batch: &[<Self::Input as InputKind>::Owned],
         ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = Result<Vec<Self::Reply>, HandlerResult>> + Send;
 }
@@ -112,14 +113,16 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
     name: String,
     def: &D,
 ) -> HandlerMetadata {
-    HandlerMetadata::typed::<D::Input>(name)
+    let mut meta = HandlerMetadata::raw(name)
         .with_output_type(std::any::type_name::<D::Reply>())
         .with_def_details(
             def.description(),
             def.input_schema(),
             def.message_name(),
             def.message_description(),
-        )
+        );
+    meta.input_type = <D::Input as InputKind>::input_label();
+    meta
 }
 
 /// The `BatchHandler` built from a [`BatchPublishingDef`]: decode the batch, run the handler,
@@ -149,9 +152,9 @@ impl<M, D, C, R, PP, S> BatchHandler<M, S> for BatchPublishingHandler<D, C, R, P
 where
     M: IncomingMessage,
     D: BatchPublishingCall<S>,
-    D::Input: DeserializeOwned + Send + Sync,
+    D::Input: DecodeWith<C>,
     D::Reply: Serialize + Send + Sync,
-    C: Codec,
+    C: Send + Sync,
     R: ReplyPublisher,
     PP: PublishPipeline,
     S: Send + Sync,
@@ -211,7 +214,7 @@ mod tests {
     }
 
     impl BatchPublishingDef for Confirm {
-        type Input = u32;
+        type Input = crate::runtime::Decoded<u32>;
         type Reply = u32;
         type Source = crate::Name;
 
