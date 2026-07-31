@@ -297,50 +297,6 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.handlers.push(meta);
     }
 
-    /// A batch starter whose handler factory runs at startup against the connected broker
-    /// (pairing the batch reply publisher first); the subscription, failure wiring, and
-    /// dispatch spawn stay here so every paired batch mount shares one shape.
-    pub(crate) fn push_paired_batch<Source, MakeHandler, HandlerFut, NewHandler>(
-        &mut self,
-        source: Source,
-        make_handler: MakeHandler,
-        meta: HandlerMetadata,
-        policies: FailurePolicies,
-        workers: Workers,
-    ) where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
-        SourceMessage<B, Source>: Send + 'static,
-        MakeHandler: FnOnce(Arc<Connected<B>>) -> HandlerFut + Send + 'static,
-        HandlerFut: Future<Output = Result<NewHandler, BoxError>> + Send,
-        NewHandler: BatchHandler<SourceMessage<B, Source>, State> + 'static,
-    {
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let handler = make_handler(Arc::clone(&connected)).await?;
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_batch_dispatch(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    ))
-                })
-            },
-        ));
-        self.handlers.push(meta);
-    }
-
     pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B, State>>, Vec<HandlerMetadata>) {
         (self.starters, self.handlers)
     }

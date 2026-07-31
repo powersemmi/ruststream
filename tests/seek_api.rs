@@ -9,6 +9,7 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use tokio::sync::Notify;
 
@@ -16,8 +17,8 @@ use ruststream::memory::{
     MemoryBroker, MemoryPosition, MemoryPublish, MemoryPublisher, MemorySeeker, MemorySource,
 };
 use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream, Seek};
-use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, Publisher, Seeker, WithSeeker, subscriber};
+use ruststream::testing::{TestApp, expect_published};
+use ruststream::{Broker, OutgoingMessage, Publisher, Seeker, WithSeeker, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -396,4 +397,65 @@ async fn a_publishing_handler_composes_with_a_seek_parameter() {
         .with(&Event { id: 20 });
 
     tb.shutdown().await.expect("graceful shutdown");
+}
+
+static PAGE_REPLAYED: AtomicBool = AtomicBool::new(false);
+
+/// A batch publishing handler with an injected seeker: the batch reply form composes with
+/// startup injections. The tail marker triggers one replay of the log suffix, so the replies
+/// repeat it.
+#[subscriber(batch("seek.ledger"), publish("seek.ledger.receipts"))]
+async fn ledger(
+    events: &[Event],
+    Seek(seeker): Seek<MemorySeeker>,
+) -> Result<Vec<Event>, HandlerResult> {
+    if events.iter().any(|event| event.id == 2)
+        && !PAGE_REPLAYED.swap(true, Ordering::SeqCst)
+        && seeker.seek(MemoryPosition::sequence(1)).await.is_err()
+    {
+        return Err(HandlerResult::retry());
+    }
+    Ok(events
+        .iter()
+        .map(|event| Event { id: event.id + 100 })
+        .collect())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_publishing_handler_composes_with_a_seek_parameter() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+    let observer = Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible");
+
+    let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(ledger);
+    });
+    let running = app.start().await.expect("startup failed");
+
+    for id in [0u64, 1, 2] {
+        ingress
+            .publish(OutgoingMessage::new("seek.ledger", payload(id).as_slice()))
+            .await
+            .expect("publish");
+    }
+    // However the pages split, the first pass answers the publish order and the replay
+    // re-answers exactly the suffix from the seek target on.
+    let seen = expect_published(&observer, "seek.ledger.receipts", 5, Duration::from_secs(2)).await;
+    let ids: Vec<u64> = seen
+        .iter()
+        .map(|m| {
+            serde_json::from_slice::<Event>(m.payload())
+                .expect("decodes")
+                .id
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        [100, 101, 102, 101, 102],
+        "the batch publishing handler's seek must replay the suffix and re-answer it",
+    );
+
+    running.shutdown().await.expect("graceful shutdown failed");
 }

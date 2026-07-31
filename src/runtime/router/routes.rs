@@ -311,11 +311,12 @@ where
     B: Broker + 'static,
     // The subscription side: batches open against the connected form.
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Subscriber: BatchSubscriber + Send + 'static,
+    Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
     SourceMessage<B, Source>: Send + 'static,
     State: Send + Sync + 'static,
     Def: BatchPublishingCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,
+    Def::Injections: FromStartup<B, Source::Subscriber, ()> + Send + Sync + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
     DecodeCodec: Send + Sync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
@@ -329,7 +330,10 @@ where
         PP: PublishPipeline + Clone + Send + 'static,
     {
         // Batch handlers are not wrapped by the per-message global stack, but they do pick up the
-        // app's publish pipeline for their replies. The reply wiring pairs at startup.
+        // app's publish pipeline for their replies. The reply wiring pairs at startup, and the
+        // startup injections resolve against the opened subscriber in the same factory (with no
+        // extra: a router mount has no attachment surface, so a Seek parameter works and an Out
+        // one needs the scope's include form).
         let pipeline = pipeline.clone();
         let Self {
             source,
@@ -340,20 +344,25 @@ where
             policies,
             workers,
         } = self;
-        sink.push_paired_batch(
+        sink.push_injected_batch(
             source,
-            async move |connected: Arc<Connected<B>>| {
+            async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = publisher
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(BatchPublishingHandler {
+                let injections = Def::Injections::resolve(&(), connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = BatchPublishingHandler {
                     def,
                     codec,
                     publisher,
                     pipeline,
+                    injections,
                     decode: policies.decode,
-                })
+                };
+                Ok((subscriber, handler))
             },
             meta,
             policies,

@@ -11,8 +11,8 @@ mod service;
 pub use app_trait::App;
 pub use health::{HealthProbe, HealthState};
 pub use include::{
-    IncludeBatchOut, IncludeBatchPublishing, IncludeDef, IncludeOut, IncludePublishing,
-    IncludePublishingOut, forms,
+    IncludeBatchOut, IncludeBatchPublishing, IncludeBatchPublishingOut, IncludeDef, IncludeOut,
+    IncludePublishing, IncludePublishingOut, IncludeWith, IncludeWithOut, forms,
 };
 pub use run::RunningApp;
 pub use scope::BrokerScope;

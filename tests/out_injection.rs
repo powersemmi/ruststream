@@ -239,3 +239,54 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
 
     running.shutdown().await.expect("graceful shutdown failed");
 }
+
+/// The batch replies leave through the fixed destination while a per-page audit copy leaves
+/// through the injected publisher: the batch publishing form composes with Out.
+#[subscriber(batch("out.ledger"), publish("out.ledger.receipts"))]
+async fn settle_page(
+    events: &[Event],
+    Out(out): Out<MemoryPublisher>,
+) -> Result<Vec<Event>, HandlerResult> {
+    let page = Event {
+        id: u64::try_from(events.len()).expect("a page fits in u64"),
+    };
+    let payload = serde_json::to_vec(&page).expect("serializable");
+    if out
+        .publish(OutgoingMessage::new("out.ledger.pages", payload.as_slice()))
+        .await
+        .is_err()
+    {
+        return Err(HandlerResult::retry());
+    }
+    Ok(events
+        .iter()
+        .map(|event| Event { id: event.id + 100 })
+        .collect())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
+    let broker = MemoryBroker::new();
+    let ingress = broker.publisher();
+    let observer = Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible");
+
+    let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
+        b.include_batch(settle_page).out(MemoryPublish);
+    });
+    let running = app.start().await.expect("startup failed");
+
+    // One publish, one page: the audit copy and the receipt are both deterministic.
+    ingress
+        .publish(OutgoingMessage::new(
+            "out.ledger",
+            serde_json::to_vec(&Event { id: 7 }).unwrap().as_slice(),
+        ))
+        .await
+        .expect("publish");
+    expect_id(&observer, "out.ledger.receipts", 107).await;
+    expect_id(&observer, "out.ledger.pages", 1).await;
+
+    running.shutdown().await.expect("graceful shutdown failed");
+}

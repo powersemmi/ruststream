@@ -26,8 +26,8 @@ mod typed;
 
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchOut, IncludeBatchPublishing,
-    IncludeDef, IncludeOut, IncludePublishing, IncludePublishingOut, RunningApp, RustStream,
-    RustStreamError, Setup, Wired, forms,
+    IncludeBatchPublishingOut, IncludeDef, IncludeOut, IncludePublishing, IncludePublishingOut,
+    IncludeWith, IncludeWithOut, RunningApp, RustStream, RustStreamError, Setup, Wired, forms,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};

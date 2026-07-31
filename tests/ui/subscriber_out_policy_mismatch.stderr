@@ -7,12 +7,12 @@ error[E0271]: type mismatch resolving `<MemoryPublish as PublishPolicy<Connected
    |                            required by a bound introduced by this call
    |
    = note: required for `(ruststream::runtime::Out<ForeignPublisher>,)` to implement `FromStartup<MemoryBroker, MemorySubscriber, MemoryPublish>`
-   = note: required for `runtime::app::include::WithSource<MemoryPublish>` to implement `runtime::app::include::CommitOut<MemoryBroker, Identity, (), (), PublishIdentity, forward>`
-note: required by a bound in `IncludeOut::<'s, B, Layers, C, State, Pipeline, Def, Source>::publisher`
+   = note: required for `runtime::app::include::WithSource<MemoryPublish>` to implement `runtime::app::include::CommitVia<runtime::app::include::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, forward>`
+note: required by a bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, Attachment>::publisher`
   --> src/runtime/app/include.rs
    |
    |     pub fn publisher<NewSource>(
    |            --------- required by a bound in this associated function
 ...
-   |         WithSource<NewSource>: CommitOut<B, Layers, C, State, Pipeline, Def>,
-   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeOut::<'s, B, Layers, C, State, Pipeline, Def, Source>::publisher`
+   |         WithSource<NewSource>: CommitVia<Mount, B, Layers, C, State, Pipeline, Def>,
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, Attachment>::publisher`

@@ -431,10 +431,8 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
 }
 
 /// Splits the (at most one) `Out<P>` parameter out of the extractor list, rejecting a
-/// duplicate and the unsupported form combinations.
+/// duplicate.
 fn split_out<'a>(
-    args: &SubscriberArgs,
-    func: &ItemFn,
     extractors: &mut Vec<(&'a Pat, &'a Type)>,
 ) -> syn::Result<Option<(&'a Pat, &'a Type)>> {
     let mut out = None;
@@ -457,21 +455,12 @@ fn split_out<'a>(
             "a #[subscriber] handler takes at most one Out parameter",
         ));
     }
-    if out.is_some() && args.batch && args.publish.is_some() {
-        return Err(Error::new_spanned(
-            &func.sig,
-            "an Out parameter is not supported together with the batch publishing form yet; \
-             publish per message or drop the Out parameter",
-        ));
-    }
     Ok(out)
 }
 
 /// Splits the (at most one) `Seek<K>` parameter out of the extractor list, rejecting a
-/// duplicate and the unsupported form combinations.
+/// duplicate.
 fn split_seek<'a>(
-    args: &SubscriberArgs,
-    func: &ItemFn,
     extractors: &mut Vec<(&'a Pat, &'a Type)>,
 ) -> syn::Result<Option<(&'a Pat, &'a Type)>> {
     let mut seek = None;
@@ -492,13 +481,6 @@ fn split_seek<'a>(
         return Err(Error::new_spanned(
             dup,
             "a #[subscriber] handler takes at most one Seek parameter",
-        ));
-    }
-    if seek.is_some() && args.batch && args.publish.is_some() {
-        return Err(Error::new_spanned(
-            &func.sig,
-            "a Seek parameter is not supported together with the batch publishing form yet; \
-             publish per message or drop the Seek parameter",
         ));
     }
     Ok(seek)
@@ -629,8 +611,8 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         quote!(_ctx)
     };
     let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
-    let out = split_out(args, func, &mut extractors)?;
-    let seek = split_seek(args, func, &mut extractors)?;
+    let out = split_out(&mut extractors)?;
+    let seek = split_seek(&mut extractors)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
@@ -710,8 +692,8 @@ fn expand_batch_publishing(
         ctx_ty: _,
         state_ty,
         extractors,
-        out: _,
-        seek: _,
+        out,
+        seek,
         workers_method,
         failure_method,
     } = parts;
@@ -727,6 +709,14 @@ fn expand_batch_publishing(
         }
     };
     let (reply_elem, call_body) = batch_reply_body(declared_ty, block)?;
+    // The injection tuple is shared with the other forms; an Out parameter selects the
+    // two-attachment builder (`.out(..)` next to `.publisher(..)`).
+    let (injection_tys, injection_pats, _single_form) = injection_pieces(*out, *seek);
+    let form = if out.is_some() {
+        quote!(::ruststream::runtime::forms::BatchPublishingOut)
+    } else {
+        quote!(::ruststream::runtime::forms::BatchPublishing)
+    };
 
     // Like the single-message publishing form: the handler implements `BatchPublishingCall` only
     // for its named state (mounts on a matching app), or generically when it names none (mounts on
@@ -757,11 +747,12 @@ fn expand_batch_publishing(
         #vis struct #name;
 
         impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = ::ruststream::runtime::forms::BatchPublishing;
+            type Form = #form;
         }
 
         impl ::ruststream::runtime::BatchPublishingDef for #name {
             type Input = ::ruststream::runtime::Decoded<#input_ty>;
+            type Injections = (#(#injection_tys,)*);
             type Reply = #reply_elem;
             type Source = #source_ty;
 
@@ -788,12 +779,14 @@ fn expand_batch_publishing(
             async fn call(
                 &self,
                 #pat: &[#input_ty],
+                __rs_inj: &Self::Injections,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
             ) -> ::core::result::Result<
                 ::std::vec::Vec<#reply_elem>,
                 ::ruststream::runtime::HandlerResult,
             > {
                 #prelude
+                let (#(#injection_pats,)*) = __rs_inj;
                 #call_body
             }
         }

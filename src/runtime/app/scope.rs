@@ -438,24 +438,28 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     }
 
     /// Mounts a batch publishing definition whose reply publisher is a policy source, paired by
-    /// the runtime after connect. Decode uses the scope codec.
-    pub(super) fn mount_batch_publishing_source<Source, Def, ReplySource, BatchReply>(
+    /// the runtime after connect; its startup injections resolve against the opened subscriber
+    /// in the same factory. Decode uses the scope codec.
+    pub(super) fn mount_batch_publishing_source<Source, Def, ReplySource, BatchReply, OutExtra>(
         &mut self,
         source: Source,
         def: Def,
         reply: ReplySource,
+        extra: OutExtra,
     ) where
         // The subscription side: batches open against the connected form.
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + 'static,
         Def: BatchPublishingCall<State> + 'static,
         Def::Input: DecodeWith<SC::Codec>,
+        Def::Injections: FromStartup<B, Source::Subscriber, OutExtra> + Send + Sync + 'static,
         Def::Reply: Serialize + Send + Sync + 'static,
         // The reply side: the source pairs at startup into a batch reply wiring (plain or
         // transactional).
         ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
         BatchReply: ReplyPublisher + 'static,
+        OutExtra: Send + Sync + 'static,
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
@@ -466,20 +470,25 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let workers = def.workers();
         let codec = self.codec.scope_codec();
         let pipeline = self.pipeline.clone();
-        self.sink.push_paired_batch(
+        self.sink.push_injected_batch(
             source,
-            async move |connected: Arc<Connected<B>>| {
+            async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = reply
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(BatchPublishingHandler {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = BatchPublishingHandler {
                     def,
                     codec,
                     publisher,
                     pipeline,
+                    injections,
                     decode: policies.decode,
-                })
+                };
+                Ok((subscriber, handler))
             },
             meta,
             policies,
