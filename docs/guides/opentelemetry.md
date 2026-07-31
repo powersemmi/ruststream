@@ -6,7 +6,7 @@ It is built on the typed publish-path context - the same seam that lets a publis
 delivery that produced a reply.
 
 ```toml
-ruststream = { version = "0.5", features = ["macros", "memory", "json", "otel"] }
+ruststream = { version = "0.6", features = ["macros", "memory", "json", "otel"] }
 ```
 
 The feature has two halves. Propagation carries the

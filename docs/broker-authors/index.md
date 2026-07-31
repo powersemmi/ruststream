@@ -6,7 +6,7 @@ any other broker:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.5", default-features = false }
+ruststream = { version = "0.6", default-features = false }
 ```
 
 This page is the contract. Implement the required traits, expose your own `Config`, add capability
