@@ -134,7 +134,9 @@ jobs:
         env:
           RUN_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
           RUN_SCAFFOLD_BUILD: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
-        run: cargo test --workspace --all-features
+        # --no-fail-fast: a failing target must not hide failures in the targets behind it;
+        # the log then lists every red test, not just the first binary's.
+        run: cargo test --workspace --all-features --no-fail-fast
 
   coverage:
     name: Coverage
@@ -163,7 +165,7 @@ jobs:
       # a human-readable table into the run's job summary, and an lcov file as a downloadable
       # artifact. `report` reuses the profile from `--no-report`, so neither re-runs the tests.
       - name: Run tests under coverage
-        run: cargo llvm-cov --no-report --workspace --all-features
+        run: cargo llvm-cov --no-report --workspace --all-features --no-fail-fast
 
       # Line-coverage gate, sitting at the 90% DoD target. Raise it here and in the justfile
       # together if coverage climbs further. The summary is written before the gate's exit code
