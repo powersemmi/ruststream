@@ -24,9 +24,9 @@ pub(crate) struct SubscriberArgs {
     pub(crate) publish_raw: Option<LitStr>,
     pub(crate) workers: Option<WorkersArg>,
     pub(crate) on_failure: Option<FailureArg>,
-    /// The `start_at(<position>)` clause: where the subscription is sought before the first
-    /// delivery.
-    pub(crate) start_at: Option<StartAtArg>,
+    /// The `start_at(<position>)` clause: a broker position constructor the subscription is
+    /// sought to before the first delivery.
+    pub(crate) start_at: Option<Expr>,
     /// The `raw` flag keyword, kept as the parsed [`Ident`] so combination errors can point at it.
     pub(crate) raw: Option<Ident>,
 }
@@ -34,13 +34,6 @@ pub(crate) struct SubscriberArgs {
 pub(crate) struct WorkersArg {
     pub(crate) count: syn::LitInt,
     pub(crate) by_key: Option<Ident>,
-}
-
-/// The `start_at(..)` argument: an explicit broker position constructor, or empty parentheses
-/// for the `Default` of the broker's position type.
-pub(crate) enum StartAtArg {
-    BrokerDefault,
-    Position(Expr),
 }
 
 /// The `on_failure(panic = .., decode = ..)` clause. Each key is optional; an omitted key keeps the
@@ -191,11 +184,14 @@ impl Parse for SubscriberArgs {
                 }
                 let content;
                 parenthesized!(content in input);
-                start_at = Some(if content.is_empty() {
-                    StartAtArg::BrokerDefault
-                } else {
-                    StartAtArg::Position(content.parse()?)
-                });
+                if content.is_empty() {
+                    return Err(syn::Error::new(
+                        keyword.span(),
+                        "start_at(..) needs a position constructor; without the clause the \
+                         subscription simply opens at the broker's default",
+                    ));
+                }
+                start_at = Some(content.parse()?);
             } else if keyword == "workers" {
                 if workers.is_some() {
                     return Err(syn::Error::new(keyword.span(), "duplicate workers(..)"));

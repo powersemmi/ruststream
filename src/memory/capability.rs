@@ -428,19 +428,14 @@ impl SeekControl {
 /// position redelivers exactly that message, and seeking at or past the end of the log skips
 /// everything published so far and resumes with the next publish.
 ///
-/// The [`Default`] position is the start of the log (used by
-/// [`StartAtDefault`](crate::StartAtDefault) and the argument-less `start_at()` clause): for an
-/// in-process broker, replaying the full history is the natural default of a forced reposition.
-///
 /// # Examples
 ///
 /// ```
 /// use ruststream::memory::MemoryPosition;
 ///
 /// assert_eq!(MemoryPosition::start(), MemoryPosition::sequence(0));
-/// assert_eq!(MemoryPosition::default(), MemoryPosition::start());
 /// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[must_use]
 pub struct MemoryPosition(usize);
 
@@ -660,7 +655,7 @@ mod tests {
     use crate::Subscribe;
     #[cfg(feature = "testing")]
     use crate::testing::{TestableBroker, coordinator::Coordinator};
-    use crate::{Broker, ConnectedBroker, Headers, StartAt, StartAtDefault, SubscriptionSource};
+    use crate::{Broker, ConnectedBroker, Headers, StartAt, SubscriptionSource};
 
     #[tokio::test]
     async fn batches_drain_buffered_deliveries() {
@@ -1057,27 +1052,6 @@ mod tests {
         assert_eq!(second.payload(), b"b");
         second.ack().await.unwrap();
         assert!(futures::poll!(stream.next()).is_pending());
-    }
-
-    #[tokio::test]
-    async fn start_at_default_replays_from_the_start() {
-        let broker = MemoryBroker::new();
-        let connected = broker.connect().await.unwrap();
-        let publisher = connected.publisher();
-        publisher
-            .publish(OutgoingMessage::new("start.default", b"a".as_slice()))
-            .await
-            .unwrap();
-
-        // The memory broker's default position is the start of the log.
-        let mut sub = StartAtDefault::new(MemorySource::new("start.default"))
-            .subscribe(&connected)
-            .await
-            .unwrap();
-        let mut stream = std::pin::pin!(sub.stream());
-        let replayed = stream.next().await.unwrap().unwrap();
-        assert_eq!(replayed.payload(), b"a");
-        replayed.ack().await.unwrap();
     }
 
     #[tokio::test]

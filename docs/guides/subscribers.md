@@ -280,13 +280,10 @@ declaration, not an operational action afterwards:
 --8<-- "examples/seek.rs:start_at"
 ```
 
-An argument-less `start_at()` uses the `Default` of the broker's position type, whose meaning
-the broker documents (the in-memory broker's default is the start of the log; a broker without
-a default position rejects the empty form at compile time).
-
-The clause forces the position on every startup. A conditional default - apply only when the
-broker holds no stored cursor for the group (Kafka's offset reset, a JetStream deliver
-policy) - stays on the broker's own subscription descriptor, which expresses it natively.
+The clause forces the position on every startup; without it the subscription simply opens at
+the broker's default. A conditional default - apply only when the broker holds no stored
+cursor for the group (Kafka's offset reset, a JetStream deliver policy) - stays on the
+broker's own subscription descriptor, which expresses it natively.
 
 What one seek covers differs per broker - repositioning a consumer instance (Kafka) moves that
 instance only, repositioning a shared group cursor (Redis streams) moves the whole group - and a
