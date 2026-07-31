@@ -17,7 +17,7 @@
 
 mod capability;
 
-pub use capability::{MemoryRequester, PARTITION_KEY_HEADER, RequestError};
+pub use capability::{MemoryRequester, MemoryTransaction, PARTITION_KEY_HEADER, RequestError};
 
 use std::{
     collections::HashMap,

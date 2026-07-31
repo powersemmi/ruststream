@@ -189,6 +189,16 @@ transforms and the app-wide `publish_layer` middleware belong to the dispatch pa
 originating delivery) and do not run here. Dropping an unsettled scope logs a warning and leaves
 the broker transaction open on that handle - always settle explicitly.
 
+The scope is the borrowed transaction kind: it borrows the handle's single broker-side
+transaction, so one scope per handle is open at a time. Brokers whose transactions are client
+buffers rather than producer state also implement the owned kind, `OwnedTransactions`: every
+`transaction()` call opens an independent transaction whose buffer lives in the returned
+`Transaction` value, so any number can be open concurrently on one handle and settling one never
+touches another. `publish` buffers into the value and `commit()` / `abort()` consume it - the
+same settle-by-consuming discipline as the scope - while dropping one merely discards its buffer
+(with a warning) instead of leaving a broker transaction open. Kafka-like brokers, whose client
+holds exactly one transaction per producer, implement only the borrowed kind.
+
 ## Batch publishing
 
 There is no direct batch-publish API on `Publisher`. For most brokers (NATS, Kafka) the client

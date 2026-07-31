@@ -7,6 +7,7 @@
 //! them.
 
 use std::{
+    fmt,
     sync::{Arc, atomic::Ordering},
     task::Poll,
     time::Duration,
@@ -16,13 +17,14 @@ use bytes::Bytes;
 use futures::Stream;
 use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
+use tracing::warn;
 
 use super::{
     MemoryDelivery, MemoryError, MemoryMessage, MemoryPublisher, MemoryState, MemorySubscriber,
 };
 use crate::{
-    BatchSubscriber, IncomingMessage, OutgoingMessage, Partitioned, Publisher, RequestReply,
-    Subscriber, TransactionalPublisher,
+    BatchSubscriber, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned, Publisher,
+    RequestReply, Subscriber, Transaction, TransactionalPublisher,
 };
 
 /// The well-known header the [`Partitioned`] implementation reads the partition key from.
@@ -101,8 +103,8 @@ impl MemoryRequester {
     }
 }
 
-impl std::fmt::Debug for MemoryRequester {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MemoryRequester {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryRequester").finish_non_exhaustive()
     }
 }
@@ -252,6 +254,108 @@ impl TransactionalPublisher for MemoryPublisher {
             .take()
             .map(|_| ())
             .ok_or(MemoryError::NoTransaction)
+    }
+}
+
+/// An owned in-process transaction, opened by
+/// [`transaction`](crate::OwnedTransactions::transaction) on a [`MemoryPublisher`].
+///
+/// A private delivery buffer, fanned out to the bus in publish order on commit and discarded
+/// on abort.
+///
+/// Unlike the handle-level [`TransactionalPublisher`] buffer, any number of these can be open
+/// on one handle at a time, and the handle keeps publishing directly while they are.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::{OutgoingMessage, OwnedTransactions, Transaction};
+///
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// let publisher = MemoryBroker::new().publisher();
+/// let mut txn = publisher.transaction().await?;
+/// txn.publish(OutgoingMessage::new("orders", b"{}".as_slice())).await?;
+/// txn.commit().await?;
+/// # Ok(())
+/// # }
+/// ```
+#[must_use = "a transaction does nothing until settled with commit() or abort()"]
+pub struct MemoryTransaction {
+    state: Arc<MemoryState>,
+    buffered: Vec<MemoryDelivery>,
+    settled: bool,
+}
+
+impl fmt::Debug for MemoryTransaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MemoryTransaction")
+            .field("buffered", &self.buffered.len())
+            .field("settled", &self.settled)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for MemoryTransaction {
+    fn drop(&mut self) {
+        // Destructors cannot run async work, so a drop can only discard the buffer; the warning
+        // marks that as an abort the caller never wrote, mirroring the runtime's
+        // TransactionScope drop.
+        if !self.settled {
+            warn!(
+                target: "ruststream::memory",
+                buffered = self.buffered.len(),
+                "owned transaction dropped without commit or abort; its buffered messages are \
+                 discarded"
+            );
+        }
+    }
+}
+
+impl Transaction for MemoryTransaction {
+    type Error = MemoryError;
+
+    async fn publish(&mut self, msg: OutgoingMessage<'_>) -> Result<(), MemoryError> {
+        // Buffering is local to this value and never touches the bus; a commit against a
+        // shut-down bus is what reports the error.
+        self.buffered.push(MemoryDelivery {
+            name: msg.name().to_owned(),
+            payload: Bytes::copy_from_slice(msg.payload()),
+            headers: msg.headers().clone(),
+        });
+        Ok(())
+    }
+
+    async fn commit(mut self) -> Result<(), MemoryError> {
+        // Settled before the flush: a failed commit has still consumed the transaction (the
+        // buffer is lost per the Transaction contract), so the drop warning must not fire.
+        self.settled = true;
+        for delivery in &self.buffered {
+            self.state.fanout(delivery)?;
+        }
+        Ok(())
+    }
+
+    async fn abort(mut self) -> Result<(), MemoryError> {
+        self.settled = true;
+        Ok(())
+    }
+}
+
+/// Owned transactions: every [`transaction`](OwnedTransactions::transaction) call opens an
+/// independent buffer-owning `MemoryTransaction`, so any number can be open concurrently on one
+/// handle, next to (and unaffected by) the handle-level [`TransactionalPublisher`] transaction.
+impl OwnedTransactions for MemoryPublisher {
+    type Transaction = MemoryTransaction;
+
+    async fn transaction(&self) -> Result<MemoryTransaction, MemoryError> {
+        // Opening allocates a buffer and never touches the bus; a shut-down bus surfaces at
+        // commit, the visibility point, like the handle-level begin.
+        Ok(MemoryTransaction {
+            state: Arc::clone(&self.state),
+            buffered: Vec::new(),
+            settled: false,
+        })
     }
 }
 
