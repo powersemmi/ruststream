@@ -138,6 +138,14 @@ jobs:
         # the log then lists every red test, not just the first binary's.
         run: cargo test --workspace --all-features --no-fail-fast
 
+      # The crate-root missing_docs deny covers item docs; this gate catches what rustc
+      # cannot: broken intra-doc links and redundant targets only rustdoc resolves.
+      - name: cargo doc
+        if: matrix.toolchain == 'stable'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps
+
   coverage:
     name: Coverage
     needs: changes
