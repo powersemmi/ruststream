@@ -133,3 +133,106 @@ async fn commit_against_a_shut_down_bus_errors() {
     // Buffering never touched the bus, so the shutdown surfaces at the visibility point.
     assert_eq!(txn.commit().await, Err(MemoryError::ShutDown));
 }
+
+/// The typed sugar (`TypedPublisher::transaction`) over the same owned kind; the default codec
+/// needs a codec feature, hence the gate.
+#[cfg(feature = "json")]
+mod typed {
+    use ruststream::codec::{Codec, DefaultCodec};
+    use ruststream::runtime::TypedPublisher;
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Order {
+        id: u32,
+    }
+
+    fn decode_order(payload: &[u8]) -> Order {
+        DefaultCodec::default()
+            .decode(payload)
+            .expect("decoding a committed payload failed")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn typed_publish_round_trips_through_the_default_codec() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("orders");
+        let publisher = TypedPublisher::new(broker.publisher());
+
+        let mut txn = publisher.transaction().await.expect("transaction failed");
+        txn.publish("orders", &Order { id: 7 })
+            .await
+            .expect("typed publish into the transaction failed");
+
+        let mut stream = pin!(subscriber.stream());
+        assert_eq!(
+            drain_next(&mut stream).await,
+            None,
+            "buffered typed publish became visible before commit"
+        );
+
+        txn.commit().await.expect("commit failed");
+        let payload = drain_next(&mut stream)
+            .await
+            .expect("committed publish missing");
+        assert_eq!(decode_order(&payload), Order { id: 7 });
+        assert_eq!(drain_next(&mut stream).await, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_typed_scopes_commit_independently() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("orders");
+        let publisher = TypedPublisher::new(broker.publisher());
+
+        let mut first = publisher.transaction().await.expect("first transaction");
+        let mut second = publisher.transaction().await.expect("second transaction");
+        first
+            .publish("orders", &Order { id: 1 })
+            .await
+            .expect("publish into first failed");
+        second
+            .publish("orders", &Order { id: 2 })
+            .await
+            .expect("publish into second failed");
+
+        // Settling one scope publishes exactly its buffer, leaving the sibling untouched.
+        second.commit().await.expect("second commit failed");
+        let mut stream = pin!(subscriber.stream());
+        let payload = drain_next(&mut stream)
+            .await
+            .expect("second scope's publish missing");
+        assert_eq!(decode_order(&payload), Order { id: 2 });
+        assert_eq!(
+            drain_next(&mut stream).await,
+            None,
+            "the sibling scope leaked into the commit"
+        );
+
+        first.commit().await.expect("first commit failed");
+        let payload = drain_next(&mut stream)
+            .await
+            .expect("first scope's publish missing");
+        assert_eq!(decode_order(&payload), Order { id: 1 });
+        assert_eq!(drain_next(&mut stream).await, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn typed_commit_against_a_shut_down_bus_errors() {
+        let broker = MemoryBroker::new();
+        let publisher = TypedPublisher::new(broker.publisher());
+
+        let mut txn = publisher.transaction().await.expect("transaction failed");
+        txn.publish("orders", &Order { id: 9 })
+            .await
+            .expect("typed publish into the transaction failed");
+
+        let connected = broker.connect().await.expect("connect failed");
+        connected.shutdown().await.expect("shutdown failed");
+
+        // Buffering never touched the bus, so the shutdown surfaces at the visibility point.
+        assert_eq!(txn.commit().await, Err(MemoryError::ShutDown));
+    }
+}

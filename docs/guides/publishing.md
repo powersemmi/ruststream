@@ -199,6 +199,13 @@ same settle-by-consuming discipline as the scope - while dropping one merely dis
 (with a warning) instead of leaving a broker transaction open. Kafka-like brokers, whose client
 holds exactly one transaction per producer, implement only the borrowed kind.
 
+The owned kind has typed sugar too: on a `TypedPublisher` whose publisher implements
+`OwnedTransactions`, `transaction()` opens a `TypedTransaction` that owns the broker transaction
+and encodes with the publisher's codec - `let mut txn = typed.transaction().await?;`, then
+`txn.publish("orders", &value).await?;` and `txn.commit().await?;`. Where `.transactional()` +
+`begin()` gives the borrowed scope (one per handle), any number of `TypedTransaction`s can be
+open on one `TypedPublisher` at a time.
+
 ## Batch publishing
 
 There is no direct batch-publish API on `Publisher`. For most brokers (NATS, Kafka) the client

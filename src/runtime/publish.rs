@@ -6,7 +6,7 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
 
-use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc};
+use std::{borrow::Cow, fmt, future::Future, pin::Pin, sync::Arc};
 
 use bytes::BytesMut;
 use serde::Serialize;
@@ -21,8 +21,8 @@ use crate::codec::{Codec, CodecError};
 use crate::codec::DefaultCodec;
 use crate::runtime::publish::sealed::Sealed;
 use crate::{
-    ConnectedBroker, Headers, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    TransactionalPublisher,
+    ConnectedBroker, Headers, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
+    Publisher, Transaction, TransactionalPublisher,
 };
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
@@ -199,8 +199,8 @@ impl<'a, N: PublishPipeline, P: Publisher> PublishNext<'a, N, P> {
     }
 }
 
-impl<N, P> std::fmt::Debug for PublishNext<'_, N, P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<N, P> fmt::Debug for PublishNext<'_, N, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishNext").finish_non_exhaustive()
     }
 }
@@ -249,8 +249,8 @@ impl<'a> PublishDynNext<'a> {
     }
 }
 
-impl std::fmt::Debug for PublishDynNext<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for PublishDynNext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishDynNext")
             .field("remaining", &self.rest.len())
             .finish_non_exhaustive()
@@ -295,8 +295,8 @@ impl PublishDynStack {
     }
 }
 
-impl std::fmt::Debug for PublishDynStack {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for PublishDynStack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishDynStack")
             .field("middleware", &self.0.len())
             .finish_non_exhaustive()
@@ -360,8 +360,8 @@ impl<'a, C> PublishContext<'a, C> {
     }
 }
 
-impl<C> std::fmt::Debug for PublishContext<'_, C> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<C> fmt::Debug for PublishContext<'_, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishContext")
             .field("name", &self.name)
             .finish_non_exhaustive()
@@ -664,8 +664,8 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     }
 }
 
-impl<P, C, PL, BL> std::fmt::Debug for TypedPublisher<P, C, PL, BL> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P, C, PL, BL> fmt::Debug for TypedPublisher<P, C, PL, BL> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedPublisher").finish_non_exhaustive()
     }
 }
@@ -703,8 +703,8 @@ pub struct Transactional<P, C, PL = PublishTransformIdentity, BL = BatchTransfor
     inner: TypedPublisher<P, C, PL, BL>,
 }
 
-impl<P, C, PL, BL> std::fmt::Debug for Transactional<P, C, PL, BL> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P, C, PL, BL> fmt::Debug for Transactional<P, C, PL, BL> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Transactional").finish_non_exhaustive()
     }
 }
@@ -901,6 +901,13 @@ where
     /// A second `begin` on this wrapper, a commit without a begin, or a publish after the commit
     /// are not expressible - the methods do not exist on the types those states leave behind.
     ///
+    /// This is the typed sugar over the borrowed transaction kind
+    /// ([`TransactionalPublisher`]): the scope claims the handle's single broker-side
+    /// transaction, so one scope per wrapper is open at a time. Brokers whose transactions are
+    /// client buffers additionally offer the owned kind through
+    /// [`TypedPublisher::transaction`], where every call opens an independent buffer-owning
+    /// [`TypedTransaction`].
+    ///
     /// ```
     /// # #[cfg(all(feature = "memory", feature = "json"))]
     /// # {
@@ -1037,11 +1044,165 @@ impl<P, C> Drop for TransactionScope<'_, P, C> {
     }
 }
 
-impl<P, C> std::fmt::Debug for TransactionScope<'_, P, C> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P, C> fmt::Debug for TransactionScope<'_, P, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TransactionScope")
             .field("open", &self.open)
             .finish_non_exhaustive()
+    }
+}
+
+impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL>
+where
+    P: OwnedTransactions,
+    C: Sync,
+    PL: Sync,
+    BL: Sync,
+{
+    /// Opens an owned broker transaction and returns the [`TypedTransaction`] that owns it.
+    ///
+    /// This is the typed sugar over the owned transaction kind ([`OwnedTransactions`]), the
+    /// counterpart of the borrowed [`Transactional::begin`]: every call opens its own
+    /// independent transaction and the returned value owns its buffer, so any number can be
+    /// open on one publisher at a time - settling one never touches another. Kafka-like
+    /// brokers, whose client holds exactly one transaction per producer, offer only the
+    /// borrowed kind.
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::TypedPublisher;
+    ///
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let broker = MemoryBroker::new();
+    /// let publisher = TypedPublisher::new(broker.publisher());
+    ///
+    /// let mut orders = publisher.transaction().await?;
+    /// let mut audit = publisher.transaction().await?; // concurrent with `orders`
+    /// orders.publish("orders.settled", &42_u32).await?;
+    /// audit.publish("audit.trail", &7_u32).await?;
+    /// orders.commit().await?;
+    /// audit.commit().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to open a transaction; pure
+    /// client-buffer implementations are infallible in practice.
+    pub async fn transaction(&self) -> Result<TypedTransaction<'_, P::Transaction, C>, P::Error> {
+        Ok(TypedTransaction {
+            txn: self.publisher.transaction().await?,
+            codec: &self.codec,
+        })
+    }
+}
+
+/// An owned broker transaction carrying the publisher's codec, opened by
+/// [`TypedPublisher::transaction`].
+///
+/// The owned counterpart of [`TransactionScope`]: the scope borrows the handle's single
+/// broker-side transaction, while this value owns an independent one
+/// ([`OwnedTransactions::Transaction`]), so any number can be open on one publisher and driven
+/// concurrently. Publishes encode with the publisher's codec and buffer into the transaction;
+/// the whole buffer becomes visible atomically on [`commit`](Self::commit) and is discarded by
+/// [`abort`](Self::abort), both of which consume the value, so a double commit or a publish
+/// after settling is a compile error.
+///
+/// Like the scope, it encodes values and sends them directly: the reply [`PublishTransform`]
+/// stack and the app-wide [`publish_layer`](super::RustStream::publish_layer) middleware belong
+/// to the dispatch path, where a delivery context exists, and do not run here.
+///
+/// Dropping an unsettled value discards the client buffer like an abort - unlike the scope, no
+/// broker-side transaction is left open on the handle. The missed-settle warning comes from the
+/// underlying [`Transaction`] value's own drop (per its contract), so this wrapper does not add
+/// a second one.
+#[must_use = "a transaction does nothing until settled with commit() or abort()"]
+pub struct TypedTransaction<'a, Txn, C> {
+    txn: Txn,
+    codec: &'a C,
+}
+
+impl<Txn, C> TypedTransaction<'_, Txn, C>
+where
+    Txn: Transaction,
+    C: Codec,
+{
+    /// Encodes `value` with the publisher's codec and publishes it into the transaction:
+    /// buffered, not visible before [`commit`](Self::commit).
+    ///
+    /// A failed publish does not settle the transaction; the caller decides between retrying
+    /// and [`abort`](Self::abort).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
+    /// [`TransactionPublishError::Publish`] when the message cannot be buffered (a pure client
+    /// buffer is infallible in practice).
+    ///
+    /// # Cancel safety
+    ///
+    /// As with [`Transaction::publish`], cancel safety is implementation-defined: dropping the
+    /// future mid-flight may leave the message in an indeterminate state inside the
+    /// transaction.
+    pub async fn publish<T>(
+        &mut self,
+        name: &str,
+        value: &T,
+    ) -> Result<(), TransactionPublishError<Txn::Error>>
+    where
+        T: Serialize + Sync,
+    {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(TransactionPublishError::Encode)?;
+        self.txn
+            .publish(OutgoingMessage::new(name, &payload))
+            .await
+            .map_err(TransactionPublishError::Publish)
+    }
+
+    /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the transaction's error when the flush fails. A failed commit has still consumed
+    /// the transaction and its buffer is lost; redelivery of the inputs, not resubmission of the
+    /// buffer, is the recovery path (the [`Transaction::commit`] contract).
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe: the future owns the transaction, so dropping it mid-commit discards
+    /// what is left of the buffer with the flush incomplete - which messages became visible is
+    /// implementation-defined, as for a [`TransactionScope::commit`] dropped mid-flight.
+    pub async fn commit(self) -> Result<(), Txn::Error> {
+        self.txn.commit().await
+    }
+
+    /// Aborts the transaction, discarding the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns the transaction's error when staged broker-side state cannot be discarded; for a
+    /// pure client buffer this is infallible in practice.
+    ///
+    /// # Cancel safety
+    ///
+    /// Dropping the future mid-abort still discards the buffer - the future owns the
+    /// transaction, and an unsettled drop is itself the discard (the underlying value may log
+    /// its missed-settle warning).
+    pub async fn abort(self) -> Result<(), Txn::Error> {
+        self.txn.abort().await
+    }
+}
+
+impl<Txn, C> fmt::Debug for TypedTransaction<'_, Txn, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TypedTransaction").finish_non_exhaustive()
     }
 }
 
@@ -1107,7 +1268,7 @@ mod tests {
                     fn record_debug(
                         &mut self,
                         field: &tracing::field::Field,
-                        value: &dyn std::fmt::Debug,
+                        value: &dyn fmt::Debug,
                     ) {
                         if field.name() == "message" {
                             self.0 = Some(format!("{value:?}"));

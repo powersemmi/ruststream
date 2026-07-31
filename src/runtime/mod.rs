@@ -51,12 +51,16 @@ pub use publish::{
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
     PublishLayer, PublishNext, PublishPipeline, PublishStack, PublishTransform,
     PublishTransformIdentity, PublishTransformStack, ReplyPublisher, ReplyWiring,
-    TransactionPublishError, TransactionScope, Transactional, TypedPublisher, for_batch,
+    TransactionPublishError, TransactionScope, Transactional, TypedPublisher, TypedTransaction,
+    for_batch,
 };
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
-pub use raw::RawSubscriberDef;
+pub use raw::{
+    RawPublishingCall, RawPublishingDef, RawPublishingHandler, RawReplyCall, RawReplyDef,
+    RawReplyHandler, RawSubscriberDef,
+};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};
