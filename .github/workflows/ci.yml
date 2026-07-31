@@ -169,6 +169,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # The cache restores llvm-cov-target from previous runs, and stale instrumented
+      # artifacts double-count files in the report (a file can show more measured lines than
+      # it physically has, cratering the total). Clear the coverage state while keeping the
+      # dependency cache.
+      - name: Clean stale coverage artifacts
+        run: cargo llvm-cov clean --workspace
+
       # Run the suite under instrumentation once, then format the collected data twice:
       # a human-readable table into the run's job summary, and an lcov file as a downloadable
       # artifact. `report` reuses the profile from `--no-report`, so neither re-runs the tests.
