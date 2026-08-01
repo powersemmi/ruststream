@@ -3,30 +3,30 @@
 use std::{error::Error as StdError, fmt, future::Future, sync::Arc};
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
-use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::PublishPolicy;
-use crate::runtime::batch::{BatchDef, batch_metadata, typed_batch};
+use crate::runtime::batch::{BatchDef, TypedBatch, batch_metadata};
+use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler, batch_inject_metadata};
 use crate::runtime::batch_publishing::{
     BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
 };
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
+use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler, inject_metadata};
+use crate::runtime::input::{DecodeWith, InputKind};
 use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer};
-use crate::runtime::out::{OutCall, OutHandler, out_metadata};
-use crate::runtime::publish::{
-    PublishIdentity, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
-};
+use crate::runtime::publish::{PublishIdentity, PublishPipeline, ReplyPublisher};
 use crate::runtime::publisher_registry::ErasedPublisher;
-use crate::runtime::publishing::{PublishingCall, PublishingHandler, publishing_metadata};
+use crate::runtime::publishing::{
+    PublishingCall, PublishingHandler, ReplySink, publishing_metadata,
+};
 use crate::runtime::router::{RouterDef, RouterSink};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
-use crate::runtime::typed::{Typed, typed};
+use crate::runtime::typed::Typed;
 
 use super::include::ScopeCodec;
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
@@ -201,27 +201,39 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
 impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC, State, Pipeline> {
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
     /// `include` / `include_on` forms.
-    pub(super) fn mount_subscriber<S, D, C>(&mut self, source: S, def: D, codec: C)
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        <S::Subscriber as Subscriber>::Message: 'static,
-        D: SubscriberDef,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Context: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
-        D::Handler: 'static,
-        C: Codec + 'static,
+    pub(super) fn mount_subscriber<Source, Def, DecodeCodec>(
+        &mut self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: 'static,
+        Def: SubscriberDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Context:
+            crate::BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + 'static,
+        Def::Handler: 'static,
+        DecodeCodec: Send + Sync + 'static,
         State: Send + Sync + 'static,
-        Layers: Layer<Typed<<S::Subscriber as Subscriber>::Message, D::Input, C, D::Handler>>,
+        Layers: Layer<
+            Typed<
+                <Source::Subscriber as Subscriber>::Message,
+                Def::Input,
+                DecodeCodec,
+                Def::Handler,
+            >,
+        >,
         Layers::Handler:
-            Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
+            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = self
             .global
-            .layer(typed(codec, def.into_handler()).on_decode_failure(policies.decode));
+            .layer(Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode));
         self.sink
             .push_subscribe_workers(source, handler, meta, policies, workers);
     }
@@ -229,52 +241,66 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
     /// tail of the `include_batch` / `include_batch_on` forms. Batch handlers are not wrapped by
     /// the global stack: per-message layers cannot wrap a whole-batch handler.
-    pub(super) fn mount_batch<S, D, C>(&mut self, source: S, def: D, codec: C)
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchDef,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: crate::runtime::SliceHandler<D::Input, State> + 'static,
-        C: Codec + 'static,
+    pub(super) fn mount_batch<Source, Def, DecodeCodec>(
+        &mut self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Handler:
+            crate::runtime::SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
+        DecodeCodec: Send + Sync + 'static,
         State: Send + Sync + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed_batch(codec, def.into_handler()).with_decode(policies.decode);
+        // The handler bound alone cannot pin the kind (two kinds may share an owned type), so
+        // the adapter names the def's input kind explicitly.
+        let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
+            .with_decode(policies.decode);
         self.sink
             .push_subscribe_batch(source, handler, meta, policies, workers);
     }
 
     /// Mounts a publishing definition whose reply publisher is a policy source, paired by the
-    /// runtime after connect. Decode uses the scope codec; the reply codec and transforms travel
-    /// on the source's typed stack.
-    pub(super) fn mount_publishing_source<S, D, Src, P, PC, PL>(
+    /// runtime after connect. Decode uses the scope codec; how the reply leaves (encoded
+    /// through a typed stack, or byte-for-byte through a bare publisher) is the source's live
+    /// form, per its [`ReplySink`] wiring.
+    pub(super) fn mount_publishing_source<Source, Def, ReplySource, OutExtra>(
         &mut self,
-        source: S,
-        def: D,
-        reply: Src,
+        source: Source,
+        def: Def,
+        reply: ReplySource,
+        extra: OutExtra,
     ) where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        <S::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        D: PublishingCall<State> + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Serialize + Send + Sync + 'static,
-        D::Context:
-            crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
-        Src: PublishPolicy<Connected<B>, Live = TypedPublisher<P, PC, PL>> + Send + 'static,
-        P: Publisher + 'static,
-        PC: Codec + 'static,
-        PL: PublishTransform<D::Context> + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Sync + Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
+        Def: PublishingCall<State> + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
+        Def::Injections: FromStartup<B, Source::Subscriber, OutExtra> + Send + Sync + 'static,
+        Def::Reply: Send + Sync + 'static,
+        Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
+            + Send
+            + Sync
+            + 'static,
+        ReplySource: PublishPolicy<Connected<B>> + Send + 'static,
+        ReplySource::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
+        OutExtra: Send + Sync + 'static,
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
-        Layers:
-            Layer<PublishingHandler<D, SC::Codec, P, PC, PL, Pipeline>> + Clone + Send + 'static,
+        Layers: Layer<PublishingHandler<Def, SC::Codec, ReplySource::Live, Pipeline>>
+            + Clone
+            + Send
+            + 'static,
         Layers::Handler:
-            Handler<<S::Subscriber as Subscriber>::Message, D::Context, State> + 'static,
+            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
         B::Connected: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
@@ -283,20 +309,28 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let codec = self.codec.scope_codec();
         let pipeline = self.pipeline.clone();
         let global = self.global.clone();
-        self.sink.push_paired_workers(
+        // The injected primitive: the reply source pairs against the connected broker and the
+        // startup injections resolve against the opened subscriber, both before the first
+        // delivery.
+        self.sink.push_injected_workers(
             source,
-            async move |connected: Arc<Connected<B>>| {
+            async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = reply
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(global.layer(PublishingHandler {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = global.layer(PublishingHandler {
                     def,
                     codec,
                     publisher,
                     pipeline,
+                    injections,
                     decode: policies.decode,
-                }))
+                });
+                Ok((subscriber, handler))
             },
             meta,
             policies,
@@ -304,53 +338,98 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         );
     }
 
-    /// Mounts an out definition: the handler's injected publisher comes from `out`, a policy
-    /// source paired by the runtime after connect. Decode uses the scope codec.
-    pub(super) fn mount_out_source<Source, Def, OutSource>(
+    /// Mounts an injected definition: its startup injections (an attached publish policy
+    /// pairing into an `Out` parameter, the subscription's own seeker for a `Seek` parameter)
+    /// resolve right after the subscription opens, before the first delivery, so the handler
+    /// holds live handles by construction. Decode uses the scope codec.
+    pub(super) fn mount_inject<Source, Def, Extra>(
         &mut self,
         source: Source,
         def: Def,
-        out: OutSource,
+        extra: Extra,
     ) where
-        // The subscription side, as in mount_publishing_source.
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source::Subscriber: Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        Def: OutCall<State> + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def: InjectCall<State> + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
         Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
             + Send
             + Sync
             + 'static,
-        Def::Out: Send + Sync + 'static,
-        // The injected publisher: the source pairs at startup into exactly the type the
-        // handler's Out parameter names.
-        OutSource: PublishPolicy<Connected<B>, Live = Def::Out> + Send + 'static,
+        Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
+        Extra: Send + Sync + 'static,
         SC: ScopeCodec,
         State: Send + Sync + 'static,
-        Layers: Layer<OutHandler<Def, SC::Codec, Def::Out>> + Clone + Send + 'static,
+        Layers: Layer<InjectHandler<Def, SC::Codec>> + Clone + Send + 'static,
         Layers::Handler:
             Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
         B::Connected: 'static,
     {
-        let meta = out_metadata(source.name().to_owned(), &def);
+        let meta = inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
         let codec = self.codec.scope_codec();
         let global = self.global.clone();
-        self.sink.push_paired_workers(
+        self.sink.push_injected_workers(
             source,
-            async move |connected: Arc<Connected<B>>| {
-                let live = out
-                    .pair(connected.as_ref())
+            async move |connected: Arc<Connected<B>>, subscriber| {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(global.layer(OutHandler {
+                let handler = global.layer(InjectHandler {
                     def,
                     codec,
-                    out: live,
+                    injections,
                     decode: policies.decode,
-                }))
+                });
+                Ok((subscriber, handler))
+            },
+            meta,
+            policies,
+            workers,
+        );
+    }
+
+    /// Mounts an injected batch definition on `source`: the subscription opens first, then the
+    /// injections resolve against it (pairing the attached publish policy, minting a seeker)
+    /// and the handler is built with them, so every injected handle is live by construction.
+    /// The batch counterpart of [`mount_inject`](Self::mount_inject); batch handlers are not
+    /// wrapped by the global stack (the documented middleware exception).
+    pub(super) fn mount_batch_inject<Source, Def, Extra>(
+        &mut self,
+        source: Source,
+        def: Def,
+        extra: Extra,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
+        <Source::Subscriber as Subscriber>::Message: Send + 'static,
+        Def: BatchInjectCall<State> + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
+        Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
+        Extra: Send + Sync + 'static,
+        SC: ScopeCodec,
+        State: Send + Sync + 'static,
+        B::Connected: 'static,
+    {
+        let meta = batch_inject_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let codec = self.codec.scope_codec();
+        self.sink.push_injected_batch(
+            source,
+            async move |connected: Arc<Connected<B>>, subscriber| {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = BatchInjectHandler {
+                    def,
+                    codec,
+                    injections,
+                    decode: policies.decode,
+                };
+                Ok((subscriber, handler))
             },
             meta,
             policies,
@@ -359,24 +438,28 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     }
 
     /// Mounts a batch publishing definition whose reply publisher is a policy source, paired by
-    /// the runtime after connect. Decode uses the scope codec.
-    pub(super) fn mount_batch_publishing_source<Source, Def, ReplySource, BatchReply>(
+    /// the runtime after connect; its startup injections resolve against the opened subscriber
+    /// in the same factory. Decode uses the scope codec.
+    pub(super) fn mount_batch_publishing_source<Source, Def, ReplySource, BatchReply, OutExtra>(
         &mut self,
         source: Source,
         def: Def,
         reply: ReplySource,
+        extra: OutExtra,
     ) where
         // The subscription side: batches open against the connected form.
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + 'static,
         Def: BatchPublishingCall<State> + 'static,
-        Def::Input: DeserializeOwned + Send + Sync + 'static,
+        Def::Input: DecodeWith<SC::Codec>,
+        Def::Injections: FromStartup<B, Source::Subscriber, OutExtra> + Send + Sync + 'static,
         Def::Reply: Serialize + Send + Sync + 'static,
         // The reply side: the source pairs at startup into a batch reply wiring (plain or
         // transactional).
         ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
         BatchReply: ReplyPublisher + 'static,
+        OutExtra: Send + Sync + 'static,
         SC: ScopeCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
@@ -387,20 +470,25 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let workers = def.workers();
         let codec = self.codec.scope_codec();
         let pipeline = self.pipeline.clone();
-        self.sink.push_paired_batch(
+        self.sink.push_injected_batch(
             source,
-            async move |connected: Arc<Connected<B>>| {
+            async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = reply
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(BatchPublishingHandler {
+                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = BatchPublishingHandler {
                     def,
                     codec,
                     publisher,
                     pipeline,
+                    injections,
                     decode: policies.decode,
-                })
+                };
+                Ok((subscriber, handler))
             },
             meta,
             policies,

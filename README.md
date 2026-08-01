@@ -58,7 +58,8 @@ block, so the guarantee cannot regress.
 - **Colored console logging** behind the `logging` feature; the generated CLI installs it on `run`,
   with verbosity driven by `RUST_LOG`.
 - **Capability traits** for optional features (batch subscribe, borrowed and owned transactions,
-  request-reply, partitioning); a broker implements only what it supports.
+  request-reply, partitioning, repositioning a live subscription in a replayable log); a broker
+  implements only what it supports.
 
 ## Install
 

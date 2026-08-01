@@ -1,5 +1,6 @@
-//! Typed handler adapter: turns a [`Handler<T>`](Handler) over a decoded value into a
-//! [`Handler<M>`](Handler) by decoding the message payload via a [`Codec`].
+//! Typed handler adapter: turns a handler over an input kind's borrowed target into a
+//! [`Handler<M>`](Handler) by materializing the input from each delivery via the input axis
+//! ([`InputKind`]).
 //!
 //! This is the decode boundary between the two middleware levels: raw (pre-decode) middleware
 //! wrap the produced `Handler<M>`; typed (post-decode) middleware wrap the `inner: Handler<T>`
@@ -16,36 +17,48 @@ use tracing::warn;
 use super::context::Context;
 use super::failure::FailurePolicy;
 use super::handler::{Handler, HandlerResult, Settle};
+use super::input::{DecodeWith, Decoded};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
 /// `inner`.
 ///
 /// `inner` is any [`Handler<T>`](Handler) - a closure `Fn(&T) -> _` or a typed middleware stack
-/// built with [`HandlerExt::with`](super::HandlerExt::with).
-pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, T, C, H>
+/// built with [`HandlerExt::with`](super::HandlerExt::with). The general form over any input
+/// kind (a raw `&[u8]` handler included) is [`Typed::over`].
+pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, Decoded<T>, C, H>
 where
     M: IncomingMessage,
-    T: DeserializeOwned + Send + Sync,
+    T: DeserializeOwned + Send + Sync + 'static,
     C: Codec,
 {
-    Typed {
-        codec,
-        inner,
-        decode: FailurePolicy::Drop,
-        _phantom: PhantomData,
-    }
+    Typed::over(codec, inner)
 }
 
-/// Handler produced by [`typed`]. Override the decode-failure policy with
-/// [`Typed::on_decode_failure`].
-pub struct Typed<M, T, C, H> {
-    codec: C,
-    inner: H,
+/// Handler produced by [`typed`] (or [`Typed::over`] for a non-decoding input kind). Override
+/// the decode-failure policy with [`Typed::on_decode_failure`].
+pub struct Typed<M, Input, DecodeCodec, Inner> {
+    codec: DecodeCodec,
+    inner: Inner,
     decode: FailurePolicy,
-    _phantom: PhantomData<fn(M, T)>,
+    _phantom: PhantomData<fn(M, Input)>,
 }
 
-impl<M, T, C, H> Typed<M, T, C, H> {
+impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
+    /// Builds the adapter for any input kind: [`Decoded<T>`] decodes with `codec`,
+    /// [`RawBytes`](super::RawBytes) ignores it (pass `()`) and lends the payload itself.
+    #[must_use]
+    pub fn over(codec: DecodeCodec, inner: Inner) -> Self
+    where
+        Input: DecodeWith<DecodeCodec>,
+    {
+        Self {
+            codec,
+            inner,
+            decode: FailurePolicy::Drop,
+            _phantom: PhantomData,
+        }
+    }
+
     /// Sets the [`FailurePolicy`] applied when the codec fails to decode an incoming payload. The
     /// default is [`FailurePolicy::Drop`].
     #[must_use]
@@ -55,7 +68,7 @@ impl<M, T, C, H> Typed<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H> fmt::Debug for Typed<M, T, C, H> {
+impl<M, Input, DecodeCodec, Inner> fmt::Debug for Typed<M, Input, DecodeCodec, Inner> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Typed")
             .field("decode", &self.decode)
@@ -63,23 +76,31 @@ impl<M, T, C, H> fmt::Debug for Typed<M, T, C, H> {
     }
 }
 
-impl<M, T, C, H, Cx, St> Handler<M, Cx, St> for Typed<M, T, C, H>
+impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
+    for Typed<M, Input, DecodeCodec, Inner>
 where
     M: IncomingMessage,
-    T: DeserializeOwned + Send + Sync,
-    C: Codec,
+    Input: DecodeWith<DecodeCodec>,
+    DecodeCodec: Send + Sync,
     Cx: Send,
     St: Send + Sync,
-    H: Handler<T, Cx, St>,
+    Inner: Handler<Input::Target, Cx, St>,
 {
     async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> Settle {
-        match self.codec.decode::<T>(msg.payload()) {
-            Ok(value) => self.inner.handle(&value, ctx).await,
+        // The decode product lives on this stack frame and the handler borrows its view, so the
+        // input path allocates nothing of its own (a raw input borrows the payload straight out
+        // of the broker's buffer).
+        match Input::decode(&self.codec, msg.payload()) {
+            Ok(owned) => {
+                self.inner
+                    .handle(Input::view(&owned, msg.payload()), ctx)
+                    .await
+            }
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",
                     subscription = %ctx.name(),
-                    message_type = std::any::type_name::<T>(),
+                    message_type = Input::input_label(),
                     error = %err,
                     "codec decode failed",
                 );
@@ -161,6 +182,38 @@ mod tests {
             HandlerResult::Ack
         );
         assert_eq!(seen.load(Ordering::SeqCst), 7);
+    }
+
+    #[tokio::test]
+    async fn raw_bytes_lend_the_payload_itself() {
+        use super::Typed;
+        use crate::runtime::input::RawBytes;
+
+        let seen = Arc::new(AtomicU32::new(0));
+        let inner = {
+            let seen = Arc::clone(&seen);
+            move |bytes: &[u8], _ctx: &mut Context| {
+                let seen = Arc::clone(&seen);
+                let len = u32::try_from(bytes.len()).unwrap();
+                async move {
+                    seen.store(len, Ordering::SeqCst);
+                    HandlerResult::Ack
+                }
+            }
+        };
+        // No codec anywhere: the raw kind decodes with `()`.
+        let handler = Typed::<StubMsg, RawBytes, (), _>::over((), inner);
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("frames", &headers, &state, (), &delivery);
+
+        let msg = StubMsg(b"not json at all".to_vec(), Headers::new());
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 15);
     }
 
     #[tokio::test]

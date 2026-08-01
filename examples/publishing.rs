@@ -70,6 +70,25 @@ async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult
 }
 // --8<-- [end:forward]
 
+// --8<-- [start:publish_out]
+// A reply form and an injected publisher in one handler: the reply answers on the fixed
+// destination while an audit copy fans out through the Out parameter.
+#[subscriber("gateway-requests", publish("gateway-responses"))]
+async fn gateway(req: &Request, Out(out): Out<MemoryPublisher>) -> Result<Response, HandlerResult> {
+    let audit = JsonCodec
+        .encode(&Event { id: req.id })
+        .expect("serializable");
+    if out
+        .publish(OutgoingMessage::new("gateway-audit", audit.as_ref()))
+        .await
+        .is_err()
+    {
+        return Err(HandlerResult::retry());
+    }
+    Ok(Response { ok: true })
+}
+// --8<-- [end:publish_out]
+
 // --8<-- [start:static_transform]
 /// A static, per-publisher transform: stamps an envelope header on every outgoing message.
 struct EnvelopeTransform;
@@ -156,6 +175,11 @@ fn app() -> impl App {
             // --8<-- [start:forward_mount]
             b.include(forward).publisher(MemoryPublish);
             // --8<-- [end:forward_mount]
+            // --8<-- [start:publish_out_mount]
+            // the reply keeps .publisher(..) (or its default); the Out parameter attaches
+            // with .out(..)
+            b.include(gateway).out(MemoryPublish);
+            // --8<-- [end:publish_out_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes

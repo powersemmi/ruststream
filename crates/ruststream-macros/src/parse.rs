@@ -6,16 +6,16 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, Ident, Lit, LitStr,
-    Meta, Path, Token, Type, TypePath, parenthesized,
+    Attribute, Error, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, Ident, Lit,
+    LitStr, Meta, Path, Token, Type, TypePath, parenthesized,
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
 /// descriptor constructor `Type::new(..)` / `Type { .. }`), optionally wrapped in `batch(..)`
 /// to consume whole batches, plus optional `publish("topic")` (the encoded reply destination),
 /// `publish_raw("topic")` (the reply is published as raw bytes), `workers(n[, by_key])` (the
-/// dispatch concurrency), and `raw` (the handler takes the payload bytes, undecoded) clauses,
-/// in any order.
+/// dispatch concurrency), `start_at(<position>)` (the subscription opens at that position),
+/// and `raw` (the handler takes the payload bytes, undecoded) clauses, in any order.
 pub(crate) struct SubscriberArgs {
     pub(crate) source: Expr,
     pub(crate) batch: bool,
@@ -24,6 +24,9 @@ pub(crate) struct SubscriberArgs {
     pub(crate) publish_raw: Option<LitStr>,
     pub(crate) workers: Option<WorkersArg>,
     pub(crate) on_failure: Option<FailureArg>,
+    /// The `start_at(<position>)` clause: a broker position constructor the subscription is
+    /// sought to before the first delivery.
+    pub(crate) start_at: Option<Expr>,
     /// The `raw` flag keyword, kept as the parsed [`Ident`] so combination errors can point at it.
     pub(crate) raw: Option<Ident>,
 }
@@ -62,7 +65,7 @@ impl Parse for FailurePolicyArg {
                 parenthesized!(content in input);
                 Ok(Self::RetryAfter(content.parse()?))
             }
-            _ => Err(syn::Error::new(
+            _ => Err(Error::new(
                 ident.span(),
                 "expected `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, or `skip`",
             )),
@@ -80,7 +83,7 @@ impl Parse for FailureArg {
             let value: FailurePolicyArg = input.parse()?;
             if key == "panic" {
                 if panic.is_some() {
-                    return Err(syn::Error::new(
+                    return Err(Error::new(
                         key.span(),
                         "duplicate `panic` in on_failure(..)",
                     ));
@@ -88,14 +91,14 @@ impl Parse for FailureArg {
                 panic = Some(value);
             } else if key == "decode" {
                 if decode.is_some() {
-                    return Err(syn::Error::new(
+                    return Err(Error::new(
                         key.span(),
                         "duplicate `decode` in on_failure(..)",
                     ));
                 }
                 decode = Some(value);
             } else {
-                return Err(syn::Error::new(
+                return Err(Error::new(
                     key.span(),
                     "expected `panic = ..` or `decode = ..`",
                 ));
@@ -107,7 +110,7 @@ impl Parse for FailureArg {
             }
         }
         if panic.is_none() && decode.is_none() {
-            return Err(syn::Error::new(
+            return Err(Error::new(
                 input.span(),
                 "on_failure(..) needs at least one of `panic = ..` or `decode = ..`",
             ));
@@ -130,7 +133,7 @@ impl Parse for SubscriberArgs {
             {
                 if path.is_ident("batch") {
                     if call.args.len() != 1 {
-                        return Err(syn::Error::new_spanned(
+                        return Err(Error::new_spanned(
                             call,
                             "batch(..) takes exactly one source argument",
                         ));
@@ -144,61 +147,64 @@ impl Parse for SubscriberArgs {
         let mut publish_raw = None;
         let mut workers = None;
         let mut on_failure = None;
+        let mut start_at = None;
         let mut raw = None;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let keyword: Ident = input.parse()?;
             if keyword == "raw" {
                 if raw.is_some() {
-                    return Err(syn::Error::new(keyword.span(), "duplicate `raw`"));
+                    return Err(Error::new(keyword.span(), "duplicate `raw`"));
                 }
                 raw = Some(keyword);
             } else if keyword == "on_failure" {
                 if on_failure.is_some() {
-                    return Err(syn::Error::new(keyword.span(), "duplicate on_failure(..)"));
+                    return Err(Error::new(keyword.span(), "duplicate on_failure(..)"));
                 }
                 let content;
                 parenthesized!(content in input);
                 on_failure = Some(content.parse()?);
             } else if keyword == "publish" {
                 if publish.is_some() {
-                    return Err(syn::Error::new(keyword.span(), "duplicate publish(..)"));
+                    return Err(Error::new(keyword.span(), "duplicate publish(..)"));
                 }
                 let content;
                 parenthesized!(content in input);
                 publish = Some(content.parse()?);
             } else if keyword == "publish_raw" {
                 if publish_raw.is_some() {
-                    return Err(syn::Error::new(keyword.span(), "duplicate publish_raw(..)"));
+                    return Err(Error::new(keyword.span(), "duplicate publish_raw(..)"));
                 }
                 let content;
                 parenthesized!(content in input);
                 publish_raw = Some(content.parse()?);
-            } else if keyword == "workers" {
-                if workers.is_some() {
-                    return Err(syn::Error::new(keyword.span(), "duplicate workers(..)"));
+            } else if keyword == "start_at" {
+                if start_at.is_some() {
+                    return Err(Error::new(keyword.span(), "duplicate start_at(..)"));
                 }
                 let content;
                 parenthesized!(content in input);
-                let count: syn::LitInt = content.parse()?;
-                let mut by_key = None;
-                if content.peek(Token![,]) {
-                    content.parse::<Token![,]>()?;
-                    let marker: Ident = content.parse()?;
-                    if marker != "by_key" {
-                        return Err(syn::Error::new(
-                            marker.span(),
-                            "expected `by_key`: workers(n) or workers(n, by_key)",
-                        ));
-                    }
-                    by_key = Some(marker);
+                if content.is_empty() {
+                    return Err(Error::new(
+                        keyword.span(),
+                        "start_at(..) needs a position constructor; without the clause the \
+                         subscription simply opens at the broker's default",
+                    ));
                 }
-                workers = Some(WorkersArg { count, by_key });
+                start_at = Some(content.parse()?);
+            } else if keyword == "workers" {
+                if workers.is_some() {
+                    return Err(Error::new(keyword.span(), "duplicate workers(..)"));
+                }
+                let content;
+                parenthesized!(content in input);
+                workers = Some(parse_workers(&content)?);
             } else {
-                return Err(syn::Error::new(
+                return Err(Error::new(
                     keyword.span(),
                     "expected `publish(\"reply-topic\")`, `publish_raw(\"reply-topic\")`, \
-                     `workers(n[, by_key])`, `on_failure(panic = .., decode = ..)`, or `raw`",
+                     `workers(n[, by_key])`, `on_failure(panic = .., decode = ..)`, \
+                     `start_at(<position>)`, or `raw`",
                 ));
             }
         }
@@ -209,9 +215,28 @@ impl Parse for SubscriberArgs {
             publish_raw,
             workers,
             on_failure,
+            start_at,
             raw,
         })
     }
+}
+
+/// Parses the inside of a `workers(..)` clause: the count, optionally followed by `by_key`.
+fn parse_workers(content: ParseStream) -> syn::Result<WorkersArg> {
+    let count: syn::LitInt = content.parse()?;
+    let mut by_key = None;
+    if content.peek(Token![,]) {
+        content.parse::<Token![,]>()?;
+        let marker: Ident = content.parse()?;
+        if marker != "by_key" {
+            return Err(Error::new(
+                marker.span(),
+                "expected `by_key`: workers(n) or workers(n, by_key)",
+            ));
+        }
+        by_key = Some(marker);
+    }
+    Ok(WorkersArg { count, by_key })
 }
 
 /// Derives the subscription `Source` type and a constructor expression from the macro argument.
@@ -236,6 +261,19 @@ pub(crate) fn source_tokens(expr: &Expr) -> syn::Result<(TokenStream2, TokenStre
 
     let ty = source_type(expr)?;
     Ok((quote!(#ty), quote!(#expr)))
+}
+
+/// Derives the position type from a `start_at(..)` argument, the same way [`source_tokens`]
+/// recovers the source type: the constructor path (`MemoryPosition::start()`,
+/// `KafkaPosition::latest()`, a builder chain on one) names the type.
+pub(crate) fn position_type(expr: &Expr) -> syn::Result<Type> {
+    source_type(expr).map_err(|_| {
+        Error::new_spanned(
+            expr,
+            "expected a position constructor `Type::latest()` / `Type::new(..)` / `Type { .. }`, \
+             or a builder chain on one - a free function does not expose its type to the macro",
+        )
+    })
 }
 
 /// Recovers the source type from a constructor expression, following a builder chain's receivers
@@ -264,7 +302,7 @@ fn source_type(expr: &Expr) -> syn::Result<Type> {
 fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
     let n = path.segments.len();
     if n < 2 {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             path,
             "expected `Type::new(..)`: the path must name a type and an associated constructor",
         ));
@@ -338,8 +376,8 @@ pub(crate) fn vec_element(ty: &Type) -> Option<&Type> {
     Some(elem)
 }
 
-fn unsupported_source(expr: &Expr) -> syn::Error {
-    syn::Error::new_spanned(
+fn unsupported_source(expr: &Expr) -> Error {
+    Error::new_spanned(
         expr,
         "expected a string literal name, `Type::new(..)`, `Type { .. }`, or a builder chain on \
          one of those - a free function does not expose its type to the macro",

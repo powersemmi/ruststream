@@ -29,7 +29,7 @@ Two architectural commitments shape the framework:
   top in the runtime.
 - **Ack consumes `self`.** You cannot ack twice - the compiler enforces it.
 - **Capability traits for optional features** (`BatchSubscriber`, `TransactionalPublisher`,
-  `RequestReply`, `Partitioned`) - never forced into the mandatory interface.
+  `RequestReply`, `Partitioned`, `Seekable`) - never forced into the mandatory interface.
 
 ## Where to go next
 

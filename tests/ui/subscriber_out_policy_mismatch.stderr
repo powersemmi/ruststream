@@ -1,0 +1,18 @@
+error[E0271]: type mismatch resolving `<MemoryPublish as PublishPolicy<ConnectedMemoryBroker>>::Live == ForeignPublisher`
+  --> tests/ui/subscriber_out_policy_mismatch.rs:22:38
+   |
+22 |         b.include(forward).publisher(MemoryPublish);
+   |                            --------- ^^^^^^^^^^^^^ expected `ForeignPublisher`, found `MemoryPublisher`
+   |                            |
+   |                            required by a bound introduced by this call
+   |
+   = note: required for `(ruststream::runtime::Out<ForeignPublisher>,)` to implement `FromStartup<MemoryBroker, MemorySubscriber, MemoryPublish>`
+   = note: required for `runtime::app::include::WithSource<MemoryPublish>` to implement `runtime::app::include::CommitVia<runtime::app::include::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, forward>`
+note: required by a bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, Attachment>::publisher`
+  --> src/runtime/app/include.rs
+   |
+   |     pub fn publisher<NewSource>(
+   |            --------- required by a bound in this associated function
+...
+   |         WithSource<NewSource>: CommitVia<Mount, B, Layers, C, State, Pipeline, Def>,
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, Attachment>::publisher`

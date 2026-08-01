@@ -92,6 +92,32 @@ use parse::{SubscriberArgs, doc_description};
 /// sequential lanes keyed by the message's partition key, preserving per-key ordering
 /// (single-message forms only). The default is the sequential loop.
 ///
+/// An `Out(out): Out<P>` parameter injects a live publisher, paired at startup from the
+/// source attached at the include site (`b.include(f).publisher(..)`); a
+/// `Seek(seeker): Seek<K>` parameter injects the subscription's own seeker, minted right
+/// after the subscription opens (the source's subscriber must implement the `Seekable`
+/// capability). The two combine freely in one handler: with each other, with `raw`, with
+/// `batch(..)`, and with every reply form (`publish(..)`, `publish_raw(..)`, and the batch
+/// publishing form). An `Out` parameter's attachment is required at the include site:
+/// `.publisher(..)` on the plain and batch forms, `.out(..)` on the reply forms (where
+/// `.publisher(..)` stays the reply's own attachment).
+///
+/// A `start_at(<position>)` clause opens the subscription at that position instead of the
+/// broker's default, seeking before the first delivery ("start from the latest on deploy",
+/// "replay the whole log"). The position is the broker's own type, named by its constructor
+/// (`MemoryPosition::start()`, a Kafka-style `latest()`); the source's subscriber must
+/// implement the `Seekable` capability, so the clause does not compile against a broker
+/// without a replayable log. The position is forced on every startup; without the clause the
+/// subscription simply opens at the broker's default, and conditional defaults stay on the
+/// broker's own subscription descriptor.
+///
+/// ```ignore
+/// // Opens at the start of the log: entries published before the service started are
+/// // replayed into the fresh subscription.
+/// #[subscriber("audit", start_at(MemoryPosition::start()))]
+/// async fn record(entry: &Entry) -> HandlerResult { /* ... */ }
+/// ```
+///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
 /// `&mut Context`, to read app state or publish manually. Any further parameter is an extractor: its
 /// type must implement

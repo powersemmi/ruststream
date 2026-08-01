@@ -13,17 +13,23 @@
 //! Every capability trait has a native implementation here, as a first-class feature of the
 //! broker's own in-process semantics (not a simulation of someone else's): request / reply via
 //! [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
-//! [`MemoryPublisher`], and partition keys on [`MemoryMessage`].
+//! [`MemoryPublisher`], partition keys on [`MemoryMessage`], and log repositioning through
+//! [`MemorySeeker`] over the per-name publish log.
 
 mod capability;
 
-pub use capability::{MemoryRequester, MemoryTransaction, PARTITION_KEY_HEADER, RequestError};
+use capability::SeekControl;
+pub use capability::{
+    MemoryPosition, MemoryRequester, MemorySeeker, MemoryTransaction, PARTITION_KEY_HEADER,
+    RequestError,
+};
 
 use std::{
     collections::HashMap,
     convert::Infallible,
     fmt,
     sync::{Arc, Mutex, OnceLock, atomic::AtomicU64},
+    task::Poll,
     time::Duration,
 };
 
@@ -42,11 +48,26 @@ use tokio::time::sleep;
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
+/// A message before it reaches the bus: what publishers construct and transactions buffer.
+///
+/// Distinct from [`MemoryDelivery`] so an unstamped message cannot be enqueued to a
+/// subscriber: only [`MemoryState::fanout`] turns an outbound into a delivery, by assigning
+/// its position in the per-name publish log.
+#[derive(Clone)]
+struct MemoryOutbound {
+    name: String,
+    payload: Bytes,
+    headers: Headers,
+}
+
 #[derive(Clone)]
 struct MemoryDelivery {
     name: String,
     payload: Bytes,
     headers: Headers,
+    /// Zero-based index of this message in its name's publish log. Stable across requeues, so
+    /// a redelivered message reports the same [`MemoryPosition`].
+    seq: usize,
 }
 
 /// The subscriber bus: alive with its registrations, or terminally shut down.
@@ -111,16 +132,21 @@ impl MemoryState {
         }
     }
 
-    /// Fans `delivery` out to the live bus.
+    /// Stamps `outbound` with its log position and fans it out to the live bus.
+    ///
+    /// Both locks are held across the log append and the sends (subscribers first, then
+    /// published, the order `apply_pending_seek` uses too): a concurrent seek must never
+    /// observe a message queued at a subscriber but absent from the log, or the reverse -
+    /// either would lose or duplicate the message across a replay.
     ///
     /// # Errors
     ///
     /// Returns [`MemoryError::ShutDown`] against a shut-down bus: nothing is delivered and
     /// nothing is recorded in the published log.
-    // significant_drop_tightening misfires here: `subscribers` borrows the guard, which already
-    // drops at the end of its minimal block right after the last use.
+    // significant_drop_tightening misfires here: both guards drop at the end of the minimal
+    // block right after their last use.
     #[allow(clippy::significant_drop_tightening)]
-    fn fanout(&self, delivery: &MemoryDelivery) -> Result<(), MemoryError> {
+    fn fanout(&self, outbound: &MemoryOutbound) -> Result<(), MemoryError> {
         {
             let bus = self
                 .subscribers
@@ -129,13 +155,19 @@ impl MemoryState {
             let Bus::Live(subscribers) = &*bus else {
                 return Err(MemoryError::ShutDown);
             };
-            self.send_to(subscribers, delivery);
-        }
-        let snapshot = RawMessage::new(delivery.name.clone(), delivery.payload.clone())
-            .with_headers(delivery.headers.clone());
-        {
             let mut log = self.published.lock().expect("memory broker mutex poisoned");
-            log.entry(delivery.name.clone()).or_default().push(snapshot);
+            let entries = log.entry(outbound.name.clone()).or_default();
+            let delivery = MemoryDelivery {
+                name: outbound.name.clone(),
+                payload: outbound.payload.clone(),
+                headers: outbound.headers.clone(),
+                seq: entries.len(),
+            };
+            entries.push(
+                RawMessage::new(outbound.name.clone(), outbound.payload.clone())
+                    .with_headers(outbound.headers.clone()),
+            );
+            self.send_to(subscribers, &delivery);
         }
         self.notify.notify_waiters();
         Ok(())
@@ -189,7 +221,9 @@ impl MemoryBroker {
     }
 
     /// Opens a subscription to `name`. The returned subscriber starts receiving messages
-    /// published after this call; messages published earlier are not buffered.
+    /// published after this call; messages published earlier are not delivered by default,
+    /// though the [`Seekable`](crate::Seekable) capability can replay them from the publish
+    /// log.
     ///
     /// On a shut-down broker the registration is refused and the subscriber simply never
     /// receives anything, matching this constructor's infallible signature; the
@@ -204,6 +238,8 @@ impl MemoryBroker {
             rx,
             requeue: tx,
             batch_limit: DEFAULT_BATCH_LIMIT,
+            state: Arc::clone(&self.state),
+            seek: Arc::new(SeekControl::default()),
             #[cfg(feature = "testing")]
             coordinator: self.state.coordinator(),
         }
@@ -423,7 +459,7 @@ impl crate::testing::TestableBroker for ConnectedMemoryBroker {
         // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
-            .fanout(&MemoryDelivery {
+            .fanout(&MemoryOutbound {
                 name: message.name().to_owned(),
                 payload: Bytes::copy_from_slice(message.payload()),
                 headers: message.headers().clone(),
@@ -458,6 +494,8 @@ impl Subscribe for ConnectedMemoryBroker {
             rx,
             requeue: tx,
             batch_limit: DEFAULT_BATCH_LIMIT,
+            state: Arc::clone(&self.state),
+            seek: Arc::new(SeekControl::default()),
             #[cfg(feature = "testing")]
             coordinator: self.state.coordinator(),
         })
@@ -507,12 +545,19 @@ const DEFAULT_BATCH_LIMIT: usize = 64;
 ///
 /// Also consumable in batches through the
 /// [`BatchSubscriber`](crate::BatchSubscriber) capability; see
-/// [`set_batch_limit`](Self::set_batch_limit) for the batch size cap.
+/// [`set_batch_limit`](Self::set_batch_limit) for the batch size cap. Repositionable over the
+/// publish log through the [`Seekable`](crate::Seekable) capability: mint a [`MemorySeeker`]
+/// with [`seeker`](crate::Seekable::seeker) before opening the stream.
 pub struct MemorySubscriber {
     name: String,
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
     batch_limit: usize,
+    /// Bus state, kept so a seek can read the publish log and check liveness.
+    state: Arc<MemoryState>,
+    /// Shared with every [`MemorySeeker`] minted off this subscriber: the pending reposition,
+    /// the stale-delivery watermark, and the waker that rouses a parked stream.
+    seek: Arc<SeekControl>,
     /// A clone of the broker's harness coordinator, threaded into each yielded message so a requeue
     /// re-counts and a consumed delivery decrements. `None` outside a harness run.
     #[cfg(feature = "testing")]
@@ -548,16 +593,33 @@ impl Subscriber for MemorySubscriber {
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| {
-            self.rx.poll_recv(cx).map(|next| {
-                next.map(|delivery| {
-                    Ok(MemoryMessage {
-                        delivery: Some(delivery),
-                        requeue: requeue.clone(),
-                        #[cfg(feature = "testing")]
-                        coordinator: coordinator.clone(),
-                    })
-                })
-            })
+            // Register before reading the pending seek: a seek landing between the read and the
+            // park then still finds a waker to rouse.
+            self.seek.waker.register(cx.waker());
+            self.apply_pending_seek();
+            loop {
+                match self.rx.poll_recv(cx) {
+                    Poll::Ready(Some(delivery)) => {
+                        // A stale pre-seek copy (a requeue that raced the seek): drop it, the
+                        // replay already covers everything from the watermark on.
+                        if delivery.seq < self.seek.watermark() {
+                            #[cfg(feature = "testing")]
+                            if let Some(coordinator) = &coordinator {
+                                coordinator.consumed();
+                            }
+                            continue;
+                        }
+                        return Poll::Ready(Some(Ok(MemoryMessage {
+                            delivery: Some(delivery),
+                            requeue: requeue.clone(),
+                            #[cfg(feature = "testing")]
+                            coordinator: coordinator.clone(),
+                        })));
+                    }
+                    Poll::Ready(None) => return Poll::Ready(None),
+                    Poll::Pending => return Poll::Pending,
+                }
+            }
         })
     }
 }
@@ -570,7 +632,7 @@ impl Subscriber for MemorySubscriber {
 pub struct MemoryPublisher {
     state: Arc<MemoryState>,
     // Active transaction buffer of this handle. `None` outside a transaction.
-    txn: Mutex<Option<Vec<MemoryDelivery>>>,
+    txn: Mutex<Option<Vec<MemoryOutbound>>>,
 }
 
 impl Clone for MemoryPublisher {
@@ -618,7 +680,7 @@ impl Publisher for MemoryPublisher {
     type Error = MemoryError;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        let delivery = MemoryDelivery {
+        let outbound = MemoryOutbound {
             name: msg.name().to_owned(),
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
@@ -628,11 +690,11 @@ impl Publisher for MemoryPublisher {
             if let Some(buffered) = txn.as_mut() {
                 // Buffering is local to this handle and never touches the bus; a commit against
                 // a shut-down bus is what reports the error.
-                buffered.push(delivery);
+                buffered.push(outbound);
                 return Ok(());
             }
         }
-        self.state.fanout(&delivery)
+        self.state.fanout(&outbound)
     }
 }
 

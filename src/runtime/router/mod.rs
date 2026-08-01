@@ -71,8 +71,15 @@ type BatchPublishingRouter<B, S, D, C, RP, RC, RL, R> =
 
 /// The router that a [`Router::subscribe_batch`] closure registration produces: the slice
 /// handler `H` is wrapped in a [`TypedBatch`] decoding elements to `T` with `C`.
-type SubscribedBatchRouter<B, S, T, C, H, RC, RL, R> =
-    Router<B, (BatchRoute<S, TypedBatch<SourceMessage<B, S>, T, C, H>>, R), RC, RL>;
+type SubscribedBatchRouter<B, S, T, C, H, RC, RL, R> = Router<
+    B,
+    (
+        BatchRoute<S, TypedBatch<SourceMessage<B, S>, crate::runtime::Decoded<T>, C, H>>,
+        R,
+    ),
+    RC,
+    RL,
+>;
 
 /// The router that [`Router::merge`] produces: the merged router becomes one registration in the
 /// list.

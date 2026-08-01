@@ -45,6 +45,10 @@ name = "subscribers"
 required-features = ["macros", "memory", "json"]
 
 [[example]]
+name = "seek"
+required-features = ["macros", "memory", "json"]
+
+[[example]]
 name = "publishing"
 required-features = ["macros", "memory", "json"]
 
@@ -125,6 +129,10 @@ required-features = ["testing", "macros", "memory", "json"]
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
+
+[[test]]
+name = "seek_api"
+required-features = ["testing", "macros", "memory", "json"]
 
 [[test]]
 name = "asyncapi"

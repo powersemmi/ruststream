@@ -523,10 +523,11 @@ impl RequestReply for NatsPublisher {
 }
 ```
 
-Implement only the capabilities the transport supports: Core NATS has no batch subscribe or
-transactional publish, so `BatchSubscriber` and `TransactionalPublisher` are left out.
-`ruststream-nats` also does not currently implement `DescribeServer`; add it if you want the broker
-reported as a server in the AsyncAPI document.
+Implement only the capabilities the transport supports: Core NATS has no batch subscribe,
+transactional publish, or replayable log, so `BatchSubscriber`, `TransactionalPublisher`, and
+`Seekable` are left out (a JetStream consumer, whose stream is a replayable log, is where a NATS
+`Seekable` would live). `ruststream-nats` also does not currently implement `DescribeServer`; add
+it if you want the broker reported as a server in the AsyncAPI document.
 
 ## The publish policy
 

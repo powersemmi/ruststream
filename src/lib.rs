@@ -56,8 +56,8 @@ pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, OwnedTransactions,
-    Partitioned, RequestReply, SecurityScheme, ServerSpec, Subscribe, Transaction,
-    TransactionalPublisher,
+    Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker, ServerSpec, Subscribe,
+    Transaction, TransactionalPublisher,
 };
 pub use error::AckError;
 pub use field::{BuildContext, ContextField, Field, FieldMut};
@@ -66,7 +66,9 @@ pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::Message;
 pub use subscriber::Subscriber;
-pub use subscription::{Name, SubscriptionSource};
+pub use subscription::{
+    Name, SeekerPendingError, SeekerToken, StartAt, SubscriptionSource, WithSeeker,
+};
 
 pub mod codec;
 

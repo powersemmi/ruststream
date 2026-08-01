@@ -238,6 +238,63 @@ way it does for a single-message nack (the crate of that broker documents it). R
 vector whose length does not match the batch is a bug in the handler: the unmatched remainder is
 retried (an extra redelivery beats a silently lost message) and the mismatch is logged.
 
+## Seeking
+
+Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory broker's
+publish log) implement the `Seekable` capability: a live subscription can be moved to another
+position - replaying a stream after fixing a handler bug, reprocessing from a known point, or
+skipping forward past a poison region - without dropping the subscription. Brokers without a
+replayable log simply do not implement it, and the mount below fails to compile against them
+instead of failing at runtime.
+
+A handler repositions its own subscription through a `Seek` parameter. The runtime mints the
+seeker off the subscription right after it opens, so the handler always holds a live handle;
+nothing is attached at the include site:
+
+```rust
+--8<-- "examples/seek.rs:handler"
+```
+
+```rust
+--8<-- "examples/seek.rs:mount"
+```
+
+A seek from inside the handler settles the current message as usual; deliveries queued before
+the target are dropped, and the stream resumes at the target position. The parameter composes
+with the rest of the subscriber surface: with an injected publisher (`Out`) in the same
+handler, with a `raw` input, with `batch(..)` handlers, and with the `publish(..)` /
+`publish_raw(..)` reply forms - a `Seek` parameter itself never needs an attachment at the
+include site, so those mounts read exactly as without it.
+
+Positions are broker-owned types (`MemoryPosition` here; a Kafka position carries partition
+offsets, a Redis position an entry id) and come from two places with different guarantees: a
+position captured from a delivered message (the `Positioned` capability on the message) carries
+a pinned contract - seeking to it redelivers exactly that message, then the rest of the log in
+order - while a position built with the broker's own constructors (earliest, a sequence number,
+a timestamp) keeps the semantics that broker documents.
+
+### Starting position
+
+A subscription can also open at a chosen position instead of the broker's default: the
+`start_at(<position>)` clause seeks before the first delivery, so "start from the latest on
+deploy" or "replay the whole log into a fresh subscription" is part of the subscriber's
+declaration, not an operational action afterwards:
+
+```rust
+--8<-- "examples/seek.rs:start_at"
+```
+
+The clause forces the position on every startup; without it the subscription simply opens at
+the broker's default. A conditional default - apply only when the broker holds no stored
+cursor for the group (Kafka's offset reset, a JetStream deliver policy) - stays on the
+broker's own subscription descriptor, which expresses it natively.
+
+What one seek covers differs per broker - repositioning a consumer instance (Kafka) moves that
+instance only, repositioning a shared group cursor (Redis streams) moves the whole group - and a
+reposition invalidates any ack bookkeeping the broker keeps for the subscription; the broker
+crate documents both. Broker authors prove the contract with the
+[`capabilities::seeking` conformance suite](../broker-authors/conformance.md#capability-suites).
+
 ## Raw subscribers
 
 When the payload is not a serialized value at all (a binary frame, a foreign wire format you
@@ -249,9 +306,9 @@ each delivery's bytes exactly as the broker handed them over.
 ```
 
 The message parameter must be `&[u8]` - a serde-typed parameter under `raw` is a compile error,
-as is `raw` combined with `batch(..)`, an injected `Out` publisher, or an
-`on_failure(decode = ..)` policy (there is no decode step to fail). Extractors, `&mut Context`,
-`workers(..)`, and `on_failure(panic = ..)` work unchanged, and a raw subscriber mounts with the
+as is `raw` combined with `batch(..)` or an `on_failure(decode = ..)` policy (there is no
+decode step to fail). Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
+the injected `Out` / `Seek` parameters work unchanged, and a raw subscriber mounts with the
 same `include` as every other definition - a scope codec, when one is set, simply does not apply
 to it. Because no codec is involved, raw subscribers are also the one subscriber form available
 with no codec feature enabled at all. For a custom serialization format you want *typed*
