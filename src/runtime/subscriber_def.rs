@@ -6,29 +6,33 @@ use super::failure::FailurePolicies;
 // Kept in scope for the `[`Handler`]` intra-doc links; the trait no longer bounds `type Handler`.
 #[allow(unused_imports)]
 use super::handler::Handler;
+use super::input::InputKind;
 use super::metadata::HandlerMetadata;
 
-/// A handler definition produced by the `#[subscriber]` macro.
+/// A handler definition produced by the `#[subscriber]` macro (with or without `raw`).
 ///
-/// It bundles a typed [`Handler`] with the subscription [`Source`](Self::Source) it binds to, so
+/// It bundles a [`Handler`] with the subscription [`Source`](Self::Source) it binds to, so
 /// [`BrokerScope::include`](super::BrokerScope::include) can subscribe and wire decoding without the
 /// caller repeating anything. The source is a [`Name`](crate::Name) for `#[subscriber("topic")]`, or
 /// a broker descriptor for `#[subscriber(RedisStream::new(..))]`. The generated type is itself the
 /// handler, so [`Handler`](Self::Handler) is usually `Self`.
 pub trait SubscriberDef: Sized {
-    /// The decoded message type the handler consumes.
-    type Input;
+    /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`
+    /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
+    type Input: InputKind;
 
     /// The broker's typed per-delivery context the handler reads by key (`()` when the handler
     /// names no context type).
     type Context;
 
-    /// The concrete handler type over [`Input`](Self::Input) and [`Context`](Self::Context).
+    /// The concrete handler type over the input's borrowed target (`Handler<T>` for a
+    /// `Decoded<T>` input, `Handler<[u8]>` for a raw one) and [`Context`](Self::Context).
     ///
     /// The handler bound is enforced where the def is mounted (against the app's state type `St`),
     /// not on the trait: a handler that reads typed application state is
-    /// [`Handler<Input, Context, St>`](Handler) only for its declared `St`, while one that ignores
-    /// state is generic over it. Pinning a single state type here would reject both shapes.
+    /// [`Handler<Target, Context, St>`](Handler) only for its declared `St`, while one that
+    /// ignores state is generic over it. Pinning a single state type here would reject both
+    /// shapes.
     type Handler;
 
     /// The subscription source this handler binds to. The bound to
@@ -81,19 +85,13 @@ pub trait SubscriberDef: Sized {
 
 /// Builds the registration metadata for a subscriber definition mounted under `name`.
 pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::typed::<D::Input>(name);
-    if let Some(description) = def.description() {
-        meta = meta.with_description(description.to_owned());
-    }
-    if let Some(schema) = def.input_schema() {
-        meta = meta.with_payload_schema(schema);
-    }
-    if let Some(message_name) = def.message_name() {
-        meta = meta.with_message_name(message_name);
-    }
-    if let Some(message_description) = def.message_description() {
-        meta = meta.with_message_description(message_description);
-    }
+    let mut meta = HandlerMetadata::raw(name).with_def_details(
+        def.description(),
+        def.input_schema(),
+        def.message_name(),
+        def.message_description(),
+    );
+    meta.input_type = <D::Input as InputKind>::input_label();
     meta
 }
 
@@ -105,6 +103,7 @@ mod tests {
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
     use crate::runtime::handler::{Handler, HandlerResult, Settle};
+    use crate::runtime::input::{Decoded, RawBytes};
 
     struct Noop;
 
@@ -119,7 +118,7 @@ mod tests {
     struct ManualDef;
 
     impl SubscriberDef for ManualDef {
-        type Input = u32;
+        type Input = Decoded<u32>;
         type Context = ();
         type Handler = Noop;
         type Source = Name;
@@ -131,6 +130,32 @@ mod tests {
         fn into_handler(self) -> Noop {
             Noop
         }
+    }
+
+    /// A raw def: the same trait with the byte input kind; pins the "bytes" metadata label.
+    struct ManualRawDef;
+
+    impl SubscriberDef for ManualRawDef {
+        type Input = RawBytes;
+        type Context = ();
+        type Handler = ();
+        type Source = Name;
+
+        fn source(&self) -> Name {
+            Name::new("frames")
+        }
+
+        fn into_handler(self) {}
+    }
+
+    #[test]
+    fn a_raw_def_reports_the_bytes_label() {
+        let def = ManualRawDef;
+        let meta = subscriber_metadata("frames".to_owned(), &def);
+        assert_eq!(meta.name, "frames");
+        assert_eq!(meta.input_type, "bytes");
+        assert!(meta.payload_schema.is_none());
+        def.into_handler();
     }
 
     #[tokio::test]

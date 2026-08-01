@@ -200,103 +200,10 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.handlers.push(meta);
     }
 
-    /// Erases a source plus an async handler factory into a starter under the `workers` policy.
-    ///
-    /// The factory runs at startup against the connected broker, for mounts whose handler can
-    /// only exist then (pairing a publisher source first); the subscription, failure wiring and
-    /// dispatch spawn stay here so every paired mount shares one shape.
-    pub(crate) fn push_paired_workers<Source, MakeHandler, HandlerFut, NewHandler, HandlerCx>(
-        &mut self,
-        source: Source,
-        make_handler: MakeHandler,
-        meta: HandlerMetadata,
-        policies: FailurePolicies,
-        workers: Workers,
-    ) where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
-        SourceMessage<B, Source>: Send + Sync + 'static,
-        MakeHandler: FnOnce(Arc<Connected<B>>) -> HandlerFut + Send + 'static,
-        HandlerFut: Future<Output = Result<NewHandler, BoxError>> + Send,
-        HandlerCx: crate::BuildContext<SourceMessage<B, Source>> + Send + 'static,
-        NewHandler: Handler<SourceMessage<B, Source>, HandlerCx, State> + 'static,
-    {
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let handler = make_handler(Arc::clone(&connected)).await?;
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    ))
-                })
-            },
-        ));
-        self.handlers.push(meta);
-    }
-
-    /// Erases a source plus a handler factory over the opened subscriber into a starter under
-    /// the `workers` policy.
-    ///
-    /// The counterpart of [`push_paired_workers`](Self::push_paired_workers) for handles minted
-    /// off the live subscription (a seeker): the subscription opens first and the factory runs
-    /// on the subscriber before the first delivery, so the handler holds a live handle by
-    /// construction - a "not opened" state is never representable inside it.
-    pub(crate) fn push_seek_workers<Source, MakeHandler, NewHandler, HandlerCx>(
-        &mut self,
-        source: Source,
-        make_handler: MakeHandler,
-        meta: HandlerMetadata,
-        policies: FailurePolicies,
-        workers: Workers,
-    ) where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
-        SourceMessage<B, Source>: Send + Sync + 'static,
-        MakeHandler: FnOnce(&Source::Subscriber) -> NewHandler + Send + 'static,
-        HandlerCx: crate::BuildContext<SourceMessage<B, Source>> + Send + 'static,
-        NewHandler: Handler<SourceMessage<B, Source>, HandlerCx, State> + 'static,
-    {
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let handler = make_handler(&subscriber);
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    ))
-                })
-            },
-        ));
-        self.handlers.push(meta);
-    }
-
-    /// The batch counterpart of [`push_paired_workers`](Self::push_paired_workers).
-    pub(crate) fn push_paired_batch<Source, MakeHandler, HandlerFut, NewHandler>(
+    /// The batch counterpart of [`push_injected_workers`](Self::push_injected_workers): the
+    /// factory resolves the injections off the opened subscriber, then the loop drives
+    /// [`BatchSubscriber::batches`].
+    pub(crate) fn push_injected_batch<Source, MakeHandler, HandlerFut, NewHandler>(
         &mut self,
         source: Source,
         make_handler: MakeHandler,
@@ -307,21 +214,74 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
         SourceMessage<B, Source>: Send + 'static,
-        MakeHandler: FnOnce(Arc<Connected<B>>) -> HandlerFut + Send + 'static,
-        HandlerFut: Future<Output = Result<NewHandler, BoxError>> + Send,
+        MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
+        HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
         NewHandler: BatchHandler<SourceMessage<B, Source>, State> + 'static,
     {
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
             move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
                 Box::pin(async move {
-                    let handler = make_handler(Arc::clone(&connected)).await?;
                     let subscriber = source
                         .subscribe(connected.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
+                    let (subscriber, handler) =
+                        make_handler(Arc::clone(&connected), subscriber).await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_batch_dispatch(
+                        subscriber,
+                        Arc::new(handler),
+                        token,
+                        name,
+                        state,
+                        delivery,
+                        failure,
+                        workers,
+                    ))
+                })
+            },
+        ));
+        self.handlers.push(meta);
+    }
+
+    /// Erases a source plus an async handler factory over the connected broker and the opened
+    /// subscriber into a starter under the `workers` policy.
+    ///
+    /// For mounts whose handler can only exist at startup (pairing a publisher source,
+    /// resolving startup injections): the subscription opens first, then the factory resolves
+    /// the injections (pairing publishers, minting seekers) and builds the handler, so every
+    /// injected handle is live by construction - a "not ready" state is never representable
+    /// inside it. The subscriber travels through the factory by value (and comes back next to
+    /// the handler) so the factory future borrows nothing and stays a plain `Send` future.
+    pub(crate) fn push_injected_workers<Source, MakeHandler, HandlerFut, NewHandler, HandlerCx>(
+        &mut self,
+        source: Source,
+        make_handler: MakeHandler,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+        workers: Workers,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        SourceMessage<B, Source>: Send + Sync + 'static,
+        MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
+        HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
+        HandlerCx: crate::BuildContext<SourceMessage<B, Source>> + Send + 'static,
+        NewHandler: Handler<SourceMessage<B, Source>, HandlerCx, State> + 'static,
+    {
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        self.starters.push(Box::new(
+            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
+                Box::pin(async move {
+                    let subscriber = source
+                        .subscribe(connected.as_ref())
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let (subscriber, handler) =
+                        make_handler(Arc::clone(&connected), subscriber).await?;
+                    let failure = DispatchFailure::new(policies, shutdown);
+                    Ok(spawn_dispatch_workers(
                         subscriber,
                         Arc::new(handler),
                         token,

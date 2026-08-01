@@ -13,17 +13,17 @@
 
 use std::future::Future;
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use tracing::warn;
 
 use crate::IncomingMessage;
-use crate::codec::Codec;
 
 use super::batch::{BatchHandler, decode_batch, settle};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
+use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
 
@@ -35,8 +35,14 @@ use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPubl
 /// half-nacked batch; handlers needing both publish manually from a plain batch handler through a
 /// publisher held in the typed application state.
 pub trait BatchPublishingDef: Send + Sync {
-    /// The decoded element type; the handler consumes `&[Input]`.
-    type Input;
+    /// The input kind of one batch element ([`Decoded<T>`](super::Decoded); see
+    /// [`BatchDef::Input`](super::BatchDef::Input)). The handler consumes `&[T]`.
+    type Input: InputKind;
+
+    /// The tuple of startup-injected parameters ([`Out`](super::Out), [`Seek`](super::Seek),
+    /// ...; `()` when the signature carries none), resolved like
+    /// [`InjectDef::Injections`](super::InjectDef::Injections).
+    type Injections;
 
     /// The reply element type; each entry of the returned `Vec` is encoded and published.
     type Reply;
@@ -102,7 +108,8 @@ pub trait BatchPublishingCall<S>: BatchPublishingDef {
     /// acks the batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
     fn call(
         &self,
-        batch: &[Self::Input],
+        batch: &[<Self::Input as InputKind>::Owned],
+        injections: &Self::Injections,
         ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = Result<Vec<Self::Reply>, HandlerResult>> + Send;
 }
@@ -112,14 +119,16 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
     name: String,
     def: &D,
 ) -> HandlerMetadata {
-    HandlerMetadata::typed::<D::Input>(name)
+    let mut meta = HandlerMetadata::raw(name)
         .with_output_type(std::any::type_name::<D::Reply>())
         .with_def_details(
             def.description(),
             def.input_schema(),
             def.message_name(),
             def.message_description(),
-        )
+        );
+    meta.input_type = <D::Input as InputKind>::input_label();
+    meta
 }
 
 /// The `BatchHandler` built from a [`BatchPublishingDef`]: decode the batch, run the handler,
@@ -130,15 +139,16 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
 /// with a plain publisher a mid-batch failure can therefore re-publish the earlier replies on
 /// redelivery (at-least-once), while a [`Transactional`](super::Transactional) publisher never
 /// leaves them half-visible.
-pub struct BatchPublishingHandler<D, C, R, PP = PublishIdentity> {
+pub struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: R,
     pub(crate) pipeline: PP,
+    pub(crate) injections: D::Injections,
     pub(crate) decode: FailurePolicy,
 }
 
-impl<D, C, R, PP> std::fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
+impl<D: BatchPublishingDef, C, R, PP> std::fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BatchPublishingHandler")
             .finish_non_exhaustive()
@@ -149,9 +159,10 @@ impl<M, D, C, R, PP, S> BatchHandler<M, S> for BatchPublishingHandler<D, C, R, P
 where
     M: IncomingMessage,
     D: BatchPublishingCall<S>,
-    D::Input: DeserializeOwned + Send + Sync,
+    D::Input: DecodeWith<C>,
+    D::Injections: Send + Sync,
     D::Reply: Serialize + Send + Sync,
-    C: Codec,
+    C: Send + Sync,
     R: ReplyPublisher,
     PP: PublishPipeline,
     S: Send + Sync,
@@ -163,7 +174,7 @@ where
         if accepted.is_empty() {
             return;
         }
-        let outcome = match self.def.call(&values, ctx).await {
+        let outcome = match self.def.call(&values, &self.injections, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
                 let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
@@ -211,7 +222,8 @@ mod tests {
     }
 
     impl BatchPublishingDef for Confirm {
-        type Input = u32;
+        type Input = crate::runtime::Decoded<u32>;
+        type Injections = ();
         type Reply = u32;
         type Source = crate::Name;
 
@@ -229,6 +241,7 @@ mod tests {
         async fn call(
             &self,
             batch: &[u32],
+            (): &(),
             _ctx: &mut Context<'_, (), S>,
         ) -> Result<Vec<u32>, HandlerResult> {
             if let Some(result) = self.fail_with {
@@ -267,6 +280,7 @@ mod tests {
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
             pipeline: PublishIdentity,
+            injections: (),
             decode: FailurePolicy::Drop,
         };
 
@@ -305,6 +319,7 @@ mod tests {
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
             pipeline: PublishIdentity,
+            injections: (),
             decode: FailurePolicy::Drop,
         };
 

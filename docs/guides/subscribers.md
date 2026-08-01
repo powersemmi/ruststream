@@ -260,7 +260,9 @@ nothing is attached at the include site:
 ```
 
 A seek from inside the handler settles the current message as usual; deliveries queued before
-the target are dropped, and the stream resumes at the target position.
+the target are dropped, and the stream resumes at the target position. The parameter combines
+with an injected publisher (`Out`) in the same handler; the `.publisher(..)` attachment stays
+required exactly when an `Out` parameter is present.
 
 Positions are broker-owned types (`MemoryPosition` here; a Kafka position carries partition
 offsets, a Redis position an entry id) and come from two places with different guarantees: a

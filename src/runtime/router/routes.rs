@@ -1,7 +1,6 @@
 //! The registration list: route types, the per-route mount trait and [`RouterDef`].
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 use std::sync::Arc;
 
@@ -15,6 +14,8 @@ use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingHandl
 use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::handler::Handler;
+use crate::runtime::inject::FromStartup;
+use crate::runtime::input::DecodeWith;
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
@@ -222,11 +223,12 @@ where
     // The subscription side: the source opens against the connected form, and the definition's
     // handler runs over the messages it yields.
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Subscriber: Send + 'static,
+    Source::Subscriber: Sync + Send + 'static,
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
     Def: PublishingCall<State> + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Injections: FromStartup<B, Source::Subscriber, ()> + Send + Sync + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
     Def::Context: crate::BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     DecodeCodec: Codec + Send + 'static,
@@ -269,12 +271,19 @@ where
                         .subscribe(connected.as_ref())
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
+                    // A router mount has no `.publisher(..)`-style attachment surface, so the
+                    // startup injections resolve with no extra: a Seek parameter works, an Out
+                    // one needs the scope's include form.
+                    let injections = Def::Injections::resolve(&(), connected.as_ref(), &subscriber)
+                        .await
+                        .map_err(|e| Box::new(e) as BoxError)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         PublishingHandler {
                             def,
                             codec,
                             publisher,
                             pipeline,
+                            injections,
                             decode: policies.decode,
                         },
                     );
@@ -302,13 +311,14 @@ where
     B: Broker + 'static,
     // The subscription side: batches open against the connected form.
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Subscriber: BatchSubscriber + Send + 'static,
+    Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
     SourceMessage<B, Source>: Send + 'static,
     State: Send + Sync + 'static,
     Def: BatchPublishingCall<State> + 'static,
-    Def::Input: DeserializeOwned + Send + Sync + 'static,
+    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Injections: FromStartup<B, Source::Subscriber, ()> + Send + Sync + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
-    DecodeCodec: Codec + Send + 'static,
+    DecodeCodec: Send + Sync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
     // transactional).
     ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
@@ -320,7 +330,10 @@ where
         PP: PublishPipeline + Clone + Send + 'static,
     {
         // Batch handlers are not wrapped by the per-message global stack, but they do pick up the
-        // app's publish pipeline for their replies. The reply wiring pairs at startup.
+        // app's publish pipeline for their replies. The reply wiring pairs at startup, and the
+        // startup injections resolve against the opened subscriber in the same factory (with no
+        // extra: a router mount has no attachment surface, so a Seek parameter works and an Out
+        // one needs the scope's include form).
         let pipeline = pipeline.clone();
         let Self {
             source,
@@ -331,20 +344,25 @@ where
             policies,
             workers,
         } = self;
-        sink.push_paired_batch(
+        sink.push_injected_batch(
             source,
-            async move |connected: Arc<Connected<B>>| {
+            async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = publisher
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                Ok(BatchPublishingHandler {
+                let injections = Def::Injections::resolve(&(), connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(|e| Box::new(e) as BoxError)?;
+                let handler = BatchPublishingHandler {
                     def,
                     codec,
                     publisher,
                     pipeline,
+                    injections,
                     decode: policies.decode,
-                })
+                };
+                Ok((subscriber, handler))
             },
             meta,
             policies,

@@ -8,17 +8,18 @@ use serde::de::DeserializeOwned;
 use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::{BatchDef, SliceHandler, batch_metadata, typed_batch};
+use crate::runtime::batch::{BatchDef, SliceHandler, TypedBatch, batch_metadata, typed_batch};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
+use crate::runtime::input::DecodeWith;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::{PublishPipeline, PublishTransform, TypedPublisher};
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
-use crate::runtime::typed::typed;
+use crate::runtime::typed::Typed;
 
 use super::routes::{
     BatchPublishingRoute, BatchRoute, HandleRoute, MountRoute, PublishingRoute, RouteMeta,
@@ -250,24 +251,24 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
 
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
     /// `include` / `include_on` forms.
-    pub(super) fn mount_subscriber<S, D, C>(
+    pub(super) fn mount_subscriber<Source, Def, DecodeCodec>(
         self,
-        source: S,
-        def: D,
-        codec: C,
-    ) -> IncludedRouter<B, S, D, C, RouteCodec, RouteLayers, Routes>
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) -> IncludedRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        D: SubscriberDef,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
-        C: Codec + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        Def: SubscriberDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Handler: 'static,
+        DecodeCodec: Send + Sync + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed(codec, def.into_handler()).on_decode_failure(policies.decode);
+        let handler = Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode);
         Router {
             routes: (
                 SubscribeRoute {
@@ -287,24 +288,27 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
 
     /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
     /// `include_batch` / `include_batch_on` forms.
-    pub(super) fn mount_batch<S, D, C>(
+    pub(super) fn mount_batch<Source, Def, DecodeCodec>(
         self,
-        source: S,
-        def: D,
-        codec: C,
-    ) -> IncludedBatchRouter<B, S, D, C, RouteCodec, RouteLayers, Routes>
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) -> IncludedBatchRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, Routes>
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchDef,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Handler: 'static,
-        C: Codec + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Handler: 'static,
+        DecodeCodec: Send + Sync + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = typed_batch(codec, def.into_handler()).with_decode(policies.decode);
+        // The handler bound alone cannot pin the kind, so the adapter names the def's input
+        // kind explicitly.
+        let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
+            .with_decode(policies.decode);
         Router {
             routes: (
                 BatchRoute {
@@ -325,21 +329,30 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// Mounts a batch publishing definition on `source`, decoding with `codec` and replying
     /// through `publisher`. The shared tail of the `include_batch_publishing` /
     /// `include_batch_publishing_on` forms.
-    pub(super) fn mount_batch_publishing<S, D, C, RP>(
+    pub(super) fn mount_batch_publishing<Source, Def, DecodeCodec, ReplySource>(
         self,
-        source: S,
-        def: D,
-        codec: C,
-        publisher: RP,
-    ) -> BatchPublishingRouter<B, S, D, C, RP, RouteCodec, RouteLayers, Routes>
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+        publisher: ReplySource,
+    ) -> BatchPublishingRouter<
+        B,
+        Source,
+        Def,
+        DecodeCodec,
+        ReplySource,
+        RouteCodec,
+        RouteLayers,
+        Routes,
+    >
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        D: BatchPublishingDef + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Serialize + Send + Sync + 'static,
-        C: Codec + 'static,
-        RP: 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchPublishingDef + 'static,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Reply: Serialize + Send + Sync + 'static,
+        DecodeCodec: Send + Sync + 'static,
+        ReplySource: 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
@@ -370,23 +383,34 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
 
     /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
     /// `publisher`. The shared tail of the `include_publishing` / `include_publishing_on` forms.
-    pub(super) fn mount_publishing<S, D, C, P, PC, PL>(
+    pub(super) fn mount_publishing<Source, Def, DecodeCodec, Leaf, ReplyCodec, Transforms>(
         self,
-        source: S,
-        def: D,
-        codec: C,
-        publisher: TypedPublisher<P, PC, PL>,
-    ) -> PublishingRouter<B, S, D, C, P, PC, PL, RouteCodec, RouteLayers, Routes>
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+        publisher: TypedPublisher<Leaf, ReplyCodec, Transforms>,
+    ) -> PublishingRouter<
+        B,
+        Source,
+        Def,
+        DecodeCodec,
+        Leaf,
+        ReplyCodec,
+        Transforms,
+        RouteCodec,
+        RouteLayers,
+        Routes,
+    >
     where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        D: PublishingDef + 'static,
-        D::Input: DeserializeOwned + Send + Sync + 'static,
-        D::Reply: Serialize + Send + Sync + 'static,
-        C: Codec + 'static,
-        P: 'static,
-        PC: Codec + 'static,
-        PL: PublishTransform<D::Context> + 'static,
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        Def: PublishingDef + 'static,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Reply: Serialize + Send + Sync + 'static,
+        DecodeCodec: Codec + 'static,
+        Leaf: 'static,
+        ReplyCodec: Codec + 'static,
+        Transforms: PublishTransform<Def::Context> + 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();

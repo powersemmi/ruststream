@@ -1,0 +1,43 @@
+error[E0277]: the trait bound `TypedPublisher<MemoryPublisher, JsonCodec>: runtime::publishing::ReplySink<Receipt, (), PublishIdentity>` is not satisfied
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
+   |
+23 |         b.include(handle);
+   |           ^^^^^^^ the trait `runtime::publishing::ReplySink<Receipt, (), PublishIdentity>` is not implemented for `TypedPublisher<MemoryPublisher, JsonCodec>`
+   |
+help: the trait `runtime::publishing::ReplySink<Reply, DeliveryCx, Pipeline>` is implemented for `TypedPublisher<Leaf, ReplyCodec, Transforms>`
+  --> src/runtime/publishing.rs
+   |
+   | / impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
+   | |     ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
+   | | where
+   | |     Reply: Serialize + Sync,
+...  |
+   | |     ReplyCodec: Codec,
+   | |     Transforms: PublishTransform<DeliveryCx>,
+   | |_____________________________________________^
+   = note: required for `runtime::app::include::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+   = note: 1 redundant requirement hidden
+   = note: required for `runtime::app::include::DefaultReply` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+   = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+
+error[E0277]: the trait bound `PublishingHandler<handle, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>: Handler<MemoryMessage>` is not satisfied
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
+   |
+23 |         b.include(handle);
+   |           ^^^^^^^ the trait `Handler<MemoryMessage>` is not implemented for `PublishingHandler<handle, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>`
+   |
+help: the trait `Handler<Msg, <Def as PublishingDef>::Context, State>` is implemented for `PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>`
+  --> src/runtime/publishing.rs
+   |
+   | / impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> Handler<Msg, Def::Context, State>
+   | |     for PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>
+   | | where
+   | |     Msg: IncomingMessage,
+...  |
+   | |     Pipeline: Send + Sync,
+   | |     State: Send + Sync,
+   | |_______________________^
+   = note: required for `runtime::app::include::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+   = note: 1 redundant requirement hidden
+   = note: required for `runtime::app::include::DefaultReply` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+   = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
