@@ -86,10 +86,17 @@ async fn a_token_repositions_a_runtime_owned_subscription() {
 
 /// Jumps forward when the producer marks a poison region: everything queued before the
 /// resume point is skipped without dropping the subscription.
+// A forward seek only skips what is already in the log, so every queued-skip test holds its
+// seeking handler on a permit until the producer has published the whole run; without the
+// gate, a fast dispatcher can handle the marker before the later entries land and the
+// end-clamped seek becomes a no-op (a real CI flake).
+static JOBS_PUBLISHED: Notify = Notify::const_new();
+
 #[subscriber(MemorySource::new("seek.jobs"))]
 async fn work(job: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
     if job.id == 0 {
         // The producer uses id 0 as "resume from the third message".
+        JOBS_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
             return HandlerResult::retry();
         }
@@ -107,14 +114,15 @@ async fn a_seek_parameter_repositions_from_inside_the_handler() {
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    // All three land before the first is handled: the handler's seek must skip the queued
-    // second message and resume at the third.
+    // The marker's seek waits for the whole run to land, then must skip the queued second
+    // message and resume at the third.
     for id in [0, 1, 2] {
         ingress
             .publish(OutgoingMessage::new("seek.jobs", payload(id).as_slice()))
             .await
             .expect("publish");
     }
+    JOBS_PUBLISHED.notify_one();
     tb.settle().await.expect("settle");
 
     let received: Vec<Event> = tb
@@ -176,6 +184,8 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
+static COMBO_PUBLISHED: Notify = Notify::const_new();
+
 /// Forwards good events through the injected publisher and skips a poison region through the
 /// injected seeker: the two startup injections compose in one handler.
 #[subscriber("seek.combo")]
@@ -185,7 +195,8 @@ async fn forward_skipping(
     Seek(seeker): Seek<MemorySeeker>,
 ) -> HandlerResult {
     if event.id == 0 {
-        // The poison marker: resume from the third message.
+        // The poison marker: resume from the third message once the whole run is in the log.
+        COMBO_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
             return HandlerResult::retry();
         }
@@ -212,14 +223,15 @@ async fn an_out_and_a_seek_parameter_combine_in_one_handler() {
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    // All three land before the first is handled: the seek skips the queued second message,
-    // and only the third reaches the forwarding branch.
+    // The marker's seek waits for the whole run: it skips the queued second message, and only
+    // the third reaches the forwarding branch.
     for id in [0, 1, 2] {
         ingress
             .publish(OutgoingMessage::new("seek.combo", payload(id).as_slice()))
             .await
             .expect("publish");
     }
+    COMBO_PUBLISHED.notify_one();
     tb.settle().await.expect("settle");
 
     let received: Vec<Event> = tb
@@ -236,12 +248,15 @@ async fn an_out_and_a_seek_parameter_combine_in_one_handler() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
+static FRAMES_PUBLISHED: Notify = Notify::const_new();
+
 /// A raw handler with an injected seeker: the input axis lets the byte-level form compose
 /// with startup injections, borrowing the payload with no decode and no copy.
 #[subscriber("seek.frames", raw)]
 async fn raw_work(frame: &[u8], Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
     if frame == b"poison" {
-        // The marker frame: resume from the third entry.
+        // The marker frame: resume from the third entry once the whole run is in the log.
+        FRAMES_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
             return HandlerResult::retry();
         }
@@ -266,6 +281,7 @@ async fn a_raw_handler_composes_with_a_seek_parameter() {
             .await
             .expect("publish");
     }
+    FRAMES_PUBLISHED.notify_one();
     tb.settle().await.expect("settle");
 
     let received = tb
@@ -350,13 +366,17 @@ async fn a_batch_handler_composes_with_a_seek_parameter() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
+static GATE_PUBLISHED: Notify = Notify::const_new();
+
 /// A publishing handler with an injected seeker: the reply form composes with startup
 /// injections. The poison marker skips its own reply and repositions the subscription
 /// instead; only the post-seek event is answered.
 #[subscriber("seek.gate", publish("seek.gate.out"))]
 async fn gate(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> Result<Event, HandlerResult> {
     if event.id == 0 {
-        // The poison marker: resume from the third message, publishing nothing.
+        // The poison marker: resume from the third message once the whole run is in the
+        // log, publishing nothing.
+        GATE_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
             return Err(HandlerResult::retry());
         }
@@ -375,14 +395,15 @@ async fn a_publishing_handler_composes_with_a_seek_parameter() {
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    // All three land before the first is handled: the seek skips the queued second message,
-    // and only the third reaches the replying branch.
+    // The marker's seek waits for the whole run: it skips the queued second message, and
+    // only the third reaches the replying branch.
     for id in [0, 1, 2] {
         ingress
             .publish(OutgoingMessage::new("seek.gate", payload(id).as_slice()))
             .await
             .expect("publish");
     }
+    GATE_PUBLISHED.notify_one();
     tb.settle().await.expect("settle");
 
     let received: Vec<Event> = tb
