@@ -1,22 +1,22 @@
 //! Optional conformance suites, one per capability trait.
 //!
 //! A broker crate that implements a capability ([`RequestReply`], [`BatchSubscriber`],
-//! [`TransactionalPublisher`], [`Seekable`]) runs the matching suite to prove the
-//! implementation honours the trait contract; brokers without the capability simply do not call
-//! it. Like [`harness::lifecycle`](super::harness::lifecycle), every suite is built from
+//! [`TransactionalPublisher`], [`OwnedTransactions`], [`Seekable`]) runs the matching suite to
+//! prove the implementation honours the trait contract; brokers without the capability simply do
+//! not call it. Like [`harness::lifecycle`](super::harness::lifecycle), every suite is built from
 //! caller-supplied factories so it stays broker-agnostic, and the in-memory broker is the
 //! executable reference that passes all of them.
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
 use super::harness::{expect_next, expect_no_more};
 use crate::{
     AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, Headers, IncomingMessage,
-    OutgoingMessage, Positioned, Publisher, RequestReply, Seekable, Seeker, Subscriber,
-    SubscriptionSource, TransactionalPublisher,
+    OutgoingMessage, OwnedTransactions, Positioned, Publisher, RequestReply, Seekable, Seeker,
+    Subscriber, SubscriptionSource, Transaction, TransactionalPublisher,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -362,6 +362,258 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .shutdown()
         .await
         .expect("broker must shut down cleanly");
+}
+
+/// Verifies the [`OwnedTransactions`] / [`Transaction`] contract.
+///
+/// Nothing published into an open transaction is visible before `commit`, a commit makes the
+/// whole buffer visible atomically in publish order, and an abort discards it. Transactions are
+/// independent: two open at once on one handle settle without affecting each other, and the
+/// handle keeps publishing directly while one is open. That a settled transaction cannot be
+/// reused is enforced by the consuming `commit` / `abort` at compile time, so this suite does not
+/// assert it.
+///
+/// The suite makes no claim about the delivery order between two transactions - only about the
+/// order inside each committed buffer.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # async fn run() {
+/// use ruststream::conformance::capabilities;
+/// use ruststream::memory::{MemoryBroker, MemorySource};
+///
+/// capabilities::owned_transactions(
+///     MemoryBroker::new,
+///     |name| MemorySource::new(name),
+///     |broker| broker.publisher(),
+/// )
+/// .await;
+/// # }
+/// ```
+///
+/// # Panics
+///
+/// Panics with a descriptive message if any step violates the contract.
+pub async fn owned_transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
+    make_broker: MkBroker,
+    make_source: MkSrc,
+    make_publisher: MkPub,
+) where
+    B: Broker,
+    MkBroker: Fn() -> B,
+    Src: SubscriptionSource<Connected<B>> + Send,
+    Src::Subscriber: Send,
+    MkSrc: Fn(&str) -> Src,
+    Pub: OwnedTransactions,
+    MkPub: Fn(&Connected<B>) -> Pub,
+{
+    const SUBJECT: &str = "conformance.owned_transactions";
+
+    let connected = make_broker().connect().await.expect("broker must connect");
+
+    let mut subscriber = make_source(SUBJECT)
+        .subscribe(&connected)
+        .await
+        .expect("subscription must open after connect");
+    let publisher = make_publisher(&connected);
+    let mut stream = std::pin::pin!(subscriber.stream());
+
+    owned_settlement(&publisher, &mut stream, SUBJECT).await;
+    owned_concurrent_settlements(&publisher, &mut stream, SUBJECT).await;
+    owned_concurrent_commits(&publisher, &mut stream, SUBJECT).await;
+    owned_direct_publish(&publisher, &mut stream, SUBJECT).await;
+
+    connected
+        .shutdown()
+        .await
+        .expect("broker must shut down cleanly");
+}
+
+/// One transaction at a time: a commit publishes the whole buffer in order, an abort discards it.
+async fn owned_settlement<Pub, S, M, E>(publisher: &Pub, stream: &mut S, subject: &str)
+where
+    Pub: OwnedTransactions,
+    S: Stream<Item = Result<M, E>> + Unpin,
+    M: IncomingMessage,
+    E: fmt::Debug,
+{
+    let mut committed = publisher
+        .transaction()
+        .await
+        .expect("transaction must open");
+    committed
+        .publish(OutgoingMessage::new(subject, b"first".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    committed
+        .publish(OutgoingMessage::new(subject, b"second".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    expect_no_more(stream, "owned_transactions: before commit").await;
+
+    committed.commit().await.expect("commit failed");
+    assert_eq!(
+        collect_payloads(stream, 2, "owned_transactions: after commit").await,
+        vec![b"first".to_vec(), b"second".to_vec()],
+        "commit must make the whole buffer visible in publish order",
+    );
+
+    let mut aborted = publisher
+        .transaction()
+        .await
+        .expect("transaction must open");
+    aborted
+        .publish(OutgoingMessage::new(subject, b"discarded".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    aborted.abort().await.expect("abort failed");
+    expect_no_more(stream, "owned_transactions: after abort").await;
+}
+
+/// Two transactions open at once on one handle, settled the opposite ways: only the committed
+/// buffer arrives, and its sibling's abort leaves it whole.
+async fn owned_concurrent_settlements<Pub, S, M, E>(publisher: &Pub, stream: &mut S, subject: &str)
+where
+    Pub: OwnedTransactions,
+    S: Stream<Item = Result<M, E>> + Unpin,
+    M: IncomingMessage,
+    E: fmt::Debug,
+{
+    let mut kept = publisher
+        .transaction()
+        .await
+        .expect("transaction must open");
+    let mut dropped = publisher
+        .transaction()
+        .await
+        .expect("a second transaction must open while the first is open");
+    kept.publish(OutgoingMessage::new(subject, b"kept-1".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    dropped
+        .publish(OutgoingMessage::new(subject, b"dropped-1".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    kept.publish(OutgoingMessage::new(subject, b"kept-2".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    dropped
+        .publish(OutgoingMessage::new(subject, b"dropped-2".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+
+    dropped.abort().await.expect("abort failed");
+    expect_no_more(stream, "owned_transactions: sibling aborted").await;
+
+    kept.commit().await.expect("commit failed");
+    assert_eq!(
+        collect_payloads(stream, 2, "owned_transactions: sibling committed").await,
+        vec![b"kept-1".to_vec(), b"kept-2".to_vec()],
+        "aborting one transaction must leave a concurrent one whole and in publish order",
+    );
+    expect_no_more(stream, "owned_transactions: after the concurrent pair").await;
+}
+
+/// Two transactions open at once, both committed: each buffer arrives whole and in publish order.
+async fn owned_concurrent_commits<Pub, S, M, E>(publisher: &Pub, stream: &mut S, subject: &str)
+where
+    Pub: OwnedTransactions,
+    S: Stream<Item = Result<M, E>> + Unpin,
+    M: IncomingMessage,
+    E: fmt::Debug,
+{
+    let mut left = publisher
+        .transaction()
+        .await
+        .expect("transaction must open");
+    let mut right = publisher
+        .transaction()
+        .await
+        .expect("a second transaction must open while the first is open");
+    left.publish(OutgoingMessage::new(subject, b"left-1".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    right
+        .publish(OutgoingMessage::new(subject, b"right-1".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    left.publish(OutgoingMessage::new(subject, b"left-2".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+
+    left.commit().await.expect("commit failed");
+    right.commit().await.expect("commit failed");
+
+    let both = collect_payloads(stream, 3, "owned_transactions: both committed").await;
+    let from_left: Vec<Vec<u8>> = both
+        .iter()
+        .filter(|payload| payload.starts_with(b"left"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        from_left,
+        vec![b"left-1".to_vec(), b"left-2".to_vec()],
+        "each committed buffer must arrive whole, in publish order",
+    );
+    assert!(
+        both.iter().any(|payload| payload == b"right-1"),
+        "committing two concurrent transactions must deliver both buffers",
+    );
+}
+
+/// The handle keeps publishing directly while a transaction is open, and neither captures the
+/// other's messages.
+async fn owned_direct_publish<Pub, S, M, E>(publisher: &Pub, stream: &mut S, subject: &str)
+where
+    Pub: OwnedTransactions,
+    S: Stream<Item = Result<M, E>> + Unpin,
+    M: IncomingMessage,
+    E: fmt::Debug,
+{
+    let mut open = publisher
+        .transaction()
+        .await
+        .expect("transaction must open");
+    open.publish(OutgoingMessage::new(subject, b"buffered".as_slice()))
+        .await
+        .expect("publish into a transaction failed");
+    publisher
+        .publish(OutgoingMessage::new(subject, b"direct".as_slice()))
+        .await
+        .expect("the handle must keep publishing directly while a transaction is open");
+    assert_eq!(
+        collect_payloads(stream, 1, "owned_transactions: direct publish").await,
+        vec![b"direct".to_vec()],
+        "a direct publish must be visible immediately, not buffered by an open transaction",
+    );
+
+    open.commit().await.expect("commit failed");
+    assert_eq!(
+        collect_payloads(stream, 1, "owned_transactions: after the direct publish").await,
+        vec![b"buffered".to_vec()],
+        "a direct publish must leave the open transaction's buffer intact",
+    );
+}
+
+/// Collects the payloads of the next `count` deliveries in arrival order, acking each.
+async fn collect_payloads<S, M, E>(stream: &mut S, count: usize, label: &str) -> Vec<Vec<u8>>
+where
+    S: Stream<Item = Result<M, E>> + Unpin,
+    M: IncomingMessage,
+    E: fmt::Debug,
+{
+    let mut payloads = Vec::with_capacity(count);
+    for _ in 0..count {
+        let msg = expect_next(&mut *stream, label).await;
+        payloads.push(msg.payload().to_vec());
+        match msg.ack().await {
+            Ok(()) | Err(AckError::Unsupported) => {}
+            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+        }
+    }
+    payloads
 }
 
 /// Verifies the [`Seekable`] contract.
