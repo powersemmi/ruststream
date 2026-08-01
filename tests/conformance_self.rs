@@ -65,6 +65,17 @@ async fn memory_broker_passes_transactions_suite() {
 
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_owned_transactions_suite() {
+    capabilities::owned_transactions(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_seeking_suite() {
     capabilities::seeking(
         MemoryBroker::new,

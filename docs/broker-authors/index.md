@@ -199,7 +199,8 @@ Implement only the capabilities your broker supports; none are part of the manda
 | Trait | For brokers that support |
 |---|---|
 | `BatchSubscriber` | receiving messages in batches |
-| `TransactionalPublisher` | begin / commit / abort around publishes |
+| `TransactionalPublisher` | begin / commit / abort around publishes on the handle |
+| `OwnedTransactions` / `Transaction` | transactions whose buffer lives in a value, any number open at once per handle |
 | `RequestReply` | native request-reply (NATS yes, Kafka no) |
 | `Partitioned` | a partition key on outgoing messages |
 | `Seekable` / `Seeker` | repositioning a live subscription in a replayable log |

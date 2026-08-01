@@ -99,6 +99,7 @@ without the capability simply do not call it. Each suite takes the same factory 
 | `capabilities::request_reply` | `RequestReply` | the request reaches a responder with a usable `reply-to` header, the correlated reply resolves the request, an unanswered request fails after its timeout |
 | `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
 | `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it; misuse errors - `commit` / `abort` with no open transaction, a second `begin_transaction` while one is open (which must leave it untouched) |
+| `capabilities::owned_transactions` | `OwnedTransactions`, its `Transaction` | nothing published into an open transaction is visible before `commit`, a commit delivers the whole buffer in publish order, an abort discards it, two transactions open at once on one handle settle independently, and the handle keeps publishing directly while one is open |
 | `capabilities::seeking` | `Seekable`, messages `Positioned` | a seek back to a position captured from a delivered message redelivers exactly that message and the ordered suffix after it, a seek forward skips the queued deliveries before the target, and the subscription keeps delivering new publishes after repositioning |
 
 <!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
@@ -120,7 +121,7 @@ async fn passes_request_reply() {
 }
 ```
 
-The in-memory broker implements every capability natively and passes all four suites in-process
+The in-memory broker implements every capability natively and passes all five suites in-process
 (see [Memory](../brokers/memory.md#capabilities)); it is the executable reference for what each
 suite expects.
 
