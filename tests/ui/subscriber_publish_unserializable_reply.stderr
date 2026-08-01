@@ -1,10 +1,10 @@
-error[E0277]: the trait bound `TypedPublisher<MemoryPublisher, JsonCodec>: runtime::publishing::ReplySink<Receipt, (), PublishIdentity>` is not satisfied
+error[E0277]: the trait bound `TypedPublisher<MemoryPublisher, JsonCodec>: ReplySink<Receipt, (), PublishIdentity>` is not satisfied
   --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
    |
 23 |         b.include(handle);
-   |           ^^^^^^^ the trait `runtime::publishing::ReplySink<Receipt, (), PublishIdentity>` is not implemented for `TypedPublisher<MemoryPublisher, JsonCodec>`
+   |           ^^^^^^^ the trait `ReplySink<Receipt, (), PublishIdentity>` is not implemented for `TypedPublisher<MemoryPublisher, JsonCodec>`
    |
-help: the trait `runtime::publishing::ReplySink<Reply, DeliveryCx, Pipeline>` is implemented for `TypedPublisher<Leaf, ReplyCodec, Transforms>`
+help: the trait `ReplySink<Reply, DeliveryCx, Pipeline>` is implemented for `TypedPublisher<Leaf, ReplyCodec, Transforms>`
   --> src/runtime/publishing.rs
    |
    | / impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>

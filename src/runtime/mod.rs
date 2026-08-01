@@ -60,7 +60,7 @@ pub use publish::{
 };
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
-pub use publishing::{PublishingCall, PublishingDef, PublishingHandler};
+pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

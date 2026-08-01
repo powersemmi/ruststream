@@ -500,7 +500,7 @@ where
     }
 }
 
-/// A registration builder over one attachment, generic over the [`CommitVia`] mount token.
+/// A registration builder over one attachment, generic over its mount token.
 ///
 /// Commits when dropped (the end of the `b.include(..)` / `b.include_batch(..)` statement).
 /// [`publisher`](Self::publisher) replaces the attachment: the reply source on the publishing

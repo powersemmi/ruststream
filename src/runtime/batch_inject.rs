@@ -96,7 +96,7 @@ pub(crate) fn batch_inject_metadata<D: BatchInjectDef>(name: String, def: &D) ->
     meta
 }
 
-/// The [`BatchHandler`] built from a [`BatchInjectDef`] once its injections resolved: decode
+/// The batch handler built from a [`BatchInjectDef`] once its injections resolved: decode
 /// the batch, run the body with them, settle every delivery.
 pub struct BatchInjectHandler<Def: BatchInjectDef, DecodeCodec> {
     pub(crate) def: Def,
