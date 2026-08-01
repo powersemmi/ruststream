@@ -73,6 +73,21 @@ The include site names the source; for the scope's own broker it is just the pub
 An `Out` handler included without `.publisher(..)` panics when the application is built (not at
 runtime), naming the fix: an injected publisher has no broker-side default.
 
+The parameter composes with every subscriber form: next to a `Seek` parameter, on a `raw`
+handler, and on `batch(..)` handlers (`b.include_batch(f).publisher(..)` - the whole page in,
+per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
+their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
+publisher attaches with `.out(..)` instead, so a gateway can answer on a fixed destination
+while fanning side copies out through the injection:
+
+```rust
+--8<-- "examples/publishing.rs:publish_out"
+```
+
+```rust
+--8<-- "examples/publishing.rs:publish_out_mount"
+```
+
 ### Publishing to a different broker
 
 When the handler consumes one broker and publishes to another (consume Kafka, forward to Redis),

@@ -260,9 +260,11 @@ nothing is attached at the include site:
 ```
 
 A seek from inside the handler settles the current message as usual; deliveries queued before
-the target are dropped, and the stream resumes at the target position. The parameter combines
-with an injected publisher (`Out`) in the same handler; the `.publisher(..)` attachment stays
-required exactly when an `Out` parameter is present.
+the target are dropped, and the stream resumes at the target position. The parameter composes
+with the rest of the subscriber surface: with an injected publisher (`Out`) in the same
+handler, with a `raw` input, with `batch(..)` handlers, and with the `publish(..)` /
+`publish_raw(..)` reply forms - a `Seek` parameter itself never needs an attachment at the
+include site, so those mounts read exactly as without it.
 
 Positions are broker-owned types (`MemoryPosition` here; a Kafka position carries partition
 offsets, a Redis position an entry id) and come from two places with different guarantees: a
@@ -304,9 +306,9 @@ each delivery's bytes exactly as the broker handed them over.
 ```
 
 The message parameter must be `&[u8]` - a serde-typed parameter under `raw` is a compile error,
-as is `raw` combined with `batch(..)`, an injected `Out` publisher, or an
-`on_failure(decode = ..)` policy (there is no decode step to fail). Extractors, `&mut Context`,
-`workers(..)`, and `on_failure(panic = ..)` work unchanged, and a raw subscriber mounts with the
+as is `raw` combined with `batch(..)` or an `on_failure(decode = ..)` policy (there is no
+decode step to fail). Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
+the injected `Out` / `Seek` parameters work unchanged, and a raw subscriber mounts with the
 same `include` as every other definition - a scope codec, when one is set, simply does not apply
 to it. Because no codec is involved, raw subscribers are also the one subscriber form available
 with no codec feature enabled at all. For a custom serialization format you want *typed*
