@@ -1,6 +1,6 @@
 # Failure policy
 
-Two things can go wrong before your handler logic even gets a chance: the handler body can
+Two things can go wrong before the handler logic runs: the handler body can
 **panic**, and an incoming payload can fail to **decode**. RustStream settles both through one
 vocabulary, set per subscriber with the `on_failure(..)` clause, but with different defaults,
 because the two failures mean different things.
@@ -61,6 +61,6 @@ max-deliveries policy.
   adapter `typed(codec, handler)` returns a `Typed` wrapper whose `on_decode_failure` accepts a
   `FailurePolicy` (see [Codecs](codecs.md#decode-failures)).
 - On the batch path the policy applies per batch decode (each element decodes independently) and to
-  a panic in the batch handler. Per-element panic handling is out of scope.
+  a panic in the batch handler. There is no per-element panic handling.
 
 This is the full example: [`examples/failure_policy.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/failure_policy.rs).

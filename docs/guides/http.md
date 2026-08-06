@@ -1,9 +1,9 @@
 # HTTP frameworks
 
-RustStream is not an HTTP framework and does not try to become one. When a service exposes a
-synchronous HTTP API and consumes messages, the HTTP framework (axum, actix-web, or any other
-tokio-based stack) runs beside the RustStream app in the same process and runtime. This page shows
-the wiring on axum and the pattern that makes the combination reliable: a transactional outbox.
+RustStream is not an HTTP framework. When a service exposes a synchronous HTTP API and consumes
+messages, the HTTP framework (axum, actix-web, or any other tokio-based stack) runs beside the
+RustStream app in the same process and runtime. This page shows the wiring on axum and the pattern
+that makes the combination reliable: a transactional outbox.
 
 The full compiled example lives at
 [`examples/http_outbox.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/http_outbox.rs):

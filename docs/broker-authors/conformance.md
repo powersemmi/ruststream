@@ -78,7 +78,7 @@ async fn passes_lifecycle() {
 ```
 
 - **`make_broker`** is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
-  cannot satisfy it - which is the point: construct cheaply, connect in `Broker::connect`.
+  cannot satisfy it: construct cheaply, connect in `Broker::connect`.
 - **`make_source`** builds the subscription descriptor for a subject (the macro-subscriber path).
 - **`make_publisher`** produces a publisher from the connected form.
 
@@ -91,7 +91,7 @@ can run it in-process.
 
 If your broker implements a capability trait, run the matching suite from
 `conformance::capabilities` to prove the implementation honours the trait contract; brokers
-without the capability simply do not call it. Each suite takes the same factory shape as
+without the capability do not call it. Each suite takes the same factory shape as
 `lifecycle` and performs a real `connect`, so gate it the same way:
 
 | Suite | Requires | Asserts |

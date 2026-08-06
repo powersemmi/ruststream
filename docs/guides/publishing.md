@@ -64,7 +64,7 @@ use ruststream::runtime::Out;
 --8<-- "examples/publishing.rs:forward"
 ```
 
-The include site names the source; for the scope's own broker it is just the publish policy:
+The include site names the source; for the scope's own broker it is the publish policy:
 
 ```rust
 --8<-- "examples/publishing.rs:forward_mount"

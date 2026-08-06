@@ -1,8 +1,8 @@
 # The CLI
 
 The `ruststream` command-line tool drives `cargo` with the framework's subcommands. Scaffolding a
-new project is `cargo generate` (see [Scaffolding](#scaffolding) below), so the tool no longer ships
-its own `new` command.
+new project is `cargo generate` (see [Scaffolding](#scaffolding) below), so the tool ships no `new`
+command of its own.
 
 ```bash
 cargo install ruststream --features cli

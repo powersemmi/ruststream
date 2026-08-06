@@ -34,7 +34,7 @@ block, so the guarantee cannot regress.
 
 ## Features
 
-- **Broker-agnostic core.** Just traits and types, zero broker dependencies. Brokers are separate
+- **Broker-agnostic core.** Traits and types only, zero broker dependencies. Brokers are separate
   crates, and the contract is checked by a conformance harness.
 - **Fully async on tokio.** No blocking APIs in the public surface.
 - **Subscribers are `Stream`s, not callbacks.** Back-pressure comes for free.

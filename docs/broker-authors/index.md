@@ -159,8 +159,8 @@ is what lets users compose codecs and transforms over your policy before it pair
 When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
 the connected form to name it. That is what lets the runtime build the default reply publisher
 when a `publish("dest")` handler is included without an explicit `.publisher(..)` - `b.include(def)`
-alone compiles. Brokers whose publishers always need explicit options simply do not implement it,
-and their users attach a policy at every registration.
+alone compiles. Brokers whose publishers always need explicit options do not implement it, and
+their users attach a policy at every registration.
 
 <!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
