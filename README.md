@@ -48,15 +48,12 @@ block, so the guarantee cannot regress.
 - **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features - or none at all:
   `raw` subscribers and `publish_raw` replies move payload bytes untouched.
 - **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI
-  scaffolds projects, runs them, and generates the AsyncAPI document.
-- **AsyncAPI 3.0 and Prometheus metrics,** served from your own HTTP stack.
+  scaffolds projects, runs them, and generates the AsyncAPI document. Console logging ships
+  behind the `logging` feature, installed on `run` with verbosity driven by `RUST_LOG`.
+- **AsyncAPI 3.0, Prometheus metrics, and a health probe,** served from your own HTTP stack.
 - **OpenTelemetry** behind the `otel` feature: OTLP export for traces and metrics, per-handler
   dispatch metrics following the messaging semantic conventions, and W3C trace-context
   propagation across the consume-transform-produce chain.
-- **A cloneable health probe** off the running app, so a sibling healthz route keeps reporting
-  the terminal state after the messaging side stops.
-- **Colored console logging** behind the `logging` feature; the generated CLI installs it on `run`,
-  with verbosity driven by `RUST_LOG`.
 - **Capability traits** for optional features (batch subscribe, borrowed and owned transactions,
   request-reply, partitioning, repositioning a live subscription in a replayable log); a broker
   implements only what it supports.
@@ -206,6 +203,26 @@ Full compiling example: `examples/asyncapi_http.rs`.
 - [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka): the Apache Kafka broker
   (consumer groups, tracked and transactional commits, retry and dead-letter topics, partition-scoped
   transactions and exactly-once pipelines, a service template) via the `rdkafka` client.
+- [`ruststream-amqp`](https://github.com/powersemmi/ruststream-amqp): the AMQP 1.0 broker (ActiveMQ
+  Artemis, RabbitMQ 4.x, Azure Service Bus, and the wider AMQP 1.0 family; request/reply and
+  transactions) via the `fe2o3-amqp` client.
+- [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub): the Google Cloud
+  Pub/Sub broker (ordering keys, exactly-once acknowledgement, dead-letter policies) via the
+  official `google-cloud-pubsub` client.
+- [`ruststream-sqs-sns`](https://github.com/powersemmi/ruststream-sqs-sns): the Amazon SQS broker
+  with SNS fan-out (FIFO groups, visibility management, native deferred retry) via the AWS SDK.
+- [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar): the Apache Pulsar broker
+  (subscription modes, patterns, dead-letter policies, repositioning) via the `pulsar` client.
+- [`ruststream-rumqttc`](https://github.com/powersemmi/ruststream-rumqttc): the MQTT 5 broker (QoS
+  levels, shared groups, retained messages) via the `rumqttc` client.
+- [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq): the brokerless ZeroMQ
+  transport (PUSH/PULL, PUB/SUB, and DEALER/ROUTER request/reply over TCP and IPC) via the
+  pure-Rust `zeromq` client.
+- [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file): the file and stdio
+  transport (persistent replayable stream files, shell pipelines, repositioning) via the
+  `sea-streamer` clients.
+- [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis): the Amazon Kinesis
+  broker (shard leasing, checkpointing, repositioning) via the AWS SDK.
 
 Concrete brokers live in their own crates and pull `ruststream` from crates.io.
 
