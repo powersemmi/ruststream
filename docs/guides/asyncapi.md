@@ -37,7 +37,7 @@ A handler's payload type appears as a schema when it derives `JsonSchema`. RustS
 --8<-- "examples/asyncapi_http.rs:payload"
 ```
 
-A type without `JsonSchema` still works as a handler payload; it just contributes no schema to the
+A type without `JsonSchema` still works as a handler payload; it contributes no schema to the
 document.
 
 ## Message names and descriptions
@@ -95,7 +95,7 @@ Declare how clients authenticate with `ServerSpec::with_security`; each scheme l
 `SecurityScheme::custom(json)` as the escape hatch for anything they do not model. Without
 `with_security` the document carries no security sections at all.
 
-Security is deliberately the service author's statement, not the broker's: the same broker is
+Security is the service author's statement, not the broker's: the same broker is
 deployed publicly and internally with different authentication, so `DescribeServer` never reports
 it. To secure a server a broker registered automatically (`with_broker_labeled`), declare it
 explicitly instead: `.server(label, broker.describe_server().with_security(..))` with the same
@@ -103,8 +103,8 @@ label.
 
 ## Serving the document
 
-Hosting is intentionally not part of the framework. `build_spec` and `to_json` / `to_yaml` give you
-the bytes; you mount them in whatever HTTP stack you already run (axum, actix, or any other).
+Hosting is not part of the framework. `build_spec` and `to_json` / `to_yaml` give you the bytes;
+you mount them in whatever HTTP stack you already run (axum, actix, or any other).
 
 For an interactive viewer, `render_viewer_html` returns a self-contained HTML page that loads the
 AsyncAPI React component and points it at your spec URL:

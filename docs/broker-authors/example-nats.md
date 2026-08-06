@@ -423,8 +423,8 @@ impl IncomingMessage for NatsMessage {
 }
 ```
 
-Returning `AckError::Unsupported` (rather than a real error) for core deliveries is exactly what lets
-the conformance lifecycle check pass for Core NATS. Each message converts its headers once at
+Returning `AckError::Unsupported` (rather than a real error) for core deliveries is what lets the
+conformance lifecycle check pass for Core NATS. Each message converts its headers once at
 construction; the two converters are the one spot that tracks the `async-nats` version:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
@@ -533,8 +533,8 @@ it if you want the broker reported as a server in the AsyncAPI document.
 
 `NatsPublisher` is the live half; `PublishPolicy` supplies its declaration half, so registrations
 can name a publisher before any connection exists. NATS publishing carries no options, so the
-policy is a unit marker (mirroring the in-memory broker's `MemoryPublish`), and pairing is just
-the connected form's own `publisher()` - infallible here; a broker that does real work bringing a
+policy is a unit marker (mirroring the in-memory broker's `MemoryPublish`), and pairing is the
+connected form's own `publisher()` - infallible here; a broker that does real work bringing a
 publisher alive (a transactional producer) wraps its failure with `PairError::new`. Because the
 default configuration is usable as-is, the connected form can also implement `DefaultPublish`
 (see [the contract](index.md#publishpolicy)) so a `publish(..)` handler compiles without an

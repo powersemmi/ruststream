@@ -49,7 +49,7 @@ Feature blocks only ADD; no `{% else %}` or `{% if not flag %}` negative branche
 render is then a strict subset of the all-features render, so a single all-features `cargo check`
 per template catches every API-drift break - nothing can hide in an off branch. Off-flag
 combinations are static authoring concerns (a dangling `use`, an unfilled slot), checked locally,
-not in CI. This additive-only rule is part of the contract.
+not in CI.
 
 ## Ownership
 

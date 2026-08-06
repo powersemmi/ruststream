@@ -24,7 +24,7 @@ Two architectural commitments shape the framework:
 
 - **Fully async, tokio-based.** No blocking APIs in the public surface.
 - **Generic core, no `dyn` in the contract.** Associated types and native `async fn in trait`;
-  object-safe erasure lives in consumers (the Python bindings), not the core.
+  object-safe erasure lives in consumers, not the core.
 - **Subscribers are `Stream`s, not callbacks.** Back-pressure for free; the callback DX is built on
   top in the runtime.
 - **Ack consumes `self`.** You cannot ack twice - the compiler enforces it.
@@ -47,7 +47,7 @@ Two architectural commitments shape the framework:
 
 ## Scope of this repository
 
-This site documents `ruststream-rs`, the pure-Rust core (no PyO3, no concrete brokers). Concrete
+This site documents `ruststream`, the pure-Rust core (no PyO3, no concrete brokers). Concrete
 brokers (NATS, Kafka, RabbitMQ, Redis, MQTT) live in their own crates and pull `ruststream` from
 crates.io. The Python bindings live in the
 [`ruststream-py`](https://github.com/powersemmi/ruststream-py) repository.

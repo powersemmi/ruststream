@@ -1,9 +1,9 @@
 # Logging
 
 RustStream emits structured [`tracing`](https://docs.rs/tracing) events throughout dispatch,
-publishing, and the service lifecycle. Like any well-behaved library it installs no subscriber on its
-own - that choice belongs to the application. The `logging` feature is the batteries-included answer:
-a colored console subscriber driven by `RUST_LOG`.
+publishing, and the service lifecycle. It installs no subscriber on its own - that choice belongs to
+the application. The `logging` feature provides one: a colored console subscriber driven by
+`RUST_LOG`.
 
 This is separate from the [`TracingLayer`](middleware.md#built-in-layers) middleware. `TracingLayer`
 *emits* an event per message; the `logging` feature installs a subscriber that *renders* events

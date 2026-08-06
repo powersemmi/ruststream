@@ -97,7 +97,7 @@ per-element `and_after` does not compose there; it applies to plain batch and si
 ### Delayed redelivery
 
 `retry_after` covers the not-ready-yet case (a dependency has not arrived, an upstream is
-rate-limited), where an immediate redelivery would just spin:
+rate-limited), where an immediate redelivery would spin without progress:
 
 ```rust
 --8<-- "examples/retry.rs:retry_after"
@@ -244,8 +244,8 @@ Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory
 publish log) implement the `Seekable` capability: a live subscription can be moved to another
 position - replaying a stream after fixing a handler bug, reprocessing from a known point, or
 skipping forward past a poison region - without dropping the subscription. Brokers without a
-replayable log simply do not implement it, and the mount below fails to compile against them
-instead of failing at runtime.
+replayable log do not implement it, and the mount below fails to compile against them instead of
+failing at runtime.
 
 A handler repositions its own subscription through a `Seek` parameter. The runtime mints the
 seeker off the subscription right after it opens, so the handler always holds a live handle;
@@ -284,8 +284,8 @@ declaration, not an operational action afterwards:
 --8<-- "examples/seek.rs:start_at"
 ```
 
-The clause forces the position on every startup; without it the subscription simply opens at
-the broker's default. A conditional default - apply only when the broker holds no stored
+The clause forces the position on every startup; without it the subscription opens at the
+broker's default. A conditional default - apply only when the broker holds no stored
 cursor for the group (Kafka's offset reset, a JetStream deliver policy) - stays on the
 broker's own subscription descriptor, which expresses it natively.
 

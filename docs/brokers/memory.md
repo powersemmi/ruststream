@@ -1,7 +1,7 @@
 # Memory
 
 The `memory` feature provides `MemoryBroker`, an in-process broker. It needs no external service,
-which makes it ideal for examples, unit tests, and prototypes; the default `cargo generate` template
+which suits examples, unit tests, and prototypes; the default `cargo generate` template
 (`templates/memory`) uses it so a fresh project runs with zero dependencies.
 
 ```toml
@@ -32,8 +32,8 @@ cursors, redelivery timers, partitions, dead-letter routing).
 
 ## Capabilities
 
-Every capability trait has a native implementation - a first-class feature of the broker's own
-in-process semantics, not a simulation of another broker's:
+Every capability trait has a native implementation over the broker's own in-process semantics, not
+a simulation of another broker's:
 
 - **Request / reply.** `broker.requester()` returns a `MemoryRequester` whose `request` publishes
   with a unique in-process inbox in the `reply-to` header and resolves on the first message
@@ -65,8 +65,7 @@ in-process semantics, not a simulation of another broker's:
   shutdown - publishers, transaction commits, requests - error with `MemoryError::ShutDown` /
   `RequestError::ShutDown` instead of silently succeeding.
 
-`DescribeServer` stays deliberately unimplemented: the in-memory broker has no network
-coordinates, and that asymmetry is part of the contract documentation.
+`DescribeServer` is not implemented: the in-memory broker has no network coordinates to report.
 
 ## Subscription source
 

@@ -80,16 +80,16 @@ compiler monomorphizes the whole chain into one state machine and inlines across
 boundaries, so a static layer adds no dispatch cost and no allocation - it is a zero-cost
 abstraction.
 
-Making every middleware dynamic (`dyn`) would throw that away. `Handler::handle` is an `async fn in
-trait`, so its future is an anonymous `impl Future` - and a trait with an `impl Trait` return is not
-object-safe. To store middleware behind `dyn`, the future has to be boxed (`Pin<Box<dyn Future>>`):
-one heap allocation per layer per message, and the call can no longer be inlined or specialized
-across the `dyn` boundary. `dyn` + `async` does not optimize, so paying that cost on every handler -
-when the chain is almost always known at compile time - would be the wrong default.
+A dynamic (`dyn`) chain gives that up. `Handler::handle` is an `async fn in trait`, so its future is
+an anonymous `impl Future` - and a trait with an `impl Trait` return is not object-safe. To store
+middleware behind `dyn`, the future has to be boxed (`Pin<Box<dyn Future>>`): one heap allocation per
+layer per message, and the call can no longer be inlined or specialized across the `dyn` boundary.
+`dyn` + `async` does not optimize, so that cost would land on every handler while the chain is
+almost always known at compile time - hence the static default.
 
 ## Dynamic middleware
 
-When the chain genuinely is decided at runtime (layers toggled by config, or held behind `dyn`), opt
+When the chain is decided at runtime (layers toggled by config, or held behind `dyn`), opt
 into the dynamic stack for exactly those handlers: `DynStack`, `DynMiddleware`, and `Next`. A
 `DynMiddleware` has an around/next signature - it inspects the input and context, then either calls
 `next.run(..)` to continue or short-circuits with its own result. Because it is object-safe, it
