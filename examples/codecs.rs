@@ -7,9 +7,7 @@
 
 use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, Context, FailurePolicy, HandlerMetadata, HandlerResult, Router, RustStream, typed,
-};
+use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -30,6 +28,15 @@ async fn audit(order: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
+// --8<-- [start:decode_failure]
+/// A payload that fails to decode is redelivered instead of dropped.
+#[subscriber("orders", on_failure(decode = retry))]
+async fn strict(order: &Order) -> HandlerResult {
+    println!("strictly decoded order {}", order.id);
+    HandlerResult::Ack
+}
+// --8<-- [end:decode_failure]
+
 #[ruststream::app]
 fn app() -> RustStream {
     let info = AppInfo::new("codecs", "0.1.0");
@@ -45,16 +52,6 @@ fn app() -> RustStream {
             // name the codec for this one handler by mounting it through a router
             b.include_router(Router::new().with_codec(JsonCodec).include(handle));
             // --8<-- [end:per_handler]
-            // --8<-- [start:decode_failure]
-            let strict = typed(JsonCodec, |_order: &Order, _ctx: &mut Context| async {
-                HandlerResult::Ack
-            })
-            .on_decode_failure(FailurePolicy::Retry);
-            b.handle(
-                b.broker().subscribe("orders"),
-                strict,
-                HandlerMetadata::typed::<Order>("orders"),
-            );
-            // --8<-- [end:decode_failure]
+            b.include(strict);
         })
 }

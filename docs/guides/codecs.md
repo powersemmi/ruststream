@@ -72,16 +72,17 @@ property of the mounting, not of the type.
 ## Decode failures
 
 When decoding fails, the failure policy decides what happens to the message; by default it is
-dropped (a nack without requeue). On a macro handler the policy is set with the
-`on_failure(decode = ..)` clause; when building handlers by hand, the `Typed` wrapper returned by
-`typed(codec, handler)` takes the same policy through `on_decode_failure`:
+dropped (a nack without requeue). The policy is set per subscriber with the
+`on_failure(decode = ..)` clause:
 
 ```rust
-use ruststream::runtime::{FailurePolicy, typed};
+use ruststream::subscriber;
 
-// inside with_broker(...):
 --8<-- "examples/codecs.rs:decode_failure"
 ```
+
+When building handlers by hand, the `Typed` wrapper returned by `typed(codec, handler)` takes
+the same policy through `on_decode_failure`.
 
 The policy values (`Drop`, `Retry`, `RetryAfter(..)`, `Skip`, `FailFast`), the defaults, and the
 retry caveats live in [Failure policy](failure-policy.md). The codec examples above are
