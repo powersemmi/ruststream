@@ -6,8 +6,8 @@ development and tests; production brokers are separate crates you add as a depen
 Handlers, routers, codecs, and middleware are broker-agnostic, so moving between brokers is a
 one-line change at `with_broker`.
 
-Each broker crate is documented where the Docs column points: on its own site, or in its
-repository until a site exists.
+Each broker crate has its own documentation site, linked in the Docs column and from the
+**Brokers** menu.
 
 | Broker | Crate | Transport | Docs |
 |---|---|---|---|
@@ -16,14 +16,14 @@ repository until a site exists.
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, cluster, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (queues, exchanges, publisher confirms, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
 | Kafka | [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka) | Apache Kafka (consumer groups, tracked commits, transactions, exactly-once pipelines) | [powersemmi.github.io/ruststream-rdkafka](https://powersemmi.github.io/ruststream-rdkafka/) |
-| AMQP 1.0 | [`ruststream-amqp`](https://github.com/powersemmi/ruststream-amqp) | ActiveMQ Artemis, RabbitMQ 4.x, Azure Service Bus, and the wider AMQP 1.0 family (request/reply, transactions) | [repository](https://github.com/powersemmi/ruststream-amqp#readme) |
-| Google Cloud Pub/Sub | [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub) | Pub/Sub over the official client (ordering keys, exactly-once acknowledgement, dead-letter policies) | [repository](https://github.com/powersemmi/ruststream-gcp-pubsub#readme) |
-| AWS SQS / SNS | [`ruststream-sqs-sns`](https://github.com/powersemmi/ruststream-sqs-sns) | SQS queues with SNS fan-out (FIFO groups, visibility management, native deferred retry) | [repository](https://github.com/powersemmi/ruststream-sqs-sns#readme) |
-| Apache Pulsar | [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar) | Pulsar topics and patterns (subscription modes, dead-letter policies, repositioning) | [repository](https://github.com/powersemmi/ruststream-pulsar#readme) |
-| MQTT 5 | [`ruststream-rumqttc`](https://github.com/powersemmi/ruststream-rumqttc) | MQTT v5 (QoS levels, shared groups, retained messages) | [repository](https://github.com/powersemmi/ruststream-rumqttc#readme) |
-| ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) | Brokerless PUSH/PULL, PUB/SUB, and DEALER/ROUTER request/reply over TCP and IPC | [repository](https://github.com/powersemmi/ruststream-zeromq#readme) |
-| Stream files / stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) | Persistent replayable stream files and shell pipelines; zero infrastructure, full repositioning | [repository](https://github.com/powersemmi/ruststream-sea-file#readme) |
-| AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Kinesis data streams (shard leasing, checkpointing, repositioning) | [repository](https://github.com/powersemmi/ruststream-kinesis#readme) |
+| AMQP 1.0 | [`ruststream-amqp`](https://github.com/powersemmi/ruststream-amqp) | ActiveMQ Artemis, RabbitMQ 4.x, Azure Service Bus, and the wider AMQP 1.0 family (request/reply, transactions) | [powersemmi.github.io/ruststream-amqp](https://powersemmi.github.io/ruststream-amqp/) |
+| Google Cloud Pub/Sub | [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub) | Pub/Sub over the official client (ordering keys, exactly-once acknowledgement, dead-letter policies) | [powersemmi.github.io/ruststream-gcp-pubsub](https://powersemmi.github.io/ruststream-gcp-pubsub/) |
+| AWS SQS / SNS | [`ruststream-sqs-sns`](https://github.com/powersemmi/ruststream-sqs-sns) | SQS queues with SNS fan-out (FIFO groups, visibility management, native deferred retry) | [powersemmi.github.io/ruststream-sqs-sns](https://powersemmi.github.io/ruststream-sqs-sns/) |
+| Apache Pulsar | [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar) | Pulsar topics and patterns (subscription modes, dead-letter policies, repositioning) | [powersemmi.github.io/ruststream-pulsar](https://powersemmi.github.io/ruststream-pulsar/) |
+| MQTT 5 | [`ruststream-rumqttc`](https://github.com/powersemmi/ruststream-rumqttc) | MQTT v5 (QoS levels, shared groups, retained messages) | [powersemmi.github.io/ruststream-rumqttc](https://powersemmi.github.io/ruststream-rumqttc/) |
+| ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) | Brokerless PUSH/PULL, PUB/SUB, and DEALER/ROUTER request/reply over TCP and IPC | [powersemmi.github.io/ruststream-zeromq](https://powersemmi.github.io/ruststream-zeromq/) |
+| Stream files / stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) | Persistent replayable stream files and shell pipelines; zero infrastructure, full repositioning | [powersemmi.github.io/ruststream-sea-file](https://powersemmi.github.io/ruststream-sea-file/) |
+| AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Kinesis data streams (shard leasing, checkpointing, repositioning) | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
 
 To implement a broker for another transport, see [Broker authors](../broker-authors/index.md).
 

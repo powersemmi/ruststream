@@ -113,6 +113,14 @@ nav:
       - Redis: https://powersemmi.github.io/ruststream-fred/
       - RabbitMQ: https://powersemmi.github.io/ruststream-lapin/
       - Kafka: https://powersemmi.github.io/ruststream-rdkafka/
+      - AMQP 1.0: https://powersemmi.github.io/ruststream-amqp/
+      - Google Cloud Pub/Sub: https://powersemmi.github.io/ruststream-gcp-pubsub/
+      - AWS SQS / SNS: https://powersemmi.github.io/ruststream-sqs-sns/
+      - Apache Pulsar: https://powersemmi.github.io/ruststream-pulsar/
+      - MQTT 5: https://powersemmi.github.io/ruststream-rumqttc/
+      - ZeroMQ: https://powersemmi.github.io/ruststream-zeromq/
+      - Stream files / stdio: https://powersemmi.github.io/ruststream-sea-file/
+      - AWS Kinesis: https://powersemmi.github.io/ruststream-kinesis/
   - Broker authors:
       - broker-authors/index.md
       - broker-authors/example-nats.md
