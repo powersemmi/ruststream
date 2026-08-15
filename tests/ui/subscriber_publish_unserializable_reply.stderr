@@ -15,7 +15,7 @@ help: the trait `ReplySink<Reply, DeliveryCx, Pipeline>` is implemented for `Typ
    | |     ReplyCodec: Codec,
    | |     Transforms: PublishTransform<DeliveryCx>,
    | |_____________________________________________^
-   = note: required for `runtime::app::include::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+   = note: required for `ruststream::runtime::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
    = note: 1 redundant requirement hidden
    = note: required for `runtime::app::include::DefaultReply` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
    = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
@@ -37,7 +37,7 @@ help: the trait `Handler<Msg, <Def as PublishingDef>::Context, State>` is implem
    | |     Pipeline: Send + Sync,
    | |     State: Send + Sync,
    | |_______________________^
-   = note: required for `runtime::app::include::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+   = note: required for `ruststream::runtime::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
    = note: 1 redundant requirement hidden
    = note: required for `runtime::app::include::DefaultReply` to implement `runtime::app::include::CommitVia<runtime::app::include::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
    = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, handle>`

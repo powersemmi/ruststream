@@ -1,0 +1,19 @@
+error: an Out parameter names the capability it needs, not a publisher type: write `Out<impl Publisher>` (or a capability like `impl OwnedTransactions`); the concrete publisher is inferred from the policy attached at the include site
+  --> tests/ui/subscriber_out_concrete_type.rs:14:48
+   |
+14 | async fn forward(order: &Order, Out(_out): Out<MemoryPublisher>) -> HandlerResult {
+   |                                                ^^^^^^^^^^^^^^^
+
+warning: unused import: `ruststream::memory::MemoryPublisher`
+ --> tests/ui/subscriber_out_concrete_type.rs:1:5
+  |
+1 | use ruststream::memory::MemoryPublisher;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `HandlerResult` and `Out`
+ --> tests/ui/subscriber_out_concrete_type.rs:2:27
+  |
+2 | use ruststream::runtime::{HandlerResult, Out};
+  |                           ^^^^^^^^^^^^^  ^^^

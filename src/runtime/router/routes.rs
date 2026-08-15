@@ -274,7 +274,7 @@ where
                     // A router mount has no `.publisher(..)`-style attachment surface, so the
                     // startup injections resolve with no extra: a Seek parameter works, an Out
                     // one needs the scope's include form.
-                    let injections = Def::Injections::resolve(&(), connected.as_ref(), &subscriber)
+                    let injections = Def::Injections::resolve((), connected.as_ref(), &subscriber)
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
@@ -351,7 +351,7 @@ where
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                let injections = Def::Injections::resolve(&(), connected.as_ref(), &subscriber)
+                let injections = Def::Injections::resolve((), connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
                 let handler = BatchPublishingHandler {

@@ -319,7 +319,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
                 let handler = global.layer(PublishingHandler {
@@ -374,7 +374,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         self.sink.push_injected_workers(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
-                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
                 let handler = global.layer(InjectHandler {
@@ -420,7 +420,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         self.sink.push_injected_batch(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
-                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
                 let handler = BatchInjectHandler {
@@ -477,7 +477,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
                     .pair(connected.as_ref())
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                let injections = Def::Injections::resolve(&extra, connected.as_ref(), &subscriber)
+                let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
                 let handler = BatchPublishingHandler {

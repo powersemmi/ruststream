@@ -16,6 +16,10 @@ use crate::RawMessage;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::HandlerResult;
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use serde::de::DeserializeOwned;
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use std::fmt::Debug;
 
 use super::coordinator::{Coordinator, Outcome, Record};
 
@@ -101,7 +105,7 @@ impl<'a> SubscriberAssertions<'a> {
     /// decode failure will fail here too).
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     #[must_use]
-    pub fn received<T: serde::de::DeserializeOwned>(&self) -> Vec<T> {
+    pub fn received<T: DeserializeOwned>(&self) -> Vec<T> {
         self.received_with(&DefaultCodec::default())
     }
 
@@ -115,7 +119,7 @@ impl<'a> SubscriberAssertions<'a> {
     #[must_use]
     pub fn received_with<T, C>(&self, codec: &C) -> Vec<T>
     where
-        T: serde::de::DeserializeOwned,
+        T: DeserializeOwned,
         C: Codec,
     {
         self.with_records(|records| {
@@ -159,7 +163,7 @@ impl<'a> SubscriberAssertions<'a> {
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn with<T>(self, expected: &T) -> Self
     where
-        T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+        T: DeserializeOwned + PartialEq + Debug,
     {
         self.with_codec(&DefaultCodec::default(), expected)
     }
@@ -174,7 +178,7 @@ impl<'a> SubscriberAssertions<'a> {
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn with_codec<T, C>(self, codec: &C, expected: &T) -> Self
     where
-        T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+        T: DeserializeOwned + PartialEq + Debug,
         C: Codec,
     {
         self.with_last("the received value", |record| {
@@ -334,6 +338,13 @@ impl<T> PublishedAssertions<T> {
         &self.messages
     }
 
+    /// Re-types the expected payload, for assertion sources that do not name one up front
+    /// (`tb.out::<Slot>().decoded_as::<Reply>().with(&expected)`).
+    #[must_use]
+    pub fn decoded_as<U>(self) -> PublishedAssertions<U> {
+        PublishedAssertions::new(self.name, self.messages)
+    }
+
     /// The most recent published message, panicking if there were none.
     fn last(&self, what: &str) -> &RawMessage {
         self.messages.last().unwrap_or_else(|| {
@@ -363,7 +374,7 @@ impl<T> PublishedAssertions<T> {
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 impl<T> PublishedAssertions<T>
 where
-    T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+    T: DeserializeOwned + PartialEq + Debug,
 {
     /// Asserts the most recent published payload decodes (with
     /// [`DefaultCodec`](crate::codec::DefaultCodec)) to `expected`. If the publisher uses a different
@@ -402,7 +413,7 @@ where
 }
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-impl<T: serde::de::DeserializeOwned> PublishedAssertions<T> {
+impl<T: DeserializeOwned> PublishedAssertions<T> {
     /// Decodes every message published to this channel (with
     /// [`DefaultCodec`](crate::codec::DefaultCodec)), in publish order, for custom inspection. Use
     /// [`decoded_with`](Self::decoded_with) for a non-default codec.

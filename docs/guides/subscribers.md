@@ -47,9 +47,10 @@ The mechanics live in
 [Injecting dependencies](context.md#injecting-dependencies-extractor-parameters) and
 [Context fields as parameters](context.md#context-fields-as-parameters).
 
-One more parameter shape is not an extractor but an **injection**: `Out(out): Out<P>` receives
-a live publisher paired by the runtime from the source attached at the include site
-(`b.include(handler).publisher(..)`). See
+One more parameter shape is not an extractor but an **injection**: `Out(out): Out<impl
+Publisher>` receives a live publisher paired by the runtime from the policy attached at the
+include site (`b.include(handler).publisher(..)`, or `.out(marker, ..)` per named slot); the
+concrete publisher type never appears in the signature. See
 [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ### Acking

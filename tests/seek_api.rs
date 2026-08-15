@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use ruststream::memory::{
-    MemoryBroker, MemoryPosition, MemoryPublish, MemoryPublisher, MemorySeeker, MemorySource,
-};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream, Seek};
 use ruststream::testing::{TestApp, expect_published};
 use ruststream::{Broker, OutgoingMessage, Publisher, Seeker, WithSeeker, subscriber};
@@ -191,7 +189,7 @@ static COMBO_PUBLISHED: Notify = Notify::const_new();
 #[subscriber("seek.combo")]
 async fn forward_skipping(
     event: &Event,
-    Out(out): Out<MemoryPublisher>,
+    Out(out): Out<impl Publisher>,
     Seek(seeker): Seek<MemorySeeker>,
 ) -> HandlerResult {
     if event.id == 0 {

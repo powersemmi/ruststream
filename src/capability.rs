@@ -145,6 +145,11 @@ pub trait Positioned: IncomingMessage {
 /// [`begin_transaction`]: Self::begin_transaction
 /// [`commit`]: Self::commit
 /// [`abort`]: Self::abort
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not support broker-side transactions",
+    note = "for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live \
+            publisher is transactional (a transactional producer configuration)"
+)]
 pub trait TransactionalPublisher: Publisher {
     /// Begins a new transaction on this publisher.
     ///
@@ -282,6 +287,12 @@ pub trait Transaction: Send {
 ///     Ok(())
 /// }
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not open caller-owned transactions",
+    note = "for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher \
+            buffers client-side transactions; Kafka-like brokers offer only the borrowed \
+            `TransactionalPublisher` kind"
+)]
 pub trait OwnedTransactions: Publisher {
     /// The buffer-owning transaction opened by [`transaction`](Self::transaction).
     type Transaction: Transaction;
@@ -304,6 +315,11 @@ pub trait OwnedTransactions: Publisher {
 /// Naturally implemented by `NATS` core and `NATS` `JetStream`'s `req` pattern. Brokers without
 /// native reply correlation (`Kafka`, `RabbitMQ` classic queues) do not implement this; users that
 /// need request / reply on those transports must emulate it themselves.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not support request / reply messaging",
+    note = "for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher \
+            correlates replies natively (NATS-style); Kafka and classic queues do not"
+)]
 pub trait RequestReply: Publisher {
     /// The reply message type.
     type Reply: IncomingMessage;

@@ -1,15 +1,18 @@
 //! Startup injections: handler parameters resolved once per subscription at startup.
 //!
-//! `#[subscriber("in")] async fn f(msg: &T, Out(out): Out<P>, Seek(seeker): Seek<K>)` declares
-//! parameters the runtime prepares before the first delivery: an injected publisher pairs
-//! against the connected broker from the source attached at the include site
-//! (`b.include(f).publisher(..)`), an injected seeker is minted off the subscription's own
-//! subscriber. Every such parameter implements [`FromStartup`], the definition carries them as
-//! one tuple ([`InjectDef::Injections`]), and a single handler adapter serves every
-//! combination - fully monomorphized, nothing to check on the hot path. Adding a new injected
-//! parameter kind is one `FromStartup` impl, not a new definition form.
+//! `#[subscriber("in")] async fn f(msg: &T, Out(out): Out<impl Publisher>, Seek(seeker):
+//! Seek<K>)` declares parameters the runtime prepares before the first delivery: an injected
+//! publisher pairs against the connected broker from the source attached at the include site
+//! (`b.include(f).publisher(..)`, or `.out(marker, ..)` per named slot), an injected seeker is
+//! minted off the subscription's own subscriber. Every such parameter implements
+//! [`FromStartup`], the definition carries them as one tuple ([`InjectDef::Injections`])
+//! resolved element-by-element against a matching extra tuple, and a single handler adapter
+//! serves every combination - fully monomorphized, nothing to check on the hot path. Adding a
+//! new injected parameter kind is one `FromStartup` impl, not a new definition form.
 
+use std::fmt;
 use std::future::Future;
+use std::marker::PhantomData;
 
 use tracing::warn;
 
@@ -22,27 +25,34 @@ use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
+use super::slot::{DefaultSlot, OutSlot, SlotPublisher};
 
 /// The marker a handler signature uses to receive an injected publisher:
-/// `Out(out): Out<P>` binds `out` to `&P` inside the body.
+/// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
 ///
-/// The value is paired by the runtime from the source attached at the include site
-/// (`b.include(f).publisher(..)`), so it is live by construction; handlers never see a
-/// "not connected" state. See the module docs.
+/// The publisher type is not named in the signature: the handler states the capability it needs
+/// (`impl Publisher`, `impl OwnedTransactions`, ...) and the concrete type is inferred from the
+/// policy attached at the include site (`b.include(f).publisher(..)`), so the same handler
+/// mounts on a production broker and on its in-process test transport unchanged. A handler
+/// taking several publishers names a slot marker per parameter
+/// (`Out<impl Publisher, MySlot>`, see [`OutSlot`](super::OutSlot)) and the include site binds
+/// each with `.out(marker, policy)`, in any order.
+///
+/// The value is paired by the runtime at startup, so it is live by construction; handlers never
+/// see a "not connected" state. See the module docs.
 ///
 /// # Examples
 ///
 /// ```
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
-/// use ruststream::memory::MemoryPublisher;
 /// use ruststream::runtime::{HandlerResult, Out};
 /// use ruststream::{OutgoingMessage, Publisher, subscriber};
 /// # #[derive(serde::Deserialize)]
 /// # struct Event { id: u64 }
 ///
 /// #[subscriber("ingress")]
-/// async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult {
+/// async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
 ///     let payload = event.id.to_be_bytes();
 ///     if out
 ///         .publish(OutgoingMessage::new("out", payload.as_slice()))
@@ -56,7 +66,7 @@ use super::metadata::HandlerMetadata;
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct Out<P>(pub P);
+pub struct Out<P, M = DefaultSlot>(pub P, pub PhantomData<M>);
 
 /// The marker a handler signature uses to receive its subscription's seeker:
 /// `Seek(seeker): Seek<K>` binds `seeker` to `&K` inside the body.
@@ -93,39 +103,52 @@ pub struct Seek<K>(pub K);
 
 /// A handler parameter resolved once per subscription at startup.
 ///
-/// `Extra` is whatever the include site attached (a publish policy for [`Out`], `()` when the
-/// definition needs no attachment); every injection of one handler sees the same attachment.
-/// The runtime resolves the whole [`InjectDef::Injections`] tuple after the subscription opens
-/// and before the first delivery, so injected values are live by construction.
+/// `Extra` is the include-site attachment for this element: a publish policy for [`Out`], any
+/// placeholder for parameters that need nothing (a [`Seek`] resolves off the subscription
+/// itself). The injection tuple resolves element-by-element against a matching extra tuple, so
+/// each slot pairs with its own attachment. The runtime resolves the whole
+/// [`InjectDef::Injections`] tuple after the subscription opens and before the first delivery,
+/// so injected values are live by construction.
 pub trait FromStartup<B: Broker, Sub, Extra>: Sized {
     /// Resolves the injected value against the connected broker and the opened subscriber.
+    ///
+    /// Runs once per subscription, so the attachment arrives by value: a publish policy is
+    /// consumed by its pairing, and no `Clone` is demanded of it.
     ///
     /// # Errors
     ///
     /// Returns [`PairError`] when the value cannot be prepared (a publish policy the broker
     /// refuses to pair); startup then fails, exactly like a failing subscription.
     fn resolve(
-        extra: &Extra,
+        extra: Extra,
         connected: &Connected<B>,
         subscriber: &Sub,
     ) -> impl Future<Output = Result<Self, PairError>> + Send;
 }
 
-/// The injected publisher: pairs the attached policy against the connected broker.
-impl<B, Sub, Extra> FromStartup<B, Sub, Extra> for Out<Extra::Live>
+/// The injected publisher: pairs the slot's attached policy against the connected broker and
+/// wraps it with the slot identity. A failing pair surfaces at startup with the slot's name
+/// (an unbound slot never gets this far: the include site does not compile without a policy
+/// per slot).
+impl<B, Sub, Extra, M> FromStartup<B, Sub, Extra> for Out<SlotPublisher<Extra::Live, M>, M>
 where
     B: Broker,
     Sub: Sync,
-    Extra: PublishPolicy<Connected<B>> + Clone + Send + Sync,
+    Extra: PublishPolicy<Connected<B>> + Send,
+    M: OutSlot,
 {
     async fn resolve(
-        extra: &Extra,
+        extra: Extra,
         connected: &Connected<B>,
         _subscriber: &Sub,
     ) -> Result<Self, PairError> {
-        // Pairing consumes the policy, and the attachment is shared by every injection of the
-        // handler, so it is cloned here; policies are small declarations by contract.
-        Ok(Self(extra.clone().pair(connected).await?))
+        let live = extra.pair(connected).await.map_err(|err| {
+            PairError::from_boxed(Box::from(format!(
+                "pairing the publisher for Out slot `{}` failed: {err}",
+                M::NAME,
+            )))
+        })?;
+        Ok(Self(SlotPublisher::new(live), PhantomData))
     }
 }
 
@@ -134,10 +157,10 @@ impl<B, Sub, Extra> FromStartup<B, Sub, Extra> for Seek<Sub::Seeker>
 where
     B: Broker,
     Sub: Seekable + Sync,
-    Extra: Sync,
+    Extra: Send,
 {
     async fn resolve(
-        _extra: &Extra,
+        _extra: Extra,
         _connected: &Connected<B>,
         subscriber: &Sub,
     ) -> Result<Self, PairError> {
@@ -146,9 +169,9 @@ where
 }
 
 /// A definition with no injected parameters still resolves: to nothing.
-impl<B: Broker, Sub: Sync, Extra: Sync> FromStartup<B, Sub, Extra> for () {
+impl<B: Broker, Sub: Sync, Extra: Send> FromStartup<B, Sub, Extra> for () {
     async fn resolve(
-        _extra: &Extra,
+        _extra: Extra,
         _connected: &Connected<B>,
         _subscriber: &Sub,
     ) -> Result<Self, PairError> {
@@ -157,32 +180,36 @@ impl<B: Broker, Sub: Sync, Extra: Sync> FromStartup<B, Sub, Extra> for () {
 }
 
 /// Implements [`FromStartup`] for injection tuples: each element resolves in declaration
-/// order against the same attachment.
+/// order, consuming its own extra (the two tuples are zipped positionally).
 macro_rules! impl_from_startup_for_tuples {
-    ($(($($name:ident),+))+) => {$(
-        impl<B, Sub, Extra, $($name),+> FromStartup<B, Sub, Extra> for ($($name,)+)
+    ($(($($name:ident: $extra:ident),+))+) => {$(
+        impl<B, Sub, $($name, $extra),+> FromStartup<B, Sub, ($($extra,)+)> for ($($name,)+)
         where
             B: Broker,
             Sub: Sync,
-            Extra: Sync,
-            $($name: FromStartup<B, Sub, Extra> + Send,)+
+            $(
+                $name: FromStartup<B, Sub, $extra> + Send,
+                $extra: Send,
+            )+
         {
             async fn resolve(
-                extra: &Extra,
+                extra: ($($extra,)+),
                 connected: &Connected<B>,
                 subscriber: &Sub,
             ) -> Result<Self, PairError> {
-                Ok(($($name::resolve(extra, connected, subscriber).await?,)+))
+                #[allow(non_snake_case)]
+                let ($($extra,)+) = extra;
+                Ok(($($name::resolve($extra, connected, subscriber).await?,)+))
             }
         }
     )+};
 }
 
 impl_from_startup_for_tuples! {
-    (T1)
-    (T1, T2)
-    (T1, T2, T3)
-    (T1, T2, T3, T4)
+    (T1: E1)
+    (T1: E1, T2: E2)
+    (T1: E1, T2: E2, T3: E3)
+    (T1: E1, T2: E2, T3: E3, T4: E4)
 }
 
 /// A subscriber definition whose handler takes startup-injected parameters.
@@ -272,8 +299,8 @@ pub struct InjectHandler<Def: InjectDef, DecodeCodec> {
     pub(crate) decode: FailurePolicy,
 }
 
-impl<Def: InjectDef, DecodeCodec> std::fmt::Debug for InjectHandler<Def, DecodeCodec> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Def: InjectDef, DecodeCodec> fmt::Debug for InjectHandler<Def, DecodeCodec> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InjectHandler").finish_non_exhaustive()
     }
 }
