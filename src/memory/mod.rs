@@ -60,11 +60,14 @@ struct MemoryOutbound {
     headers: Headers,
 }
 
+/// A stamped message on its way to subscribers. The name and headers are shared, not owned:
+/// fanout clones one delivery per subscriber, so per-subscriber cost is reference-count bumps
+/// (plus the [`Bytes`] payload's own cheap clone), not string and map allocations.
 #[derive(Clone)]
 struct MemoryDelivery {
-    name: String,
+    name: Arc<str>,
     payload: Bytes,
-    headers: Headers,
+    headers: Arc<Headers>,
     /// Zero-based index of this message in its name's publish log. Stable across requeues, so
     /// a redelivered message reports the same [`MemoryPosition`].
     seq: usize,
@@ -89,7 +92,9 @@ impl Default for Bus {
 #[derive(Default)]
 struct MemoryState {
     subscribers: Mutex<Bus>,
-    published: Mutex<HashMap<String, Vec<RawMessage>>>,
+    // Keyed by the shared delivery name, so the per-publish log append reuses the fanout's
+    // `Arc<str>` instead of allocating a fresh key (lookups by `&str` work through `Borrow`).
+    published: Mutex<HashMap<Arc<str>, Vec<RawMessage>>>,
     notify: Notify,
     inbox_seq: AtomicU64,
     /// The harness's quiescence-and-recording coordinator, installed by a
@@ -146,7 +151,16 @@ impl MemoryState {
     // significant_drop_tightening misfires here: both guards drop at the end of the minimal
     // block right after their last use.
     #[allow(clippy::significant_drop_tightening)]
-    fn fanout(&self, outbound: &MemoryOutbound) -> Result<(), MemoryError> {
+    fn fanout(&self, outbound: MemoryOutbound) -> Result<(), MemoryError> {
+        // The outbound arrives by value: its name and headers move into shared allocations
+        // once, and every per-subscriber copy below is reference-count bumps.
+        let MemoryOutbound {
+            name,
+            payload,
+            headers,
+        } = outbound;
+        let name: Arc<str> = name.into();
+        let headers = Arc::new(headers);
         {
             let bus = self
                 .subscribers
@@ -156,17 +170,15 @@ impl MemoryState {
                 return Err(MemoryError::ShutDown);
             };
             let mut log = self.published.lock().expect("memory broker mutex poisoned");
-            let entries = log.entry(outbound.name.clone()).or_default();
+            let entries = log.entry(Arc::clone(&name)).or_default();
             let delivery = MemoryDelivery {
-                name: outbound.name.clone(),
-                payload: outbound.payload.clone(),
-                headers: outbound.headers.clone(),
+                name: Arc::clone(&name),
+                payload: payload.clone(),
+                headers: Arc::clone(&headers),
                 seq: entries.len(),
             };
-            entries.push(
-                RawMessage::new(outbound.name.clone(), outbound.payload.clone())
-                    .with_headers(outbound.headers.clone()),
-            );
+            // The log owns its copy (the one unavoidable materialization per publish).
+            entries.push(RawMessage::new(&*name, payload).with_headers((*headers).clone()));
             self.send_to(subscribers, &delivery);
         }
         self.notify.notify_waiters();
@@ -175,7 +187,7 @@ impl MemoryState {
 
     /// Enqueues `delivery` to every subscriber registered under its name.
     fn send_to(&self, subscribers: &HashMap<String, Vec<Sender>>, delivery: &MemoryDelivery) {
-        if let Some(senders) = subscribers.get(&delivery.name) {
+        if let Some(senders) = subscribers.get(&*delivery.name) {
             for tx in senders {
                 let sent = tx.send(delivery.clone());
                 // Count every live enqueue so the harness can drive to quiescence. Request inboxes
@@ -459,7 +471,7 @@ impl crate::testing::TestableBroker for ConnectedMemoryBroker {
         // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
-            .fanout(&MemoryOutbound {
+            .fanout(MemoryOutbound {
                 name: message.name().to_owned(),
                 payload: Bytes::copy_from_slice(message.payload()),
                 headers: message.headers().clone(),
@@ -694,7 +706,7 @@ impl Publisher for MemoryPublisher {
                 return Ok(());
             }
         }
-        self.state.fanout(&outbound)
+        self.state.fanout(outbound)
     }
 }
 
@@ -728,7 +740,7 @@ impl Drop for MemoryMessage {
 impl fmt::Debug for MemoryMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryMessage")
-            .field("name", &self.delivery.as_ref().map(|d| d.name.as_str()))
+            .field("name", &self.delivery.as_ref().map(|d| &*d.name))
             .finish_non_exhaustive()
     }
 }
@@ -737,10 +749,7 @@ impl MemoryMessage {
     /// Returns the name the message was published to.
     #[must_use]
     pub fn name(&self) -> &str {
-        self.delivery
-            .as_ref()
-            .map(|d| d.name.as_str())
-            .unwrap_or_default()
+        self.delivery.as_ref().map(|d| &*d.name).unwrap_or_default()
     }
 
     /// Converts the delivery into a broker-agnostic [`RawMessage`]. Consumes the handle without
@@ -753,7 +762,9 @@ impl MemoryMessage {
     #[must_use]
     pub fn into_raw(mut self) -> RawMessage {
         let delivery = self.delivery.take().expect("delivery already consumed");
-        RawMessage::new(delivery.name, delivery.payload).with_headers(delivery.headers)
+        // Cold path (test assertions): materializing the shared name and headers here keeps
+        // the hot fanout free of owned copies.
+        RawMessage::new(&*delivery.name, delivery.payload).with_headers((*delivery.headers).clone())
     }
 }
 

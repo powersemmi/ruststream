@@ -123,7 +123,7 @@ impl Publisher for MemoryRequester {
             headers: msg.headers().clone(),
         };
         self.state
-            .fanout(&outbound)
+            .fanout(outbound)
             .map_err(|_| RequestError::ShutDown)
     }
 }
@@ -150,7 +150,7 @@ impl RequestReply for MemoryRequester {
             payload: Bytes::copy_from_slice(msg.payload()),
             headers,
         };
-        if self.state.fanout(&outbound).is_err() {
+        if self.state.fanout(outbound).is_err() {
             self.state.unregister(&inbox);
             return Err(RequestError::ShutDown);
         }
@@ -267,8 +267,8 @@ impl TransactionalPublisher for MemoryPublisher {
             .expect("memory broker mutex poisoned")
             .take()
             .ok_or(MemoryError::NoTransaction)?;
-        for delivery in buffered {
-            self.state.fanout(&delivery)?;
+        for outbound in buffered {
+            self.state.fanout(outbound)?;
         }
         Ok(())
     }
@@ -356,8 +356,8 @@ impl Transaction for MemoryTransaction {
         // Settled before the flush: a failed commit has still consumed the transaction (the
         // buffer is lost per the Transaction contract), so the drop warning must not fire.
         self.settled = true;
-        for delivery in &self.buffered {
-            self.state.fanout(delivery)?;
+        for outbound in std::mem::take(&mut self.buffered) {
+            self.state.fanout(outbound)?;
         }
         Ok(())
     }
@@ -548,7 +548,7 @@ impl Seeker for MemorySeeker {
             .published
             .lock()
             .expect("memory broker mutex poisoned")
-            .get(&self.name)
+            .get(self.name.as_str())
             .map_or(0, Vec::len);
         let clamped = to.0.min(end);
         // Watermark first (Release, paired with the Acquire load in the delivery filter), then
@@ -599,7 +599,10 @@ impl MemorySubscriber {
             .lock()
             .expect("memory broker mutex poisoned");
 
-        let entries = log.get(&self.name).map(Vec::as_slice).unwrap_or_default();
+        let entries = log
+            .get(self.name.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
 
         // The replay is counted in flight BEFORE the drain releases the queued deliveries:
         // decrementing first would let the in-flight count touch zero mid-swap, and a
@@ -622,9 +625,9 @@ impl MemorySubscriber {
 
         for (seq, raw) in entries.iter().enumerate().skip(target) {
             let delivery = MemoryDelivery {
-                name: self.name.clone(),
+                name: Arc::from(self.name.as_str()),
                 payload: raw.payload_bytes(),
-                headers: raw.headers().clone(),
+                headers: Arc::new(raw.headers().clone()),
                 seq,
             };
             // The send cannot fail: this subscriber holds both ends of its own channel.
