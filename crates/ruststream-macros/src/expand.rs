@@ -22,7 +22,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
         // carries Out / Seek parameters - the input axis makes raw compose with them).
         match &args.publish_raw {
             Some(reply_topic) => expand_publishing(&parts, func, reply_topic, true, true)?,
-            None if parts.out.is_some() || parts.seek.is_some() => expand_injected(&parts, true),
+            None if !parts.outs.is_empty() || parts.seek.is_some() => expand_injected(&parts, true),
             None => expand_subscribing(&parts, true),
         }
     } else if let Some(reply_topic) = &args.publish_raw {
@@ -30,14 +30,14 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
     } else {
         match (&args.batch, &args.publish) {
             (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
-            (true, None) if parts.out.is_some() || parts.seek.is_some() => {
+            (true, None) if !parts.outs.is_empty() || parts.seek.is_some() => {
                 expand_batch_injected(&parts, func)
             }
             (true, None) => expand_batch(&parts, func),
             (false, Some(reply_topic)) => {
                 expand_publishing(&parts, func, reply_topic, false, false)?
             }
-            (false, None) if parts.out.is_some() || parts.seek.is_some() => {
+            (false, None) if !parts.outs.is_empty() || parts.seek.is_some() => {
                 expand_injected(&parts, false)
             }
             (false, None) => expand_subscribing(&parts, false),
@@ -111,7 +111,7 @@ struct HandlerParts<'a> {
     ctx_ty: TokenStream2,
     state_ty: Option<TokenStream2>,
     extractors: Vec<(&'a Pat, &'a Type)>,
-    out: Option<(&'a Pat, &'a Type)>,
+    outs: Vec<OutParam<'a>>,
     seek: Option<(&'a Pat, &'a Type)>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
@@ -161,10 +161,19 @@ fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
     quote!(())
 }
 
-/// The publisher type `P` of an `Out<P>`-shaped parameter type, when the type has that shape.
-/// Purely syntactic (the last path segment `Out` with exactly one type argument), like the
+/// One `Out<impl Bounds[, Marker]>` handler parameter: the binding pattern, the capability
+/// bounds the publisher generic carries, and the slot marker type (the implicit `DefaultSlot`
+/// when the parameter names none).
+struct OutParam<'a> {
+    pat: &'a Pat,
+    bounds: &'a syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+    marker: TokenStream2,
+}
+
+/// The type arguments of an `Out<..>`-shaped parameter type, when the type has that shape.
+/// Purely syntactic (the last path segment `Out` with one or two type arguments), like the
 /// `Ctx<K>` probe below.
-fn out_param_type(ty: &Type) -> Option<&Type> {
+fn out_param_args(ty: &Type) -> Option<Vec<&Type>> {
     let Type::Path(path) = ty else {
         return None;
     };
@@ -175,15 +184,18 @@ fn out_param_type(ty: &Type) -> Option<&Type> {
     let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
         return None;
     };
-    let mut types = args.args.iter().filter_map(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
-    });
-    let publisher = types.next()?;
-    if types.next().is_some() {
+    let types: Vec<&Type> = args
+        .args
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::GenericArgument::Type(ty) => Some(ty),
+            _ => None,
+        })
+        .collect();
+    if types.is_empty() || types.len() > 2 {
         return None;
     }
-    Some(publisher)
+    Some(types)
 }
 
 /// The seeker type `K` of a `Seek<K>`-shaped parameter type, when the type has that shape.
@@ -305,21 +317,36 @@ fn collect_extractors(func: &ItemFn, ctx_present: bool) -> syn::Result<Vec<(&Pat
     Ok(extractors)
 }
 
-/// The `where` predicates binding each extractor type to [`FromContext`] for the handler's context
-/// `C` and state `S`, or nothing when there are no extractors. Added to the generated call impl so a
-/// state-specific extractor compiles without forcing the handler to name a `&mut Context`.
+/// The predicates binding each extractor type to [`FromContext`] for the handler's context `C`
+/// and state `S`. Added to the generated call impl so a state-specific extractor compiles
+/// without forcing the handler to name a `&mut Context`.
+fn extractor_preds(
+    extractors: &[(&Pat, &Type)],
+    ctx_ty: &TokenStream2,
+    state: &TokenStream2,
+) -> Vec<TokenStream2> {
+    extractors
+        .iter()
+        .map(|(_, ty)| quote!(#ty: ::ruststream::runtime::FromContext<#ctx_ty, #state>))
+        .collect()
+}
+
+/// Renders a predicate list as a `where` clause, or nothing when the list is empty.
+fn where_clause(preds: &[TokenStream2]) -> TokenStream2 {
+    if preds.is_empty() {
+        return quote!();
+    }
+    quote!(where #(#preds),*)
+}
+
+/// [`extractor_preds`] rendered as a full `where` clause, for the expansions without slot
+/// bounds of their own.
 fn extractor_where(
     extractors: &[(&Pat, &Type)],
     ctx_ty: &TokenStream2,
     state: &TokenStream2,
 ) -> TokenStream2 {
-    if extractors.is_empty() {
-        return quote!();
-    }
-    let preds = extractors
-        .iter()
-        .map(|(_, ty)| quote!(#ty: ::ruststream::runtime::FromContext<#ctx_ty, #state>));
-    quote!(where #(#preds),*)
+    where_clause(&extractor_preds(extractors, ctx_ty, state))
 }
 
 /// The `let` bindings that resolve each extractor from the context before the body runs. A failed
@@ -430,32 +457,60 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
     })
 }
 
-/// Splits the (at most one) `Out<P>` parameter out of the extractor list, rejecting a
-/// duplicate.
-fn split_out<'a>(
-    extractors: &mut Vec<(&'a Pat, &'a Type)>,
-) -> syn::Result<Option<(&'a Pat, &'a Type)>> {
-    let mut out = None;
-    extractors.retain(|(pat, ty)| {
-        if let Some(publisher_ty) = out_param_type(ty) {
-            // Only the first Out parameter is kept; a duplicate is rejected below.
-            if out.is_none() {
-                out = Some((*pat, publisher_ty));
-                return false;
-            }
-        }
-        true
-    });
-    if let Some((_, dup)) = extractors
-        .iter()
-        .find(|(_, ty)| out_param_type(ty).is_some())
-    {
+/// Splits the `Out<..>` parameters out of the extractor list, in signature order.
+///
+/// Each must carry its capability as `impl Trait` (the concrete publisher type is inferred at
+/// the include site) and a distinct marker; a single parameter may omit the marker and binds
+/// the implicit `DefaultSlot`.
+fn split_outs<'a>(extractors: &mut Vec<(&'a Pat, &'a Type)>) -> syn::Result<Vec<OutParam<'a>>> {
+    let mut outs = Vec::new();
+    let mut kept = Vec::new();
+    for (pat, ty) in extractors.drain(..) {
+        let Some(args) = out_param_args(ty) else {
+            kept.push((pat, ty));
+            continue;
+        };
+        let Type::ImplTrait(capability) = args[0] else {
+            return Err(Error::new_spanned(
+                args[0],
+                "an Out parameter names the capability it needs, not a publisher type: write \
+                 `Out<impl Publisher>` (or a capability like `impl OwnedTransactions`); the \
+                 concrete publisher is inferred from the policy attached at the include site",
+            ));
+        };
+        let marker = args.get(1).map_or_else(
+            || quote!(::ruststream::runtime::DefaultSlot),
+            |marker| quote!(#marker),
+        );
+        outs.push(OutParam {
+            pat,
+            bounds: &capability.bounds,
+            marker,
+        });
+    }
+    *extractors = kept;
+    if outs.len() > 3 {
         return Err(Error::new_spanned(
-            dup,
-            "a #[subscriber] handler takes at most one Out parameter",
+            outs[3].pat,
+            "a #[subscriber] handler takes at most three Out parameters",
         ));
     }
-    Ok(out)
+    for (index, out) in outs.iter().enumerate() {
+        let name = out.marker.to_string();
+        if outs
+            .iter()
+            .skip(index + 1)
+            .any(|other| other.marker.to_string() == name)
+        {
+            return Err(Error::new_spanned(
+                out.pat,
+                "every Out parameter needs its own slot marker: two parameters bind the same \
+                 slot (name each with `Out<impl Publisher, MyMarker>` and derive the markers \
+                 with #[derive(OutSlot)])",
+            ));
+        }
+    }
+    Ok(outs)
 }
 
 /// Splits the (at most one) `Seek<K>` parameter out of the extractor list, rejecting a
@@ -611,7 +666,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         quote!(_ctx)
     };
     let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
-    let out = split_out(&mut extractors)?;
+    let outs = split_outs(&mut extractors)?;
     let seek = split_seek(&mut extractors)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
@@ -634,7 +689,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         ctx_ty,
         state_ty,
         extractors,
-        out,
+        outs,
         seek,
         workers_method,
         failure_method,
@@ -646,9 +701,19 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
 /// passed through; a plain `-> Vec<Reply>` is wrapped in `Ok`. Both checks are syntactic, like the
 /// single-message publish form: a type alias is not seen through.
 fn batch_reply_body<'a>(
-    declared_ty: &'a Type,
+    func: &'a ItemFn,
     block: &syn::Block,
 ) -> syn::Result<(&'a Type, TokenStream2)> {
+    let declared_ty = match &func.sig.output {
+        ReturnType::Type(_, ty) => &**ty,
+        ReturnType::Default => {
+            return Err(Error::new_spanned(
+                &func.sig,
+                "a batch publishing handler must return the replies: Vec<Reply>, or \
+                 Result<Vec<Reply>, HandlerResult>",
+            ));
+        }
+    };
     if let Some(ok_ty) = publish_result_reply(declared_ty) {
         let Some(elem) = vec_element(ok_ty) else {
             return Err(Error::new_spanned(
@@ -692,45 +757,39 @@ fn expand_batch_publishing(
         ctx_ty: _,
         state_ty,
         extractors,
-        out,
+        outs,
         seek,
         workers_method,
         failure_method,
     } = parts;
 
-    let declared_ty = match &func.sig.output {
-        ReturnType::Type(_, ty) => &**ty,
-        ReturnType::Default => {
-            return Err(Error::new_spanned(
-                &func.sig,
-                "a batch publishing handler must return the replies: Vec<Reply>, or \
-                 Result<Vec<Reply>, HandlerResult>",
-            ));
-        }
-    };
-    let (reply_elem, call_body) = batch_reply_body(declared_ty, block)?;
+    let (reply_elem, call_body) = batch_reply_body(func, block)?;
     // The injection tuple is shared with the other forms; an Out parameter selects the
-    // two-attachment builder (`.out(..)` next to `.publisher(..)`).
-    let (injection_tys, injection_pats, _single_form) = injection_pieces(*out, *seek);
-    let form = if out.is_some() {
-        quote!(::ruststream::runtime::forms::BatchPublishingOut)
-    } else {
+    // two-attachment builder (`.out(marker, ..)` next to `.publisher(..)`).
+    let form = if outs.is_empty() {
         quote!(::ruststream::runtime::forms::BatchPublishing)
+    } else {
+        quote!(::ruststream::runtime::forms::BatchPublishingOut)
     };
+    let SlotScaffold {
+        def_target,
+        def_generics,
+        generics: out_generics,
+        scaffold: scaffold_items,
+        out_bounds,
+    } = slot_scaffold(vis, name, outs, seek.is_some());
+    let (injection_tys, injection_bindings) = injection_pieces(outs, &out_generics, *seek);
 
     // Like the single-message publishing form: the handler implements `BatchPublishingCall` only
     // for its named state (mounts on a matching app), or generically when it names none (mounts on
     // any app). The metadata-only `BatchPublishingDef` is unconditional.
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty)),
-        None => (
-            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
-            quote!(__RsState),
-        ),
-    };
+    let (state_generic, state_in_ctx) = state_pieces(state_ty.as_ref());
     // The batch context is always `()`; extractors resolve against it.
     let unit_ctx = quote!(());
-    let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
+    let def_where = where_clause(&out_bounds);
+    let mut call_preds = extractor_preds(extractors, &unit_ctx, &state_in_ctx);
+    call_preds.extend(out_bounds.iter().cloned());
+    let call_where = where_clause(&call_preds);
     let prelude = extractor_prelude(
         extractors,
         ctx_param,
@@ -750,7 +809,11 @@ fn expand_batch_publishing(
             type Form = #form;
         }
 
-        impl ::ruststream::runtime::BatchPublishingDef for #name {
+        #scaffold_items
+
+        impl<#def_generics> ::ruststream::runtime::BatchPublishingDef for #def_target
+        #def_where
+        {
             type Input = ::ruststream::runtime::Decoded<#input_ty>;
             type Injections = (#(#injection_tys,)*);
             type Reply = #reply_elem;
@@ -772,9 +835,9 @@ fn expand_batch_publishing(
             #message_meta
         }
 
-        impl #impl_generics
-            ::ruststream::runtime::BatchPublishingCall<#state_in_ctx> for #name
-            #where_clause
+        impl<#state_generic #def_generics>
+            ::ruststream::runtime::BatchPublishingCall<#state_in_ctx> for #def_target
+            #call_where
         {
             async fn call(
                 &self,
@@ -786,7 +849,7 @@ fn expand_batch_publishing(
                 ::ruststream::runtime::HandlerResult,
             > {
                 #prelude
-                let (#(#injection_pats,)*) = __rs_inj;
+                #injection_bindings
                 #call_body
             }
         }
@@ -809,7 +872,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ctx_ty: _,
         state_ty,
         extractors,
-        out: _,
+        outs: _,
         seek: _,
         workers_method,
         failure_method,
@@ -913,7 +976,7 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
         ctx_ty: _,
         state_ty,
         extractors,
-        out,
+        outs,
         seek,
         workers_method,
         failure_method,
@@ -921,28 +984,32 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
 
     // The injection tuple is shared with the single-message form; only the form token differs
     // (the batch mount arms drive batches, not a per-message stream).
-    let (injection_tys, injection_pats, _single_form) = injection_pieces(*out, *seek);
-    let form = if out.is_some() {
-        quote!(::ruststream::runtime::forms::BatchOut)
-    } else {
+    let form = if outs.is_empty() {
         quote!(::ruststream::runtime::forms::BatchSeek)
+    } else {
+        quote!(::ruststream::runtime::forms::BatchOut)
     };
+    let SlotScaffold {
+        def_target,
+        def_generics,
+        generics: out_generics,
+        scaffold: scaffold_items,
+        out_bounds,
+    } = slot_scaffold(vis, name, outs, seek.is_some());
+    let (injection_tys, injection_bindings) = injection_pieces(outs, &out_generics, *seek);
 
     // As for `expand_batch`: pin the body's type before the `IntoBatchResult` conversion.
     let outcome_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => quote!(#ty),
         ReturnType::Default => quote!(()),
     };
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty)),
-        None => (
-            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
-            quote!(__RsState),
-        ),
-    };
+    let (state_generic, state_in_ctx) = state_pieces(state_ty.as_ref());
     // The batch context is always `()`; extractors resolve against it.
     let unit_ctx = quote!(());
-    let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
+    let def_where = where_clause(&out_bounds);
+    let mut call_preds = extractor_preds(extractors, &unit_ctx, &state_in_ctx);
+    call_preds.extend(out_bounds.iter().cloned());
+    let call_where = where_clause(&call_preds);
     let prelude = extractor_prelude(
         extractors,
         ctx_param,
@@ -964,7 +1031,11 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
             type Form = #form;
         }
 
-        impl ::ruststream::runtime::BatchInjectDef for #name {
+        #scaffold_items
+
+        impl<#def_generics> ::ruststream::runtime::BatchInjectDef for #def_target
+        #def_where
+        {
             type Input = ::ruststream::runtime::Decoded<#input_ty>;
             type Source = #source_ty;
             type Injections = (#(#injection_tys,)*);
@@ -984,9 +1055,9 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
             #message_meta
         }
 
-        impl #impl_generics
-            ::ruststream::runtime::BatchInjectCall<#state_in_ctx> for #name
-            #where_clause
+        impl<#state_generic #def_generics>
+            ::ruststream::runtime::BatchInjectCall<#state_in_ctx> for #def_target
+            #call_where
         {
             async fn call(
                 &self,
@@ -995,7 +1066,7 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
             ) -> ::ruststream::runtime::BatchResult {
                 #prelude
-                let (#(#injection_pats,)*) = __rs_inj;
+                #injection_bindings
                 let outcome: #outcome_ty = (async move #block).await;
                 ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)
             }
@@ -1029,7 +1100,7 @@ fn expand_publishing(
         ctx_ty,
         state_ty,
         extractors,
-        out,
+        outs,
         seek,
         workers_method,
         failure_method,
@@ -1037,28 +1108,32 @@ fn expand_publishing(
 
     let (reply_ty, call_body) = publishing_reply(func, block, bare)?;
     // The injection tuple is shared with the plain forms; the form token additionally selects
-    // the Out-taking builder (which grows the `.out(..)` attachment next to `.publisher(..)`).
-    let (injection_tys, injection_pats, _single_form) = injection_pieces(*out, *seek);
-    let form = match (bare, out.is_some()) {
+    // the Out-taking builder (which grows the `.out(..)` attachments next to `.publisher(..)`).
+    let form = match (bare, !outs.is_empty()) {
         (false, false) => quote!(::ruststream::runtime::forms::Publishing),
         (false, true) => quote!(::ruststream::runtime::forms::PublishingOut),
         (true, false) => quote!(::ruststream::runtime::forms::RawReply),
         (true, true) => quote!(::ruststream::runtime::forms::RawReplyOut),
     };
+    let SlotScaffold {
+        def_target,
+        def_generics,
+        generics: out_generics,
+        scaffold: scaffold_items,
+        out_bounds,
+    } = slot_scaffold(vis, name, outs, seek.is_some());
+    let (injection_tys, injection_bindings) = injection_pieces(outs, &out_generics, *seek);
     let (input_kind, input_param, input_schema, message_meta) =
         input_pieces(input_ty, input_schema, message_meta, raw_input);
 
     // As for `expand_subscribing`: a publishing handler that names a state type implements
     // `PublishingCall` only for that state (mounts on a matching app); one that names none is
     // generic over the state (mounts on any app). The metadata-only `PublishingDef` is unconditional.
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty)),
-        None => (
-            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
-            quote!(__RsState),
-        ),
-    };
-    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
+    let (state_generic, state_in_ctx) = state_pieces(state_ty.as_ref());
+    let def_where = where_clause(&out_bounds);
+    let mut call_preds = extractor_preds(extractors, ctx_ty, &state_in_ctx);
+    call_preds.extend(out_bounds.iter().cloned());
+    let call_where = where_clause(&call_preds);
     let prelude = extractor_prelude(
         extractors,
         ctx_param,
@@ -1078,7 +1153,11 @@ fn expand_publishing(
             type Form = #form;
         }
 
-        impl ::ruststream::runtime::PublishingDef for #name {
+        #scaffold_items
+
+        impl<#def_generics> ::ruststream::runtime::PublishingDef for #def_target
+        #def_where
+        {
             type Input = #input_kind;
             type Injections = (#(#injection_tys,)*);
             type Reply = #reply_ty;
@@ -1101,9 +1180,9 @@ fn expand_publishing(
             #message_meta
         }
 
-        impl #impl_generics
-            ::ruststream::runtime::PublishingCall<#state_in_ctx> for #name
-            #where_clause
+        impl<#state_generic #def_generics>
+            ::ruststream::runtime::PublishingCall<#state_in_ctx> for #def_target
+            #call_where
         {
             async fn call(
                 &self,
@@ -1112,7 +1191,7 @@ fn expand_publishing(
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
                 #prelude
-                let (#(#injection_pats,)*) = __rs_inj;
+                #injection_bindings
                 #call_body
             }
         }
@@ -1178,36 +1257,181 @@ fn input_pieces(
     }
 }
 
-/// Collects the canonical injection tuple (Out first, then Seek), the matching binding
-/// patterns for the generated call (the user's parameter patterns are already
-/// `Out(..)` / `Seek(..)`-shaped, so they destructure the tuple elements directly), and the
-/// form token: an Out parameter needs a publisher attachment at the include site, so it
-/// selects the builder form; injections resolved off the subscription alone mount eagerly.
+/// Everything the slot-carrying expansions share: where the definition traits land, the impls
+/// tying the user-visible unit struct to the hidden publisher-generic definition, and the
+/// pieces the def / call impls interpolate.
+struct SlotScaffold {
+    /// The definition impls' target: the unit struct itself (no Out parameters) or the hidden
+    /// generic struct applied to its publisher generics.
+    def_target: TokenStream2,
+    /// The publisher generic parameters of the definition impls (empty without Out parameters).
+    def_generics: TokenStream2,
+    /// One publisher generic ident per Out parameter (`__RsOut0`, ...), in signature order.
+    generics: Vec<Ident>,
+    /// The hidden generic struct plus the unit struct's `HasSlots` / `BindSlots` impls.
+    scaffold: TokenStream2,
+    /// The `__RsOutN: <bounds> + 'static` predicates for the hidden definition's impls.
+    out_bounds: Vec<TokenStream2>,
+}
+
+/// Builds the [`SlotScaffold`]: without Out parameters the definition stays on the unit struct
+/// and every slot piece is empty; with them, the unit struct the user passes to `include` keeps
+/// marker metadata (`HasSlots`) plus the source-to-definition instantiation (`BindSlots`), and
+/// the definition traits land on a hidden struct generic over the slot publishers, so the
+/// concrete types are inferred from the include-site attachments.
+fn slot_scaffold(
+    vis: &syn::Visibility,
+    name: &Ident,
+    outs: &[OutParam<'_>],
+    has_seek: bool,
+) -> SlotScaffold {
+    if outs.is_empty() {
+        return SlotScaffold {
+            def_target: quote!(#name),
+            def_generics: quote!(),
+            generics: Vec::new(),
+            scaffold: quote!(),
+            out_bounds: Vec::new(),
+        };
+    }
+    let hidden_ident = Ident::new(&format!("__RsOutDef_{name}"), name.span());
+    let generics: Vec<Ident> = (0..outs.len())
+        .map(|index| Ident::new(&format!("__RsOut{index}"), name.span()))
+        .collect();
+    let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();
+    let sources: Vec<Ident> = (0..outs.len())
+        .map(|index| Ident::new(&format!("__RsSrc{index}"), name.span()))
+        .collect();
+    let source_values: Vec<Ident> = (0..outs.len())
+        .map(|index| Ident::new(&format!("__rs_src{index}"), name.span()))
+        .collect();
+    let out_bounds: Vec<TokenStream2> = outs
+        .iter()
+        .zip(&generics)
+        .map(|(out, generic)| {
+            let bounds = out.bounds;
+            // The dispatch machinery shares the injected value across worker tasks, so
+            // Send + Sync are structural, not optional; adding them here keeps broker-defined
+            // capability bounds (which need not imply them) as ergonomic as the core ones.
+            quote!(#generic: #bounds + ::core::marker::Send + ::core::marker::Sync + 'static)
+        })
+        .collect();
+    // A trailing Seek parameter resolves off the subscription itself, so its extra is a unit.
+    let seek_extra = has_seek.then(|| quote!((),));
+    let scaffold = quote! {
+        #[doc(hidden)]
+        #[allow(non_camel_case_types)]
+        #vis struct #hidden_ident<#(#generics),*>(
+            ::core::marker::PhantomData<fn() -> (#(#generics,)*)>,
+        );
+
+        impl ::ruststream::runtime::HasSlots for #name {
+            type Markers = (#(#markers,)*);
+        }
+
+        impl<__RsC, #(#sources),*> ::ruststream::runtime::BindSlots<__RsC, (#(#sources,)*)>
+            for #name
+        where
+            __RsC: ::ruststream::ConnectedBroker,
+            #(#sources: ::ruststream::PublishPolicy<__RsC>,)*
+        {
+            type Bound = #hidden_ident<
+                #(::ruststream::runtime::SlotPublisher<
+                    <#sources as ::ruststream::PublishPolicy<__RsC>>::Live,
+                    #markers,
+                >,)*
+            >;
+            type Extra = (#(#sources,)* #seek_extra);
+
+            fn bind(self, sources: (#(#sources,)*)) -> (Self::Bound, Self::Extra) {
+                let (#(#source_values,)*) = sources;
+                (
+                    #hidden_ident(::core::marker::PhantomData),
+                    (#(#source_values,)* #seek_extra),
+                )
+            }
+        }
+    };
+    SlotScaffold {
+        def_target: quote!(#hidden_ident<#(#generics),*>),
+        def_generics: quote!(#(#generics),*),
+        generics,
+        scaffold,
+        out_bounds,
+    }
+}
+
+/// Collects the canonical injection tuple (Out parameters in signature order, then Seek), and
+/// the `let` bindings resolving each user pattern from the resolved tuple. An `Out(x)` /
+/// `Seek(x)`-shaped pattern binds the injected value itself; any other pattern binds a
+/// reference to the whole marker struct. `out_generics` supplies the publisher generic per Out
+/// parameter (empty when the handler has none).
 fn injection_pieces(
-    out: Option<(&Pat, &Type)>,
+    outs: &[OutParam<'_>],
+    out_generics: &[Ident],
     seek: Option<(&Pat, &Type)>,
-) -> (Vec<TokenStream2>, Vec<TokenStream2>, TokenStream2) {
+) -> (Vec<TokenStream2>, TokenStream2) {
     let mut injection_tys = Vec::new();
-    let mut injection_pats = Vec::new();
-    if let Some((out_pat, out_ty)) = out {
-        injection_tys.push(quote!(::ruststream::runtime::Out<#out_ty>));
-        injection_pats.push(quote!(#out_pat));
+    let mut bindings = Vec::new();
+    for (index, (out, generic)) in outs.iter().zip(out_generics).enumerate() {
+        let marker = &out.marker;
+        injection_tys.push(quote!(::ruststream::runtime::Out<#generic, #marker>));
+        bindings.push(injection_binding(out.pat, index));
     }
     if let Some((seek_pat, seeker_ty)) = seek {
         injection_tys.push(quote!(::ruststream::runtime::Seek<#seeker_ty>));
-        injection_pats.push(quote!(#seek_pat));
+        bindings.push(injection_binding(seek_pat, outs.len()));
     }
-    let form = if out.is_some() {
+    (injection_tys, quote!(#(#bindings)*))
+}
+
+/// One injected parameter's binding: a single-element tuple-struct pattern (`Out(x)`,
+/// `Seek(x)`) binds the wrapped value by reference, through the user's own path (so their
+/// import stays used) with a rest pattern absorbing the marker field; any other pattern binds
+/// the whole element.
+fn injection_binding(pat: &Pat, index: usize) -> TokenStream2 {
+    let index = syn::Index::from(index);
+    if let Pat::TupleStruct(tuple) = pat
+        && tuple.elems.len() == 1
+    {
+        let path = &tuple.path;
+        let inner = &tuple.elems[0];
+        return quote!(let #path(#inner, ..) = &__rs_inj.#index;);
+    }
+    quote!(let #pat = &__rs_inj.#index;)
+}
+
+/// The state generic of a call impl and the state type used in its `Context`: a handler that
+/// names a state type is bound to it (no generic), one that names none is generic over the
+/// state, so it mounts on an app with any state type. The generic ends with a trailing comma
+/// so it composes with the slot generics.
+fn state_pieces(state_ty: Option<&TokenStream2>) -> (TokenStream2, TokenStream2) {
+    match state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(__RsState: ::core::marker::Send + ::core::marker::Sync,),
+            quote!(__RsState),
+        ),
+    }
+}
+
+/// The form token of an injected definition: an Out parameter needs publisher attachments at
+/// the include site, so it selects the builder form; injections resolved off the subscription
+/// alone mount eagerly.
+fn injected_form(has_out: bool) -> TokenStream2 {
+    if has_out {
         quote!(::ruststream::runtime::forms::Out)
     } else {
         quote!(::ruststream::runtime::forms::Seek)
-    };
-    (injection_tys, injection_pats, form)
+    }
 }
 
 /// The startup-injection form: `Out` / `Seek` parameters travel as one tuple resolved by the
 /// runtime after the subscription opens, so any combination shares this single expansion.
 /// `raw` selects the byte input kind (the handler borrows the payload as `&[u8]`).
+///
+/// A Seek-only handler keeps the definition on the unit struct itself; Out parameters move the
+/// definition onto the hidden publisher-generic struct, connected through [`slot_scaffold`].
 fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
     let HandlerParts {
         vis,
@@ -1224,24 +1448,29 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_ty,
         state_ty,
         extractors,
-        out,
+        outs,
         seek,
         workers_method,
         failure_method,
     } = parts;
 
-    let (injection_tys, injection_pats, form) = injection_pieces(*out, *seek);
+    let form = injected_form(!outs.is_empty());
+    let SlotScaffold {
+        def_target,
+        def_generics,
+        generics: out_generics,
+        scaffold: scaffold_items,
+        out_bounds,
+    } = slot_scaffold(vis, name, outs, seek.is_some());
+    let (injection_tys, injection_bindings) = injection_pieces(outs, &out_generics, *seek);
     let (input_kind, input_param, input_schema, message_meta) =
         input_pieces(input_ty, input_schema, message_meta, raw);
 
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty)),
-        None => (
-            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
-            quote!(__RsState),
-        ),
-    };
-    let where_clause = extractor_where(extractors, ctx_ty, &state_in_ctx);
+    let (state_generic, state_in_ctx) = state_pieces(state_ty.as_ref());
+    let def_where = where_clause(&out_bounds);
+    let mut call_preds = extractor_preds(extractors, ctx_ty, &state_in_ctx);
+    call_preds.extend(out_bounds.iter().cloned());
+    let call_where = where_clause(&call_preds);
     let prelude = extractor_prelude(
         extractors,
         ctx_param,
@@ -1263,7 +1492,11 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
             type Form = #form;
         }
 
-        impl ::ruststream::runtime::InjectDef for #name {
+        #scaffold_items
+
+        impl<#def_generics> ::ruststream::runtime::InjectDef for #def_target
+        #def_where
+        {
             type Input = #input_kind;
             type Context = #ctx_ty;
             type Source = #source_ty;
@@ -1284,9 +1517,9 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
             #message_meta
         }
 
-        impl #impl_generics
-            ::ruststream::runtime::InjectCall<#state_in_ctx> for #name
-            #where_clause
+        impl<#state_generic #def_generics>
+            ::ruststream::runtime::InjectCall<#state_in_ctx> for #def_target
+            #call_where
         {
             async fn call(
                 &self,
@@ -1295,7 +1528,7 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> ::ruststream::runtime::Settle {
                 #prelude
-                let (#(#injection_pats,)*) = __rs_inj;
+                #injection_bindings
                 ::ruststream::runtime::IntoSettle::into_settle(
                     (async move #block).await,
                 )
@@ -1320,7 +1553,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_ty,
         state_ty,
         extractors,
-        out: _,
+        outs: _,
         seek: _,
         workers_method,
         failure_method,

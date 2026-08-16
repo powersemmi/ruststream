@@ -1,0 +1,26 @@
+error[E0277]: not every Out slot of this handler is bound
+  --> tests/ui/subscriber_out_unbound_slot.rs:25:58
+   |
+25 |         b.include(transcode).out(Encoded, MemoryPublish).mount();
+   |                                                          ^^^^^ the attachment still contains a `MissingSlot<..>` naming the unbound slot
+   |
+   = help: the trait `ruststream::runtime::SlotCommit<runtime::app::include::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, transcode>` is not implemented for `(ruststream::runtime::WithSource<MemoryPublish>, ruststream::runtime::MissingSlot<Audit>)`
+   = note: bind each remaining slot with .out(marker, policy) before .mount()
+   = help: the following other types implement trait `ruststream::runtime::SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>`:
+             `(runtime::app::include::DefaultBareReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::app::include::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(runtime::app::include::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::app::include::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(runtime::app::include::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::app::include::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::app::include::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::app::include::InjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>, ruststream::runtime::WithSource<A2>)` implements `ruststream::runtime::SlotCommit<runtime::app::include::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>, ruststream::runtime::WithSource<A2>)` implements `ruststream::runtime::SlotCommit<runtime::app::include::InjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<A0>,)` implements `ruststream::runtime::SlotCommit<runtime::app::include::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
+           and $N others
+note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
+  --> src/runtime/app/include.rs
+   |
+   |     pub fn mount(self)
+   |            ----- required by a bound in this associated function
+   |     where
+   |         Slots: SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`

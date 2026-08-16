@@ -53,10 +53,12 @@ Make publishing handlers idempotent under redelivery.
 
 To publish to a destination other than a single reply (a computed destination, fan-out, side
 effects), take the publisher as a handler parameter with `Out`: the pattern
-`Out(out): Out<MemoryPublisher>` binds `out` to a live `&MemoryPublisher` inside the body.
-The source is attached where the handler is included, and the runtime pairs it after the broker
-connects, so the handler cannot observe a "not connected" publisher, and the state stays free of
-connection-bound values.
+`Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body. The signature
+names only the capability the handler needs, never a broker publisher type: the concrete type
+is inferred from the policy attached where the handler is included, and the runtime pairs it
+after the broker connects. The handler cannot observe a "not connected" publisher, the state
+stays free of connection-bound values, and the same handler mounts unchanged on a production
+broker and on its in-process test transport - no `#[cfg(test)]` type aliases.
 
 ```rust
 use ruststream::runtime::Out;
@@ -70,15 +72,43 @@ The include site names the source; for the scope's own broker it is the publish 
 --8<-- "examples/publishing.rs:forward_mount"
 ```
 
-An `Out` handler included without `.publisher(..)` panics when the application is built (not at
-runtime), naming the fix: an injected publisher has no broker-side default.
+An `Out` slot left unbound is a compile error, not a runtime one: an injected publisher has no
+broker-side default, so the registration does not build until every slot has a policy.
+
+### Named slots
+
+A handler that takes several publishers names a **slot marker** per parameter: a unit struct
+deriving `OutSlot`, written as the second type argument (`Out<impl Publisher, Primary>`). The
+include site binds each marker with `.out(marker, policy)` and commits the registration with a
+terminal `.mount()`. The calls bind by marker, so their order does not matter; binding the same
+slot twice (or a marker the handler does not declare) fails to compile, and `.mount()` exists
+only once every slot is bound - a forgotten binding is a compile error whose attachment type
+names the slot (`MissingSlot<Audit>`). A single unnamed `Out<impl Publisher>` parameter binds
+the implicit `DefaultSlot` through the plain `.publisher(policy)` call, which binds and commits
+in one step, so the common case stays noise-free.
+
+```rust
+use ruststream::OutSlot;
+
+--8<-- "examples/publishing.rs:slots"
+```
+
+```rust
+--8<-- "examples/publishing.rs:slots_mount"
+```
+
+The capability in the bound can be refined: `Out<impl OwnedTransactions, Ledger>` compiles only
+against a policy whose live publisher supports owned transactions, checked at the include site
+with a diagnostic naming the missing capability. The slot marker is also the identity the
+[test harness](testing.md#asserting-on-out-slots) records publishes against.
 
 The parameter composes with every subscriber form: next to a `Seek` parameter, on a `raw`
 handler, and on `batch(..)` handlers (`b.include_batch(f).publisher(..)` - the whole page in,
 per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
 their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
-publisher attaches with `.out(..)` instead, so a gateway can answer on a fixed destination
-while fanning side copies out through the injection:
+publisher attaches with `.out(marker, ..)` plus the terminal `.mount()` (`DefaultSlot` for a
+single unnamed slot), so a gateway can answer on a fixed destination while fanning side copies
+out through the injection:
 
 ```rust
 --8<-- "examples/publishing.rs:publish_out"

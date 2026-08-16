@@ -12,7 +12,8 @@ pub use app_trait::App;
 pub use health::{HealthProbe, HealthState};
 pub use include::{
     IncludeBatchOut, IncludeBatchPublishing, IncludeBatchPublishingOut, IncludeDef, IncludeOut,
-    IncludePublishing, IncludePublishingOut, IncludeWith, IncludeWithOut, forms,
+    IncludePublishing, IncludePublishingOut, IncludeSlots, IncludeSlotsWithReply, IncludeWith,
+    SlotCommit, forms,
 };
 pub use run::RunningApp;
 pub use scope::BrokerScope;

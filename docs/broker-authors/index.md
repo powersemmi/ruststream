@@ -215,6 +215,23 @@ that message - while constructed positions keep the semantics your position type
 Document what one seek covers (a consumer instance, or a shared group cursor) and reset any ack
 bookkeeping the reposition invalidates.
 
+### Extending the `Out` slot vocabulary
+
+An `Out<impl X, Marker>` handler parameter accepts any `X` the runtime's `SlotPublisher`
+wrapper implements; the core delegates its own capability set (`Publisher`,
+`TransactionalPublisher`, `OwnedTransactions`, `RequestReply`). When your paired value offers
+more than that - or is not a publisher at all (a per-partition producer cache, a shard
+router) - declare your own capability trait, implement it for the value, and graft it onto the
+wrapper with one blanket impl delegating through `SlotPublisher::inner`. Handlers then bound
+their slot with your trait, and the concrete type still never appears in application code:
+
+```rust
+--8<-- "tests/out_slots.rs:extension"
+```
+
+Publishes made through values obtained from `inner` bypass the harness's per-slot capture
+(like a settled owned transaction's buffer); they stay visible in the broker's publish log.
+
 ## Per-delivery context and `Ctx` keys
 
 A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it as a

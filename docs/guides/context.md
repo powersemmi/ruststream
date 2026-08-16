@@ -173,9 +173,10 @@ Two boundaries to keep in mind:
 ## Publishing from a handler
 
 To publish from inside a handler (beyond the `publish(..)` reply form), do not put the publisher
-in the state: take it as a handler parameter with `Out` - the pattern `Out(out): Out<P>` binds
-`out` to a live publisher inside the body. The source is attached where the handler is included,
-and the runtime pairs it after the broker connects, so the handler never sees a "not connected"
+in the state: take it as a handler parameter with `Out` - the pattern
+`Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body. The policy is
+attached where the handler is included, the concrete publisher type is inferred from it, and
+the runtime pairs it after the broker connects, so the handler never sees a "not connected"
 publisher and the state stays free of connection-bound values. The full pattern and its snippet
 live in [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 

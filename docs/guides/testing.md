@@ -87,6 +87,22 @@ was mounted with a different codec (`include_with` / `with_broker_codec`), pass 
 `.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
 `.decoded_with(&CborCodec)` - while `with_raw` / `received_raw` / `messages` stay codec-free.
 
+### Asserting on Out slots
+
+A handler's [`Out` slot](publishing.md#named-slots) is also its testing identity:
+`tb.out::<Marker>()` returns exactly the messages published through that injected publisher -
+destinations and headers included, across all brokers - with the same assertion surface as
+`published` (`assert_called_once`, `with_raw`, `messages`; chain `.decoded_as::<T>()` for the
+typed `with`). The slot view only adds attribution: the broker's per-channel publish log sees
+the same messages.
+
+```rust
+--8<-- "tests/out_slots.rs:slot_capture"
+```
+
+Publishes that leave the handler task (a spawned sibling task, a settled owned transaction's
+buffer) are not attributed to the slot; assert on the broker's publish log for those.
+
 ### Failure policy, panic, and shutdown
 
 The harness runs dispatch under the application's real `FailurePolicy`, so a negative test is a

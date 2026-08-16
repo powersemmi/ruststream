@@ -6,7 +6,7 @@ members = ["crates/ruststream-macros"]
 exclude = ["templates"]
 
 [workspace.package]
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -253,7 +253,7 @@ tracing = "0.1"
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
-ruststream-macros = { version = "=0.6.1", path = "crates/ruststream-macros", optional = true }
+ruststream-macros = { version = "=0.6.2", path = "crates/ruststream-macros", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
@@ -273,7 +273,6 @@ tracing-opentelemetry = { version = "0.33", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
-tempfile = "3"
 axum = "0.8"
 trybuild = "1"
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"] }

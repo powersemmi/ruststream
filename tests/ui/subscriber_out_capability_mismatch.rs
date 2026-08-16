@@ -1,6 +1,6 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
-use ruststream::subscriber;
+use ruststream::{RequestReply, subscriber};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -8,11 +8,11 @@ struct Order {
     id: u32,
 }
 
-// Not what the attached MemoryPublish policy pairs into: the parameter cannot resolve.
-struct ForeignPublisher;
-
+// The slot demands request / reply, but the attached policy's live publisher (the plain memory
+// publisher) does not correlate replies: the include site fails to compile with the capability
+// diagnostic.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(_out): Out<ForeignPublisher>) -> HandlerResult {
+async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerResult {
     let _ = order.id;
     HandlerResult::Ack
 }

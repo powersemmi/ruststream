@@ -105,6 +105,17 @@ pub use ruststream_macros::Message;
 #[cfg(feature = "macros")]
 pub use ruststream_macros::FromRef;
 
+/// Derive macro that makes a unit struct a slot marker ([`OutSlot`]) for
+/// `Out<impl Publisher, Marker>` handler parameters.
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::OutSlot;
+
+// The trait shares the derive's name at the root (the serde pattern), so one import serves
+// both the `#[derive(OutSlot)]` and a broker's blanket impl bound.
+pub use runtime::OutSlot;
+
 #[cfg(feature = "conformance")]
 pub mod conformance;
 

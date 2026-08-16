@@ -21,13 +21,23 @@ mod publish_source;
 mod publisher_registry;
 mod publishing;
 mod router;
+mod slot;
 mod subscriber_def;
 mod typed;
+
+/// The subscriber a source opens, for broker `B` (the source resolves against the broker's
+/// connected form). Tames the long projection in bounds.
+pub(crate) type SourceSubscriber<B, S> =
+    <S as crate::SubscriptionSource<crate::Connected<B>>>::Subscriber;
+
+/// The message that subscriber yields. See [`SourceSubscriber`].
+pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as crate::Subscriber>::Message;
 
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchOut, IncludeBatchPublishing,
     IncludeBatchPublishingOut, IncludeDef, IncludeOut, IncludePublishing, IncludePublishingOut,
-    IncludeWith, IncludeWithOut, RunningApp, RustStream, RustStreamError, Setup, Wired, forms,
+    IncludeSlots, IncludeSlotsWithReply, IncludeWith, RunningApp, RustStream, RustStreamError,
+    Setup, SlotCommit, Wired, forms,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
@@ -62,5 +72,8 @@ pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
+#[doc(hidden)]
+pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
+pub use slot::{BindSlots, DefaultSlot, HasSlots, OutSlot, SlotPublisher};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

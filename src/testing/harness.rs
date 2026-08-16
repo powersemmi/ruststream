@@ -14,7 +14,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::OutgoingMessage;
 use crate::runtime::{
-    ConnectedLifecycle, ErrorShutdown, LifecycleHook, PublishIdentity, RegisteredBroker,
+    ConnectedLifecycle, ErrorShutdown, LifecycleHook, OutSlot, PublishIdentity, RegisteredBroker,
     RustStream, RustStreamError, Starter, TestParts,
 };
 
@@ -400,6 +400,58 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             .find(|e| e.label.as_deref() == Some(label))
             .unwrap_or_else(|| panic!("no broker labeled {label:?}"));
         self.handle(entry)
+    }
+
+    /// Asserts on what was published through the [`Out`](crate::runtime::Out) slot marked `M`:
+    /// exactly the messages the handler sent through that injected publisher, with their
+    /// destinations and headers, across all brokers.
+    ///
+    /// The untyped assertions ([`assert_called_once`](PublishedAssertions::assert_called_once),
+    /// [`with_raw`](PublishedAssertions::with_raw), ...) apply directly; decode the payloads
+    /// with [`decoded_as`](PublishedAssertions::decoded_as) for the typed
+    /// [`with`](PublishedAssertions::with) form.
+    ///
+    /// Publishes made outside the handler task (a spawned sibling task, a settled owned
+    /// transaction's buffer) are visible in the broker's publish log
+    /// ([`BrokerHandle::published`]) but are not attributed to the slot.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), ruststream::testing::TestError> {
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
+    /// use ruststream::testing::TestApp;
+    /// use ruststream::{OutSlot, OutgoingMessage, Publisher, subscriber};
+    ///
+    /// #[derive(OutSlot)]
+    /// struct Encoded;
+    ///
+    /// #[subscriber("chunks", raw)]
+    /// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerResult {
+    ///     if out.publish(OutgoingMessage::new("encoded", chunk)).await.is_err() {
+    ///         return HandlerResult::retry();
+    ///     }
+    ///     HandlerResult::Ack
+    /// }
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(transcode).out(Encoded, MemoryPublish).mount();
+    ///     });
+    /// let tb = TestApp::start(app).await?;
+    /// tb.broker::<MemoryBroker>().publish_raw("chunks", b"frame").await?;
+    /// tb.out::<Encoded>().assert_called_once().with_raw(b"frame");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {
+        PublishedAssertions::new(
+            format!("Out slot `{}`", M::NAME),
+            self.coordinator.slot_published(M::NAME),
+        )
     }
 
     fn handle<'a>(&'a self, entry: &'a BrokerEntry) -> BrokerHandle<'a> {

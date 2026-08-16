@@ -239,3 +239,52 @@ pub fn derive_from_ref(item: TokenStream) -> TokenStream {
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
+
+/// Derives [`OutSlot`](../ruststream/runtime/trait.OutSlot.html) for a unit struct, making it a
+/// slot marker for `Out<impl Publisher, Marker>` handler parameters. The marker's
+/// [`NAME`](../ruststream/runtime/trait.OutSlot.html#associatedconstant.NAME) is the struct's
+/// identifier, used by startup errors and test assertions.
+///
+/// ```ignore
+/// #[derive(OutSlot)]
+/// struct Encoded;
+///
+/// #[subscriber("chunks", raw)]
+/// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerResult {
+///     /* ... */
+/// }
+/// // include site: b.include(transcode).out(Encoded, KafkaPublish::default());
+/// ```
+#[proc_macro_derive(OutSlot)]
+pub fn derive_out_slot(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    let syn::Data::Struct(data) = &input.data else {
+        return syn::Error::new_spanned(&input.ident, "OutSlot is derived on a unit struct")
+            .into_compile_error()
+            .into();
+    };
+    if !matches!(data.fields, syn::Fields::Unit) {
+        return syn::Error::new_spanned(
+            &data.fields,
+            "an OutSlot marker is a unit struct: it identifies the slot and carries no data",
+        )
+        .into_compile_error()
+        .into();
+    }
+    if !input.generics.params.is_empty() {
+        return syn::Error::new_spanned(
+            &input.generics,
+            "an OutSlot marker takes no generic parameters",
+        )
+        .into_compile_error()
+        .into();
+    }
+    let name = &input.ident;
+    let name_str = name.to_string();
+    quote! {
+        impl ::ruststream::runtime::OutSlot for #name {
+            const NAME: &'static str = #name_str;
+        }
+    }
+    .into()
+}

@@ -44,7 +44,9 @@ block, so the guarantee cannot regress.
   by consuming their scope.
 - **Publishers pair at startup.** Reply wiring and the `Out(..)` handler parameter attach a
   publish policy where the handler is included; the runtime pairs it against the connected
-  broker, so a handler never sees a "not connected" publisher.
+  broker, so a handler never sees a "not connected" publisher. The parameter states a
+  capability (`Out<impl Publisher>`), never a broker type, so the same handler mounts on a
+  production broker and its in-process test transport unchanged.
 - **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features - or none at all:
   `raw` subscribers and `publish_raw` replies move payload bytes untouched.
 - **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI

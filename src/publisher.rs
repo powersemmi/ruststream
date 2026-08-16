@@ -24,6 +24,11 @@ use crate::{ConnectedBroker, OutgoingMessage};
 /// ```
 ///
 /// [`Arc`]: std::sync::Arc
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a publisher",
+    note = "for an `Out<impl Publisher, _>` slot, the type comes from the policy attached at \
+            the include site: attach one whose live form publishes"
+)]
 pub trait Publisher: Send + Sync {
     /// The error type returned by [`publish`].
     ///

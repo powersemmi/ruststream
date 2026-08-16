@@ -10,12 +10,12 @@
 use std::error::Error;
 
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
-    App, AppInfo, HandlerResult, Out, Outgoing, PublishLayer, PublishNext, PublishPipeline,
-    PublishTransform, RustStream, Transactional, TypedPublisher,
+    App, AppInfo, DefaultSlot, HandlerResult, Out, Outgoing, PublishContext, PublishLayer,
+    PublishNext, PublishPipeline, PublishTransform, RustStream, Transactional, TypedPublisher,
 };
-use ruststream::{OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
+use ruststream::{OutSlot, OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +60,7 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // site, the runtime pairs it with the connected broker at startup, and the handler always holds
 // a live publisher - no registry, no erased lookup, no state plumbing.
 #[subscriber("ingress")]
-async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult {
+async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
     let payload = JsonCodec.encode(event).expect("serializable");
     let msg = OutgoingMessage::new("egress", payload.as_ref());
     if out.publish(msg).await.is_err() {
@@ -70,11 +70,44 @@ async fn forward(event: &Event, Out(out): Out<MemoryPublisher>) -> HandlerResult
 }
 // --8<-- [end:forward]
 
+// --8<-- [start:slots]
+// A handler with several injected publishers names a slot marker per parameter; the include
+// site binds each marker to its own policy, in any order. No broker publisher type appears in
+// the signature, so the same handler mounts on a production broker and on its in-process test
+// transport unchanged.
+#[derive(OutSlot)]
+struct Primary;
+
+#[derive(OutSlot)]
+struct Shadow;
+
+#[subscriber("mirror")]
+async fn mirror(
+    event: &Event,
+    Out(primary): Out<impl Publisher, Primary>,
+    Out(shadow): Out<impl Publisher, Shadow>,
+) -> HandlerResult {
+    let payload = JsonCodec.encode(event).expect("serializable");
+    if primary
+        .publish(OutgoingMessage::new("mirror-primary", payload.as_ref()))
+        .await
+        .is_err()
+        || shadow
+            .publish(OutgoingMessage::new("mirror-shadow", payload.as_ref()))
+            .await
+            .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    HandlerResult::Ack
+}
+// --8<-- [end:slots]
+
 // --8<-- [start:publish_out]
 // A reply form and an injected publisher in one handler: the reply answers on the fixed
 // destination while an audit copy fans out through the Out parameter.
 #[subscriber("gateway-requests", publish("gateway-responses"))]
-async fn gateway(req: &Request, Out(out): Out<MemoryPublisher>) -> Result<Response, HandlerResult> {
+async fn gateway(req: &Request, Out(out): Out<impl Publisher>) -> Result<Response, HandlerResult> {
     let audit = JsonCodec
         .encode(&Event { id: req.id })
         .expect("serializable");
@@ -94,7 +127,7 @@ async fn gateway(req: &Request, Out(out): Out<MemoryPublisher>) -> Result<Respon
 struct EnvelopeTransform;
 
 impl<C> PublishTransform<C> for EnvelopeTransform {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
@@ -175,10 +208,17 @@ fn app() -> impl App {
             // --8<-- [start:forward_mount]
             b.include(forward).publisher(MemoryPublish);
             // --8<-- [end:forward_mount]
+            // --8<-- [start:slots_mount]
+            // each named slot binds by marker; the call order does not matter
+            b.include(mirror)
+                .out(Shadow, MemoryPublish)
+                .out(Primary, MemoryPublish)
+                .mount();
+            // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
             // the reply keeps .publisher(..) (or its default); the Out parameter attaches
-            // with .out(..)
-            b.include(gateway).out(MemoryPublish);
+            // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
+            b.include(gateway).out(DefaultSlot, MemoryPublish).mount();
             // --8<-- [end:publish_out_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live

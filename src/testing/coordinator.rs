@@ -11,6 +11,9 @@
 //!   standstill before returning: every enqueue into a subscriber increments the counter, every
 //!   completed dispatch decrements it.
 
+use std::fmt;
+use std::future::Future;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,8 +22,41 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use crate::runtime::HandlerResult;
+use crate::{OutgoingMessage, RawMessage};
 
 use super::TestError;
+
+tokio::task_local! {
+    /// The coordinator of the harness driving the current dispatch task, so a slot publisher
+    /// can attribute its publishes without threading a handle through the resolution path.
+    /// Installed by `dispatch` around each handler invocation when a harness is attached.
+    static SLOT_SINK: Coordinator;
+}
+
+/// Records a publish made through an `Out` slot against the harness driving the current
+/// dispatch task, if any. Called by the slot publisher wrapper on every publish; outside a
+/// harness-driven handler (production, or a test without a `TestApp`) it is a no-op.
+pub(crate) fn record_slot_publish(slot: &'static str, msg: &OutgoingMessage<'_>) {
+    let _ = SLOT_SINK.try_with(|coordinator| coordinator.record_slot(slot, msg));
+}
+
+/// Runs `fut` with the harness coordinator (when one is attached) visible to slot publishers.
+pub(crate) async fn in_slot_scope<F: Future>(
+    coordinator: Option<Coordinator>,
+    fut: F,
+) -> F::Output {
+    match coordinator {
+        Some(coordinator) => SLOT_SINK.scope(coordinator, fut).await,
+        None => fut.await,
+    }
+}
+
+/// One publish made through an `Out` slot: the slot's name and the outgoing message, captured
+/// as a [`RawMessage`] (destination, payload, headers).
+pub(crate) struct SlotRecord {
+    pub(crate) slot: &'static str,
+    pub(crate) message: RawMessage,
+}
 
 /// The classified outcome the harness records for one delivery to a handler.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -116,11 +152,11 @@ impl TestHooks {
 /// scope at once.
 #[derive(Clone)]
 pub struct Coordinator {
-    inner: std::sync::Arc<Inner>,
+    inner: Arc<Inner>,
 }
 
-impl std::fmt::Debug for Coordinator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Coordinator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Coordinator")
             .field("in_flight", &self.inner.in_flight.load(Ordering::SeqCst))
             .field("processed", &self.inner.processed.load(Ordering::SeqCst))
@@ -134,6 +170,7 @@ struct Inner {
     max_steps: usize,
     notify: tokio::sync::Notify,
     records: Mutex<Vec<Record>>,
+    slot_records: Mutex<Vec<SlotRecord>>,
     timers: Mutex<Vec<Timer>>,
 }
 
@@ -149,12 +186,13 @@ impl Coordinator {
     /// reaching quiescence (a guard against perpetual-requeue handlers).
     pub(crate) fn new(max_steps: usize) -> Self {
         Self {
-            inner: std::sync::Arc::new(Inner {
+            inner: Arc::new(Inner {
                 in_flight: AtomicUsize::new(0),
                 processed: AtomicUsize::new(0),
                 max_steps,
                 notify: tokio::sync::Notify::new(),
                 records: Mutex::new(Vec::new()),
+                slot_records: Mutex::new(Vec::new()),
                 timers: Mutex::new(Vec::new()),
             }),
         }
@@ -273,6 +311,29 @@ impl Coordinator {
             }
             notified.await;
         }
+    }
+
+    /// Records one publish made through the `Out` slot named `slot`.
+    pub(crate) fn record_slot(&self, slot: &'static str, msg: &OutgoingMessage<'_>) {
+        let message = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
+            .with_headers(msg.headers().clone());
+        self.inner
+            .slot_records
+            .lock()
+            .expect("coordinator slot records mutex poisoned")
+            .push(SlotRecord { slot, message });
+    }
+
+    /// Every message published through the `Out` slot named `slot`, in publish order.
+    pub(crate) fn slot_published(&self, slot: &str) -> Vec<RawMessage> {
+        self.inner
+            .slot_records
+            .lock()
+            .expect("coordinator slot records mutex poisoned")
+            .iter()
+            .filter(|record| record.slot == slot)
+            .map(|record| record.message.clone())
+            .collect()
     }
 
     /// Runs `f` over every record matching `scope_id` and `name`, in delivery order.

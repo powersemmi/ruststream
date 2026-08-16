@@ -2,6 +2,7 @@
 //! until shutdown is signalled or the stream ends. Lifted out of the former `Router` so
 //! [`RustStream`](super::RustStream) can own task spawning directly.
 
+use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
@@ -24,7 +25,7 @@ use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publisher_registry::ErasedPublisher;
 #[cfg(feature = "testing")]
-use crate::testing::coordinator::{Record, TestHooks};
+use crate::testing::coordinator::{Record, TestHooks, in_slot_scope};
 
 /// Header carrying the framework's deferred-republish retry count.
 ///
@@ -186,8 +187,8 @@ impl Delivery {
     }
 }
 
-impl std::fmt::Debug for Delivery {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Delivery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery")
             .field("retry_publisher", &self.retry_publisher.is_some())
             .field("pending_continuations", &self.tasks.len())
@@ -581,6 +582,15 @@ async fn dispatch<H, M, C, St>(
     // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
     // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
     // the future borrows `&mut ctx`; that state is discarded with the failed delivery.
+    // Under the harness, the invocation runs in a task-local slot scope so publishes made
+    // through injected `Out` publishers are attributed to their slot.
+    #[cfg(feature = "testing")]
+    let result = in_slot_scope(
+        delivery.hooks.coordinator().cloned(),
+        AssertUnwindSafe(handler.handle(&msg, &mut ctx)).catch_unwind(),
+    )
+    .await;
+    #[cfg(not(feature = "testing"))]
     let result = AssertUnwindSafe(handler.handle(&msg, &mut ctx))
         .catch_unwind()
         .await;
@@ -676,6 +686,14 @@ async fn run_batch<H, M, St>(
     // A batch has no single broker message, so its per-delivery context is unit (`C = ()`); the
     // shared app state is threaded the same way as on the single-message path.
     let mut ctx = Context::new(name, &empty, state, (), delivery).with_failfast(&failure.shutdown);
+    // See `dispatch`: the harness's slot scope attributes `Out` publishes to their slot.
+    #[cfg(feature = "testing")]
+    let result = in_slot_scope(
+        delivery.hooks.coordinator().cloned(),
+        AssertUnwindSafe(handler.handle_batch(batch, &mut ctx)).catch_unwind(),
+    )
+    .await;
+    #[cfg(not(feature = "testing"))]
     let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
         .catch_unwind()
         .await;
