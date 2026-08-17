@@ -24,7 +24,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::input::{DecodeWith, InputKind};
-use super::metadata::HandlerMetadata;
+use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
 
 /// A batch subscriber definition that produces replies to publish.
@@ -82,6 +82,19 @@ pub trait BatchPublishingDef: Send + Sync {
         None
     }
 
+    /// The serialized JSON Schema of the element type's header contract, when one is declared
+    /// and the `asyncapi` feature is on. The default omits it.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
+    /// The messages this handler publishes, for the `AsyncAPI` `send` operations: the reply
+    /// message, plus every `Out` slot dictionary entry. The macro fills this in; the default
+    /// declares nothing. Called once at registration.
+    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        Vec::new()
+    }
+
     /// The element type's [`Message`](crate::Message) name, when it implements that trait. The
     /// macro fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
@@ -124,10 +137,12 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
         .with_def_details(
             def.description(),
             def.input_schema(),
+            def.headers_schema(),
             def.message_name(),
             def.message_description(),
         );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.outgoing = def.outgoing();
     meta
 }
 

@@ -91,6 +91,7 @@ nav:
       - guides/routing.md
       - guides/codecs.md
       - guides/context.md
+      - guides/headers.md
       - guides/lifespan.md
       - guides/middleware.md
       - guides/failure-policy.md

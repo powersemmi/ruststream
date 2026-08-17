@@ -46,6 +46,7 @@ mod schema;
 mod subscriber;
 mod subscription;
 pub mod testing;
+mod typed_headers;
 
 /// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.
 #[cfg(feature = "testing")]
@@ -64,11 +65,12 @@ pub use field::{BuildContext, ContextField, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
-pub use schema::Message;
+pub use schema::{HeadersContract, Message, MessageHeaders, NoHeaders, WithHeaders};
 pub use subscriber::Subscriber;
 pub use subscription::{
     Name, SeekerPendingError, SeekerToken, StartAt, SubscriptionSource, WithSeeker,
 };
+pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
 
 pub mod codec;
 
@@ -111,6 +113,14 @@ pub use ruststream_macros::FromRef;
 /// Available with the `macros` feature.
 #[cfg(feature = "macros")]
 pub use ruststream_macros::OutSlot;
+
+/// Derive macro for a declared message set: an enum whose variants each wrap one message
+/// model, named as the third `Out` argument (`Out<impl Publisher, Marker, SendSet>`). The enum
+/// is a type-level declaration and is never constructed.
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::OutMessages;
 
 // The trait shares the derive's name at the root (the serde pattern), so one import serves
 // both the `#[derive(OutSlot)]` and a broker's blanket impl bound.
@@ -224,6 +234,58 @@ pub mod __private {
         #[must_use]
         pub fn message_description(&self) -> Option<&'static str> {
             T::DESCRIPTION
+        }
+    }
+
+    /// The trait fallback for header-contract schemas.
+    ///
+    /// Chosen for any `T` the inherent method below does not cover: no
+    /// [`MessageHeaders`](crate::MessageHeaders) impl, a [`NoHeaders`](crate::NoHeaders)
+    /// contract, or a contract type without a schema.
+    pub trait NoHeadersSchemaProbe {
+        /// Returns `None` (no headers schema available for the probed type).
+        fn headers_schema_json(&self) -> Option<String>;
+    }
+
+    impl<T> NoHeadersSchemaProbe for Probe<T> {
+        fn headers_schema_json(&self) -> Option<String> {
+            None
+        }
+    }
+
+    /// Renders a [`HeadersContract`](crate::HeadersContract) shape as a schema:
+    /// [`WithHeaders<H>`](crate::WithHeaders) yields `H`'s JSON Schema.
+    #[cfg(feature = "asyncapi")]
+    pub trait ContractSchema {
+        /// The serialized JSON Schema of the contract's header type, if any.
+        fn schema_json() -> Option<String>;
+    }
+
+    #[cfg(feature = "asyncapi")]
+    impl ContractSchema for crate::NoHeaders {
+        fn schema_json() -> Option<String> {
+            None
+        }
+    }
+
+    #[cfg(feature = "asyncapi")]
+    impl<H: schemars::JsonSchema> ContractSchema for crate::WithHeaders<H> {
+        fn schema_json() -> Option<String> {
+            serde_json::to_string(&schemars::schema_for!(H)).ok()
+        }
+    }
+
+    #[cfg(feature = "asyncapi")]
+    impl<T> Probe<T>
+    where
+        T: crate::MessageHeaders,
+        T::Contract: ContractSchema,
+    {
+        /// Returns the schema of `T`'s declared header contract (inherent; preferred over the
+        /// trait fallback).
+        #[must_use]
+        pub fn headers_schema_json(&self) -> Option<String> {
+            <T::Contract as ContractSchema>::schema_json()
         }
     }
 }

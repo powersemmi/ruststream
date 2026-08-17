@@ -7,7 +7,7 @@ use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
     Attribute, Error, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, Ident, Lit,
-    LitStr, Meta, Path, Token, Type, TypePath, parenthesized,
+    Meta, Path, Token, Type, TypePath, parenthesized,
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
@@ -19,9 +19,11 @@ use syn::{
 pub(crate) struct SubscriberArgs {
     pub(crate) source: Expr,
     pub(crate) batch: bool,
-    pub(crate) publish: Option<LitStr>,
-    /// The `publish_raw("topic")` destination: the reply bytes go out unencoded.
-    pub(crate) publish_raw: Option<LitStr>,
+    /// The `publish(..)` destination: a string literal, or a `&'static str` constant.
+    pub(crate) publish: Option<Expr>,
+    /// The `publish_raw(..)` destination (the reply bytes go out unencoded): a string literal,
+    /// or a `&'static str` constant.
+    pub(crate) publish_raw: Option<Expr>,
     pub(crate) workers: Option<WorkersArg>,
     pub(crate) on_failure: Option<FailureArg>,
     /// The `start_at(<position>)` clause: a broker position constructor the subscription is
@@ -32,44 +34,76 @@ pub(crate) struct SubscriberArgs {
 }
 
 pub(crate) struct WorkersArg {
-    pub(crate) count: syn::LitInt,
+    /// The worker count: an integer literal (zero rejected at expansion), or any `usize`
+    /// expression - a constant, a static, a function call (zero rejected at registration).
+    pub(crate) count: Expr,
     pub(crate) by_key: Option<Ident>,
 }
 
-/// The `on_failure(panic = .., decode = ..)` clause. Each key is optional; an omitted key keeps the
-/// runtime default (a panic fails fast, a decode failure drops).
+/// The `on_failure(panic = .., decode = ..)` clause. Each key is optional; an omitted key keeps
+/// the runtime default (a panic fails fast, a decode failure drops). The `decode` policy covers
+/// both the payload codec and a `FromHeaders` contract - one materialization policy.
 pub(crate) struct FailureArg {
     pub(crate) panic: Option<FailurePolicyArg>,
     pub(crate) decode: Option<FailurePolicyArg>,
 }
 
-/// One failure policy value: `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, or `skip`.
+/// One failure policy value: `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, `skip`,
+/// or any expression evaluating to a `FailurePolicy` (a shared constant, a function call).
 pub(crate) enum FailurePolicyArg {
     FailFast,
     Drop,
     Retry,
     RetryAfter(Expr),
     Skip,
+    Value(Expr),
 }
 
 impl Parse for FailurePolicyArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ident: Ident = input.parse()?;
-        match ident.to_string().as_str() {
-            "fail_fast" => Ok(Self::FailFast),
-            "drop" => Ok(Self::Drop),
-            "retry" => Ok(Self::Retry),
-            "skip" => Ok(Self::Skip),
-            "retry_after" => {
-                let content;
-                parenthesized!(content in input);
-                Ok(Self::RetryAfter(content.parse()?))
+        let expr: Expr = input.parse()?;
+        // The keyword vocabulary parses as expressions too (`drop` is a path,
+        // `retry_after(..)` a call); recognize it first, and let anything else pass through as
+        // a `FailurePolicy` value.
+        if let Expr::Path(ExprPath {
+            path, qself: None, ..
+        }) = &expr
+            && let Some(keyword) = path.get_ident()
+        {
+            let name = keyword.to_string();
+            match name.as_str() {
+                "fail_fast" => return Ok(Self::FailFast),
+                "drop" => return Ok(Self::Drop),
+                "retry" => return Ok(Self::Retry),
+                "skip" => return Ok(Self::Skip),
+                _ => {}
             }
-            _ => Err(Error::new(
-                ident.span(),
-                "expected `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, or `skip`",
-            )),
+            // A bare lowercase name outside the vocabulary is almost certainly a keyword typo,
+            // not a constant (constants are SCREAMING_CASE by convention); rejecting it here
+            // keeps the vocabulary error instead of an unresolved-name one.
+            if name.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                return Err(Error::new(
+                    keyword.span(),
+                    "expected `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, `skip`, \
+                     or a `FailurePolicy` expression (a constant, a function call)",
+                ));
+            }
         }
+        if let Expr::Call(call) = &expr
+            && let Expr::Path(ExprPath {
+                path, qself: None, ..
+            }) = &*call.func
+            && path.is_ident("retry_after")
+        {
+            if call.args.len() != 1 {
+                return Err(Error::new_spanned(
+                    call,
+                    "retry_after(..) takes exactly one duration argument",
+                ));
+            }
+            return Ok(Self::RetryAfter(call.args[0].clone()));
+        }
+        Ok(Self::Value(expr))
     }
 }
 
@@ -223,7 +257,7 @@ impl Parse for SubscriberArgs {
 
 /// Parses the inside of a `workers(..)` clause: the count, optionally followed by `by_key`.
 fn parse_workers(content: ParseStream) -> syn::Result<WorkersArg> {
-    let count: syn::LitInt = content.parse()?;
+    let count: Expr = content.parse()?;
     let mut by_key = None;
     if content.peek(Token![,]) {
         content.parse::<Token![,]>()?;

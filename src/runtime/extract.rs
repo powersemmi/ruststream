@@ -8,13 +8,18 @@
 //! dependencies arrive as arguments instead of being reached for through `ctx.state()`. A failed
 //! extraction short-circuits the delivery with the rejection's [`HandlerResult`].
 
+use std::any::type_name;
 use std::convert::Infallible;
 use std::fmt;
 use std::future::Future;
 
+use serde::de::DeserializeOwned;
+use tracing::warn;
+
 use crate::ContextField;
 
 use super::context::Context;
+use super::failure::FailurePolicy;
 use super::handler::HandlerResult;
 
 /// A value resolved from the per-delivery [`Context`] and shared state, ready to be passed to a
@@ -205,5 +210,87 @@ where
     ) -> impl Future<Output = Result<Self, Infallible>> + Send {
         let value = K::default().read(ctx.cx_ref());
         async move { Ok(Self(value)) }
+    }
+}
+
+/// Extractor that parses the delivery headers into a typed contract before the body runs.
+///
+/// `FromHeaders<T>` reads the header map through [`Headers::to_typed`](crate::Headers::to_typed):
+/// `T` is a flat struct whose fields name headers, with string-encoded values parsed into what
+/// each field expects. The handler body only runs when the whole contract parsed; a missing or
+/// unparsable header settles the delivery by the subscriber's `on_failure(decode = ..)` policy
+/// (drop by default) after a `WARN` naming the subscription and the contract type - a header
+/// contract violation is the same class of bad external input as a payload that does not decode,
+/// so one policy covers both.
+///
+/// Under the `asyncapi` feature the `#[subscriber]` macro also lifts `T`'s
+/// [`schemars::JsonSchema`] into the message's headers schema, so the same declaration feeds the
+/// generated document.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::{FromHeaders, HandlerResult};
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct ChunkMeta {
+///     task_id: u64,
+///     chunk_no: u32,
+/// }
+///
+/// // In a handler:
+/// // async fn handle(chunk: &[u8], FromHeaders(meta): FromHeaders<ChunkMeta>) -> HandlerResult
+/// let FromHeaders(meta) = FromHeaders(ChunkMeta { task_id: 7, chunk_no: 3 });
+/// assert_eq!(meta.chunk_no, 3);
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct FromHeaders<T>(pub T);
+
+impl<T: DeserializeOwned> FromHeaders<T> {
+    /// Parses the delivery headers under the given failure policy. The `#[subscriber]` macro
+    /// routes generated handlers through here so `on_failure(decode = ..)` applies; the plain
+    /// [`FromContext`] impl uses the [`Drop`](FailurePolicy::Drop) default.
+    #[doc(hidden)]
+    pub fn extract<C, S>(
+        ctx: &mut Context<'_, C, S>,
+        policy: FailurePolicy,
+    ) -> Result<Self, HandlerResult> {
+        match ctx.headers().to_typed::<T>() {
+            Ok(value) => Ok(Self(value)),
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    headers_type = type_name::<T>(),
+                    error = %err,
+                    "typed header extraction failed",
+                );
+                #[cfg(any(feature = "testing", feature = "otel"))]
+                ctx.mark_decode_failed();
+                Err(match policy {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("header extraction failed: {err}"));
+                        HandlerResult::drop()
+                    }
+                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
+                })
+            }
+        }
+    }
+}
+
+impl<C, S, T> FromContext<C, S> for FromHeaders<T>
+where
+    T: DeserializeOwned + Send,
+    C: Send,
+    S: Sync,
+{
+    type Rejection = HandlerResult;
+    fn from_context(
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, HandlerResult>> + Send {
+        let result = Self::extract(ctx, FailurePolicy::Drop);
+        async move { result }
     }
 }

@@ -221,6 +221,12 @@ pub trait BatchDef: Sized {
         None
     }
 
+    /// The serialized JSON Schema of the element type's header contract, when one is declared
+    /// and the `asyncapi` feature is on. The default omits it.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
     /// The element type's [`Message`](crate::Message) name, when it implements that trait. The
     /// macro fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
@@ -242,6 +248,7 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
     let mut meta = HandlerMetadata::raw(name).with_def_details(
         def.description(),
         def.input_schema(),
+        def.headers_schema(),
         def.message_name(),
         def.message_description(),
     );

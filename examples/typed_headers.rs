@@ -1,0 +1,152 @@
+//! Typed message headers: one struct declares the header contract, and it drives all three
+//! surfaces at once - runtime extraction (`FromHeaders`), the outgoing typed publish path (the
+//! `Out` slot dictionary and the reply form), and the generated `AsyncAPI` document (headers
+//! schemas next to the payloads). Driven through the real dispatch path with the in-process
+//! `TestApp` harness.
+//!
+//! ```text
+//! cargo run --example typed_headers --features testing,macros,memory,json,asyncapi
+//! ```
+
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
+use ruststream::schemars::JsonSchema;
+use ruststream::testing::TestApp;
+use ruststream::{Message, OutSlot, Publisher, subscriber};
+use serde::{Deserialize, Serialize};
+
+// The header contracts: flat structs whose fields name headers. On the wire every value is a
+// string-encoded header entry; the schema describes the logical types.
+// --8<-- [start:contracts]
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct ChunkMeta {
+    task_id: u64,
+    chunk_no: u32,
+    chunks_total: u32,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct DoneMeta {
+    task_id: u64,
+    duration_ms: u64,
+}
+// --8<-- [end:contracts]
+
+// The outgoing messages: `#[message(headers(..))]` ties a header contract to the type, so the
+// typed publish path demands the right headers and the AsyncAPI document shows them.
+// --8<-- [start:messages]
+#[derive(Message, Serialize, Deserialize, JsonSchema)]
+#[message(headers(DoneMeta))]
+struct ChunkDone {
+    output_key: String,
+}
+
+#[derive(Message, Serialize, Deserialize, JsonSchema)]
+struct Progress {
+    percent: u8,
+}
+// --8<-- [end:messages]
+
+// The slot's publish dictionary: each type maps to the channel it publishes to. The destination
+// never appears in handler code, and an undeclared type does not compile.
+// --8<-- [start:dictionary]
+#[derive(OutSlot)]
+#[publishes(ChunkDone = "chunks.done", Progress = "chunks.progress")]
+struct Events;
+// --8<-- [end:dictionary]
+
+// FromHeaders parses the delivery headers into the contract before the body runs; a missing or
+// unparsable header settles the delivery by `on_failure(decode = ..)` (drop by default). The
+// Out parameter's optional third position declares the message types this handler publishes:
+// destinations come from the dictionary, headers from each message's contract - `Progress`
+// publishes bare, `ChunkDone` does not compile without `.with_headers(&meta)`.
+// --8<-- [start:handler]
+#[subscriber("chunks.raw", raw)]
+async fn convert(
+    chunk: &[u8],
+    FromHeaders(meta): FromHeaders<ChunkMeta>,
+    Out(events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
+) -> HandlerResult {
+    let percent = u8::try_from(meta.chunk_no * 100 / meta.chunks_total.max(1)).unwrap_or(100);
+    if events.publish_typed(&Progress { percent }).await.is_err() {
+        return HandlerResult::retry();
+    }
+
+    let done = ChunkDone {
+        output_key: format!("chunks/{}/{}.part", meta.task_id, meta.chunk_no),
+    };
+    let done_meta = DoneMeta {
+        task_id: meta.task_id,
+        duration_ms: chunk.len() as u64,
+    };
+    if events
+        .with_headers(&done_meta)
+        .publish_typed(&done)
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    HandlerResult::Ack
+}
+// --8<-- [end:handler]
+
+// The reply form gets the same treatment from the reply type's contract: the generated document
+// declares a send operation for "jobs.status" with `DoneMeta` as the headers schema. At runtime
+// reply headers stay with `PublishTransform`, which can serialize a contract with
+// `headers_mut().insert_typed(&meta)`.
+// --8<-- [start:reply]
+#[derive(Deserialize, JsonSchema)]
+struct StatusRequest {
+    task_id: u64,
+}
+
+#[derive(Message, Serialize, JsonSchema)]
+#[message(headers(DoneMeta))]
+struct StatusReply {
+    done: bool,
+}
+
+#[subscriber("jobs.status-requests", publish("jobs.status"))]
+async fn status(req: &StatusRequest) -> StatusReply {
+    StatusReply {
+        done: req.task_id % 2 == 0,
+    }
+}
+// --8<-- [end:reply]
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // --8<-- [start:mounts]
+    let app = RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(convert).out(Events, MemoryPublish).mount();
+            b.include(status);
+        },
+    );
+    // --8<-- [end:mounts]
+
+    let tb = TestApp::start(app).await?;
+    // --8<-- [start:drive]
+    let meta = ChunkMeta {
+        task_id: 7,
+        chunk_no: 3,
+        chunks_total: 12,
+    };
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers("chunks.raw", &[0_u8; 16], &meta)
+        .await?;
+
+    let done = tb
+        .broker::<MemoryBroker>()
+        .published::<ChunkDone>("chunks.done")
+        .assert_called_once();
+    println!("published: {:?}", done.decoded()[0].output_key);
+    println!(
+        "task_id header: {:?}",
+        done.messages()[0].headers().get_str("task_id")
+    );
+    // --8<-- [end:drive]
+    Ok(())
+}

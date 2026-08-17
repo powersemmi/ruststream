@@ -3,7 +3,9 @@
 
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
+use ruststream::runtime::{
+    AppInfo, Context, HandlerMetadata, HandlerResult, OutgoingMessageMetadata, RustStream,
+};
 use ruststream::{SecurityScheme, ServerSpec};
 
 #[test]
@@ -44,10 +46,62 @@ fn build_spec_describes_handlers() {
         Some("Handles orders"),
     );
 
+    // Schema coverage is assertable: the typed u64 model has no JSON Schema captured (a gap),
+    // while the raw-bytes message is deliberately schema-free and not reported.
+    assert_eq!(spec.messages_without_schema(), vec!["u64"]);
+
     let json = spec.to_json().unwrap();
     assert!(json.contains("\"asyncapi\": \"3.0.0\""));
     assert!(json.contains("\"receive\""));
     assert!(json.contains("\"$ref\""));
+}
+
+/// Shared message components merge across handlers (an absent schema fills in from a later
+/// contributor; a conflicting headers schema keeps the first), and send operation ids stay
+/// unique when several handlers share one subscription name.
+#[test]
+fn message_components_merge_and_send_ids_stay_unique() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+        let first = b.broker().subscribe("shared");
+        let mut first_meta =
+            HandlerMetadata::typed::<u64>("shared").with_headers_schema("{\"title\":\"MetaA\"}");
+        first_meta
+            .outgoing
+            .push(OutgoingMessageMetadata::new("c1", "bytes"));
+        b.handle(
+            first,
+            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            first_meta,
+        );
+
+        // The second handler on the same subject brings the payload schema the first one
+        // lacked, plus a conflicting headers schema, plus its own outgoing channel.
+        let second = b.broker().subscribe("shared");
+        let mut second_meta = HandlerMetadata::typed::<u64>("shared")
+            .with_payload_schema("{\"type\":\"integer\"}")
+            .with_headers_schema("{\"title\":\"MetaB\"}");
+        second_meta
+            .outgoing
+            .push(OutgoingMessageMetadata::new("c2", "bytes"));
+        b.handle(
+            second,
+            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            second_meta,
+        );
+    });
+
+    let spec = build_spec(&app);
+
+    // One send operation per (subscription, channel): nothing silently overwritten.
+    assert_eq!(spec.operations["send_shared_c1"].action, "send");
+    assert_eq!(spec.operations["send_shared_c2"].action, "send");
+
+    // The shared component filled in the payload schema from the later contributor (so the
+    // coverage gate reports no false gap) and kept the first headers schema on conflict.
+    let component = &spec.components.messages["u64"];
+    assert!(component.payload.is_some());
+    assert_eq!(component.headers.as_ref().unwrap()["title"], "MetaA");
+    assert!(spec.messages_without_schema().is_empty());
 }
 
 #[test]
@@ -361,4 +415,124 @@ fn server_security_lands_in_components_and_refs() {
             .server("nats", ServerSpec::new("nats.example.com:4222", "nats")),
     );
     assert!(!bare.to_json().unwrap().contains("security"));
+}
+
+/// Typed headers and declared outgoing messages: the macro lifts a `FromHeaders` contract into
+/// the receive message's headers schema, and `publish(..)` / `#[publishes(..)]` declarations
+/// become `send` operations with payload and headers schemas.
+#[cfg(all(feature = "macros", feature = "json"))]
+mod typed_headers_spec {
+    use ruststream::memory::{MemoryBroker, MemoryPublish};
+    use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
+    use ruststream::schemars::JsonSchema;
+    use ruststream::{Message, OutSlot, Publisher, subscriber};
+    use serde::{Deserialize, Serialize};
+
+    use super::build_spec;
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    struct ChunkMeta {
+        task_id: u64,
+        chunk_no: u32,
+    }
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    struct DoneMeta {
+        task_id: u64,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    struct Chunk {
+        #[allow(dead_code)]
+        seq: u64,
+    }
+
+    #[derive(Message, Serialize, JsonSchema)]
+    #[message(headers(DoneMeta))]
+    struct ChunkDone {
+        output_key: String,
+    }
+
+    #[derive(Message, Serialize, JsonSchema)]
+    struct Progress {
+        percent: u8,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    struct Request {
+        #[allow(dead_code)]
+        id: u64,
+    }
+
+    #[derive(Message, Serialize, JsonSchema)]
+    #[message(headers(DoneMeta))]
+    struct Response {
+        ok: bool,
+    }
+
+    #[derive(OutSlot)]
+    #[publishes(ChunkDone = "chunks.done", Progress = "chunks.progress")]
+    struct Events;
+
+    #[subscriber("chunks.raw")]
+    async fn convert(
+        _chunk: &Chunk,
+        FromHeaders(_meta): FromHeaders<ChunkMeta>,
+        Out(_events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
+    ) -> HandlerResult {
+        HandlerResult::Ack
+    }
+
+    #[subscriber("requests", publish("responses"))]
+    async fn respond(_req: &Request) -> Response {
+        Response { ok: true }
+    }
+
+    #[test]
+    fn receive_headers_schema_and_send_operations() {
+        let app = RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(convert).out(Events, MemoryPublish).mount();
+                b.include(respond);
+            },
+        );
+        let spec = build_spec(&app);
+
+        // The FromHeaders contract lands as the receive message's headers schema.
+        let chunk = &spec.components.messages["Chunk"];
+        let headers = chunk.headers.as_ref().expect("headers schema");
+        assert!(
+            headers["properties"].get("task_id").is_some()
+                && headers["properties"].get("chunk_no").is_some(),
+            "got: {headers}"
+        );
+
+        // The slot dictionary becomes send operations on the declared channels.
+        assert_eq!(
+            spec.operations["send_chunks_raw_chunks_done"].action,
+            "send"
+        );
+        assert_eq!(
+            spec.operations["send_chunks_raw_chunks_progress"].action,
+            "send"
+        );
+        assert!(spec.channels.contains_key("chunks.done"));
+        assert!(spec.channels.contains_key("chunks.progress"));
+        let done = &spec.components.messages["ChunkDone"];
+        assert!(done.payload.is_some());
+        let done_headers = done.headers.as_ref().expect("dictionary headers schema");
+        assert!(done_headers["properties"].get("task_id").is_some());
+        assert!(spec.components.messages["Progress"].headers.is_none());
+
+        // The reply form declares its own send operation; the reply type's contract feeds the
+        // headers schema.
+        assert_eq!(spec.operations["send_requests_responses"].action, "send");
+        assert!(spec.channels.contains_key("responses"));
+        let response = &spec.components.messages["Response"];
+        assert!(response.headers.is_some());
+
+        // Every model here derives JsonSchema: the coverage gate reports no gaps.
+        assert!(spec.messages_without_schema().is_empty());
+    }
 }

@@ -5,8 +5,8 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
-use syn::{Error, FnArg, Ident, ItemFn, LitStr, Pat, PatType, ReturnType, Type, TypePath};
+use quote::{ToTokens, quote};
+use syn::{Error, Expr, FnArg, Ident, ItemFn, Pat, PatType, ReturnType, Type, TypePath};
 
 use crate::parse::{
     FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, position_type,
@@ -14,7 +14,7 @@ use crate::parse::{
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
-    reject_raw_combinations(args)?;
+    reject_raw_combinations(args, func)?;
     let parts = handler_parts(args, func)?;
     let body = if args.raw.is_some() {
         // The remaining combinations are already rejected above; publish_raw(..) selects the
@@ -50,10 +50,10 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
 /// delivery's bytes only) or the decode failure policy (there is no decode step), an encoded
 /// `publish(..)` reply off raw bytes (the reply of a raw handler is bytes - `publish_raw`), both
 /// reply clauses at once, and a batch with a byte reply.
-fn reject_raw_combinations(args: &SubscriberArgs) -> syn::Result<()> {
+fn reject_raw_combinations(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<()> {
     if let (Some(_), Some(publish_raw)) = (&args.publish, &args.publish_raw) {
-        return Err(Error::new(
-            publish_raw.span(),
+        return Err(Error::new_spanned(
+            publish_raw,
             "publish(..) and publish_raw(..) are mutually exclusive: one reply, one destination",
         ));
     }
@@ -83,13 +83,21 @@ fn reject_raw_combinations(args: &SubscriberArgs) -> syn::Result<()> {
              payload as `&[u8]`",
         ));
     }
+    // With a FromHeaders parameter the decode policy still has a job on a raw handler: it
+    // settles a header contract that fails to parse.
+    let has_from_headers = func
+        .sig
+        .inputs
+        .iter()
+        .any(|arg| matches!(arg, FnArg::Typed(pt) if from_headers_ty(&pt.ty).is_some()));
     if let Some(failure) = &args.on_failure
         && failure.decode.is_some()
+        && !has_from_headers
     {
         return Err(Error::new(
             raw.span(),
-            "on_failure(decode = ..) does not apply to raw: the payload is not decoded; keep \
-             only on_failure(panic = ..)",
+            "on_failure(decode = ..) does not apply to raw: the payload is not decoded and \
+             there is no FromHeaders parameter; keep only on_failure(panic = ..)",
         ));
     }
     Ok(())
@@ -115,6 +123,11 @@ struct HandlerParts<'a> {
     seek: Option<(&'a Pat, &'a Type)>,
     workers_method: TokenStream2,
     failure_method: TokenStream2,
+    /// The `FailurePolicy` value applied to `FromHeaders` extraction (the `decode` key).
+    headers_policy: TokenStream2,
+    /// The `headers_schema()` def-method override lifted from the first `FromHeaders<T>`
+    /// parameter's contract type, or empty when the handler takes none.
+    headers_schema: TokenStream2,
 }
 
 /// The per-delivery context type the handler named in its `ctx: &mut Context<'_, C>` parameter,
@@ -161,13 +174,25 @@ fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
     quote!(())
 }
 
-/// One `Out<impl Bounds[, Marker]>` handler parameter: the binding pattern, the capability
-/// bounds the publisher generic carries, and the slot marker type (the implicit `DefaultSlot`
-/// when the parameter names none).
+/// One `Out<impl Bounds[, Marker[, Set]]>` handler parameter: the binding pattern, the
+/// capability bounds the publisher generic carries, the slot marker type (the implicit
+/// `DefaultSlot` when the parameter names none), and the declared message set of the optional
+/// third position.
 struct OutParam<'a> {
     pat: &'a Pat,
     bounds: &'a syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
     marker: TokenStream2,
+    /// The declared message set; `None` (also written `()`) leaves the slot unrestricted.
+    bodies: Option<BodyDecl<'a>>,
+}
+
+/// The declared message set of an `Out` parameter's third position.
+enum BodyDecl<'a> {
+    /// A tuple listing the types inline.
+    List(Vec<&'a Type>),
+    /// A set-defining type: a `#[derive(Message)]` type (itself) or a `#[derive(OutMessages)]`
+    /// enum (its variants' models).
+    Set(&'a Type),
 }
 
 /// The type arguments of an `Out<..>`-shaped parameter type, when the type has that shape.
@@ -192,7 +217,7 @@ fn out_param_args(ty: &Type) -> Option<Vec<&Type>> {
             _ => None,
         })
         .collect();
-    if types.is_empty() || types.len() > 2 {
+    if types.is_empty() || types.len() > 3 {
         return None;
     }
     Some(types)
@@ -221,6 +246,31 @@ fn seek_param_type(ty: &Type) -> Option<&Type> {
         return None;
     }
     Some(seeker)
+}
+
+/// The contract type `T` of a `FromHeaders<T>`-shaped parameter type, when the type has that
+/// shape. Purely syntactic (the last path segment `FromHeaders` with exactly one type argument),
+/// like the `Ctx<K>` probe below.
+fn from_headers_ty(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "FromHeaders" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let contract = types.next()?;
+    if types.next().is_some() {
+        return None;
+    }
+    Some(contract)
 }
 
 /// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
@@ -351,14 +401,27 @@ fn extractor_where(
 
 /// The `let` bindings that resolve each extractor from the context before the body runs. A failed
 /// extraction runs `reject` (a `return` settling the delivery by the rejection's `HandlerResult`).
+///
+/// A `FromHeaders<T>` parameter takes the policy-aware path instead of the generic
+/// [`FromContext`] call, so the subscriber's `on_failure(decode = ..)` policy (interpolated as
+/// `headers_policy`) applies to the header contract exactly like it applies to the payload codec.
 fn extractor_prelude(
     extractors: &[(&Pat, &Type)],
     ctx_param: &TokenStream2,
     ctx_ty: &TokenStream2,
     state: &TokenStream2,
+    headers_policy: &TokenStream2,
     reject: &TokenStream2,
 ) -> TokenStream2 {
     let binds = extractors.iter().map(|(pat, ty)| {
+        if from_headers_ty(ty).is_some() {
+            return quote! {
+                let #pat = match <#ty>::extract(&mut *#ctx_param, #headers_policy) {
+                    ::core::result::Result::Ok(__rs_value) => __rs_value,
+                    ::core::result::Result::Err(__rs_err) => { #reject; }
+                };
+            };
+        }
         quote! {
             let #pat = match <#ty as ::ruststream::runtime::FromContext<#ctx_ty, #state>>::from_context(
                 &mut *#ctx_param,
@@ -397,6 +460,208 @@ fn failure_method(args: &SubscriberArgs) -> TokenStream2 {
     }
 }
 
+/// Renders the def's `headers_schema()` override, rejecting `FromHeaders` on batch forms (a
+/// header contract is per-delivery; a batch spans many deliveries with as many header maps).
+///
+/// The schema source: a `FromHeaders<T>` parameter wins (its contract is what the runtime
+/// actually enforces); otherwise the input type's `#[message(headers(..))]` contract, when it
+/// declares one. Both use the same autoref-specialization probes as the payload schema. A raw
+/// handler has no typed input to carry a contract, so without a `FromHeaders` parameter it
+/// emits nothing.
+fn headers_schema_method(
+    args: &SubscriberArgs,
+    extractors: &[(&Pat, &Type)],
+    input_ty: &Type,
+) -> syn::Result<TokenStream2> {
+    if args.batch
+        && let Some((_, ty)) = extractors
+            .iter()
+            .find(|(_, ty)| from_headers_ty(ty).is_some())
+    {
+        return Err(Error::new_spanned(
+            ty,
+            "FromHeaders is per-delivery and does not apply to batch(..) forms: a batch spans \
+             many deliveries, each with its own headers",
+        ));
+    }
+    let method = extractors
+        .iter()
+        .find_map(|(_, ty)| from_headers_ty(ty))
+        .map_or_else(
+            || {
+                if args.raw.is_some() {
+                    return quote!();
+                }
+                quote! {
+                    fn headers_schema(&self) -> ::core::option::Option<::std::string::String> {
+                        #[allow(unused_imports)]
+                        use ::ruststream::__private::NoHeadersSchemaProbe as _;
+                        ::ruststream::__private::Probe::<#input_ty>::new().headers_schema_json()
+                    }
+                }
+            },
+            |contract| {
+                quote! {
+                    fn headers_schema(&self) -> ::core::option::Option<::std::string::String> {
+                        #[allow(unused_imports)]
+                        use ::ruststream::__private::NoSchemaProbe as _;
+                        ::ruststream::__private::Probe::<#contract>::new().schema_json()
+                    }
+                }
+            },
+        );
+    Ok(method)
+}
+
+/// The failure policy applied to `FromHeaders` extraction, as a `FailurePolicy` value: the
+/// `on_failure(decode = ..)` key (one materialization policy covers the payload codec and the
+/// header contract), or the runtime default (drop) when the clause omits it. Interpolated into
+/// the generated extraction call - the handler body has no access to the def's
+/// `failure_policies()`.
+fn headers_policy_tokens(args: &SubscriberArgs) -> TokenStream2 {
+    args.on_failure
+        .as_ref()
+        .and_then(|failure| failure.decode.as_ref())
+        .map_or_else(
+            || quote!(::ruststream::runtime::FailurePolicy::Drop),
+            failure_policy_tokens,
+        )
+}
+
+/// Renders the def's `outgoing()` override: the reply message (typed probes on the reply type,
+/// or a bare bytes entry for `publish_raw`) plus each `Out` parameter's declarations - a
+/// declared message set (its channels read off the dictionary consts), or the whole
+/// `#[publishes(..)]` dictionary for a byte-level slot. Empty when the handler declares no
+/// outgoing messages, keeping the trait default.
+fn outgoing_method(
+    reply: Option<(&Expr, Option<TokenStream2>)>,
+    outs: &[OutParam<'_>],
+) -> TokenStream2 {
+    if reply.is_none() && outs.is_empty() {
+        return quote!();
+    }
+    let reply_entry = reply.map(|(topic, reply_ty)| {
+        reply_ty.map_or_else(
+            // A publish_raw reply is bytes: no schema, no Message metadata to probe. The
+            // explicit &'static str binding keeps a wrongly-typed destination expression a
+            // plain type error instead of a trait-bound failure inside the metadata builder.
+            || {
+                quote! {
+                    __rs_outgoing.push(::ruststream::runtime::OutgoingMessageMetadata::new(
+                        { let __rs_channel: &'static str = #topic; __rs_channel },
+                        "bytes",
+                    ));
+                }
+            },
+            |reply_ty| outgoing_entry(&quote!(#topic), &reply_ty),
+        )
+    });
+    let slots = outs.iter().map(|out| {
+        let marker = &out.marker;
+        match &out.bodies {
+            // Unrestricted: the honest declaration is the marker's whole dictionary.
+            None => quote! {
+                __rs_outgoing.extend(<#marker as ::ruststream::runtime::OutSlot>::outgoing());
+            },
+            Some(BodyDecl::List(bodies)) => {
+                let entries = bodies.iter().map(|body| {
+                    let channel = quote! {
+                        <#body as ::ruststream::runtime::OutMessage<#marker>>::CHANNEL
+                    };
+                    outgoing_entry(&channel, &quote!(#body))
+                });
+                quote!(#(#entries)*)
+            }
+            Some(BodyDecl::Set(set)) => quote! {
+                __rs_outgoing.extend(
+                    <#set as ::ruststream::runtime::OutMessages<#marker>>::outgoing(),
+                );
+            },
+        }
+    });
+    quote! {
+        fn outgoing(&self)
+            -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata>
+        {
+            let mut __rs_outgoing = ::std::vec::Vec::new();
+            #reply_entry
+            #(#slots)*
+            __rs_outgoing
+        }
+    }
+}
+
+/// The reply-form pieces shared by both publishing expansions: the def's `outgoing()` override
+/// and its `reply_name()` body.
+fn reply_pieces(
+    reply_topic: &Expr,
+    reply_ty: Option<TokenStream2>,
+    outs: &[OutParam<'_>],
+) -> (TokenStream2, TokenStream2) {
+    (
+        outgoing_method(Some((reply_topic, reply_ty)), outs),
+        reply_name_body(reply_topic),
+    )
+}
+
+/// Renders the body of the def's `reply_name()`: a string literal passes through (zero cost);
+/// any other expression is evaluated once into a process-wide `LazyLock` - `reply_name()` sits
+/// on the per-delivery path, and an arbitrary destination expression (a function call) must
+/// not run per message.
+fn reply_name_body(reply_topic: &Expr) -> TokenStream2 {
+    if matches!(
+        reply_topic,
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(_),
+            ..
+        })
+    ) {
+        return quote!(#reply_topic);
+    }
+    quote! {
+        {
+            static __RS_REPLY_NAME: ::std::sync::LazyLock<&'static str> =
+                ::std::sync::LazyLock::new(|| #reply_topic);
+            *__RS_REPLY_NAME
+        }
+    }
+}
+
+/// One `outgoing()` entry: the message type's metadata probed at the call site (schema,
+/// `Message` name / description, headers contract), published to `channel`. The explicit
+/// &'static str binding keeps a wrongly-typed destination expression a plain type error
+/// instead of a trait-bound failure inside the metadata builder.
+fn outgoing_entry(channel: &TokenStream2, message_ty: &TokenStream2) -> TokenStream2 {
+    quote! {
+        __rs_outgoing.push(
+            ::ruststream::runtime::OutgoingMessageMetadata::new(
+                { let __rs_channel: &'static str = #channel; __rs_channel },
+                ::core::any::type_name::<#message_ty>(),
+            )
+            .with_message_name({
+                #[allow(unused_imports)]
+                use ::ruststream::__private::NoMessageProbe as _;
+                ::ruststream::__private::Probe::<#message_ty>::new().message_name()
+            })
+            .with_message_description({
+                #[allow(unused_imports)]
+                use ::ruststream::__private::NoMessageProbe as _;
+                ::ruststream::__private::Probe::<#message_ty>::new().message_description()
+            })
+            .with_payload_schema({
+                #[allow(unused_imports)]
+                use ::ruststream::__private::NoSchemaProbe as _;
+                ::ruststream::__private::Probe::<#message_ty>::new().schema_json()
+            })
+            .with_headers_schema({
+                #[allow(unused_imports)]
+                use ::ruststream::__private::NoHeadersSchemaProbe as _;
+                ::ruststream::__private::Probe::<#message_ty>::new().headers_schema_json()
+            }),
+        );
+    }
+}
+
 /// Renders one [`FailurePolicyArg`] as the matching `FailurePolicy` value.
 fn failure_policy_tokens(policy: &FailurePolicyArg) -> TokenStream2 {
     match policy {
@@ -407,21 +672,18 @@ fn failure_policy_tokens(policy: &FailurePolicyArg) -> TokenStream2 {
             quote!(::ruststream::runtime::FailurePolicy::RetryAfter(#expr))
         }
         FailurePolicyArg::Skip => quote!(::ruststream::runtime::FailurePolicy::Skip),
+        // A shared constant / any FailurePolicy expression passes through verbatim.
+        FailurePolicyArg::Value(expr) => quote!(#expr),
     }
 }
 
 /// Renders the `workers(..)` clause as an override of the def's defaulted `workers` method, or
 /// nothing when the clause is absent.
-fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
+fn workers_method(args: &SubscriberArgs, handler: &Ident) -> syn::Result<TokenStream2> {
     let Some(WorkersArg { count, by_key }) = &args.workers else {
         return Ok(quote!());
     };
-    if count.base10_parse::<usize>()? == 0 {
-        return Err(Error::new(
-            count.span(),
-            "workers(0) is not a policy; the minimum is 1",
-        ));
-    }
+    let count = workers_count(count, handler)?;
     if let Some(marker) = by_key {
         if args.batch {
             return Err(Error::new(
@@ -432,28 +694,48 @@ fn workers_method(args: &SubscriberArgs) -> syn::Result<TokenStream2> {
         }
         return Ok(quote! {
             fn workers(&self) -> ::ruststream::runtime::Workers {
-                // The macro rejects workers(0) at expansion, so the None arm is unreachable;
-                // MIN keeps the lowering panic-free.
-                ::ruststream::runtime::Workers::keyed(
-                    match ::core::num::NonZeroUsize::new(#count) {
-                        ::core::option::Option::Some(count) => count,
-                        ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
-                    },
-                )
+                ::ruststream::runtime::Workers::keyed(#count)
             }
         });
     }
     Ok(quote! {
         fn workers(&self) -> ::ruststream::runtime::Workers {
-            // The macro rejects workers(0) at expansion, so the None arm is unreachable;
-            // MIN keeps the lowering panic-free.
-            ::ruststream::runtime::Workers::pool(
-                match ::core::num::NonZeroUsize::new(#count) {
-                    ::core::option::Option::Some(count) => count,
-                    ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
-                },
-            )
+            ::ruststream::runtime::Workers::pool(#count)
         }
+    })
+}
+
+/// Lowers the `workers(..)` count to a `NonZeroUsize`: an integer literal is checked at
+/// expansion (zero is a compile error) and lowered panic-free; any other `usize` expression -
+/// a constant, a static, a function call - is not knowable here, so zero surfaces as a
+/// registration-time panic naming the clause (the startup rung: the value is external input to
+/// the macro).
+fn workers_count(count: &Expr, handler: &Ident) -> syn::Result<TokenStream2> {
+    if let Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Int(literal),
+        ..
+    }) = count
+    {
+        if literal.base10_parse::<usize>()? == 0 {
+            return Err(Error::new(
+                literal.span(),
+                "workers(0) is not a policy; the minimum is 1",
+            ));
+        }
+        // The literal is checked above, so the None arm is unreachable; MIN keeps the
+        // lowering panic-free.
+        return Ok(quote! {
+            match ::core::num::NonZeroUsize::new(#literal) {
+                ::core::option::Option::Some(count) => count,
+                ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
+            }
+        });
+    }
+    let misconfigured = format!(
+        "workers(..) on subscriber `{handler}` needs a non-zero count; the configured value is 0",
+    );
+    Ok(quote! {
+        ::core::num::NonZeroUsize::new(#count).expect(#misconfigured)
     })
 }
 
@@ -482,10 +764,15 @@ fn split_outs<'a>(extractors: &mut Vec<(&'a Pat, &'a Type)>) -> syn::Result<Vec<
             || quote!(::ruststream::runtime::DefaultSlot),
             |marker| quote!(#marker),
         );
+        let bodies = match args.get(2) {
+            Some(body) => body_decl(body)?,
+            None => None,
+        };
         outs.push(OutParam {
             pat,
             bounds: &capability.bounds,
             marker,
+            bodies,
         });
     }
     *extractors = kept;
@@ -511,6 +798,43 @@ fn split_outs<'a>(extractors: &mut Vec<(&'a Pat, &'a Type)>) -> syn::Result<Vec<
         }
     }
     Ok(outs)
+}
+
+/// The declared message set of an `Out` parameter's third position: a tuple lists types
+/// inline (`()` = unrestricted, like an absent position), a bare type defines its own set.
+/// Rejects a duplicate list entry (its `publish_typed` index inference would be ambiguous).
+fn body_decl(body: &Type) -> syn::Result<Option<BodyDecl<'_>>> {
+    let Type::Tuple(tuple) = body else {
+        // A bare type defines its own set: a #[derive(Message)] type declares itself, a
+        // #[derive(OutMessages)] enum declares its variants' models.
+        return Ok(Some(BodyDecl::Set(body)));
+    };
+    let bodies: Vec<&Type> = tuple.elems.iter().collect();
+    // `()` spells the default out: the slot stays unrestricted.
+    if bodies.is_empty() {
+        return Ok(None);
+    }
+    if bodies.len() > 4 {
+        return Err(Error::new_spanned(
+            bodies[4],
+            "an Out parameter lists at most four message types inline; declare a \
+             #[derive(OutMessages)] set enum for a larger one",
+        ));
+    }
+    for (index, body) in bodies.iter().enumerate() {
+        let name = body.to_token_stream().to_string();
+        if bodies
+            .iter()
+            .skip(index + 1)
+            .any(|other| other.to_token_stream().to_string() == name)
+        {
+            return Err(Error::new_spanned(
+                body,
+                "this type is already in the Out parameter's message list",
+            ));
+        }
+    }
+    Ok(Some(BodyDecl::List(bodies)))
 }
 
 /// Splits the (at most one) `Seek<K>` parameter out of the extractor list, rejecting a
@@ -671,7 +995,10 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
-    let workers_method = workers_method(args)?;
+    let headers_schema = headers_schema_method(args, &extractors, input_ty)?;
+    let headers_policy = headers_policy_tokens(args);
+
+    let workers_method = workers_method(args, &func.sig.ident)?;
     let failure_method = failure_method(args);
 
     Ok(HandlerParts {
@@ -693,6 +1020,8 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         seek,
         workers_method,
         failure_method,
+        headers_policy,
+        headers_schema,
     })
 }
 
@@ -740,7 +1069,7 @@ fn batch_reply_body<'a>(
 fn expand_batch_publishing(
     parts: &HandlerParts<'_>,
     func: &ItemFn,
-    reply_topic: &LitStr,
+    reply_topic: &Expr,
 ) -> syn::Result<TokenStream2> {
     let HandlerParts {
         vis,
@@ -761,9 +1090,12 @@ fn expand_batch_publishing(
         seek,
         workers_method,
         failure_method,
+        headers_policy,
+        headers_schema,
     } = parts;
 
     let (reply_elem, call_body) = batch_reply_body(func, block)?;
+    let (outgoing, reply_name_body) = reply_pieces(reply_topic, Some(quote!(#reply_elem)), outs);
     // The injection tuple is shared with the other forms; an Out parameter selects the
     // two-attachment builder (`.out(marker, ..)` next to `.publisher(..)`).
     let form = if outs.is_empty() {
@@ -795,6 +1127,7 @@ fn expand_batch_publishing(
         ctx_param,
         &unit_ctx,
         &state_in_ctx,
+        headers_policy,
         &quote!(
             return ::core::result::Result::Err(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
@@ -820,7 +1153,7 @@ fn expand_batch_publishing(
             type Source = #source_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
-            fn reply_name(&self) -> &str { #reply_topic }
+            fn reply_name(&self) -> &str { #reply_name_body }
 
             #workers_method
 
@@ -832,7 +1165,11 @@ fn expand_batch_publishing(
 
             #input_schema
 
+            #headers_schema
+
             #message_meta
+
+            #outgoing
         }
 
         impl<#state_generic #def_generics>
@@ -876,6 +1213,8 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         seek: _,
         workers_method,
         failure_method,
+        headers_policy,
+        headers_schema,
     } = parts;
 
     // Pin the body's type to the declared return type before the `IntoBatchResult` conversion:
@@ -903,6 +1242,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ctx_param,
         &unit_ctx,
         &state_in_ctx,
+        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoBatchResult::into_batch_result(
                 ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
@@ -951,6 +1291,8 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
 
                 #input_schema
 
+            #headers_schema
+
                 #message_meta
 
                 fn into_handler(self) -> Self { self }
@@ -980,6 +1322,8 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
         seek,
         workers_method,
         failure_method,
+        headers_policy,
+        headers_schema,
     } = parts;
 
     // The injection tuple is shared with the single-message form; only the form token differs
@@ -989,6 +1333,7 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
     } else {
         quote!(::ruststream::runtime::forms::BatchOut)
     };
+    let outgoing = outgoing_method(None, outs);
     let SlotScaffold {
         def_target,
         def_generics,
@@ -1015,6 +1360,7 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
         ctx_param,
         &unit_ctx,
         &state_in_ctx,
+        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoBatchResult::into_batch_result(
                 ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
@@ -1052,7 +1398,11 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
 
             #input_schema
 
+            #headers_schema
+
             #message_meta
+
+            #outgoing
         }
 
         impl<#state_generic #def_generics>
@@ -1074,6 +1424,18 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
     }
 }
 
+/// The include form token of the reply-publishing expansion. The injection tuple is shared
+/// with the plain forms; an Out parameter additionally selects the slot-taking builder (which
+/// grows the `.out(..)` attachments next to `.publisher(..)`).
+fn publishing_form(bare: bool, has_outs: bool) -> TokenStream2 {
+    match (bare, has_outs) {
+        (false, false) => quote!(::ruststream::runtime::forms::Publishing),
+        (false, true) => quote!(::ruststream::runtime::forms::PublishingOut),
+        (true, false) => quote!(::ruststream::runtime::forms::RawReply),
+        (true, true) => quote!(::ruststream::runtime::forms::RawReplyOut),
+    }
+}
+
 /// The reply-publishing form. `bare` marks the `publish_raw` (byte reply) variant - the same
 /// definition and machinery, with the form token selecting the bare-policy default commit
 /// instead of the typed-codec one - and `raw_input` selects the byte input kind (the handler
@@ -1081,7 +1443,7 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
 fn expand_publishing(
     parts: &HandlerParts<'_>,
     func: &ItemFn,
-    reply_topic: &LitStr,
+    reply_topic: &Expr,
     bare: bool,
     raw_input: bool,
 ) -> syn::Result<TokenStream2> {
@@ -1104,17 +1466,14 @@ fn expand_publishing(
         seek,
         workers_method,
         failure_method,
+        headers_policy,
+        headers_schema,
     } = parts;
 
     let (reply_ty, call_body) = publishing_reply(func, block, bare)?;
-    // The injection tuple is shared with the plain forms; the form token additionally selects
-    // the Out-taking builder (which grows the `.out(..)` attachments next to `.publisher(..)`).
-    let form = match (bare, !outs.is_empty()) {
-        (false, false) => quote!(::ruststream::runtime::forms::Publishing),
-        (false, true) => quote!(::ruststream::runtime::forms::PublishingOut),
-        (true, false) => quote!(::ruststream::runtime::forms::RawReply),
-        (true, true) => quote!(::ruststream::runtime::forms::RawReplyOut),
-    };
+    let (outgoing, reply_name_body) =
+        reply_pieces(reply_topic, (!bare).then(|| quote!(#reply_ty)), outs);
+    let form = publishing_form(bare, !outs.is_empty());
     let SlotScaffold {
         def_target,
         def_generics,
@@ -1139,6 +1498,7 @@ fn expand_publishing(
         ctx_param,
         ctx_ty,
         &state_in_ctx,
+        headers_policy,
         &quote!(
             return ::core::result::Result::Err(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
@@ -1165,7 +1525,7 @@ fn expand_publishing(
             type Source = #source_ty;
 
             fn source(&self) -> Self::Source { #source_expr }
-            fn reply_name(&self) -> &str { #reply_topic }
+            fn reply_name(&self) -> &str { #reply_name_body }
 
             #workers_method
 
@@ -1177,7 +1537,11 @@ fn expand_publishing(
 
             #input_schema
 
+            #headers_schema
+
             #message_meta
+
+            #outgoing
         }
 
         impl<#state_generic #def_generics>
@@ -1266,12 +1630,57 @@ struct SlotScaffold {
     def_target: TokenStream2,
     /// The publisher generic parameters of the definition impls (empty without Out parameters).
     def_generics: TokenStream2,
-    /// One publisher generic ident per Out parameter (`__RsOut0`, ...), in signature order.
-    generics: Vec<Ident>,
+    /// The hidden generic idents per Out parameter, in signature order.
+    generics: Vec<SlotGenerics>,
     /// The hidden generic struct plus the unit struct's `HasSlots` / `BindSlots` impls.
     scaffold: TokenStream2,
     /// The `__RsOutN: <bounds> + 'static` predicates for the hidden definition's impls.
     out_bounds: Vec<TokenStream2>,
+}
+
+/// The hidden generic idents of one Out parameter: its publisher (`__RsOutN`) and the scope
+/// codec its typed publishes encode with (`__RsOutCodecN`).
+struct SlotGenerics {
+    publisher: Ident,
+    codec: Ident,
+}
+
+/// The where-clause predicates of the hidden definition's impls, per Out parameter: the
+/// publisher generic carries the user's capability bounds, the codec generic the scope codec's,
+/// and a declared message set adds its dictionary membership (fully concrete predicates, so a
+/// type outside the dictionary fails right at the handler).
+fn slot_bounds(outs: &[OutParam<'_>], generics: &[SlotGenerics]) -> Vec<TokenStream2> {
+    let mut out_bounds: Vec<TokenStream2> = Vec::new();
+    for (out, slot) in outs.iter().zip(generics) {
+        let publisher = &slot.publisher;
+        let codec = &slot.codec;
+        let bounds = out.bounds;
+        // The dispatch machinery shares the injected value across worker tasks, so
+        // Send + Sync are structural, not optional; adding them here keeps broker-defined
+        // capability bounds (which need not imply them) as ergonomic as the core ones.
+        out_bounds.push(
+            quote!(#publisher: #bounds + ::core::marker::Send + ::core::marker::Sync + 'static),
+        );
+        out_bounds.push(quote! {
+            #codec: ::ruststream::codec::Codec
+                + ::core::marker::Send
+                + ::core::marker::Sync
+                + 'static
+        });
+        let marker = &out.marker;
+        match &out.bodies {
+            Some(BodyDecl::List(bodies)) => {
+                for body in bodies {
+                    out_bounds.push(quote!(#body: ::ruststream::runtime::OutMessage<#marker>));
+                }
+            }
+            Some(BodyDecl::Set(set)) => {
+                out_bounds.push(quote!(#set: ::ruststream::runtime::OutMessages<#marker>));
+            }
+            None => {}
+        }
+    }
+    out_bounds
 }
 
 /// Builds the [`SlotScaffold`]: without Out parameters the definition stays on the unit struct
@@ -1295,8 +1704,15 @@ fn slot_scaffold(
         };
     }
     let hidden_ident = Ident::new(&format!("__RsOutDef_{name}"), name.span());
-    let generics: Vec<Ident> = (0..outs.len())
-        .map(|index| Ident::new(&format!("__RsOut{index}"), name.span()))
+    let generics: Vec<SlotGenerics> = (0..outs.len())
+        .map(|index| SlotGenerics {
+            publisher: Ident::new(&format!("__RsOut{index}"), name.span()),
+            codec: Ident::new(&format!("__RsOutCodec{index}"), name.span()),
+        })
+        .collect();
+    let all_generics: Vec<&Ident> = generics
+        .iter()
+        .flat_map(|slot| [&slot.publisher, &slot.codec])
         .collect();
     let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();
     let sources: Vec<Ident> = (0..outs.len())
@@ -1305,15 +1721,22 @@ fn slot_scaffold(
     let source_values: Vec<Ident> = (0..outs.len())
         .map(|index| Ident::new(&format!("__rs_src{index}"), name.span()))
         .collect();
-    let out_bounds: Vec<TokenStream2> = outs
+    let out_bounds = slot_bounds(outs, &generics);
+    // Per parameter: the paired slot publisher and the scope codec.
+    let bound_args: Vec<TokenStream2> = outs
         .iter()
-        .zip(&generics)
-        .map(|(out, generic)| {
-            let bounds = out.bounds;
-            // The dispatch machinery shares the injected value across worker tasks, so
-            // Send + Sync are structural, not optional; adding them here keeps broker-defined
-            // capability bounds (which need not imply them) as ergonomic as the core ones.
-            quote!(#generic: #bounds + ::core::marker::Send + ::core::marker::Sync + 'static)
+        .zip(&sources)
+        .flat_map(|(out, source)| {
+            let marker = &out.marker;
+            [
+                quote! {
+                    ::ruststream::runtime::SlotPublisher<
+                        <#source as ::ruststream::PublishPolicy<__RsC>>::Live,
+                        #marker,
+                    >
+                },
+                quote!(__RsCodec),
+            ]
         })
         .collect();
     // A trailing Seek parameter resolves off the subscription itself, so its extra is a unit.
@@ -1321,29 +1744,24 @@ fn slot_scaffold(
     let scaffold = quote! {
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
-        #vis struct #hidden_ident<#(#generics),*>(
-            ::core::marker::PhantomData<fn() -> (#(#generics,)*)>,
+        #vis struct #hidden_ident<#(#all_generics),*>(
+            ::core::marker::PhantomData<fn() -> (#(#all_generics,)*)>,
         );
 
         impl ::ruststream::runtime::HasSlots for #name {
             type Markers = (#(#markers,)*);
         }
 
-        impl<__RsC, #(#sources),*> ::ruststream::runtime::BindSlots<__RsC, (#(#sources,)*)>
-            for #name
+        impl<__RsC, __RsCodec, #(#sources),*>
+            ::ruststream::runtime::BindSlots<__RsC, (#((#sources, __RsCodec),)*)> for #name
         where
             __RsC: ::ruststream::ConnectedBroker,
             #(#sources: ::ruststream::PublishPolicy<__RsC>,)*
         {
-            type Bound = #hidden_ident<
-                #(::ruststream::runtime::SlotPublisher<
-                    <#sources as ::ruststream::PublishPolicy<__RsC>>::Live,
-                    #markers,
-                >,)*
-            >;
-            type Extra = (#(#sources,)* #seek_extra);
+            type Bound = #hidden_ident<#(#bound_args,)*>;
+            type Extra = (#((#sources, __RsCodec),)* #seek_extra);
 
-            fn bind(self, sources: (#(#sources,)*)) -> (Self::Bound, Self::Extra) {
+            fn bind(self, sources: (#((#sources, __RsCodec),)*)) -> (Self::Bound, Self::Extra) {
                 let (#(#source_values,)*) = sources;
                 (
                     #hidden_ident(::core::marker::PhantomData),
@@ -1353,8 +1771,8 @@ fn slot_scaffold(
         }
     };
     SlotScaffold {
-        def_target: quote!(#hidden_ident<#(#generics),*>),
-        def_generics: quote!(#(#generics),*),
+        def_target: quote!(#hidden_ident<#(#all_generics),*>),
+        def_generics: quote!(#(#all_generics),*),
         generics,
         scaffold,
         out_bounds,
@@ -1368,14 +1786,23 @@ fn slot_scaffold(
 /// parameter (empty when the handler has none).
 fn injection_pieces(
     outs: &[OutParam<'_>],
-    out_generics: &[Ident],
+    out_generics: &[SlotGenerics],
     seek: Option<(&Pat, &Type)>,
 ) -> (Vec<TokenStream2>, TokenStream2) {
     let mut injection_tys = Vec::new();
     let mut bindings = Vec::new();
-    for (index, (out, generic)) in outs.iter().zip(out_generics).enumerate() {
+    for (index, (out, slot)) in outs.iter().zip(out_generics).enumerate() {
         let marker = &out.marker;
-        injection_tys.push(quote!(::ruststream::runtime::Out<#generic, #marker>));
+        let publisher = &slot.publisher;
+        let codec = &slot.codec;
+        let body = match &out.bodies {
+            Some(BodyDecl::List(bodies)) => quote!((#(#bodies,)*)),
+            Some(BodyDecl::Set(set)) => quote!(#set),
+            None => quote!(()),
+        };
+        injection_tys.push(quote! {
+            ::ruststream::runtime::Out<#publisher, #marker, #body, #codec>
+        });
         bindings.push(injection_binding(out.pat, index));
     }
     if let Some((seek_pat, seeker_ty)) = seek {
@@ -1452,6 +1879,8 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         seek,
         workers_method,
         failure_method,
+        headers_policy,
+        headers_schema,
     } = parts;
 
     let form = injected_form(!outs.is_empty());
@@ -1465,6 +1894,7 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
     let (injection_tys, injection_bindings) = injection_pieces(outs, &out_generics, *seek);
     let (input_kind, input_param, input_schema, message_meta) =
         input_pieces(input_ty, input_schema, message_meta, raw);
+    let outgoing = outgoing_method(None, outs);
 
     let (state_generic, state_in_ctx) = state_pieces(state_ty.as_ref());
     let def_where = where_clause(&out_bounds);
@@ -1476,6 +1906,7 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_param,
         ctx_ty,
         &state_in_ctx,
+        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
@@ -1514,7 +1945,11 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
 
             #input_schema
 
+            #headers_schema
+
             #message_meta
+
+            #outgoing
         }
 
         impl<#state_generic #def_generics>
@@ -1557,6 +1992,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         seek: _,
         workers_method,
         failure_method,
+        headers_policy,
+        headers_schema,
     } = parts;
 
     let (input_kind, input_param, input_schema, message_meta) =
@@ -1587,6 +2024,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_param,
         ctx_ty,
         &state_in_ctx,
+        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
@@ -1636,6 +2074,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
                 }
 
                 #input_schema
+
+            #headers_schema
 
                 #message_meta
 

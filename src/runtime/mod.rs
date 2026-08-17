@@ -47,7 +47,7 @@ pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublish
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
-pub use extract::{Ctx, FromContext, FromRef, State};
+pub use extract::{Ctx, FromContext, FromHeaders, FromRef, State};
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
@@ -58,7 +58,7 @@ pub use input::{DecodeWith, Decoded, InputKind, RawBytes};
 pub(crate) use lifecycle::ConnectedLifecycle;
 #[doc(hidden)]
 pub use lifecycle::ConnectedSlot;
-pub use metadata::HandlerMetadata;
+pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
@@ -74,6 +74,9 @@ pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink
 pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
-pub use slot::{BindSlots, DefaultSlot, HasSlots, OutSlot, SlotPublisher};
+pub use slot::{
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessage, OutMessages, OutSlot,
+    PublishTypedError, SlotPublisher, TypedSlot, TypedSlotWithHeaders, Unrestricted,
+};
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

@@ -1,4 +1,4 @@
-error: on_failure(decode = ..) does not apply to raw: the payload is not decoded; keep only on_failure(panic = ..)
+error: on_failure(decode = ..) does not apply to raw: the payload is not decoded and there is no FromHeaders parameter; keep only on_failure(panic = ..)
  --> tests/ui/subscriber_raw_on_failure_decode.rs:4:24
   |
 4 | #[subscriber("frames", raw, on_failure(decode = drop))]

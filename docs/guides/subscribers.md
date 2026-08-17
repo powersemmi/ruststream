@@ -36,10 +36,12 @@ access, broker per-delivery fields - is covered in [Context and state](context.m
 
 Any further parameter, after the message and the optional `&mut Context`, is an **extractor**:
 the runtime resolves it from the delivery before the body runs, and a failed extraction settles
-the delivery without running the body. Three kinds can appear:
+the delivery without running the body. Four kinds can appear:
 
 - `State<T>` - a field of the application state (derive `FromRef` on the state type).
 - `Ctx<K>` - a broker per-delivery field, read by its key.
+- `FromHeaders<T>` - the delivery headers parsed into a typed contract; a violation settles by
+  the `on_failure(decode = ..)` policy (see [typed headers](headers.md)).
 - any type implementing `FromContext` - a custom extractor (an auth guard, a request-scoped
   resolver).
 
@@ -50,7 +52,9 @@ The mechanics live in
 One more parameter shape is not an extractor but an **injection**: `Out(out): Out<impl
 Publisher>` receives a live publisher paired by the runtime from the policy attached at the
 include site (`b.include(handler).publisher(..)`, or `.out(marker, ..)` per named slot); the
-concrete publisher type never appears in the signature. See
+concrete publisher type never appears in the signature. An optional third position declares
+the message set the handler publishes - `Out<impl Publisher, Marker, (A, B)>` - enabling the
+dictionary-driven typed publish path ([typed headers](headers.md)). See
 [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ### Acking

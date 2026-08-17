@@ -12,7 +12,10 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+// The default-codec publish helpers are gated on a codec feature, like the codec itself.
 use crate::OutgoingMessage;
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::{
     ConnectedLifecycle, ErrorShutdown, LifecycleHook, OutSlot, PublishIdentity, RegisteredBroker,
     RustStream, RustStreamError, Starter, TestParts,
@@ -627,19 +630,58 @@ impl BrokerHandle<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::Encode`] if
-    /// the value does not encode, or [`TestError::NotQuiescent`] if the reaction does not settle.
+    /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::Encode`]
+    /// if the value does not encode, [`TestError::NoTransport`] if this broker has no
+    /// in-process test transport, or [`TestError::NotQuiescent`] if the reaction does not
+    /// settle.
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub async fn publish<T: serde::Serialize + Sync>(
         &self,
         name: &str,
         value: &T,
     ) -> Result<(), TestError> {
-        use crate::codec::Codec;
-        let bytes = crate::codec::DefaultCodec::default()
+        let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
         self.publish_raw(name, &bytes).await
+    }
+
+    /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
+    /// contract serialized into the header map (see
+    /// [`Headers::insert_typed`](crate::Headers::insert_typed)) - the input a
+    /// [`FromHeaders`](crate::runtime::FromHeaders) handler parses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::Encode`]
+    /// if the value or the headers do not encode, [`TestError::NoTransport`] if this broker has
+    /// no in-process test transport, or [`TestError::NotQuiescent`] if the reaction does not
+    /// settle.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub async fn publish_with_headers<T, H>(
+        &self,
+        name: &str,
+        value: &T,
+        headers: &H,
+    ) -> Result<(), TestError>
+    where
+        T: serde::Serialize + Sync,
+        H: serde::Serialize + Sync,
+    {
+        let bytes = DefaultCodec::default()
+            .encode(value)
+            .map_err(|err| TestError::Encode(err.to_string()))?;
+        if self.token.is_cancelled() {
+            return Err(TestError::ShutDown);
+        }
+        let transport = self
+            .testable
+            .ok_or_else(|| TestError::NoTransport(self.label.clone()))?;
+        let msg = OutgoingMessage::new(name, &bytes)
+            .with_typed_headers(headers)
+            .map_err(|err| TestError::Encode(err.to_string()))?;
+        transport.inject(msg);
+        self.coordinator.drive().await
     }
 
     /// Publishes raw `payload` bytes to `name`, then drives the reaction to a standstill.

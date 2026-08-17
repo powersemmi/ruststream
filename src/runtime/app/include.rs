@@ -1032,7 +1032,7 @@ macro_rules! impl_publishing_out_commit {
         where
             B: Broker + 'static,
             C: ScopeCodec,
-            Def: BindSlots<Connected<B>, ($($attach,)+), Bound = Bound, Extra = Extra>,
+            Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: PublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Sync + Send + 'static,
@@ -1060,7 +1060,8 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
-                let (def, extra) = def.bind(($($attach.into_source(),)+));
+                let codec = scope.codec.scope_codec();
+                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_publishing_source(source, def, reply.into_source(), extra);
             }
@@ -1157,7 +1158,7 @@ macro_rules! impl_inject_out_commit {
         where
             B: Broker + 'static,
             C: ScopeCodec,
-            Def: BindSlots<Connected<B>, ($($attach,)+), Bound = Bound, Extra = Extra>,
+            Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: InjectCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Sync + Send + 'static,
@@ -1177,7 +1178,8 @@ macro_rules! impl_inject_out_commit {
             fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
-                let (def, extra) = def.bind(($($attach.into_source(),)+));
+                let codec = scope.codec.scope_codec();
+                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_inject(source, def, extra);
             }
@@ -1249,7 +1251,7 @@ macro_rules! impl_batch_inject_out_commit {
         where
             B: Broker + 'static,
             C: ScopeCodec,
-            Def: BindSlots<Connected<B>, ($($attach,)+), Bound = Bound, Extra = Extra>,
+            Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: BatchInjectCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Sync + Send + 'static,
@@ -1265,7 +1267,8 @@ macro_rules! impl_batch_inject_out_commit {
             fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
-                let (def, extra) = def.bind(($($attach.into_source(),)+));
+                let codec = scope.codec.scope_codec();
+                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_batch_inject(source, def, extra);
             }
@@ -1421,7 +1424,7 @@ macro_rules! impl_batch_publishing_out_commit {
         where
             B: Broker + 'static,
             C: ScopeCodec,
-            Def: BindSlots<Connected<B>, ($($attach,)+), Bound = Bound, Extra = Extra>,
+            Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: BatchPublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Sync + Send + 'static,
@@ -1442,7 +1445,8 @@ macro_rules! impl_batch_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
-                let (def, extra) = def.bind(($($attach.into_source(),)+));
+                let codec = scope.codec.scope_codec();
+                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_batch_publishing_source(source, def, reply.into_source(), extra);
             }

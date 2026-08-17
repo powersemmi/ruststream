@@ -54,6 +54,14 @@ pub trait SubscriberDef: Sized {
         None
     }
 
+    /// The serialized JSON Schema of the handler's typed header contract (its
+    /// [`FromHeaders<T>`](super::FromHeaders) parameter), when `T` implements
+    /// [`schemars::JsonSchema`] and the `asyncapi` feature is on. The macro fills this in; the
+    /// default omits it.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
     /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
     /// fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
@@ -88,6 +96,7 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
     let mut meta = HandlerMetadata::raw(name).with_def_details(
         def.description(),
         def.input_schema(),
+        def.headers_schema(),
         def.message_name(),
         def.message_description(),
     );

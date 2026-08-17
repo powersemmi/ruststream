@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 use serde_json::Value;
+use tracing::warn;
 
 use crate::runtime::App;
 
@@ -44,6 +45,38 @@ impl Spec {
     /// Returns [`serde_json::Error`] if serialization fails (not expected for a well-formed spec).
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
+    }
+
+    /// The message components carrying no payload schema, excluding the deliberately
+    /// schema-free raw-bytes messages: the models that would document better with a
+    /// [`schemars::JsonSchema`] derive.
+    ///
+    /// [`build_spec`] logs a `WARN` per gap when the document is generated; this accessor makes
+    /// the same list assertable, so a service can gate schema coverage in its test suite.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "memory")]
+    /// # fn demo() {
+    /// use ruststream::asyncapi::build_spec;
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    ///
+    /// let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| { let _ = b; });
+    /// let spec = build_spec(&app);
+    /// assert!(spec.messages_without_schema().is_empty());
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn messages_without_schema(&self) -> Vec<&str> {
+        self.components
+            .messages
+            .values()
+            .filter(|message| message.payload.is_none() && message.name != "bytes")
+            .map(|message| message.name.as_str())
+            .collect()
     }
 
     /// Serializes the document to YAML.
@@ -103,7 +136,7 @@ pub struct Channel {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct Operation {
-    /// The action; `"receive"` for subscribers.
+    /// The action: `"receive"` for subscribers, `"send"` for declared outgoing messages.
     pub action: String,
     /// Reference to the channel this operation acts on.
     pub channel: Reference,
@@ -140,6 +173,11 @@ pub struct MessageObject {
     /// [`schemars::JsonSchema`]. Absent for raw-bytes handlers and types without a schema.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+    /// The JSON Schema of the application headers, when the handler declares a typed header
+    /// contract (a `FromHeaders<T>` parameter). The schema describes the logical contract; on
+    /// the wire, header values are string-encoded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<Value>,
 }
 
 /// A JSON `$ref` pointer.
@@ -235,65 +273,19 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
     let mut messages = BTreeMap::new();
 
     for handler in app.handlers() {
-        let name = handler.name.as_ref();
-        let payload = handler
-            .payload_schema
-            .as_deref()
-            .and_then(|json| serde_json::from_str::<Value>(json).ok());
-        // The JsonSchema derive captures the type's own doc comment (and a schemars title /
-        // rename), so a documented payload type feeds the component without a Message impl.
-        let schema_str = |key: &str| {
-            payload
-                .as_ref()
-                .and_then(|schema| schema.get(key))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        };
-        // A `Message` impl on the input type names the component; the schema title is next; the
-        // type name is the fallback.
-        let message_name = handler
-            .message_name
-            .as_ref()
-            .map(ToString::to_string)
-            .or_else(|| schema_str("title"))
-            .unwrap_or_else(|| message_name(handler.input_type));
-
-        channels.entry(name.to_owned()).or_insert_with(|| Channel {
-            address: name.to_owned(),
-            messages: BTreeMap::from([(
-                message_name.clone(),
-                Reference::new(format!("#/components/messages/{message_name}")),
-            )]),
-        });
-
-        operations.insert(
-            operation_id(name),
-            Operation {
-                action: "receive".to_owned(),
-                channel: Reference::new(format!("#/channels/{name}")),
-                messages: vec![Reference::new(format!(
-                    "#/channels/{name}/messages/{message_name}"
-                ))],
-                description: handler.description.as_ref().map(ToString::to_string),
-            },
-        );
-
-        // Message::DESCRIPTION wins, then the type's own doc comment from the schema, then the
-        // handler doc (already on the operation) so plain types keep their description.
-        let message_description = handler
-            .message_description
-            .as_ref()
-            .map(ToString::to_string)
-            .or_else(|| schema_str("description"))
-            .or_else(|| handler.description.as_ref().map(ToString::to_string));
-
-        messages
-            .entry(message_name.clone())
-            .or_insert_with(|| MessageObject {
-                name: message_name,
-                description: message_description,
-                payload,
-            });
+        add_receive(handler, &mut channels, &mut operations, &mut messages);
+        // One `send` operation per declared outgoing message: the reply of a publish(..) form
+        // and every Out slot dictionary entry. A channel several messages flow through lists
+        // them all; the message component is shared with any handler that receives it.
+        for outgoing in &handler.outgoing {
+            add_outgoing(
+                outgoing,
+                handler.name.as_ref(),
+                &mut channels,
+                &mut operations,
+                &mut messages,
+            );
+        }
     }
 
     Spec {
@@ -431,13 +423,246 @@ fn message_name(type_name: &str) -> String {
         .to_owned()
 }
 
-/// Derives a stable operation id from a name.
+/// Adds one registered subscriber to the document: its channel entry, its `receive` operation,
+/// and its message component (with the payload and headers schemas the handler declared).
+fn add_receive(
+    handler: &crate::runtime::HandlerMetadata,
+    channels: &mut BTreeMap<String, Channel>,
+    operations: &mut BTreeMap<String, Operation>,
+    messages: &mut BTreeMap<String, MessageObject>,
+) {
+    let name = handler.name.as_ref();
+    let payload = handler
+        .payload_schema
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Value>(json).ok());
+    // A raw handler is deliberately schema-free; a typed model without a schema is a
+    // documentation gap worth flagging at generation time.
+    if payload.is_none() && handler.input_type != "bytes" {
+        warn!(
+            target: "ruststream::asyncapi",
+            subscription = %name,
+            message_type = handler.input_type,
+            "message type has no JSON Schema; its AsyncAPI message carries no payload schema - \
+             derive schemars::JsonSchema on it",
+        );
+    }
+    let headers = handler
+        .headers_schema
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Value>(json).ok());
+    // The JsonSchema derive captures the type's own doc comment (and a schemars title /
+    // rename), so a documented payload type feeds the component without a Message impl.
+    let schema_str = |key: &str| {
+        payload
+            .as_ref()
+            .and_then(|schema| schema.get(key))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    // A `Message` impl on the input type names the component; the schema title is next; the
+    // type name is the fallback.
+    let message_name = handler
+        .message_name
+        .as_ref()
+        .map(ToString::to_string)
+        .or_else(|| schema_str("title"))
+        .unwrap_or_else(|| message_name(handler.input_type));
+
+    channels
+        .entry(name.to_owned())
+        .or_insert_with(|| Channel {
+            address: name.to_owned(),
+            messages: BTreeMap::new(),
+        })
+        .messages
+        .insert(
+            message_name.clone(),
+            Reference::new(format!("#/components/messages/{message_name}")),
+        );
+
+    operations.insert(
+        operation_id(name),
+        Operation {
+            action: "receive".to_owned(),
+            channel: Reference::new(format!("#/channels/{name}")),
+            messages: vec![Reference::new(format!(
+                "#/channels/{name}/messages/{message_name}"
+            ))],
+            description: handler.description.as_ref().map(ToString::to_string),
+        },
+    );
+
+    // Message::DESCRIPTION wins, then the type's own doc comment from the schema, then the
+    // handler doc (already on the operation) so plain types keep their description.
+    let message_description = handler
+        .message_description
+        .as_ref()
+        .map(ToString::to_string)
+        .or_else(|| schema_str("description"))
+        .or_else(|| handler.description.as_ref().map(ToString::to_string));
+
+    merge_message(
+        messages,
+        message_name,
+        message_description,
+        payload,
+        headers,
+        name,
+    );
+}
+
+/// Merges one contribution into a shared message component: an absent description, payload, or
+/// headers schema fills in from a later contributor (component identity is the message name,
+/// and several handlers may carry different slices of its metadata), while a conflicting
+/// headers schema keeps the first one with a WARN - one component cannot carry two contracts,
+/// and the conflict usually means two handlers read the same type with different `FromHeaders`
+/// declarations.
+fn merge_message(
+    messages: &mut BTreeMap<String, MessageObject>,
+    name: String,
+    description: Option<String>,
+    payload: Option<Value>,
+    headers: Option<Value>,
+    context: &str,
+) {
+    let entry = messages
+        .entry(name.clone())
+        .or_insert_with(|| MessageObject {
+            name,
+            description: None,
+            payload: None,
+            headers: None,
+        });
+    if entry.description.is_none() {
+        entry.description = description;
+    }
+    if entry.payload.is_none() {
+        entry.payload = payload;
+    }
+    match (&entry.headers, headers) {
+        (None, Some(headers)) => entry.headers = Some(headers),
+        (Some(existing), Some(headers)) if *existing != headers => {
+            warn!(
+                target: "ruststream::asyncapi",
+                message = %entry.name,
+                context = %context,
+                "conflicting headers schemas for one message component; keeping the first",
+            );
+        }
+        _ => {}
+    }
+}
+
+/// Adds one declared outgoing message to the document: its channel entry, one `send` operation
+/// (id derived from the publishing handler's subscription name and the channel), and its
+/// message component (shared with any handler that receives the same type). The message name
+/// falls back like the receive side: `Message` impl, then schema title, then the type name.
+fn add_outgoing(
+    outgoing: &crate::runtime::OutgoingMessageMetadata,
+    handler_name: &str,
+    channels: &mut BTreeMap<String, Channel>,
+    operations: &mut BTreeMap<String, Operation>,
+    messages: &mut BTreeMap<String, MessageObject>,
+) {
+    let payload = outgoing
+        .payload_schema
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Value>(json).ok());
+    // A publish_raw reply is deliberately schema-free; a typed model without a schema is a
+    // documentation gap worth flagging at generation time.
+    if payload.is_none() && outgoing.message_type != "bytes" {
+        warn!(
+            target: "ruststream::asyncapi",
+            channel = %outgoing.channel,
+            message_type = outgoing.message_type,
+            "outgoing message type has no JSON Schema; its AsyncAPI message carries no payload \
+             schema - derive schemars::JsonSchema on it",
+        );
+    }
+    let headers = outgoing
+        .headers_schema
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Value>(json).ok());
+    let title = payload
+        .as_ref()
+        .and_then(|schema| schema.get("title"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let name = outgoing
+        .message_name
+        .map(str::to_owned)
+        .or(title)
+        .unwrap_or_else(|| message_name(outgoing.message_type));
+    let description = outgoing.message_description.map(str::to_owned).or_else(|| {
+        payload
+            .as_ref()
+            .and_then(|schema| schema.get("description"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    });
+    let channel = outgoing.channel.as_ref();
+
+    channels
+        .entry(channel.to_owned())
+        .or_insert_with(|| Channel {
+            address: channel.to_owned(),
+            messages: BTreeMap::new(),
+        })
+        .messages
+        .insert(
+            name.clone(),
+            Reference::new(format!("#/components/messages/{name}")),
+        );
+
+    operations.insert(
+        send_operation_id(operations, handler_name, channel),
+        Operation {
+            action: "send".to_owned(),
+            channel: Reference::new(format!("#/channels/{channel}")),
+            messages: vec![Reference::new(format!(
+                "#/channels/{channel}/messages/{name}"
+            ))],
+            description: None,
+        },
+    );
+
+    merge_message(messages, name, description, payload, headers, channel);
+}
+
+/// Derives a stable `receive` operation id from a subscription name.
 fn operation_id(name: &str) -> String {
-    let sanitized: String = name
-        .chars()
+    format!("receive_{}", sanitize_id(name))
+}
+
+/// Derives a stable `send` operation id from the publishing handler's subscription name and
+/// the target channel: `send_<name>_<channel>`.
+fn send_operation_id(
+    operations: &BTreeMap<String, Operation>,
+    name: &str,
+    channel: &str,
+) -> String {
+    let base = format!("send_{}_{}", sanitize_id(name), sanitize_id(channel));
+    if !operations.contains_key(&base) {
+        return base;
+    }
+    // A residual collision (several handlers on one subject publishing to one channel, or a
+    // lossy sanitization) gets a deterministic numeric suffix instead of overwriting.
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{base}_{suffix}");
+        if !operations.contains_key(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// Replaces every non-alphanumeric character with `_` for use in an operation id.
+fn sanitize_id(name: &str) -> String {
+    name.chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    format!("receive_{sanitized}")
+        .collect()
 }
 
 #[cfg(test)]

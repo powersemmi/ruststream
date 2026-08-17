@@ -38,7 +38,15 @@ A handler's payload type appears as a schema when it derives `JsonSchema`. RustS
 ```
 
 A type without `JsonSchema` still works as a handler payload; it contributes no schema to the
-document.
+document. Generating the document logs a `WARN` per such gap (once per handler or outgoing
+declaration, naming the subscription or channel and the type; deliberately schema-free
+raw-bytes messages are not reported), and `Spec::messages_without_schema()` lists the affected
+message components - assert it empty in a test to gate schema coverage in CI.
+
+Beyond payloads, the document also carries **headers schemas** (from a handler's
+`FromHeaders<T>` parameter or a type's `#[message(headers(..))]` contract) and **`send`
+operations** for every declared outgoing message - the reply of a `publish(..)` form and every
+entry of an `Out` slot's `#[publishes(..)]` dictionary. See [typed headers](headers.md).
 
 ## Message names and descriptions
 

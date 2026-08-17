@@ -16,13 +16,19 @@
 //!   compile error naming the slot.
 
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::time::Duration;
 
+use serde::Serialize;
+use thiserror::Error;
+
+use crate::codec::{Codec, CodecError};
+use crate::runtime::metadata::OutgoingMessageMetadata;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
-    ConnectedBroker, OutgoingMessage, OwnedTransactions, Publisher, RequestReply,
-    TransactionalPublisher,
+    ConnectedBroker, MessageHeaders, NoHeaders, OutgoingMessage, OwnedTransactions, Publisher,
+    RequestReply, SerializeHeadersError, TransactionalPublisher, WithHeaders,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -49,6 +55,15 @@ use crate::{
 pub trait OutSlot: 'static {
     /// The human-readable slot name, used by diagnostics and test assertions.
     const NAME: &'static str;
+
+    /// The slot's publish dictionary as `AsyncAPI` metadata, one entry per
+    /// `#[publishes(..)]` pair. The derive fills this in; the default (a marker without a
+    /// dictionary) publishes nothing declared. Called once at registration; never on the
+    /// publish path.
+    #[must_use]
+    fn outgoing() -> Vec<OutgoingMessageMetadata> {
+        Vec::new()
+    }
 }
 
 /// The implicit marker of a single unnamed `Out<impl Publisher>` parameter.
@@ -179,6 +194,474 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
         #[cfg(feature = "testing")]
         record_slot_publish(M::NAME, &msg);
         self.inner.request(msg, timeout).await
+    }
+}
+
+/// One entry of a slot's publish dictionary: the message type `Self` publishes to
+/// [`CHANNEL`](Self::CHANNEL) through the slot marked `M`.
+///
+/// Declared on the marker with `#[publishes(Type = "channel", ..)]` (on `#[derive(OutSlot)]`),
+/// one impl per listed type. The dictionary is what
+/// [`publish_typed`](TypedSlot::publish_typed) compiles against: the destination comes from
+/// the declaration, and a type outside the dictionary does not compile. Several types may
+/// share one channel; one type maps to exactly one channel per slot (the derive rejects a
+/// duplicate).
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::{OutMessage, OutSlot};
+///
+/// struct Progress {
+///     percent: u8,
+/// }
+///
+/// struct Events;
+///
+/// impl OutSlot for Events {
+///     const NAME: &'static str = "Events";
+/// }
+///
+/// // What `#[derive(OutSlot)]` + `#[publishes(Progress = "chunks.progress")]` generates:
+/// impl OutMessage<Events> for Progress {
+///     const CHANNEL: &'static str = "chunks.progress";
+/// }
+///
+/// assert_eq!(<Progress as OutMessage<Events>>::CHANNEL, "chunks.progress");
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not in the publish dictionary of the `{M}` slot",
+    note = "declare it on the marker: #[publishes({Self} = \"<channel>\")] (the #[derive(OutSlot)] \
+            attribute); only declared types publish through publish_typed"
+)]
+pub trait OutMessage<M: OutSlot> {
+    /// The channel / subject the message type publishes to through this slot.
+    const CHANNEL: &'static str;
+}
+
+/// The error of the typed publish path ([`TypedSlot::publish_typed`]): encoding the payload,
+/// serializing the typed headers, or the broker publish itself.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum PublishTypedError<E> {
+    /// The slot's codec failed to encode the message payload.
+    #[error("encoding the typed message failed: {0}")]
+    Encode(#[source] CodecError),
+    /// The typed headers did not serialize into a header map.
+    #[error("serializing the typed headers failed: {0}")]
+    Headers(#[source] SerializeHeadersError),
+    /// The underlying publisher failed.
+    #[error("publishing the typed message failed: {0}")]
+    Publish(#[source] E),
+}
+
+/// Membership of a message type in an `Out` parameter's declared message list.
+///
+/// The declaration is a tuple listing types, a set-defining type (a `#[derive(Message)]` type
+/// declares itself, a `#[derive(OutMessages)]` enum declares its variants' models), or the
+/// unrestricted `()` (any dictionary type). The `Index` parameter is inferred per call, like
+/// the slot-binding machinery's positions; a duplicate type in a declaration is rejected where
+/// it is declared, so the index is always unambiguous.
+#[diagnostic::on_unimplemented(
+    message = "`{T}` is not in this Out parameter's declared message set `{Self}`",
+    note = "the third Out argument declares what the handler publishes: list the type there \
+            (`Out<impl Publisher, Marker, (A, B)>`), leave the slot unrestricted with `()`, or \
+            publish through another slot"
+)]
+pub trait ContainsMessage<T, Index> {}
+
+/// The [`ContainsMessage`] index of the unrestricted `()` declaration.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct Unrestricted;
+
+// The unrestricted declaration: any message the marker's dictionary admits.
+impl<T> ContainsMessage<T, Unrestricted> for () {}
+
+/// Implements [`ContainsMessage`] for each (arity, position) pair of the message-list tuple.
+macro_rules! impl_contains_message {
+    ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
+        impl<T $(, $before)* $(, $after)*> ContainsMessage<T, SlotPos<$pos>>
+            for ($($before,)* T, $($after,)*)
+        {
+        }
+    )+};
+}
+
+impl_contains_message! {
+    (@ 0)
+    (@ 0, A1)
+    (A0, @ 1)
+    (@ 0, A1, A2)
+    (A0, @ 1, A2)
+    (A0, A1, @ 2)
+    (@ 0, A1, A2, A3)
+    (A0, @ 1, A2, A3)
+    (A0, A1, @ 2, A3)
+    (A0, A1, A2, @ 3)
+}
+
+/// A declared message set's `AsyncAPI` contribution: one
+/// [`OutgoingMessageMetadata`] entry per member, with channels read off the `M` dictionary.
+///
+/// Implemented by `#[derive(Message)]` (the type declares itself) and by
+/// `#[derive(OutMessages)]` on a set enum (each variant's model); `()` falls back to the whole
+/// dictionary. A tuple declaration needs no impl - the `#[subscriber]` macro enumerates its
+/// elements itself. The impls carry `OutMessage<M>` bounds per member, so naming a set whose
+/// member is outside the slot's dictionary fails to compile at the handler.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::{Message, OutMessages};
+/// use serde::Serialize;
+///
+/// #[derive(Message, Serialize)]
+/// struct Progress {
+///     percent: u8,
+/// }
+///
+/// #[derive(Message, Serialize)]
+/// struct ChunkDone {
+///     output_key: String,
+/// }
+///
+/// // A reusable named set: the variants' models are what a handler naming `ConvertSends` as
+/// // its third Out argument publishes. The enum is never constructed.
+/// #[derive(OutMessages)]
+/// enum ConvertSends {
+///     Progress(Progress),
+///     Done(ChunkDone),
+/// }
+/// # }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not define a message set for the `{M}` slot",
+    note = "the third Out argument is a tuple of types, `()` (unrestricted), a \
+            #[derive(Message)] type (declares itself), or a #[derive(OutMessages)] enum \
+            (declares its variants' models); every member must be in the marker's \
+            #[publishes(..)] dictionary"
+)]
+pub trait OutMessages<M: OutSlot> {
+    /// The set's declared outgoing messages, for the generated document. Called once at
+    /// registration; never on the publish path.
+    #[must_use]
+    fn outgoing() -> Vec<OutgoingMessageMetadata>;
+}
+
+// The unrestricted declaration documents the whole dictionary.
+impl<M: OutSlot> OutMessages<M> for () {
+    fn outgoing() -> Vec<OutgoingMessageMetadata> {
+        M::outgoing()
+    }
+}
+
+/// The live value behind an [`Out`](super::Out) parameter: the slot's publisher plus the scope
+/// codec, pinned to the parameter's declared message set.
+///
+/// The handler receives it destructured (`Out(out)`) and publishes dictionary messages
+/// with [`publish_typed`](Self::publish_typed) / [`with_headers`](Self::with_headers); the
+/// declared publisher capability stays reachable through `Deref` (the byte-level
+/// [`publish`](Publisher::publish) for a computed destination, transactions, broker-defined
+/// capability traits). You never name this type: the `#[subscriber]` macro wires it from the
+/// parameter declaration.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::runtime::{HandlerResult, Out};
+/// use ruststream::{Message, OutSlot, Publisher, subscriber};
+/// use serde::{Deserialize, Serialize};
+/// # #[derive(serde::Deserialize)]
+/// # struct Event { id: u64 }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct DoneMeta {
+///     task_id: u64,
+/// }
+///
+/// #[derive(Message, Serialize)]
+/// struct Progress {
+///     percent: u8,
+/// }
+///
+/// #[derive(Message, Serialize)]
+/// #[message(headers(DoneMeta))]
+/// struct ChunkDone {
+///     output_key: String,
+/// }
+///
+/// #[derive(OutSlot)]
+/// #[publishes(ChunkDone = "chunks.done", Progress = "chunks.progress")]
+/// struct Events;
+///
+/// #[subscriber("chunks.raw")]
+/// async fn convert(
+///     event: &Event,
+///     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress)>,
+/// ) -> HandlerResult {
+///     // No headers contract on Progress: publish directly.
+///     if out.publish_typed(&Progress { percent: 100 }).await.is_err() {
+///         return HandlerResult::retry();
+///     }
+///     // ChunkDone declares DoneMeta: with_headers is demanded by the contract.
+///     let done = ChunkDone { output_key: format!("out/{}", event.id) };
+///     let meta = DoneMeta { task_id: event.id };
+///     if out.with_headers(&meta).publish_typed(&done).await.is_err() {
+///         return HandlerResult::retry();
+///     }
+///     HandlerResult::Ack
+/// }
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct TypedSlot<P, Body, M, EncodeCodec> {
+    slot: P,
+    codec: EncodeCodec,
+    _pinned: PhantomData<fn() -> (Body, M)>,
+}
+
+impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
+    pub(crate) fn new(slot: P, codec: EncodeCodec) -> Self {
+        Self {
+            slot,
+            codec,
+            _pinned: PhantomData,
+        }
+    }
+}
+
+// The declared capability rides the publisher inside; Deref keeps its whole surface (the
+// byte-level publish, transactions, broker-defined capability traits) reachable without
+// re-delegating every trait on this wrapper.
+impl<P, Body, M, EncodeCodec> Deref for TypedSlot<P, Body, M, EncodeCodec> {
+    type Target = P;
+
+    fn deref(&self) -> &P {
+        &self.slot
+    }
+}
+
+// The core capability vocabulary is also delegated directly (not only through Deref), so an
+// injected slot passes into generic positions demanding the capability (`fn f(p: &impl
+// Publisher)`), exactly like the wrapped slot publisher itself.
+impl<P, Body, M, EncodeCodec> Publisher for TypedSlot<P, Body, M, EncodeCodec>
+where
+    P: Publisher,
+    M: OutSlot,
+    EncodeCodec: Send + Sync,
+{
+    type Error = P::Error;
+
+    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        self.slot.publish(msg).await
+    }
+}
+
+impl<P, Body, M, EncodeCodec> TransactionalPublisher for TypedSlot<P, Body, M, EncodeCodec>
+where
+    P: TransactionalPublisher,
+    M: OutSlot,
+    EncodeCodec: Send + Sync,
+{
+    async fn begin_transaction(&self) -> Result<(), Self::Error> {
+        self.slot.begin_transaction().await
+    }
+
+    async fn commit(&self) -> Result<(), Self::Error> {
+        self.slot.commit().await
+    }
+
+    async fn abort(&self) -> Result<(), Self::Error> {
+        self.slot.abort().await
+    }
+}
+
+impl<P, Body, M, EncodeCodec> OwnedTransactions for TypedSlot<P, Body, M, EncodeCodec>
+where
+    P: OwnedTransactions,
+    M: OutSlot,
+    EncodeCodec: Send + Sync,
+{
+    type Transaction = P::Transaction;
+
+    async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
+        self.slot.transaction().await
+    }
+}
+
+impl<P, Body, M, EncodeCodec> RequestReply for TypedSlot<P, Body, M, EncodeCodec>
+where
+    P: RequestReply,
+    M: OutSlot,
+    EncodeCodec: Send + Sync,
+{
+    type Reply = P::Reply;
+
+    async fn request(
+        &self,
+        msg: OutgoingMessage<'_>,
+        timeout: Duration,
+    ) -> Result<Self::Reply, Self::Error> {
+        self.slot.request(msg, timeout).await
+    }
+}
+
+impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec>
+where
+    P: Publisher,
+    M: OutSlot,
+    EncodeCodec: Codec + Send + Sync,
+{
+    /// Publishes a declared message: the destination comes from the marker's
+    /// `#[publishes(..)]` dictionary, the payload is encoded with the include site's scope
+    /// codec. Compiles only for types in the parameter's message list whose contract carries
+    /// no typed headers; a type declaring `#[message(headers(..))]` publishes through
+    /// [`with_headers`](Self::with_headers) instead (forgetting the headers is a compile
+    /// error).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PublishTypedError`] when encoding fails or the broker rejects the publish.
+    ///
+    /// # Cancel safety
+    ///
+    /// As cancel-safe as the underlying publisher's [`publish`](Publisher::publish): dropping
+    /// the future mid-flight may leave the message in an indeterminate state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::runtime::{HandlerResult, Out};
+    /// use ruststream::{Message, OutSlot, Publisher, subscriber};
+    /// use serde::Serialize;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Event { id: u64 }
+    ///
+    /// #[derive(Message, Serialize)]
+    /// struct Progress {
+    ///     percent: u8,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// #[publishes(Progress = "chunks.progress")]
+    /// struct Events;
+    ///
+    /// #[subscriber("chunks.raw")]
+    /// async fn convert(
+    ///     event: &Event,
+    ///     Out(out): Out<impl Publisher, Events, Progress>,
+    /// ) -> HandlerResult {
+    ///     if out.publish_typed(&Progress { percent: 100 }).await.is_err() {
+    ///         return HandlerResult::retry();
+    ///     }
+    ///     HandlerResult::Ack
+    /// }
+    /// # }
+    /// ```
+    pub async fn publish_typed<T, Index>(
+        &self,
+        value: &T,
+    ) -> Result<(), PublishTypedError<P::Error>>
+    where
+        Body: ContainsMessage<T, Index>,
+        T: OutMessage<M> + MessageHeaders<Contract = NoHeaders> + Serialize + Sync,
+    {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(PublishTypedError::Encode)?;
+        let msg = OutgoingMessage::new(T::CHANNEL, payload.as_ref());
+        self.slot
+            .publish(msg)
+            .await
+            .map_err(PublishTypedError::Publish)
+    }
+
+    /// Supplies the typed headers for a declared message whose contract demands them:
+    /// `out.with_headers(&meta).publish_typed(&value)`. The headers type is checked against the
+    /// message's `#[message(headers(..))]` contract, so a mismatched or missing headers value
+    /// is a compile error. The borrow is cheap; nothing is serialized until the publish.
+    ///
+    /// # Examples
+    ///
+    /// The full flow, with the contract-carrying message, lives on the [`TypedSlot`] type
+    /// docs; the shape of the call:
+    ///
+    /// ```text
+    /// out.with_headers(&DoneMeta { task_id: 7 }).publish_typed(&done).await?;
+    /// ```
+    #[must_use]
+    pub fn with_headers<'a, H>(
+        &'a self,
+        headers: &'a H,
+    ) -> TypedSlotWithHeaders<'a, P, Body, M, EncodeCodec, H> {
+        TypedSlotWithHeaders {
+            slot: self,
+            headers,
+        }
+    }
+}
+
+/// A [`TypedSlot`] borrow paired with the typed headers of the next publish.
+///
+/// Built by [`TypedSlot::with_headers`]; its [`publish_typed`](Self::publish_typed) compiles
+/// only for declared messages whose `#[message(headers(..))]` contract names exactly the
+/// borrowed headers type. You never name this type.
+#[derive(Debug)]
+pub struct TypedSlotWithHeaders<'a, P, Body, M, EncodeCodec, H> {
+    slot: &'a TypedSlot<P, Body, M, EncodeCodec>,
+    headers: &'a H,
+}
+
+impl<P, Body, M, EncodeCodec, H> TypedSlotWithHeaders<'_, P, Body, M, EncodeCodec, H>
+where
+    P: Publisher,
+    M: OutSlot,
+    EncodeCodec: Codec + Send + Sync,
+    H: Serialize + Sync,
+{
+    /// Publishes a declared message together with the borrowed typed headers: the destination
+    /// comes from the marker's `#[publishes(..)]` dictionary, the payload is encoded with the
+    /// scope codec, and the headers are serialized into the header map (one entry per field,
+    /// string-encoded).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PublishTypedError`] when encoding the payload or serializing the headers
+    /// fails, or the broker rejects the publish.
+    ///
+    /// # Cancel safety
+    ///
+    /// As cancel-safe as the underlying publisher's [`publish`](Publisher::publish): dropping
+    /// the future mid-flight may leave the message in an indeterminate state.
+    pub async fn publish_typed<T, Index>(
+        &self,
+        value: &T,
+    ) -> Result<(), PublishTypedError<P::Error>>
+    where
+        Body: ContainsMessage<T, Index>,
+        T: OutMessage<M> + MessageHeaders<Contract = WithHeaders<H>> + Serialize + Sync,
+    {
+        let payload = self
+            .slot
+            .codec
+            .encode(value)
+            .map_err(PublishTypedError::Encode)?;
+        let msg = OutgoingMessage::new(T::CHANNEL, payload.as_ref())
+            .with_typed_headers(self.headers)
+            .map_err(PublishTypedError::Headers)?;
+        self.slot
+            .slot
+            .publish(msg)
+            .await
+            .map_err(PublishTypedError::Publish)
     }
 }
 

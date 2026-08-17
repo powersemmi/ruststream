@@ -102,6 +102,13 @@ against a policy whose live publisher supports owned transactions, checked at th
 with a diagnostic naming the missing capability. The slot marker is also the identity the
 [test harness](testing.md#asserting-on-out-slots) records publishes against.
 
+A named marker can go further and declare a **publish dictionary** - which message types it
+publishes and to which channels. The `Out` parameter's optional third position then declares
+what this handler sends (`Out<impl Publisher, Marker, (A, B)>`, a single type, or a
+`#[derive(OutMessages)]` set enum), and the handler publishes by value with compile-checked
+destinations and header contracts, feeding the `send` operations of the generated AsyncAPI
+document. See [typed headers](headers.md).
+
 The parameter composes with every subscriber form: next to a `Seek` parameter, on a `raw`
 handler, and on `batch(..)` handlers (`b.include_batch(f).publisher(..)` - the whole page in,
 per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
