@@ -1,0 +1,36 @@
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
+use ruststream::{Message, OutSlot, RequestReply, subscriber};
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+struct Order {
+    id: u32,
+}
+
+#[derive(Message, Serialize)]
+struct Progress {
+    percent: u8,
+}
+
+#[derive(OutSlot)]
+#[publishes(Progress = "orders.progress")]
+struct Events;
+
+// The first Out position stays the capability vocabulary, checked at the include site: the
+// slot demands request / reply next to the declared messages, but the attached policy's live
+// publisher (the plain memory publisher) does not correlate replies.
+#[subscriber("orders")]
+async fn forward(
+    _order: &Order,
+    Out(out): Out<impl RequestReply, Events, Progress>,
+) -> HandlerResult {
+    let _ = out;
+    HandlerResult::Ack
+}
+
+fn main() {
+    RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(forward).out(Events, MemoryPublish).mount();
+    });
+}

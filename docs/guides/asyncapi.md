@@ -2,7 +2,8 @@
 
 With the `asyncapi` feature, RustStream generates an [AsyncAPI 3.0](https://www.asyncapi.com/)
 document from the application's handlers: each subscriber becomes a channel and a `receive`
-operation, and payload types contribute schemas.
+operation, and payload types contribute schemas. Handlers that share a channel each keep their own
+operation - they open separate subscriptions, so the document shows one per handler.
 
 ```toml
 ruststream = { version = "0.6", features = ["macros", "memory", "asyncapi"] }
@@ -38,7 +39,15 @@ A handler's payload type appears as a schema when it derives `JsonSchema`. RustS
 ```
 
 A type without `JsonSchema` still works as a handler payload; it contributes no schema to the
-document.
+document. Generating the document logs a `WARN` per such gap (once per handler or outgoing
+declaration, naming the subscription or channel and the type; deliberately schema-free
+raw-bytes messages are not reported), and `Spec::messages_without_schema()` lists the affected
+message components - assert it empty in a test to gate schema coverage in CI.
+
+Beyond payloads, the document also carries **headers schemas** (from a handler's
+`FromHeaders<T>` parameter or a type's `#[message(headers(..))]` contract) and **`send`
+operations** for every declared outgoing message - the reply of a `publish(..)` form and every
+entry of an `Out` slot's `#[publishes(..)]` dictionary. See [typed headers](headers.md).
 
 ## Message names and descriptions
 

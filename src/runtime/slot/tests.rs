@@ -1,0 +1,299 @@
+use std::collections::HashMap;
+
+use super::*;
+
+#[derive(Debug)]
+struct A;
+impl OutSlot for A {
+    const NAME: &'static str = "A";
+}
+
+#[derive(Debug)]
+struct B;
+impl OutSlot for B {
+    const NAME: &'static str = "B";
+}
+
+#[test]
+fn binds_slots_in_any_order() {
+    let init = <(A, B) as InitSlots>::init();
+    // Bind the second marker first, then the first: positions are found by marker.
+    let step = BindSlot::<B, &str, SlotPos<1>>::bind(init, "b");
+    let done = BindSlot::<A, &str, SlotPos<0>>::bind(step, "a");
+    let (a, b) = done;
+    assert_eq!(a.into_source(), "a");
+    assert_eq!(b.into_source(), "b");
+}
+
+/// A marker carrying a publish dictionary, standing in for `#[derive(OutSlot)]` with
+/// `#[publishes(..)]` (the derive lives in the macros crate).
+#[derive(Debug)]
+struct Events;
+
+impl OutSlot for Events {
+    const NAME: &'static str = "Events";
+
+    fn outgoing() -> Vec<OutgoingMessageMetadata> {
+        vec![OutgoingMessageMetadata::new("events.progress", "Progress")]
+    }
+}
+
+/// A dictionary message with no header contract, and a payload JSON cannot encode: an
+/// object key must be a string, and this map's are tuples.
+#[derive(Serialize)]
+struct Progress {
+    samples: HashMap<(u8, u8), u8>,
+}
+
+impl Progress {
+    fn new() -> Self {
+        Self {
+            samples: HashMap::from([((1, 2), 3)]),
+        }
+    }
+}
+
+impl OutMessage<Events> for Progress {
+    const CHANNEL: &'static str = "events.progress";
+}
+
+impl MessageHeaders for Progress {
+    type Contract = NoHeaders;
+}
+
+/// Headers a header map can carry: one scalar field.
+#[derive(Serialize)]
+struct Meta {
+    task_id: u64,
+}
+
+/// Headers it cannot: entries are scalars, and this one nests a struct.
+#[derive(Serialize)]
+struct NestedMeta {
+    inner: Meta,
+}
+
+/// A contract-carrying message with the same unencodable payload.
+#[derive(Serialize)]
+struct Blob {
+    samples: HashMap<(u8, u8), u8>,
+}
+
+impl OutMessage<Events> for Blob {
+    const CHANNEL: &'static str = "events.blob";
+}
+
+impl MessageHeaders for Blob {
+    type Contract = WithHeaders<Meta>;
+}
+
+/// A contract-carrying message that encodes, so the headers are what fails.
+#[derive(Serialize)]
+struct Done {
+    key: &'static str,
+}
+
+impl OutMessage<Events> for Done {
+    const CHANNEL: &'static str = "events.done";
+}
+
+impl MessageHeaders for Done {
+    type Contract = WithHeaders<NestedMeta>;
+}
+
+/// The unrestricted declaration documents whatever the marker declares, so a handler that
+/// pins no message set still contributes the slot's dictionary to the document.
+#[test]
+fn an_unrestricted_declaration_documents_the_whole_dictionary() {
+    let declared = <() as OutMessages<Events>>::outgoing();
+    assert_eq!(declared.len(), 1);
+    assert_eq!(declared[0].channel, "events.progress");
+    assert_eq!(declared[0].message_type, "Progress");
+}
+
+/// The slot wrapper is transparent for the whole transaction protocol: what the handler
+/// aborts through the slot never reaches the bus.
+#[cfg(feature = "memory")]
+#[tokio::test]
+async fn a_slot_publisher_delegates_the_transaction_protocol() {
+    use futures::StreamExt;
+
+    use crate::Subscriber;
+    use crate::memory::MemoryBroker;
+
+    let broker = MemoryBroker::new();
+    let mut subscriber = broker.subscribe("slots.ledger");
+    let slot = SlotPublisher::<_, Events>::new(broker.publisher());
+
+    slot.begin_transaction().await.expect("begin failed");
+    slot.publish(OutgoingMessage::new("slots.ledger", b"staged".as_slice()))
+        .await
+        .expect("publish failed");
+    slot.abort().await.expect("abort failed");
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    assert!(
+        futures::poll!(stream.next()).is_pending(),
+        "an aborted transaction discards what it staged",
+    );
+}
+
+/// Request / reply rides the slot wrapper unchanged, through the typed layer as well: the
+/// correlated reply comes back to the caller.
+#[cfg(all(feature = "memory", feature = "json"))]
+#[tokio::test]
+async fn a_typed_slot_delegates_request_reply() {
+    use futures::StreamExt;
+
+    use crate::codec::JsonCodec;
+    use crate::memory::MemoryBroker;
+    use crate::{IncomingMessage, Publisher as _, Subscriber};
+
+    let broker = MemoryBroker::new();
+    let mut service = broker.subscribe("slots.echo");
+    let responder = broker.publisher();
+    let slot = TypedSlot::<_, (), Events, _>::new(
+        SlotPublisher::<_, Events>::new(broker.requester()),
+        JsonCodec,
+    );
+
+    let respond = async {
+        let mut stream = std::pin::pin!(service.stream());
+        let msg = stream
+            .next()
+            .await
+            .expect("request missing")
+            .expect("memory subscriber never errors");
+        let reply_to = msg
+            .headers()
+            .reply_to()
+            .expect("a request carries reply-to")
+            .to_owned();
+        responder
+            .publish(OutgoingMessage::new(&reply_to, msg.payload()))
+            .await
+            .expect("reply publish failed");
+        msg.ack().await.expect("ack failed");
+    };
+    let request = slot.request(
+        OutgoingMessage::new("slots.echo", b"ping".as_slice()),
+        Duration::from_secs(5),
+    );
+
+    let (reply, ()) = futures::join!(request, respond);
+    assert_eq!(
+        reply.expect("the request must resolve").payload(),
+        b"ping",
+        "the reply travels back through the slot wrapper untouched",
+    );
+}
+
+/// The typed slot delegates the borrowed transaction protocol too, so a capability-refined
+/// `Out` slot settles through the wrapper.
+#[cfg(all(feature = "memory", feature = "json"))]
+#[tokio::test]
+async fn a_typed_slot_delegates_the_transaction_protocol() {
+    use futures::StreamExt;
+
+    use crate::Subscriber;
+    use crate::codec::JsonCodec;
+    use crate::memory::MemoryBroker;
+
+    let broker = MemoryBroker::new();
+    let mut subscriber = broker.subscribe("slots.ledger");
+    let slot = TypedSlot::<_, (), Events, _>::new(
+        SlotPublisher::<_, Events>::new(broker.publisher()),
+        JsonCodec,
+    );
+
+    slot.begin_transaction().await.expect("begin failed");
+    slot.publish(OutgoingMessage::new("slots.ledger", b"staged".as_slice()))
+        .await
+        .expect("publish failed");
+    slot.abort().await.expect("abort failed");
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    assert!(
+        futures::poll!(stream.next()).is_pending(),
+        "an aborted transaction discards what it staged",
+    );
+}
+
+/// A payload the codec cannot encode is reported by both typed publish forms, and nothing
+/// leaves for the broker.
+#[cfg(all(feature = "memory", feature = "json"))]
+#[tokio::test]
+async fn an_unencodable_payload_stops_both_typed_publish_forms() {
+    use crate::codec::JsonCodec;
+    use crate::memory::MemoryBroker;
+
+    let broker = MemoryBroker::new();
+    let slot = TypedSlot::<_, (), Events, _>::new(
+        SlotPublisher::<_, Events>::new(broker.publisher()),
+        JsonCodec,
+    );
+
+    let plain = slot
+        .publish_typed(&Progress::new())
+        .await
+        .expect_err("the codec cannot encode this payload");
+    assert!(
+        matches!(plain, PublishTypedError::Encode(_)),
+        "the encode arm must be distinguishable from a broker rejection: {plain:?}",
+    );
+
+    let meta = Meta { task_id: 7 };
+    let with_headers = slot
+        .with_headers(&meta)
+        .publish_typed(&Blob {
+            samples: Progress::new().samples,
+        })
+        .await
+        .expect_err("the codec cannot encode this payload");
+    assert!(
+        matches!(with_headers, PublishTypedError::Encode(_)),
+        "the payload is encoded before the headers are serialized: {with_headers:?}",
+    );
+}
+
+/// Headers that a header map cannot carry fail the publish with their own arm, before the
+/// message is handed to the broker.
+#[cfg(all(feature = "memory", feature = "json"))]
+#[tokio::test]
+async fn unrepresentable_headers_fail_the_typed_publish() {
+    use futures::StreamExt;
+
+    use crate::Subscriber;
+    use crate::codec::JsonCodec;
+    use crate::memory::MemoryBroker;
+
+    let broker = MemoryBroker::new();
+    let mut subscriber = broker.subscribe("events.done");
+    let slot = TypedSlot::<_, (), Events, _>::new(
+        SlotPublisher::<_, Events>::new(broker.publisher()),
+        JsonCodec,
+    );
+
+    let headers = NestedMeta {
+        inner: Meta { task_id: 7 },
+    };
+    let err = slot
+        .with_headers(&headers)
+        .publish_typed(&Done { key: "out/1" })
+        .await
+        .expect_err("a nested struct is not a header value");
+    assert!(
+        matches!(err, PublishTypedError::Headers(_)),
+        "the headers arm names what failed: {err:?}",
+    );
+    assert!(
+        err.to_string().contains("serializing the typed headers"),
+        "the message must point at the headers: {err}",
+    );
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    assert!(
+        futures::poll!(stream.next()).is_pending(),
+        "nothing may be published once the headers are rejected",
+    );
+}

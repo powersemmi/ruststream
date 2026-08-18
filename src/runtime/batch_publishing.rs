@@ -24,7 +24,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerResult;
 use super::input::{DecodeWith, InputKind};
-use super::metadata::HandlerMetadata;
+use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
 
 /// A batch subscriber definition that produces replies to publish.
@@ -82,6 +82,19 @@ pub trait BatchPublishingDef: Send + Sync {
         None
     }
 
+    /// The serialized JSON Schema of the element type's header contract, when one is declared
+    /// and the `asyncapi` feature is on. The default omits it.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
+    /// The messages this handler publishes, for the `AsyncAPI` `send` operations: the reply
+    /// message, plus every `Out` slot dictionary entry. The macro fills this in; the default
+    /// declares nothing. Called once at registration.
+    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        Vec::new()
+    }
+
     /// The element type's [`Message`](crate::Message) name, when it implements that trait. The
     /// macro fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
@@ -124,10 +137,12 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
         .with_def_details(
             def.description(),
             def.input_schema(),
+            def.headers_schema(),
             def.message_name(),
             def.message_description(),
         );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.outgoing = def.outgoing();
     meta
 }
 
@@ -206,138 +221,4 @@ where
 }
 
 #[cfg(all(test, feature = "memory", feature = "json"))]
-mod tests {
-    use futures::StreamExt;
-
-    use super::super::dispatch::Delivery;
-    use super::super::publish::TypedPublisher;
-    use super::*;
-    use crate::codec::JsonCodec;
-    use crate::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
-    use crate::{BatchSubscriber, Headers, OutgoingMessage, Publisher, Subscriber};
-
-    struct Confirm {
-        reply_to: &'static str,
-        fail_with: Option<HandlerResult>,
-    }
-
-    impl BatchPublishingDef for Confirm {
-        type Input = crate::runtime::Decoded<u32>;
-        type Injections = ();
-        type Reply = u32;
-        type Source = crate::Name;
-
-        fn source(&self) -> Self::Source {
-            crate::Name::new("orders")
-        }
-
-        fn reply_name(&self) -> &str {
-            self.reply_to
-        }
-    }
-
-    // Ignores the app state, so it is generic over it (mounts on any app).
-    impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
-        async fn call(
-            &self,
-            batch: &[u32],
-            (): &(),
-            _ctx: &mut Context<'_, (), S>,
-        ) -> Result<Vec<u32>, HandlerResult> {
-            if let Some(result) = self.fail_with {
-                return Err(result);
-            }
-            Ok(batch.iter().map(|n| n * 10).collect())
-        }
-    }
-
-    async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
-        let publisher = broker.publisher();
-        for n in numbers {
-            publisher
-                .publish(OutgoingMessage::new(name, &serde_json::to_vec(n).unwrap()))
-                .await
-                .unwrap();
-        }
-    }
-
-    async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
-        let mut stream = std::pin::pin!(sub.batches());
-        stream.next().await.unwrap().unwrap()
-    }
-
-    #[tokio::test]
-    async fn transactional_replies_publish_atomically_then_ack() {
-        let broker = MemoryBroker::new();
-        let mut input = broker.subscribe("orders");
-        let mut replies = broker.subscribe("confirmations");
-
-        let handler = BatchPublishingHandler {
-            def: Confirm {
-                reply_to: "confirmations",
-                fail_with: None,
-            },
-            codec: JsonCodec,
-            publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: PublishIdentity,
-            injections: (),
-            decode: FailurePolicy::Drop,
-        };
-
-        publish_numbers(&broker, "orders", &[1, 2]).await;
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = Headers::new();
-        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-        let batch = pull_batch(&mut input).await;
-        handler.handle_batch(batch, &mut ctx).await;
-
-        // Both replies are visible after the commit, in order.
-        let confirmed = pull_batch(&mut replies).await;
-        let payloads: Vec<&[u8]> = confirmed.iter().map(IncomingMessage::payload).collect();
-        assert_eq!(payloads, [b"10", b"20"]);
-        for msg in confirmed {
-            msg.ack().await.unwrap();
-        }
-
-        // The acked input batch is not redelivered.
-        let mut stream = std::pin::pin!(input.stream());
-        assert!(futures::poll!(stream.next()).is_pending());
-    }
-
-    #[tokio::test]
-    async fn handler_error_publishes_nothing_and_settles_the_batch() {
-        let broker = MemoryBroker::new();
-        let mut input = broker.subscribe("orders");
-        let mut replies = broker.subscribe("confirmations");
-
-        let handler = BatchPublishingHandler {
-            def: Confirm {
-                reply_to: "confirmations",
-                fail_with: Some(HandlerResult::retry()),
-            },
-            codec: JsonCodec,
-            publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
-            pipeline: PublishIdentity,
-            injections: (),
-            decode: FailurePolicy::Drop,
-        };
-
-        publish_numbers(&broker, "orders", &[1, 2]).await;
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = Headers::new();
-        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-        let batch = pull_batch(&mut input).await;
-        handler.handle_batch(batch, &mut ctx).await;
-
-        // Nothing was published, and the whole input batch is back for redelivery.
-        let mut reply_stream = std::pin::pin!(replies.stream());
-        assert!(futures::poll!(reply_stream.next()).is_pending());
-        let redelivered = pull_batch(&mut input).await;
-        assert_eq!(redelivered.len(), 2);
-        for msg in redelivered {
-            msg.ack().await.unwrap();
-        }
-    }
-}
+mod tests;

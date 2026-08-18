@@ -16,7 +16,9 @@ With no clause, a subscriber uses the built-in defaults:
   stopped consuming or an invisible redelivery loop.
 - **decode = `drop`**: a decode failure is usually bad external input. Dropping the one bad message
   (a nack without requeue) keeps a single malformed payload from taking the consumer down, which on
-  an untrusted topic would be a poison-message or denial-of-service footgun.
+  an untrusted topic would be a poison-message or denial-of-service footgun. The same policy covers
+  a [typed header contract](headers.md) that fails to parse - headers are the same class of
+  external input as the payload, so one `decode` key settles both.
 
 ```rust
 --8<-- "examples/failure_policy.rs:defaults"

@@ -331,3 +331,41 @@ impl<K: Seeker> SeekerToken<K> {
 #[error("the subscription this seeker token belongs to has not been opened yet")]
 #[non_exhaustive]
 pub struct SeekerPendingError;
+
+#[cfg(all(test, feature = "memory"))]
+mod tests {
+    use super::*;
+    use crate::memory::{ConnectedMemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
+
+    #[test]
+    fn a_pending_token_reports_it_is_unresolved() {
+        let (source, token) = WithSeeker::<_, MemorySeeker>::attach(MemorySource::new("orders"));
+
+        // Before startup the token names its state rather than handing out a half-built seeker.
+        let pending = token.seeker().expect_err("nothing has been opened yet");
+        assert!(pending.to_string().contains("has not been opened yet"));
+        assert!(format!("{token:?}").contains("resolved: false"));
+
+        // A clone shares the slot rather than taking it: both copies still report pending.
+        let clone = token.clone();
+        assert!(clone.seeker().is_err());
+        assert!(token.seeker().is_err());
+
+        // The decorated source keeps the inner subscription's name for the runtime and logs.
+        assert_eq!(
+            SubscriptionSource::<ConnectedMemoryBroker>::name(&source),
+            "orders"
+        );
+        assert!(format!("{source:?}").contains("WithSeeker"));
+    }
+
+    #[test]
+    fn a_start_position_decorates_the_source_it_wraps() {
+        let source = StartAt::new(MemorySource::new("orders"), MemoryPosition::start());
+        assert_eq!(
+            SubscriptionSource::<ConnectedMemoryBroker>::name(&source),
+            "orders"
+        );
+        assert!(format!("{source:?}").contains("StartAt"));
+    }
+}

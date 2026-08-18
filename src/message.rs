@@ -4,7 +4,7 @@ use std::{future::Future, time::Duration};
 
 use bytes::Bytes;
 
-use crate::{AckError, Headers};
+use crate::{AckError, Headers, SerializeHeadersError};
 
 /// An owned snapshot of a message as it travels through the framework.
 ///
@@ -106,6 +106,37 @@ impl<'a> OutgoingMessage<'a> {
     pub fn with_headers(mut self, headers: Headers) -> Self {
         self.headers = headers;
         self
+    }
+
+    /// Builder-style setter that serializes a typed contract into the headers, one entry per
+    /// field (see [`Headers::insert_typed`]). Entries already present under other names are kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializeHeadersError`] when the value is not a flat struct or string-keyed map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::OutgoingMessage;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct ChunkMeta {
+    ///     task_id: u64,
+    /// }
+    ///
+    /// let msg = OutgoingMessage::new("chunks.done", b"{}")
+    ///     .with_typed_headers(&ChunkMeta { task_id: 7 })?;
+    /// assert_eq!(msg.headers().get_str("task_id"), Some("7"));
+    /// # Ok::<(), ruststream::SerializeHeadersError>(())
+    /// ```
+    pub fn with_typed_headers<T: serde::Serialize + ?Sized>(
+        mut self,
+        value: &T,
+    ) -> Result<Self, SerializeHeadersError> {
+        self.headers.insert_typed(value)?;
+        Ok(self)
     }
 
     /// Returns the name / subject this message will be published to.

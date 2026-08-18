@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
-use crate::runtime::batch::{BatchDef, SliceHandler};
+use crate::runtime::batch::{BatchDef, BatchWithHeadersDef, SliceHandler};
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::input::{DecodeWith, RawBytes};
 use crate::runtime::metadata::HandlerMetadata;
@@ -17,8 +17,8 @@ use crate::runtime::subscriber_def::SubscriberDef;
 
 use super::builder::Router;
 use super::{
-    BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, PublishingRouter,
-    SubscribedBatchRouter,
+    BatchPublishingRouter, IncludedBatchRouter, IncludedBatchWithHeadersRouter, IncludedRouter,
+    PublishingRouter, SubscribedBatchRouter,
 };
 
 impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers> {
@@ -107,6 +107,64 @@ impl<B: Broker + 'static, Routes, RouteLayers> Router<B, Routes, (), RouteLayers
         Def::Handler: 'static,
     {
         self.mount_batch(source, def, crate::codec::DefaultCodec::default())
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition whose handler also reads a typed
+    /// header contract per element (`FromHeaders<Vec<H>>`), decoding each element with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    ///
+    /// The contracts are parsed next to the payload decode, so an element failing either step is
+    /// settled by the definition's decode policy and never reaches the handler.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_batch_with_headers<Def>(
+        self,
+        def: Def,
+    ) -> IncludedBatchWithHeadersRouter<
+        B,
+        Def::Source,
+        Def,
+        crate::codec::DefaultCodec,
+        (),
+        RouteLayers,
+        Routes,
+    >
+    where
+        Def: BatchWithHeadersDef,
+        Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+            BatchSubscriber + Send + 'static,
+        Def::Input: DecodeWith<crate::codec::DefaultCodec>,
+        Def::Handler: 'static,
+    {
+        let source = def.source();
+        self.mount_batch_with_headers(source, def, crate::codec::DefaultCodec::default())
+    }
+
+    /// Mounts a header-reading batch definition on an explicit subscription `source` (overriding
+    /// the macro's own source), decoding each element with the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn include_batch_with_headers_on<S, Def>(
+        self,
+        source: S,
+        def: Def,
+    ) -> IncludedBatchWithHeadersRouter<
+        B,
+        S,
+        Def,
+        crate::codec::DefaultCodec,
+        (),
+        RouteLayers,
+        Routes,
+    >
+    where
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchWithHeadersDef,
+        Def::Input: DecodeWith<crate::codec::DefaultCodec>,
+        Def::Handler: 'static,
+    {
+        self.mount_batch_with_headers(source, def, crate::codec::DefaultCodec::default())
     }
 
     /// Attaches a slice handler to a batch subscription described by `source`, decoding each
@@ -351,6 +409,52 @@ impl<B: Broker + 'static, Routes, RouteCodec: Codec + Clone + 'static, RouteLaye
     {
         let codec = self.codec.clone();
         self.mount_batch(source, def, codec)
+    }
+
+    /// Mounts a `#[subscriber(batch(..))]`-generated definition whose handler also reads a typed
+    /// header contract per element (`FromHeaders<Vec<H>>`), decoding each element with the
+    /// chain's codec (set by [`with_codec`](Self::with_codec)).
+    pub fn include_batch_with_headers<Def>(
+        self,
+        def: Def,
+    ) -> IncludedBatchWithHeadersRouter<
+        B,
+        Def::Source,
+        Def,
+        RouteCodec,
+        RouteCodec,
+        RouteLayers,
+        Routes,
+    >
+    where
+        Def: BatchWithHeadersDef,
+        Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
+            BatchSubscriber + Send + 'static,
+        Def::Input: DecodeWith<RouteCodec>,
+        Def::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        let source = def.source();
+        self.mount_batch_with_headers(source, def, codec)
+    }
+
+    /// Mounts a header-reading batch definition on an explicit subscription `source`, decoding
+    /// each element with the chain's codec (set by [`with_codec`](Self::with_codec)).
+    pub fn include_batch_with_headers_on<S, Def>(
+        self,
+        source: S,
+        def: Def,
+    ) -> IncludedBatchWithHeadersRouter<B, S, Def, RouteCodec, RouteCodec, RouteLayers, Routes>
+    where
+        S: SubscriptionSource<Connected<B>> + Send + 'static,
+        S::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchWithHeadersDef,
+        Def::Input: DecodeWith<RouteCodec>,
+        Def::Handler: 'static,
+    {
+        let codec = self.codec.clone();
+        self.mount_batch_with_headers(source, def, codec)
     }
 
     /// Attaches a slice handler to a batch subscription described by `source`, decoding each

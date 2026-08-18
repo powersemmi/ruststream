@@ -223,4 +223,57 @@ pub mod layers {
             }
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use std::time::Duration;
+
+        use super::*;
+        use crate::Headers;
+        use crate::runtime::dispatch::Delivery;
+
+        struct Fixed(HandlerResult);
+
+        impl Handler<(), (), ()> for Fixed {
+            fn handle(
+                &self,
+                _msg: &(),
+                _ctx: &mut Context<'_, (), ()>,
+            ) -> impl Future<Output = Settle> + Send {
+                let outcome = self.0;
+                async move { Settle::from(outcome) }
+            }
+        }
+
+        async fn traced(layer: &TracingLayer, outcome: HandlerResult) -> HandlerResult {
+            let state = ();
+            let delivery = Delivery::empty();
+            let headers = Headers::new();
+            let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+            layer
+                .layer(Fixed(outcome))
+                .handle(&(), &mut ctx)
+                .await
+                .outcome()
+        }
+
+        #[tokio::test]
+        async fn the_tracing_layer_logs_every_outcome_and_passes_it_through() {
+            // Logging must never rewrite the settlement, whichever branch reports it.
+            let layer = TracingLayer::default();
+            assert_eq!(traced(&layer, HandlerResult::Ack).await, HandlerResult::Ack);
+            assert_eq!(
+                traced(&layer, HandlerResult::retry()).await,
+                HandlerResult::retry()
+            );
+            let delayed = HandlerResult::retry_after(Duration::from_secs(3));
+            assert_eq!(traced(&layer, delayed).await, delayed);
+        }
+
+        #[tokio::test]
+        async fn a_target_scoped_layer_wraps_the_same_way() {
+            let layer = TracingLayer::with_target("my_service::orders");
+            assert_eq!(traced(&layer, HandlerResult::Ack).await, HandlerResult::Ack);
+        }
+    }
 }

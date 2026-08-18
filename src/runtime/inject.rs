@@ -12,7 +12,6 @@
 
 use std::fmt;
 use std::future::Future;
-use std::marker::PhantomData;
 
 use tracing::warn;
 
@@ -24,8 +23,8 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::input::{DecodeWith, InputKind};
-use super::metadata::HandlerMetadata;
-use super::slot::{DefaultSlot, OutSlot, SlotPublisher};
+use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
+use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 
 /// The marker a handler signature uses to receive an injected publisher:
 /// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
@@ -37,6 +36,18 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher};
 /// taking several publishers names a slot marker per parameter
 /// (`Out<impl Publisher, MySlot>`, see [`OutSlot`](super::OutSlot)) and the include site binds
 /// each with `.out(marker, policy)`, in any order.
+///
+/// An optional third position declares the message set the handler publishes, enabling the
+/// typed publish path ([`publish_typed`](super::TypedSlot::publish_typed), destinations from
+/// the marker's `#[publishes(..)]` dictionary):
+///
+/// - `Out<impl Publisher>` / `Out<impl Publisher, Events>` / `Out<impl Publisher, Events, ()>`
+///   - unrestricted: `publish_typed` accepts any type in the marker's dictionary;
+/// - `Out<impl Publisher, Events, ChunkDone>` - one declared type (a `#[derive(Message)]` type
+///   declares itself);
+/// - `Out<impl Publisher, Events, (ChunkDone, Progress)>` - a list of declared types;
+/// - `Out<impl Publisher, Events, SendSet>` - a `#[derive(OutMessages)]` enum whose variants'
+///   models are the declared set.
 ///
 /// The value is paired by the runtime at startup, so it is live by construction; handlers never
 /// see a "not connected" state. See the module docs.
@@ -66,7 +77,11 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher};
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct Out<P, M = DefaultSlot>(pub P, pub PhantomData<M>);
+pub struct Out<P, M = DefaultSlot, Body = (), EncodeCodec = ()>(
+    /// The live slot: the paired publisher plus the scope codec, pinned to the declared
+    /// message set.
+    pub TypedSlot<P, Body, M, EncodeCodec>,
+);
 
 /// The marker a handler signature uses to receive its subscription's seeker:
 /// `Seek(seeker): Seek<K>` binds `seeker` to `&K` inside the body.
@@ -127,28 +142,31 @@ pub trait FromStartup<B: Broker, Sub, Extra>: Sized {
 }
 
 /// The injected publisher: pairs the slot's attached policy against the connected broker and
-/// wraps it with the slot identity. A failing pair surfaces at startup with the slot's name
-/// (an unbound slot never gets this far: the include site does not compile without a policy
-/// per slot).
-impl<B, Sub, Extra, M> FromStartup<B, Sub, Extra> for Out<SlotPublisher<Extra::Live, M>, M>
+/// wraps it with the slot identity, the include site's scope codec (what
+/// [`publish_typed`](super::TypedSlot::publish_typed) encodes with), and the declared message
+/// set. A failing pair surfaces at startup with the slot's name (an unbound slot never gets
+/// this far: the include site does not compile without a policy per slot).
+impl<B, Sub, Policy, EncodeCodec, Body, M> FromStartup<B, Sub, (Policy, EncodeCodec)>
+    for Out<SlotPublisher<Policy::Live, M>, M, Body, EncodeCodec>
 where
     B: Broker,
     Sub: Sync,
-    Extra: PublishPolicy<Connected<B>> + Send,
+    Policy: PublishPolicy<Connected<B>> + Send,
+    EncodeCodec: Send,
     M: OutSlot,
 {
     async fn resolve(
-        extra: Extra,
+        (policy, codec): (Policy, EncodeCodec),
         connected: &Connected<B>,
         _subscriber: &Sub,
     ) -> Result<Self, PairError> {
-        let live = extra.pair(connected).await.map_err(|err| {
+        let live = policy.pair(connected).await.map_err(|err| {
             PairError::from_boxed(Box::from(format!(
                 "pairing the publisher for Out slot `{}` failed: {err}",
                 M::NAME,
             )))
         })?;
-        Ok(Self(SlotPublisher::new(live), PhantomData))
+        Ok(Self(TypedSlot::new(SlotPublisher::new(live), codec)))
     }
 }
 
@@ -254,6 +272,19 @@ pub trait InjectDef: Send + Sync {
         None
     }
 
+    /// The serialized JSON Schema of the handler's typed header contract (its
+    /// [`FromHeaders<T>`](super::FromHeaders) parameter), when available.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
+    /// The messages this handler publishes, for the `AsyncAPI` `send` operations: every `Out`
+    /// slot dictionary entry. The macro fills this in; the default declares nothing. Called
+    /// once at registration.
+    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        Vec::new()
+    }
+
     /// The input type's [`Message`](crate::Message) name, when it implements that trait.
     fn message_name(&self) -> Option<&'static str> {
         None
@@ -283,10 +314,12 @@ pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMet
     let mut meta = HandlerMetadata::raw(name).with_def_details(
         def.description(),
         def.input_schema(),
+        def.headers_schema(),
         def.message_name(),
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.outgoing = def.outgoing();
     meta
 }
 

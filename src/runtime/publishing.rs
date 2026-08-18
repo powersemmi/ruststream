@@ -22,7 +22,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerResult, Settle};
 use super::input::{DecodeWith, InputKind};
-use super::metadata::HandlerMetadata;
+use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
     PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
 };
@@ -154,6 +154,21 @@ pub trait PublishingDef: Send + Sync {
         None
     }
 
+    /// The serialized JSON Schema of the handler's typed header contract (its
+    /// [`FromHeaders<T>`](super::FromHeaders) parameter), when `T` implements
+    /// [`schemars::JsonSchema`] and the `asyncapi` feature is on. The macro fills this in; the
+    /// default omits it.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
+    /// The messages this handler publishes, for the `AsyncAPI` `send` operations: the reply
+    /// message, plus every `Out` slot dictionary entry. The macro fills this in; the default
+    /// declares nothing. Called once at registration.
+    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        Vec::new()
+    }
+
     /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
     /// fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
@@ -194,10 +209,12 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
         .with_def_details(
             def.description(),
             def.input_schema(),
+            def.headers_schema(),
             def.message_name(),
             def.message_description(),
         );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.outgoing = def.outgoing();
     meta
 }
 
@@ -354,5 +371,198 @@ mod tests {
         let headers = Headers::new();
         let mut ctx = Context::new("in", &headers, &state, (), &delivery);
         assert_eq!(def.call(&5, &(), &mut ctx).await.unwrap(), 5);
+    }
+
+    /// The two diagnostics of the publishing path. They are asserted on the handler itself
+    /// because the subject is the warning's content, and a field value is only evaluated while a
+    /// subscriber listens.
+    #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
+    mod diagnostics {
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        use futures::StreamExt;
+        use tracing::field::{Field, Visit};
+        use tracing::subscriber::DefaultGuard;
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
+
+        use super::ManualPub;
+        use crate::codec::JsonCodec;
+        use crate::memory::{MemoryBroker, MemoryError, MemoryMessage};
+        use crate::runtime::context::Context;
+        use crate::runtime::dispatch::Delivery;
+        use crate::runtime::failure::FailurePolicy;
+        use crate::runtime::handler::{Handler, HandlerResult};
+        use crate::runtime::publish::{PublishIdentity, TypedPublisher};
+        use crate::runtime::publishing::PublishingHandler;
+        use crate::{Headers, OutgoingMessage, Publisher, Subscriber};
+
+        type Events = Arc<Mutex<Vec<HashMap<String, String>>>>;
+
+        /// Collects each event's fields by name.
+        struct Capture(Events);
+
+        impl<S: tracing::Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
+                #[derive(Default)]
+                struct Fields(HashMap<String, String>);
+
+                impl Visit for Fields {
+                    // Without this, a string field arrives through record_debug and is captured in
+                    // its quoted Debug form, which no assertion here is written against.
+                    fn record_str(&mut self, field: &Field, value: &str) {
+                        self.0.insert(field.name().to_owned(), value.to_owned());
+                    }
+
+                    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                        self.0.insert(field.name().to_owned(), format!("{value:?}"));
+                    }
+                }
+
+                let mut fields = Fields::default();
+                event.record(&mut fields);
+                self.0.lock().unwrap().push(fields.0);
+            }
+        }
+
+        fn start_capture() -> (Events, DefaultGuard) {
+            let events: Events = Arc::new(Mutex::new(Vec::new()));
+            let guard = tracing::subscriber::set_default(
+                tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
+            );
+            (events, guard)
+        }
+
+        fn find(events: &Events, message: &str) -> HashMap<String, String> {
+            let captured = events.lock().unwrap();
+            captured
+                .iter()
+                .find(|fields| fields.get("message").is_some_and(|m| m == message))
+                .cloned()
+                .unwrap_or_else(|| panic!("no `{message}` event was emitted"))
+        }
+
+        /// Publishes `payload` to `name` and pulls the delivery back off the bus.
+        async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
+            let mut subscriber = broker.subscribe(name);
+            broker
+                .publisher()
+                .publish(OutgoingMessage::new(name, payload))
+                .await
+                .expect("publish failed");
+            let mut stream = std::pin::pin!(subscriber.stream());
+            stream
+                .next()
+                .await
+                .expect("delivery missing")
+                .expect("memory subscriber never errors")
+        }
+
+        /// A publisher that always refuses, modelling a broker rejecting the reply.
+        struct Rejecting;
+
+        impl Publisher for Rejecting {
+            type Error = MemoryError;
+
+            async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+                Err(MemoryError::ShutDown)
+            }
+        }
+
+        /// The decode diagnostic names the subscription and the type that was expected, so the
+        /// offending producer is findable from the logs; `fail_fast` still settles the message
+        /// out of the way (the teardown is what makes the failure loud).
+        #[tokio::test]
+        async fn a_decode_failure_names_the_subscription_and_the_expected_type() {
+            let broker = MemoryBroker::new();
+            let msg = one_delivery(&broker, "in", b"not json").await;
+            let handler = PublishingHandler {
+                def: ManualPub,
+                codec: JsonCodec,
+                publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec),
+                pipeline: PublishIdentity,
+                injections: (),
+                decode: FailurePolicy::FailFast,
+            };
+
+            let state = ();
+            let delivery = Delivery::empty();
+            let headers = Headers::new();
+            let mut ctx = Context::new("in", &headers, &state, (), &delivery);
+
+            let (events, guard) = start_capture();
+            let settle = handler.handle(&msg, &mut ctx).await;
+            drop(guard);
+
+            let failure = find(&events, "codec decode failed");
+            assert_eq!(failure.get("subscription").map(String::as_str), Some("in"));
+            assert_eq!(failure.get("message_type").map(String::as_str), Some("u32"));
+            assert!(
+                failure.get("error").is_some_and(|e| e.contains("decode")),
+                "the diagnostic must carry the codec error: {failure:?}",
+            );
+            assert_eq!(settle.outcome(), HandlerResult::drop());
+        }
+
+        /// A reply the broker rejects is diagnosed with the reply channel and asks for a
+        /// redelivery: the reply is retried, never silently lost.
+        #[tokio::test]
+        async fn a_failed_reply_publish_names_the_reply_channel_and_retries() {
+            let broker = MemoryBroker::new();
+            let msg = one_delivery(&broker, "in", b"5").await;
+            let handler = PublishingHandler {
+                def: ManualPub,
+                codec: JsonCodec,
+                publisher: TypedPublisher::with_codec(Rejecting, JsonCodec),
+                pipeline: PublishIdentity,
+                injections: (),
+                decode: FailurePolicy::Drop,
+            };
+
+            let state = ();
+            let delivery = Delivery::empty();
+            let headers = Headers::new();
+            let mut ctx = Context::new("in", &headers, &state, (), &delivery);
+
+            let (events, guard) = start_capture();
+            let settle = handler.handle(&msg, &mut ctx).await;
+            drop(guard);
+
+            let failure = find(&events, "reply publish failed");
+            assert_eq!(failure.get("subscription").map(String::as_str), Some("in"));
+            assert_eq!(failure.get("reply").map(String::as_str), Some("out"));
+            assert_eq!(failure.get("reply_type").map(String::as_str), Some("u32"));
+            assert!(
+                failure
+                    .get("error")
+                    .is_some_and(|e| e.contains("shut down")),
+                "the diagnostic must carry the broker error: {failure:?}",
+            );
+            assert_eq!(settle.outcome(), HandlerResult::retry());
+        }
+    }
+
+    /// The mounted handler keeps its wiring out of Debug: it holds a live connection, and a
+    /// registration dump must not print one.
+    #[cfg(all(feature = "memory", feature = "json"))]
+    #[test]
+    fn a_mounted_publishing_handler_hides_its_wiring() {
+        use crate::codec::JsonCodec;
+        use crate::memory::MemoryPublish;
+        use crate::runtime::failure::FailurePolicy;
+        use crate::runtime::publish::{PublishIdentity, TypedPublisher};
+        use crate::runtime::publishing::PublishingHandler;
+
+        let handler = PublishingHandler {
+            def: ManualPub,
+            codec: JsonCodec,
+            publisher: TypedPublisher::new(MemoryPublish),
+            pipeline: PublishIdentity,
+            injections: (),
+            decode: FailurePolicy::Drop,
+        };
+
+        assert_eq!(format!("{handler:?}"), "PublishingHandler { .. }");
     }
 }

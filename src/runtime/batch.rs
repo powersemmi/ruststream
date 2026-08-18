@@ -142,11 +142,36 @@ impl IntoBatchResult for Vec<HandlerResult> {
 ///     });
 /// }
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a batch handler over `{T}`",
+    note = "a batch handler declaring FromHeaders<Vec<_>> implements SliceHandlerWithHeaders \
+            instead: mount it with BrokerScope::include_batch, or with \
+            Router::include_batch_with_headers on the router path"
+)]
 pub trait SliceHandler<T, S = ()>: Send + Sync {
     /// Handles one decoded batch, with the per-batch [`Context`] carrying the typed app state `S`.
     fn handle_slice(
         &self,
         batch: &[T],
+        ctx: &mut Context<'_, (), S>,
+    ) -> impl Future<Output = BatchResult> + Send;
+}
+
+/// A handler invoked with one whole decoded batch and the typed headers of its elements.
+///
+/// The counterpart of [`SliceHandler`] for a batch handler that declares
+/// `FromHeaders(meta): FromHeaders<Vec<H>>`. Headers are per-delivery, so the batch gets one
+/// contract per element: `headers[i]` belongs to `batch[i]`. The two slices are aligned by
+/// construction, because an element whose payload or headers fail to materialize is settled by
+/// the decode policy and never reaches the handler.
+pub trait SliceHandlerWithHeaders<T, H, S = ()>: Send + Sync {
+    /// Handles one decoded batch alongside its per-element header contracts. The contracts move
+    /// into the handler as the `Vec` the parameter declares; the payload stays a borrowed slice,
+    /// as on the plain batch path.
+    fn handle_slice(
+        &self,
+        batch: &[T],
+        headers: Vec<H>,
         ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = BatchResult> + Send;
 }
@@ -221,6 +246,12 @@ pub trait BatchDef: Sized {
         None
     }
 
+    /// The serialized JSON Schema of the element type's header contract, when one is declared
+    /// and the `asyncapi` feature is on. The default omits it.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
     /// The element type's [`Message`](crate::Message) name, when it implements that trait. The
     /// macro fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
@@ -237,11 +268,22 @@ pub trait BatchDef: Sized {
     fn into_handler(self) -> Self::Handler;
 }
 
+/// A batch definition whose handler also reads a typed header contract per element.
+///
+/// Adds the contract type to [`BatchDef`]; everything else (source, workers, failure policies,
+/// schemas) is inherited. Implemented by `#[subscriber(batch(..))]` for a handler that declares
+/// `FromHeaders(meta): FromHeaders<Vec<H>>`.
+pub trait BatchWithHeadersDef: BatchDef {
+    /// The header contract parsed from each element's headers.
+    type Headers: DeserializeOwned + Send + Sync + 'static;
+}
+
 /// Builds the registration metadata for a batch definition mounted under `name`.
 pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetadata {
     let mut meta = HandlerMetadata::raw(name).with_def_details(
         def.description(),
         def.input_schema(),
+        def.headers_schema(),
         def.message_name(),
         def.message_description(),
     );
@@ -339,6 +381,82 @@ where
         }
         let tasks = ctx.tasks().clone();
         let result = self.inner.handle_slice(&values, ctx).await;
+        settle_batch(accepted, result, &subscription, &tasks).await;
+    }
+}
+
+/// The decode adapter for batch handlers that also read a typed header contract per element.
+///
+/// The [`TypedBatch`] counterpart for the `FromHeaders(meta): FromHeaders<Vec<H>>` form: each
+/// element must both decode and satisfy the header contract to reach the handler, so the payload
+/// slice and the header slice stay index-aligned.
+pub struct TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner> {
+    codec: DecodeCodec,
+    inner: Inner,
+    decode: FailurePolicy,
+    _phantom: PhantomData<fn(M, Input, HeaderContract)>,
+}
+
+impl<M, Input, DecodeCodec, HeaderContract, Inner>
+    TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
+{
+    /// Builds the adapter, like [`TypedBatch::over`].
+    #[must_use]
+    pub(crate) fn over(codec: DecodeCodec, inner: Inner) -> Self
+    where
+        Input: DecodeWith<DecodeCodec>,
+    {
+        Self {
+            codec,
+            inner,
+            decode: FailurePolicy::Drop,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Sets the policy applied when an element fails to decode or to satisfy the contract.
+    #[must_use]
+    pub(crate) fn with_decode(mut self, decode: FailurePolicy) -> Self {
+        self.decode = decode;
+        self
+    }
+}
+
+impl<M, Input, DecodeCodec, HeaderContract, Inner> std::fmt::Debug
+    for TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TypedBatchWithHeaders")
+            .field("decode", &self.decode)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M, Input, DecodeCodec, HeaderContract, Inner, S> BatchHandler<M, S>
+    for TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
+where
+    M: IncomingMessage,
+    Input: DecodeWith<DecodeCodec>,
+    DecodeCodec: Send + Sync,
+    HeaderContract: DeserializeOwned + Send + Sync,
+    Inner: SliceHandlerWithHeaders<Input::Owned, HeaderContract, S>,
+    S: Send + Sync,
+{
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
+        let subscription = ctx.name().to_owned();
+        let (values, contracts, accepted) = decode_batch_with_headers::<
+            M,
+            Input,
+            DecodeCodec,
+            HeaderContract,
+            S,
+        >(batch, &self.codec, self.decode, ctx)
+        .await;
+        if accepted.is_empty() {
+            return;
+        }
+        let tasks = ctx.tasks().clone();
+        let result = self.inner.handle_slice(&values, contracts, ctx).await;
         settle_batch(accepted, result, &subscription, &tasks).await;
     }
 }
@@ -459,13 +577,7 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                let outcome = match decode {
-                    FailurePolicy::FailFast => {
-                        ctx.fail_fast(&format!("batch decode failed: {err}"));
-                        HandlerResult::drop()
-                    }
-                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
-                };
+                let outcome = rejection(&err, "batch decode failed", decode, ctx);
                 settle(msg, outcome, &subscription).await;
             }
         }
@@ -477,6 +589,89 @@ where
         record_batch_size(&subscription, values.len());
     }
     (values, accepted)
+}
+
+/// The settlement of one element the handler will never see, per the subscriber's decode policy.
+/// Shared by the payload decode and the header contract, which are the same class of bad external
+/// input. Not `async`: the outcome is decided before the delivery is settled, so the borrowed
+/// error never crosses an await.
+fn rejection<S>(
+    err: &impl std::fmt::Display,
+    reason: &str,
+    decode: FailurePolicy,
+    ctx: &Context<'_, (), S>,
+) -> HandlerResult {
+    match decode {
+        FailurePolicy::FailFast => {
+            ctx.fail_fast(&format!("{reason}: {err}"));
+            HandlerResult::drop()
+        }
+        other => other.settlement().unwrap_or_else(HandlerResult::drop),
+    }
+}
+
+/// Decodes each element and parses its headers into `H`, keeping the two products aligned: an
+/// element that fails either step is settled by the decode policy and dropped from both.
+// The exclusive borrow is what keeps the returned future `Send`: a shared `&Context` would demand
+// `Sync` from the post-settle hooks it carries, which are boxed futures.
+#[allow(clippy::needless_pass_by_ref_mut)]
+pub(crate) async fn decode_batch_with_headers<M, Input, DecodeCodec, H, S>(
+    batch: Vec<M>,
+    codec: &DecodeCodec,
+    decode: FailurePolicy,
+    ctx: &mut Context<'_, (), S>,
+) -> (Vec<Input::Owned>, Vec<H>, Vec<M>)
+where
+    M: IncomingMessage,
+    Input: DecodeWith<DecodeCodec>,
+    DecodeCodec: Sync,
+    H: DeserializeOwned,
+    S: Send + Sync,
+{
+    let subscription = ctx.name().to_owned();
+    let mut values = Vec::with_capacity(batch.len());
+    let mut contracts = Vec::with_capacity(batch.len());
+    let mut accepted = Vec::with_capacity(batch.len());
+    for msg in batch {
+        let value = match Input::decode(codec, msg.payload()) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %subscription,
+                    message_type = Input::input_label(),
+                    error = %err,
+                    "codec decode failed",
+                );
+                let outcome = rejection(&err, "batch decode failed", decode, ctx);
+                settle(msg, outcome, &subscription).await;
+                continue;
+            }
+        };
+        match msg.headers().to_typed::<H>() {
+            Ok(contract) => {
+                values.push(value);
+                contracts.push(contract);
+                accepted.push(msg);
+            }
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %subscription,
+                    headers_type = std::any::type_name::<H>(),
+                    error = %err,
+                    "typed header extraction failed",
+                );
+                let outcome = rejection(&err, "batch header extraction failed", decode, ctx);
+                settle(msg, outcome, &subscription).await;
+            }
+        }
+    }
+    #[cfg(feature = "otel")]
+    if !accepted.is_empty() {
+        record_batch_size(&subscription, values.len());
+    }
+    (values, contracts, accepted)
 }
 
 /// Applies one settlement to one delivery's own `ack` / `nack`.
@@ -497,203 +692,4 @@ pub(crate) async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult, su
 }
 
 #[cfg(all(test, feature = "memory", feature = "json"))]
-mod tests {
-    use futures::StreamExt;
-
-    use super::super::dispatch::Delivery;
-    use super::*;
-    use crate::codec::JsonCodec;
-    use crate::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
-    use crate::{BatchSubscriber, Headers, OutgoingMessage, Publisher, Subscriber};
-
-    async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
-        let publisher = broker.publisher();
-        for n in numbers {
-            publisher
-                .publish(OutgoingMessage::new(name, &serde_json::to_vec(n).unwrap()))
-                .await
-                .unwrap();
-        }
-    }
-
-    async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
-        let mut stream = std::pin::pin!(sub.batches());
-        stream.next().await.unwrap().unwrap()
-    }
-
-    #[tokio::test]
-    async fn per_element_outcomes_settle_individually() {
-        let broker = MemoryBroker::new();
-        let mut sub = broker.subscribe("selective");
-        publish_numbers(&broker, "selective", &[0, 1, 2]).await;
-
-        // 0 acks, 1 retries, 2 drops: only 1 may come back.
-        let handler = typed_batch(JsonCodec, |batch: &[u32], _ctx: &mut Context| {
-            let outcomes: Vec<HandlerResult> = batch
-                .iter()
-                .map(|n| match n {
-                    1 => HandlerResult::retry(),
-                    2 => HandlerResult::drop(),
-                    _ => HandlerResult::Ack,
-                })
-                .collect();
-            async move { outcomes }
-        });
-
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = Headers::new();
-        let mut ctx = Context::new("selective", &headers, &state, (), &delivery);
-        let batch = pull_batch(&mut sub).await;
-        assert_eq!(batch.len(), 3);
-        handler.handle_batch(batch, &mut ctx).await;
-
-        let redelivered = pull_batch(&mut sub).await;
-        let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
-        assert_eq!(payloads, [b"1"]);
-        for msg in redelivered {
-            msg.ack().await.unwrap();
-        }
-        let mut stream = std::pin::pin!(sub.stream());
-        assert!(futures::poll!(stream.next()).is_pending());
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn per_element_continuations_run_after_settle() {
-        use std::sync::Arc;
-        use tokio::sync::Notify;
-        use tokio_util::task::TaskTracker;
-
-        let broker = MemoryBroker::new();
-        let mut sub = broker.subscribe("after-batch");
-        publish_numbers(&broker, "after-batch", &[0, 1]).await;
-
-        // Element 0 acks with a continuation; element 1 retries with no continuation.
-        let ran = Arc::new(Notify::new());
-        let signal = Arc::clone(&ran);
-        let handler = typed_batch(JsonCodec, move |batch: &[u32], _ctx: &mut Context| {
-            let signal = Arc::clone(&signal);
-            let outcomes: Vec<Settle> = batch
-                .iter()
-                .map(|n| {
-                    if *n == 0 {
-                        let signal = Arc::clone(&signal);
-                        HandlerResult::ack().and_after(async move { signal.notify_one() })
-                    } else {
-                        HandlerResult::retry().into()
-                    }
-                })
-                .collect();
-            async move { outcomes }
-        });
-
-        let tasks = TaskTracker::new();
-        let state = ();
-        let delivery = Delivery::with_tasks(tasks.clone());
-        let headers = Headers::new();
-        let mut ctx = Context::new("after-batch", &headers, &state, (), &delivery);
-        let batch = pull_batch(&mut sub).await;
-        handler.handle_batch(batch, &mut ctx).await;
-
-        // The continuation for element 0 runs on the tracked set after settling.
-        ran.notified().await;
-        tasks.close();
-        tasks.wait().await;
-
-        // Element 1 (no continuation) retried and comes back; element 0 is gone.
-        let redelivered = pull_batch(&mut sub).await;
-        let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
-        assert_eq!(payloads, [b"1"]);
-        for msg in redelivered {
-            msg.ack().await.unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn unmatched_remainder_is_retried() {
-        let broker = MemoryBroker::new();
-        let mut sub = broker.subscribe("short");
-        publish_numbers(&broker, "short", &[0, 1, 2]).await;
-
-        // A buggy handler returning one outcome for a batch of three: the unmatched two retry.
-        let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-            vec![HandlerResult::Ack]
-        });
-
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = Headers::new();
-        let mut ctx = Context::new("short", &headers, &state, (), &delivery);
-        let batch = pull_batch(&mut sub).await;
-        assert_eq!(batch.len(), 3);
-        handler.handle_batch(batch, &mut ctx).await;
-
-        let redelivered = pull_batch(&mut sub).await;
-        let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
-        assert_eq!(payloads, [b"1", b"2"]);
-        for msg in redelivered {
-            msg.ack().await.unwrap();
-        }
-    }
-
-    // Paused time (current-thread runtime): the per-element delay auto-advances.
-    #[tokio::test(start_paused = true)]
-    async fn per_element_outcomes_carry_delays() {
-        let broker = MemoryBroker::new();
-        let mut sub = broker.subscribe("delayed");
-        publish_numbers(&broker, "delayed", &[0, 1]).await;
-
-        // 0 acks; 1 retries no sooner than five seconds from now.
-        let handler = typed_batch(JsonCodec, |batch: &[u32], _ctx: &mut Context| {
-            let outcomes: Vec<HandlerResult> = batch
-                .iter()
-                .map(|n| match n {
-                    1 => HandlerResult::retry_after(std::time::Duration::from_secs(5)),
-                    _ => HandlerResult::Ack,
-                })
-                .collect();
-            async move { outcomes }
-        });
-
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = Headers::new();
-        let mut ctx = Context::new("delayed", &headers, &state, (), &delivery);
-        let batch = pull_batch(&mut sub).await;
-        handler.handle_batch(batch, &mut ctx).await;
-
-        let mut stream = std::pin::pin!(sub.stream());
-        assert!(futures::poll!(stream.next()).is_pending());
-        tokio::time::advance(std::time::Duration::from_secs(5)).await;
-        tokio::task::yield_now().await;
-
-        let redelivered = stream.next().await.unwrap().unwrap();
-        assert_eq!(redelivered.payload(), b"1");
-        redelivered.ack().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn uniform_outcome_settles_the_whole_batch() {
-        let broker = MemoryBroker::new();
-        let mut sub = broker.subscribe("uniform");
-        publish_numbers(&broker, "uniform", &[0, 1]).await;
-
-        let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-            HandlerResult::retry()
-        });
-
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = Headers::new();
-        let mut ctx = Context::new("uniform", &headers, &state, (), &delivery);
-        let batch = pull_batch(&mut sub).await;
-        assert_eq!(batch.len(), 2);
-        handler.handle_batch(batch, &mut ctx).await;
-
-        let redelivered = pull_batch(&mut sub).await;
-        assert_eq!(redelivered.len(), 2);
-        for msg in redelivered {
-            msg.ack().await.unwrap();
-        }
-    }
-}
+mod tests;

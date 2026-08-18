@@ -1,5 +1,5 @@
-error: expected `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, or `skip`
- --> tests/ui/subscriber_bad_on_failure.rs:4:43
+error: expected `fail_fast`, `drop`, `retry`, `retry_after(<duration>)`, `skip`, or a `FailurePolicy` expression (a constant, a function call)
+ --> tests/ui/subscriber_bad_on_failure.rs:5:43
   |
-4 | #[subscriber("orders", on_failure(panic = unknown))]
+5 | #[subscriber("orders", on_failure(panic = unknown))]
   |                                           ^^^^^^^

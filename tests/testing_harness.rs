@@ -512,3 +512,36 @@ async fn published_with_on_empty_channel_panics() {
         .published::<Order>("out")
         .with(&Order { id: 1 });
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "no broker labeled")]
+async fn addressing_an_unknown_label_names_the_label() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_labeled(
+        "a",
+        MemoryBroker::new(),
+        |b| b.include(handle_orders),
+    );
+    let tb = TestApp::start(app).await.unwrap();
+
+    // A typo in the label is a test-authoring mistake, so the panic has to quote it back.
+    let _ = tb.broker_named("typo");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failing_startup_hook_is_reported_as_a_startup_error() {
+    #[derive(Debug, thiserror::Error)]
+    #[error("state could not be built")]
+    struct StartupFailed;
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_startup(async move |()| Err::<(), _>(StartupFailed))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+
+    let started = TestApp::start(app).await;
+    match started {
+        Err(TestError::Startup(source)) => {
+            assert!(source.to_string().contains("state could not be built"));
+        }
+        other => panic!("expected a startup error, got {:?}", other.map(|_| ())),
+    }
+}

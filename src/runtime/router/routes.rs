@@ -442,3 +442,42 @@ where
         self.0.collect(out);
     }
 }
+
+#[cfg(all(test, feature = "memory", feature = "json"))]
+mod tests {
+    use super::*;
+    use crate::Name;
+    use crate::codec::JsonCodec;
+    use crate::memory::MemoryPublish;
+
+    /// The two deferred routes hold no built handler to print, so their `Debug` has to identify the
+    /// registration by its metadata; without that a router's registration list is anonymous.
+    #[test]
+    fn deferred_route_debug_names_the_registration() {
+        let publishing = PublishingRoute {
+            source: Name::new("orders"),
+            def: (),
+            codec: JsonCodec,
+            publisher: TypedPublisher::with_codec(MemoryPublish, JsonCodec),
+            meta: HandlerMetadata::raw("orders"),
+            policies: FailurePolicies::default(),
+            workers: Workers::sequential(),
+        };
+        let rendered = format!("{publishing:?}");
+        assert!(rendered.contains("PublishingRoute"), "{rendered}");
+        assert!(rendered.contains("orders"), "{rendered}");
+
+        let batch_publishing = BatchPublishingRoute {
+            source: Name::new("bulk-orders"),
+            def: (),
+            codec: JsonCodec,
+            publisher: TypedPublisher::with_codec(MemoryPublish, JsonCodec),
+            meta: HandlerMetadata::raw("bulk-orders"),
+            policies: FailurePolicies::default(),
+            workers: Workers::sequential(),
+        };
+        let rendered = format!("{batch_publishing:?}");
+        assert!(rendered.contains("BatchPublishingRoute"), "{rendered}");
+        assert!(rendered.contains("bulk-orders"), "{rendered}");
+    }
+}

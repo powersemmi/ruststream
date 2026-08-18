@@ -6,7 +6,7 @@ members = ["crates/ruststream-macros"]
 exclude = ["templates"]
 
 [workspace.package]
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -93,6 +93,10 @@ name = "context_field"
 [[example]]
 name = "from_context"
 required-features = ["testing", "macros", "memory", "json"]
+
+[[example]]
+name = "typed_headers"
+required-features = ["testing", "macros", "memory", "json", "asyncapi"]
 
 [[example]]
 name = "ctx_extractor"
@@ -253,7 +257,7 @@ tracing = "0.1"
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
-ruststream-macros = { version = "=0.6.2", path = "crates/ruststream-macros", optional = true }
+ruststream-macros = { version = "=0.6.3", path = "crates/ruststream-macros", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }

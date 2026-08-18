@@ -7,7 +7,9 @@ use serde::Serialize;
 use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, SubscriptionSource};
 
 use crate::PublishPolicy;
-use crate::runtime::batch::{BatchDef, TypedBatch, batch_metadata};
+use crate::runtime::batch::{
+    BatchDef, BatchWithHeadersDef, TypedBatch, TypedBatchWithHeaders, batch_metadata,
+};
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler, batch_inject_metadata};
 use crate::runtime::batch_publishing::{
     BatchPublishingCall, BatchPublishingHandler, batch_publishing_metadata,
@@ -267,6 +269,39 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
             .push_subscribe_batch(source, handler, meta, policies, workers);
     }
 
+    /// Mounts a batch definition whose handler also reads a typed header contract per element.
+    /// The adapter parses the contract next to the payload decode, so both failures follow the
+    /// one decode policy and the handler's two slices stay aligned.
+    pub(super) fn mount_batch_with_headers<Source, Def, DecodeCodec>(
+        &mut self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchWithHeadersDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Handler: crate::runtime::SliceHandlerWithHeaders<
+                <Def::Input as InputKind>::Owned,
+                Def::Headers,
+                State,
+            > + 'static,
+        DecodeCodec: Send + Sync + 'static,
+        State: Send + Sync + 'static,
+    {
+        let meta = batch_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let handler = TypedBatchWithHeaders::<_, Def::Input, _, Def::Headers, _>::over(
+            codec,
+            def.into_handler(),
+        )
+        .with_decode(policies.decode);
+        self.sink
+            .push_subscribe_batch(source, handler, meta, policies, workers);
+    }
+
     /// Mounts a publishing definition whose reply publisher is a policy source, paired by the
     /// runtime after connect. Decode uses the scope codec; how the reply leaves (encoded
     /// through a typed stack, or byte-for-byte through a bare publisher) is the source's live
@@ -504,5 +539,63 @@ impl<B: Broker, Layers, C, State, Pipeline> fmt::Debug
         f.debug_struct("BrokerScope")
             .field("sink", &self.sink)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(all(test, feature = "memory"))]
+mod tests {
+    use std::pin::pin;
+
+    use futures::StreamExt as _;
+
+    use crate::memory::MemoryBroker;
+    use crate::runtime::publisher_registry::ErasedPublisher;
+    use crate::runtime::{AppInfo, RustStream};
+    use crate::{IncomingMessage, Subscriber};
+
+    use super::Arc;
+
+    /// The deferred-retry fallback is only reachable through a broker without native delayed
+    /// redelivery (the in-memory one has it), so what the scope owes is the wiring: the publisher
+    /// handed to `retry_via` is held erased and still reaches the broker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retry_via_holds_a_live_erased_publisher() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("retry.fallback");
+        let publisher = broker.publisher();
+
+        let mut fallback: Option<Arc<dyn ErasedPublisher>> = None;
+        let _app = RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(broker, |b| {
+            assert!(
+                b.retry_publisher.is_none(),
+                "a fresh scope has no fallback publisher",
+            );
+            b.retry_via(publisher);
+            fallback = b.retry_publisher.clone();
+        });
+
+        let fallback = fallback.expect("retry_via must wire the deferred-retry publisher");
+        fallback
+            .publish_bytes("retry.fallback", b"deferred")
+            .await
+            .expect("the erased fallback publish failed");
+
+        let mut stream = pin!(subscriber.stream());
+        let msg = stream
+            .next()
+            .await
+            .expect("the fallback publish must reach the broker")
+            .expect("delivery");
+        assert_eq!(msg.payload(), b"deferred");
+    }
+
+    #[test]
+    fn scope_debug_reports_its_registrations() {
+        let _app =
+            RustStream::new(AppInfo::new("dbg", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                let rendered = format!("{b:?}");
+                assert!(rendered.starts_with("BrokerScope"), "{rendered}");
+                assert!(rendered.contains("sink"), "{rendered}");
+            });
     }
 }

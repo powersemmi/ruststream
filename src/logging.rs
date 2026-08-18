@@ -284,7 +284,7 @@ mod tests {
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::fmt::MakeWriter;
 
-    use super::{ColorFormatter, Logging};
+    use super::{ColorFormatter, Logging, LoggingInitError, init};
 
     /// A `MakeWriter` that appends every formatted event to a shared buffer, so a test can read
     /// back what `ColorFormatter` rendered.
@@ -372,6 +372,25 @@ mod tests {
         assert_eq!(cfg.default_filter, "ruststream=debug,warn");
         assert_eq!(cfg.ansi, Some(false));
         assert!(!cfg.target);
+    }
+
+    /// The subscriber slot is process-wide and can be filled only once, so this asserts the
+    /// contract that holds whichever call wins the race with another test in this binary: the
+    /// logger installs, and an already-installed subscriber is never replaced.
+    #[test]
+    fn init_installs_the_logger_and_never_replaces_one() {
+        let first = init();
+        let second = Logging::new().with_default_filter("warn").try_init();
+        assert!(
+            matches!(second, Err(LoggingInitError::AlreadyInitialized(_))),
+            "a second install must be refused, got: {second:?}",
+        );
+        if let Err(err) = first {
+            assert!(
+                matches!(err, LoggingInitError::AlreadyInitialized(_)),
+                "got: {err:?}",
+            );
+        }
     }
 
     #[test]

@@ -16,7 +16,7 @@ use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::input::{DecodeWith, InputKind};
-use super::metadata::HandlerMetadata;
+use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 
 /// A batch definition whose handler takes startup-injected parameters.
 ///
@@ -58,6 +58,18 @@ pub trait BatchInjectDef: Send + Sync {
         None
     }
 
+    /// The serialized JSON Schema of the element type's header contract, when one is declared.
+    fn headers_schema(&self) -> Option<String> {
+        None
+    }
+
+    /// The messages this handler publishes, for the `AsyncAPI` `send` operations: every `Out`
+    /// slot dictionary entry. The macro fills this in; the default declares nothing. Called
+    /// once at registration.
+    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        Vec::new()
+    }
+
     /// The element type's [`Message`](crate::Message) name, when it implements that trait.
     fn message_name(&self) -> Option<&'static str> {
         None
@@ -89,10 +101,12 @@ pub(crate) fn batch_inject_metadata<D: BatchInjectDef>(name: String, def: &D) ->
     let mut meta = HandlerMetadata::raw(name).with_def_details(
         def.description(),
         def.input_schema(),
+        def.headers_schema(),
         def.message_name(),
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.outgoing = def.outgoing();
     meta
 }
 
@@ -135,5 +149,173 @@ where
         let tasks = ctx.tasks().clone();
         let result = self.def.call(&values, &self.injections, ctx).await;
         settle_batch(accepted, result, &subscription, &tasks).await;
+    }
+}
+
+#[cfg(all(test, feature = "memory", feature = "json"))]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use futures::StreamExt;
+
+    use super::super::dispatch::Delivery;
+    use super::super::handler::HandlerResult;
+    use super::super::input::Decoded;
+    use super::*;
+    use crate::codec::JsonCodec;
+    use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
+    use crate::{
+        BatchSubscriber, Headers, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
+    };
+
+    /// A definition whose "injection" is a plain multiplier: the real ones are `Out` / `Seek`
+    /// values, but the handler side only cares that the resolved tuple is handed to every call.
+    struct Scale {
+        calls: Arc<AtomicUsize>,
+        seen: Arc<Mutex<Vec<u32>>>,
+    }
+
+    impl Scale {
+        fn new() -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl BatchInjectDef for Scale {
+        type Input = Decoded<u32>;
+        type Source = Name;
+        type Injections = u32;
+
+        fn source(&self) -> Self::Source {
+            Name::new("scale")
+        }
+    }
+
+    // Ignores the app state, so it is generic over it (mounts on any app).
+    impl<S: Send + Sync> BatchInjectCall<S> for Scale {
+        async fn call(
+            &self,
+            batch: &[u32],
+            factor: &u32,
+            _ctx: &mut Context<'_, (), S>,
+        ) -> BatchResult {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.seen
+                .lock()
+                .unwrap()
+                .extend(batch.iter().map(|n| n * factor));
+            BatchResult::Uniform(HandlerResult::Ack)
+        }
+    }
+
+    async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
+        let publisher = broker.publisher();
+        for payload in payloads {
+            publisher
+                .publish(OutgoingMessage::new(name, payload))
+                .await
+                .unwrap();
+        }
+    }
+
+    async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
+        let mut stream = std::pin::pin!(sub.batches());
+        stream.next().await.unwrap().unwrap()
+    }
+
+    #[test]
+    fn batch_inject_def_defaults_register_without_documentation() {
+        let def = Scale::new();
+        // The mount site names the registration after the def's own source.
+        let source = def.source();
+        let name = SubscriptionSource::<ConnectedMemoryBroker>::name(&source).to_owned();
+        let meta = batch_inject_metadata(name, &def);
+
+        assert_eq!(meta.name, "scale");
+        assert_eq!(meta.input_type, "u32");
+        assert!(meta.description.is_none());
+        assert!(meta.payload_schema.is_none());
+        assert!(meta.headers_schema.is_none());
+        assert!(meta.message_name.is_none());
+        assert!(meta.message_description.is_none());
+        assert!(meta.outgoing.is_empty());
+        assert_eq!(def.workers(), Workers::sequential());
+        assert_eq!(def.failure_policies(), FailurePolicies::default());
+    }
+
+    #[test]
+    fn handler_debug_hides_the_injections() {
+        let handler = BatchInjectHandler {
+            def: Scale::new(),
+            codec: JsonCodec,
+            injections: 10,
+            decode: FailurePolicy::Drop,
+        };
+        assert!(format!("{handler:?}").contains("BatchInjectHandler"));
+    }
+
+    /// The resolved injections reach every call alongside the decoded batch, and the returned
+    /// settlement is applied to the deliveries behind it.
+    #[tokio::test]
+    async fn resolved_injections_reach_the_body_with_the_batch() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("scale");
+        publish_payloads(&broker, "scale", &[b"1", b"2"]).await;
+
+        let def = Scale::new();
+        let seen = Arc::clone(&def.seen);
+        let handler = BatchInjectHandler {
+            def,
+            codec: JsonCodec,
+            injections: 10,
+            decode: FailurePolicy::Drop,
+        };
+
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
+        let batch = pull_batch(&mut sub).await;
+        assert_eq!(batch.len(), 2);
+        handler.handle_batch(batch, &mut ctx).await;
+
+        assert_eq!(*seen.lock().unwrap(), [10, 20]);
+        // The uniform Ack settled both deliveries, so neither comes back.
+        let mut stream = std::pin::pin!(sub.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
+    }
+
+    /// Every element failing to decode short-circuits: the body is not invoked with an empty
+    /// slice, and the dropped elements are not requeued.
+    #[tokio::test]
+    async fn a_fully_undecodable_batch_never_reaches_the_body() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("scale");
+        publish_payloads(&broker, "scale", &[b"not json", b"also not json"]).await;
+
+        let def = Scale::new();
+        let calls = Arc::clone(&def.calls);
+        let handler = BatchInjectHandler {
+            def,
+            codec: JsonCodec,
+            injections: 10,
+            decode: FailurePolicy::Drop,
+        };
+
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
+        let batch = pull_batch(&mut sub).await;
+        assert_eq!(batch.len(), 2);
+        handler.handle_batch(batch, &mut ctx).await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let mut stream = std::pin::pin!(sub.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
     }
 }

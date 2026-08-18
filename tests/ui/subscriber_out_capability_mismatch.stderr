@@ -10,15 +10,22 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
 help: the following other types implement trait `RequestReply`
   --> src/runtime/slot.rs
    |
-   | impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+...
+   | / impl<P, Body, M, EncodeCodec> RequestReply for TypedSlot<P, Body, M, EncodeCodec>
+   | | where
+   | |     P: RequestReply,
+   | |     M: OutSlot,
+   | |     EncodeCodec: Send + Sync,
+   | |_____________________________^ `TypedSlot<P, Body, M, EncodeCodec>`
    |
   ::: src/memory/capability.rs
    |
-   | impl RequestReply for MemoryRequester {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
+   |   impl RequestReply for MemoryRequester {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
    = note: required for `SlotPublisher<MemoryPublisher, DefaultSlot>` to implement `RequestReply`
-note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, DefaultSlot>>` to implement `InjectCall<()>`
+note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, DefaultSlot>, JsonCodec>` to implement `InjectCall<()>`
   --> tests/ui/subscriber_out_capability_mismatch.rs:14:1
    |
 14 | #[subscriber("orders")]
@@ -27,7 +34,7 @@ note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, DefaultSlo
    |                                                     ------------ unsatisfied trait bound introduced here
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::app::include::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, forward>`
 note: required by a bound in `IncludeSlots::<'_, Mount, B, Layers, C, State, Pipeline, Def, (ruststream::runtime::MissingSlot<M>,)>::publisher`
-  --> src/runtime/app/include.rs
+  --> src/runtime/app/include/slot_builder.rs
    |
    |     pub fn publisher<NewSource>(self, source: NewSource)
    |            --------- required by a bound in this associated function

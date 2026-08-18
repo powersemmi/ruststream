@@ -1,0 +1,18 @@
+error[E0277]: `Rogue` is not in the publish dictionary of the `Events` slot
+  --> tests/ui/out_typed_undeclared_message.rs:26:1
+   |
+26 | #[subscriber("orders")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `OutMessage<Events>` is not implemented for `Rogue`
+  --> tests/ui/out_typed_undeclared_message.rs:16:1
+   |
+16 | struct Rogue {
+   | ^^^^^^^^^^^^
+   = note: declare it on the marker: #[publishes(Rogue = "<channel>")] (the #[derive(OutSlot)] attribute); only declared types publish through publish_typed
+help: the trait `OutMessage<Events>` is implemented for `Progress`
+  --> tests/ui/out_typed_undeclared_message.rs:20:10
+   |
+20 | #[derive(OutSlot)]
+   |          ^^^^^^^
+   = note: this error originates in the attribute macro `subscriber` which comes from the expansion of the derive macro `OutSlot` (in Nightly builds, run with -Z macro-backtrace for more info)

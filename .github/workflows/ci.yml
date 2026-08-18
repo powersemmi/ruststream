@@ -138,6 +138,16 @@ jobs:
         # the log then lists every red test, not just the first binary's.
         run: cargo test --workspace --all-features --no-fail-fast
 
+      # The suite above compiles every doc example with all features on, which hides an example
+      # that names a feature-gated item without gating itself: it then fails for the user who
+      # installs the crate with defaults, or with none. Run the doc examples at both ends of the
+      # feature range so that gap fails here instead.
+      - name: cargo test --doc (feature edges)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo test --workspace --doc
+          cargo test --workspace --doc --no-default-features
+
       # The crate-root missing_docs deny covers item docs; this gate catches what rustc
       # cannot: broken intra-doc links and redundant targets only rustdoc resolves.
       - name: cargo doc
@@ -182,13 +192,13 @@ jobs:
       - name: Run tests under coverage
         run: cargo llvm-cov --no-report --workspace --all-features --no-fail-fast
 
-      # Line-coverage gate, sitting at the 90% DoD target. Raise it here and in the justfile
+      # Line-coverage gate, sitting at the 95% DoD target. Raise it here and in the justfile
       # together if coverage climbs further. The summary is written before the gate's exit code
       # propagates, so it shows up even on a failure.
       - name: Coverage summary and gate
         run: |
           set +e
-          cargo llvm-cov report --summary-only --fail-under-lines 90 | tee coverage.txt
+          cargo llvm-cov report --summary-only --fail-under-lines 95 | tee coverage.txt
           rc=${PIPESTATUS[0]}
           {
             echo '## Coverage'

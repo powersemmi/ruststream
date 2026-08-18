@@ -357,3 +357,21 @@ impl Coordinator {
         f(&matching)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_debug_form_reports_the_quiescence_counters() {
+        let coordinator = Coordinator::new(16);
+        let idle = format!("{coordinator:?}");
+        assert!(idle.contains("in_flight: 0"), "{idle}");
+        assert!(idle.contains("processed: 0"), "{idle}");
+
+        // These two counters are what a hung `drain` is diagnosed from, so Debug must carry them.
+        coordinator.enqueued();
+        let busy = format!("{coordinator:?}");
+        assert!(busy.contains("in_flight: 1"), "{busy}");
+    }
+}
