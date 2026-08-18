@@ -138,6 +138,16 @@ jobs:
         # the log then lists every red test, not just the first binary's.
         run: cargo test --workspace --all-features --no-fail-fast
 
+      # The suite above compiles every doc example with all features on, which hides an example
+      # that names a feature-gated item without gating itself: it then fails for the user who
+      # installs the crate with defaults, or with none. Run the doc examples at both ends of the
+      # feature range so that gap fails here instead.
+      - name: cargo test --doc (feature edges)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo test --workspace --doc
+          cargo test --workspace --doc --no-default-features
+
       # The crate-root missing_docs deny covers item docs; this gate catches what rustc
       # cannot: broken intra-doc links and redundant targets only rustdoc resolves.
       - name: cargo doc

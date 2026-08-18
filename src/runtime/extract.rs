@@ -117,6 +117,8 @@ pub trait FromRef<S>: Sized {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "macros")]
+/// # {
 /// use ruststream::runtime::State;
 /// use ruststream::FromRef;
 ///
@@ -131,6 +133,7 @@ pub trait FromRef<S>: Sized {
 ///
 /// // In a handler: `async fn handle(msg: &M, State(orders): State<Orders>) -> HandlerResult`.
 /// let _ = State(Orders);
+/// # }
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct State<T>(pub T);
