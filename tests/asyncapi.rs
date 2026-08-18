@@ -96,6 +96,10 @@ fn message_components_merge_and_send_ids_stay_unique() {
     assert_eq!(spec.operations["send_shared_c1"].action, "send");
     assert_eq!(spec.operations["send_shared_c2"].action, "send");
 
+    // And one receive operation per handler, for the same reason.
+    assert_eq!(spec.operations["receive_shared"].action, "receive");
+    assert_eq!(spec.operations["receive_shared_2"].action, "receive");
+
     // The shared component filled in the payload schema from the later contributor (so the
     // coverage gate reports no false gap) and kept the first headers schema on conflict.
     let component = &spec.components.messages["u64"];
@@ -534,5 +538,57 @@ mod typed_headers_spec {
 
         // Every model here derives JsonSchema: the coverage gate reports no gaps.
         assert!(spec.messages_without_schema().is_empty());
+    }
+}
+
+/// Two handlers on one channel: each opens its own subscription, so each is its own receive
+/// operation rather than the second overwriting the first.
+#[derive(serde::Deserialize)]
+struct Audited {
+    #[allow(dead_code)]
+    id: u32,
+}
+
+/// Audits every order.
+#[ruststream::subscriber("orders.shared")]
+async fn audit_shared(order: &Audited) -> HandlerResult {
+    let _ = order;
+    HandlerResult::Ack
+}
+
+/// Bills every order.
+#[ruststream::subscriber("orders.shared")]
+async fn bill_shared(order: &Audited) -> HandlerResult {
+    let _ = order;
+    HandlerResult::Ack
+}
+
+#[test]
+fn every_handler_on_a_shared_channel_gets_its_own_receive_operation() {
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(audit_shared);
+        b.include(bill_shared);
+    });
+
+    let spec = build_spec(&app);
+
+    assert_eq!(app.handlers().len(), 2);
+    let receives: Vec<&String> = spec
+        .operations
+        .iter()
+        .filter(|(_, operation)| operation.action == "receive")
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(
+        receives,
+        vec!["receive_orders_shared", "receive_orders_shared_2"]
+    );
+
+    // Both describe the same channel; only the operation id disambiguates them.
+    for id in receives {
+        assert_eq!(
+            spec.operations[id].channel.reference,
+            "#/channels/orders.shared"
+        );
     }
 }
