@@ -8,22 +8,17 @@ use serde::Serialize;
 use crate::codec::DefaultCodec;
 // The default-reply commits build a `TypedPublisher` over the broker's default policy, so those
 // imports are gated with the default codec they require.
-use crate::{
-    BatchSubscriber, Broker, BuildContext, Connected, PublishPolicy, Subscriber, SubscriptionSource,
-};
+use crate::{BatchSubscriber, Broker, Connected, PublishPolicy, Subscriber, SubscriptionSource};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::{DefaultPublish, Publisher};
 
 use crate::runtime::batch_inject::BatchInjectCall;
 use crate::runtime::batch_publishing::BatchPublishingCall;
-use crate::runtime::handler::Handler;
 use crate::runtime::inject::FromStartup;
 use crate::runtime::input::DecodeWith;
-use crate::runtime::middleware::Layer;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
 use crate::runtime::publish::{PublishPipeline, ReplyPublisher};
-use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
@@ -308,66 +303,5 @@ where
             <Def::Markers as InitSlots>::init(),
             scope,
         )
-    }
-}
-
-impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
-    /// Mounts a `publish("dest")` definition on an explicit subscription `source`, replying
-    /// through `publisher` (a typed policy stack, or a [`Bound`](crate::runtime::Bound) token
-    /// wrapping one). The positional counterpart of `include(def).publisher(..)` for the
-    /// source-override case.
-    pub fn include_publishing_on<Source, Def, ReplySource>(
-        &mut self,
-        source: Source,
-        def: Def,
-        publisher: ReplySource,
-    ) where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Sync + Send + 'static,
-        <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        C: MountCodec,
-        Def: PublishingCall<State> + 'static,
-        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
-        Def::Injections: FromStartup<B, Source::Subscriber, ((),)> + Send + Sync + 'static,
-        Def::Reply: Send + Sync + 'static,
-        Def::Context:
-            BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + Sync + 'static,
-        ReplySource: PublishPolicy<Connected<B>> + Send + 'static,
-        ReplySource::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
-        Pipeline: PublishPipeline + Clone + Send + 'static,
-        State: Send + Sync + 'static,
-        Layers: Layer<PublishingHandler<Def, C::Codec, ReplySource::Live, Pipeline>>
-            + Clone
-            + Send
-            + 'static,
-        Layers::Handler:
-            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
-    {
-        self.mount_publishing_source(source, def, publisher, ((),));
-    }
-
-    /// Mounts a `batch(.., publish("dest"))` definition on an explicit subscription `source`,
-    /// replying through `publisher` (a typed policy stack, its transactional form, or a
-    /// [`Bound`](crate::runtime::Bound) token wrapping either).
-    pub fn include_batch_publishing_on<Source, Def, ReplySource, BatchReply>(
-        &mut self,
-        source: Source,
-        def: Def,
-        publisher: ReplySource,
-    ) where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
-        <Source::Subscriber as Subscriber>::Message: Send + 'static,
-        C: MountCodec,
-        Def: BatchPublishingCall<State> + 'static,
-        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
-        Def::Injections: FromStartup<B, Source::Subscriber, ((),)> + Send + Sync + 'static,
-        Def::Reply: Serialize + Send + Sync + 'static,
-        ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
-        BatchReply: ReplyPublisher + 'static,
-        Pipeline: PublishPipeline + Clone + Send + 'static,
-        State: Send + Sync + 'static,
-    {
-        self.mount_batch_publishing_source(source, def, publisher, ((),));
     }
 }

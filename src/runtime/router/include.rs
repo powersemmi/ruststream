@@ -25,9 +25,9 @@ use super::mount::{IncludeDef, MountCodec, RouterMount};
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     Router<B, Routes, RouteCodec, RouteLayers>
 {
-    /// Mounts a single-message `#[subscriber]` definition on its own source: a plain handler
-    /// grows the router directly, a `publish("dest")` or `Out`-taking one hands back a
-    /// registration builder to finish with `.publisher(policy)`, `.mount()`, or
+    /// Mounts a single-message `#[subscriber]` definition, on the source the definition names: a
+    /// plain handler grows the router directly, a `publish("dest")` or `Out`-taking one hands
+    /// back a registration builder to finish with `.publisher(policy)`, `.mount()`, or
     /// `.out(marker, policy)` per slot.
     ///
     /// Decoding uses the chain's codec when one was set with
@@ -68,9 +68,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         <Def::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, Def>>::begin(def, self)
     }
 
-    /// Mounts a `#[subscriber(batch(..))]` definition on its own source; the `publish("dest")`
-    /// and `Out`-taking shapes hand back a registration builder, exactly like
-    /// [`include`](Self::include).
+    /// Mounts a `#[subscriber(batch(..))]` definition; the `publish("dest")` and `Out`-taking
+    /// shapes hand back a registration builder, exactly like [`include`](Self::include).
     ///
     /// The source's subscriber must implement [`BatchSubscriber`] - natively, or through the
     /// [`Buffered`](crate::Buffered) adapter. Router and app middleware wrap per-message
