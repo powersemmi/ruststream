@@ -21,6 +21,7 @@ use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
 
 use super::ScopeCodec;
+use super::{DefaultBareReply, DefaultReply, PublishMount};
 use crate::runtime::app::scope::BrokerScope;
 
 // ---------------------------------------------------------------------------------------------
@@ -38,41 +39,6 @@ use crate::runtime::app::scope::BrokerScope;
 // [`IncludeWith`] (one attachment, replaced by `.publisher(..)`) and [`IncludeWithOut`] (a
 // reply attachment plus the `Out` parameter's own `.out(..)`) - and the per-form names are
 // aliases picking the token and the initial attachment.
-
-/// The default reply commit: the broker's default publish policy under the default codec.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DefaultReply;
-
-/// The default commit of the byte-reply form: the broker's plain publish policy taken bare.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DefaultBareReply;
-
-/// The mount tokens keying [`CommitVia`]: which mount a committed attachment drives.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct PublishMount;
-/// See [`PublishMount`].
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct InjectMount;
-/// See [`PublishMount`].
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct BatchPublishMount;
-/// See [`PublishMount`].
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct BatchInjectMount;
-/// See [`PublishMount`].
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct PublishInjectMount;
-/// See [`PublishMount`].
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct BatchPublishInjectMount;
 
 /// One commit strategy of a registration builder, keyed by its `Mount` token. Machinery;
 /// never named directly.

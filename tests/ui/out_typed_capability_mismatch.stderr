@@ -18,7 +18,7 @@ help: the trait `Handler<Msg, <Def as InjectDef>::Context, State>` is implemente
    | |_______________________^
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::app::include::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, forward>`
 note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
-  --> src/runtime/app/include.rs
+  --> src/runtime/app/include/slot_builder.rs
    |
    |     pub fn mount(self)
    |            ----- required by a bound in this associated function
@@ -61,7 +61,7 @@ note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, J
    |                        ------------ unsatisfied trait bound introduced here
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::app::include::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, forward>`
 note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
-  --> src/runtime/app/include.rs
+  --> src/runtime/app/include/slot_builder.rs
    |
    |     pub fn mount(self)
    |            ----- required by a bound in this associated function

@@ -152,6 +152,41 @@ impl<C: Codec + Clone + Send + Sync + 'static> ScopeCodec for C {
     }
 }
 
+/// The default reply commit: the broker's default publish policy under the default codec.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DefaultReply;
+
+/// The default commit of the byte-reply form: the broker's plain publish policy taken bare.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DefaultBareReply;
+
+/// The mount tokens keying [`CommitVia`]: which mount a committed attachment drives.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct PublishMount;
+/// See [`PublishMount`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct InjectMount;
+/// See [`PublishMount`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct BatchPublishMount;
+/// See [`PublishMount`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct BatchInjectMount;
+/// See [`PublishMount`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct PublishInjectMount;
+/// See [`PublishMount`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct BatchPublishInjectMount;
+
 mod builder;
 mod commit;
 mod forms_batch;
@@ -166,10 +201,7 @@ pub use builder::{
 };
 // The mount tokens and the commit trait are machinery: reachable across the include
 // modules, never re-exported from the crate root.
-pub(crate) use commit::{
-    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, CommitVia, DefaultBareReply,
-    DefaultReply, InjectMount, PublishInjectMount, PublishMount,
-};
+pub(crate) use commit::CommitVia;
 pub use slot_builder::{IncludeSlots, SlotCommit};
 pub use slot_reply_builder::{
     IncludeBatchPublishingOut, IncludePublishingOut, IncludeSlotsWithReply,
