@@ -35,12 +35,12 @@ pub use builders::{
 #[doc(hidden)]
 pub use builders::{RouterCommit, RouterSlotCommit};
 pub use mount::IncludeDef;
+#[doc(hidden)]
+pub use mount::RouterMount;
 pub(crate) use mount::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultBareReply, DefaultReply,
     InjectMount, MountCodec, PublishInjectMount, PublishMount,
 };
-#[doc(hidden)]
-pub use mount::{RouterMount, RouterMountOn};
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 

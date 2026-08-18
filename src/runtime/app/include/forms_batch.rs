@@ -14,21 +14,18 @@ use crate::{
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::{DefaultPublish, Publisher};
 
-use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_inject::BatchInjectCall;
 use crate::runtime::batch_publishing::BatchPublishingCall;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::FromStartup;
-use crate::runtime::input::{DecodeWith, InputKind};
+use crate::runtime::input::DecodeWith;
 use crate::runtime::middleware::Layer;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
 use crate::runtime::publish::{PublishPipeline, ReplyPublisher};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
-use crate::runtime::subscriber_def::SubscriberDef;
-use crate::runtime::typed::Typed;
-use crate::runtime::{SliceHandler, SourceMessage, SourceSubscriber};
+use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, CommitVia, DefaultReply,
@@ -311,47 +308,6 @@ where
             <Def::Markers as InitSlots>::init(),
             scope,
         )
-    }
-}
-
-impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
-    /// Mounts a plain `#[subscriber]` definition on an explicit subscription `source`
-    /// (overriding the macro's own source), decoding with the scope codec (or the default).
-    pub fn include_on<Source, Def>(&mut self, source: Source, def: Def)
-    where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
-        <Source::Subscriber as Subscriber>::Message: 'static,
-        C: MountCodec,
-        Def: SubscriberDef,
-        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
-        Def::Handler: 'static,
-        Def::Context: BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + 'static,
-        State: Send + Sync + 'static,
-        Layers: Layer<
-            Typed<<Source::Subscriber as Subscriber>::Message, Def::Input, C::Codec, Def::Handler>,
-        >,
-        Layers::Handler:
-            Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
-    {
-        let codec = self.codec.mount_codec();
-        self.mount_subscriber(source, def, codec);
-    }
-
-    /// Mounts a `#[subscriber(batch(..))]` definition on an explicit subscription `source`,
-    /// decoding each element with the scope codec (or the default).
-    pub fn include_batch_on<Source, Def>(&mut self, source: Source, def: Def)
-    where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
-        C: MountCodec,
-        Def: BatchDef,
-        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
-        Def::Handler: SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
-        State: Send + Sync + 'static,
-    {
-        let codec = self.codec.mount_codec();
-        self.mount_batch(source, def, codec);
     }
 }
 

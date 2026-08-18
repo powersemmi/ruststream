@@ -7,8 +7,8 @@
 //! with a single slot uses the `.publisher(policy)` shorthand, which binds and commits in one
 //! call.
 //!
-//! These forms have no source-override mount: a slot-taking definition is only instantiated once
-//! the sources are bound, so its subscription source is not known at the call.
+//! Like every other form, the subscription source comes from the definition - here from the one
+//! the bound slots instantiate, which is why the commit resolves it rather than the entry point.
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.

@@ -80,7 +80,7 @@ pub use router::{
     RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
 };
 #[doc(hidden)]
-pub use router::{RouterCommit, RouterMount, RouterMountOn, RouterSlotCommit};
+pub use router::{RouterCommit, RouterMount, RouterSlotCommit};
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{

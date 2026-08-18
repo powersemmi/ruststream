@@ -24,18 +24,11 @@ use super::mount::{
 /// One commit strategy of a router registration builder, keyed by its `Mount` token. Machinery;
 /// never named directly.
 #[doc(hidden)]
-pub trait RouterCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, Source, Def>:
-    Sized
-{
+pub trait RouterCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, Def>: Sized {
     /// The router the committed registration grows into.
     type Out;
 
-    fn commit(
-        self,
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out;
+    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out;
 }
 
 /// The commit of a fully-bound slot registration, keyed by its `Mount` token. Implemented only
@@ -62,11 +55,10 @@ pub trait RouterSlotCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, De
 /// return the grown router. The per-form names are aliases: [`RouterPublishing`],
 /// [`RouterBatchPublishing`].
 #[must_use = "a router registration is only added once .publisher(policy) or .mount() commits it"]
-pub struct RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback>
+pub struct RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
 where
     B: Broker + 'static,
 {
-    source: Source,
     def: Def,
     router: Router<B, Routes, RouteCodec, RouteLayers>,
     _attachment: PhantomData<fn() -> (Mount, Fallback)>,
@@ -74,13 +66,13 @@ where
 
 /// The builder [`Router::include`](super::Router::include) returns for a `publish("dest")`
 /// definition.
-pub type RouterPublishing<B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback> =
-    RouterWith<PublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback>;
+pub type RouterPublishing<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
+    RouterWith<PublishMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
 
 /// The builder [`Router::include`](super::Router::include) returns for a `publish_raw("dest")`
 /// definition, whose reply bytes go out as-is through a bare publisher.
-pub type RouterRawReply<B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback> =
-    RouterWith<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback>;
+pub type RouterRawReply<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
+    RouterWith<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
 
 /// The builder [`Router::include_batch`](super::Router::include_batch) returns for a
 /// `batch(.., publish("dest"))` definition.
@@ -88,8 +80,8 @@ pub type RouterRawReply<B, Routes, RouteCodec, RouteLayers, Source, Def, Fallbac
 /// The attachment is the batch reply source: a typed stack, or its
 /// [`transactional`](crate::runtime::TypedPublisher::transactional) form for one transaction per
 /// batch.
-pub type RouterBatchPublishing<B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback> =
-    RouterWith<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback>;
+pub type RouterBatchPublishing<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
+    RouterWith<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
 
 /// The builder [`Router::include`](super::Router::include) returns for a handler with
 /// [`Out`](crate::runtime::Out) parameters.
@@ -135,18 +127,13 @@ pub type RouterBatchPublishingOut<B, Routes, RouteCodec, RouteLayers, Def, Reply
         Slots,
     >;
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback>
-    RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
+    RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
 where
     B: Broker + 'static,
 {
-    pub(super) fn new(
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self {
+    pub(super) fn new(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self {
         Self {
-            source,
             def,
             router,
             _attachment: PhantomData,
@@ -162,19 +149,11 @@ where
     pub fn publisher<Policy>(
         self,
         policy: Policy,
-    ) -> <WithSource<Policy> as RouterCommit<
-        Mount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Source,
-        Def,
-    >>::Out
+    ) -> <WithSource<Policy> as RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
     where
-        WithSource<Policy>: RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def>,
+        WithSource<Policy>: RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>,
     {
-        WithSource::new(policy).commit(self.source, self.def, self.router)
+        WithSource::new(policy).commit(self.def, self.router)
     }
 
     /// Commits the registration with the broker's own
@@ -183,11 +162,11 @@ where
     #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
     pub fn mount(
         self,
-    ) -> <Fallback as RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def>>::Out
+    ) -> <Fallback as RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
     where
-        Fallback: Default + RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def>,
+        Fallback: Default + RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>,
     {
-        Fallback::default().commit(self.source, self.def, self.router)
+        Fallback::default().commit(self.def, self.router)
     }
 }
 
@@ -401,8 +380,8 @@ where
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback> fmt::Debug
-    for RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Source, Def, Fallback>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback> fmt::Debug
+    for RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
 where
     B: Broker + 'static,
 {

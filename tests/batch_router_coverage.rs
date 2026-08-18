@@ -159,6 +159,12 @@ impl SubscriptionSource<ConnectedMemoryBroker> for ClosedSource {
     }
 }
 
+/// The definition carries the source that never opens, so the failure is the source's own.
+#[subscriber(ClosedSource {}, publish("brc-out"))]
+async fn brc_closed_relay(order: &Order) -> Receipt {
+    Receipt { id: order.id }
+}
+
 fn assert_subscribe_error(result: Result<impl Sized, RustStreamError>, expected: &str) {
     match result {
         Ok(_) => panic!("startup must fail"),
@@ -177,7 +183,7 @@ fn assert_subscribe_error(result: Result<impl Sized, RustStreamError>, expected:
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_route_reports_a_refused_reply_publisher() {
     let router = Router::<MemoryBroker>::new()
-        .include_on(Name::new("brc-pair-in"), brc_relay)
+        .include(brc_relay)
         .publisher(TypedPublisher::new(RefusedPublish));
 
     let app =
@@ -193,7 +199,7 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_publishing_route_reports_a_refused_reply_publisher() {
     let router = Router::<MemoryBroker>::new()
-        .include_batch_on(Name::new("brc-batch-pair-in"), brc_batch_relay)
+        .include_batch(brc_batch_relay)
         .publisher(TypedPublisher::new(RefusedPublish));
 
     let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(
@@ -211,7 +217,7 @@ async fn batch_publishing_route_reports_a_refused_reply_publisher() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_route_reports_a_source_that_never_opens() {
     let router = Router::<MemoryBroker>::new()
-        .include_on(ClosedSource, brc_relay)
+        .include(brc_closed_relay)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("brc-source", "0.1.0")).with_broker(

@@ -2,10 +2,11 @@
 //!
 //! A definition ties itself to a form token ([`IncludeDef::Form`]), and one entry point per
 //! shape - [`Router::include`](super::Router::include) /
-//! [`include_batch`](super::Router::include_batch) and their `_on` source-override variants,
+//! [`include_batch`](super::Router::include_batch),
 //! [`BrokerScope::include`](crate::runtime::BrokerScope::include) /
 //! [`include_batch`](crate::runtime::BrokerScope::include_batch) - resolves the token to the
-//! machinery that form needs, at compile time.
+//! machinery that form needs, at compile time. The subscription source is never named at a
+//! mount site: it belongs to the definition, which takes the broker's own source expression.
 
 use crate::Broker;
 use crate::codec::Codec;
@@ -14,7 +15,6 @@ use crate::codec::Codec;
 use crate::codec::DefaultCodec;
 
 use super::builder::Router;
-use super::forms;
 
 /// Ties a definition type to its form token.
 ///
@@ -22,7 +22,7 @@ use super::forms;
 /// Implemented by the `#[subscriber]` macro; a hand-written definition adds it next to its def
 /// trait impl.
 pub trait IncludeDef {
-    /// The form token: one of the markers in [`forms`].
+    /// The form token: one of the markers in [`forms`](super::forms).
     type Form;
 }
 
@@ -100,7 +100,8 @@ pub struct RawReplyInjectMount;
 pub struct BatchPublishInjectMount;
 
 /// Form-token dispatch for [`Router::include`](super::Router::include) and
-/// [`include_batch`](super::Router::include_batch): implemented by the tokens in [`forms`],
+/// [`include_batch`](super::Router::include_batch): implemented by the tokens in
+/// [`forms`](super::forms),
 /// generic over the definition and the router chain. Machinery; you never implement or name it.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
@@ -115,63 +116,4 @@ pub trait RouterMount<B: Broker, Routes, RouteCodec, RouteLayers, Def> {
     type Out;
 
     fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out;
-}
-
-/// The source-override counterpart of [`RouterMount`], behind
-/// [`Router::include_on`](super::Router::include_on) and
-/// [`include_batch_on`](super::Router::include_batch_on).
-///
-/// Implemented for the forms whose subscription source can be replaced from the outside. A
-/// handler with [`Out`](crate::runtime::Out) slots has none: its definition is only
-/// instantiated once the slots are bound, so its source is not known at the call.
-#[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "this definition's form cannot be mounted on an explicit source",
-    label = "the form token `{Self}` has no source-override router mount",
-    note = "a handler with Out slots takes its source from the definition the bound slots \
-            instantiate; mount it with .include(..) and bind the slots there"
-)]
-pub trait RouterMountOn<B: Broker, Routes, RouteCodec, RouteLayers, Source, Def> {
-    /// See [`RouterMount::Out`].
-    type Out;
-
-    fn begin_on(
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out;
-}
-
-/// Implements [`RouterMount`] for a form whose source comes from the definition: it resolves the
-/// source and hands over to the source-override mount, so the two entry points share one body.
-macro_rules! mount_via_own_source {
-    ($($form:ty => $def_trait:path),+ $(,)?) => {$(
-        impl<B, Routes, RouteCodec, RouteLayers, Def>
-            RouterMount<B, Routes, RouteCodec, RouteLayers, Def> for $form
-        where
-            B: Broker + 'static,
-            Def: $def_trait,
-            Self: RouterMountOn<B, Routes, RouteCodec, RouteLayers, Def::Source, Def>,
-        {
-            type Out =
-                <Self as RouterMountOn<B, Routes, RouteCodec, RouteLayers, Def::Source, Def>>::Out;
-
-            fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-                let source = def.source();
-                Self::begin_on(source, def, router)
-            }
-        }
-    )+};
-}
-
-mount_via_own_source! {
-    forms::Subscribing => crate::runtime::subscriber_def::SubscriberDef,
-    forms::RawSubscribing => crate::runtime::subscriber_def::SubscriberDef,
-    forms::Seek => crate::runtime::inject::InjectDef,
-    forms::Publishing => crate::runtime::publishing::PublishingDef,
-    forms::RawReply => crate::runtime::publishing::PublishingDef,
-    forms::Batch => crate::runtime::batch::BatchDef,
-    forms::BatchWithHeaders => crate::runtime::batch::BatchWithHeadersDef,
-    forms::BatchSeek => crate::runtime::batch_inject::BatchInjectDef,
-    forms::BatchPublishing => crate::runtime::batch_publishing::BatchPublishingDef,
 }

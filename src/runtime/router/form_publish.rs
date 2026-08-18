@@ -2,14 +2,16 @@
 //!
 //! Each form hands back a [`RouterWith`] builder whose terminal decides the reply wiring:
 //! `.publisher(policy)` names one, `.mount()` takes the broker's own
-//! [`DefaultPublish`](crate::DefaultPublish) policy.
+//! [`DefaultPublish`](crate::DefaultPublish) policy. The subscription source comes from the
+//! definition, so the terminal only ever carries the reply side.
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-use crate::{Broker, Connected, DefaultPublish, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSource};
 
+use crate::runtime::SourceSubscriber;
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
@@ -21,58 +23,46 @@ use super::builder::Router;
 use super::builders::{RouterBatchPublishing, RouterCommit, RouterPublishing, RouterRawReply};
 use super::mount::{
     BatchPublishMount, DefaultBareReply, DefaultReply, MountCodec, PublishMount, RawReplyMount,
-    RouterMountOn,
+    RouterMount,
 };
 use super::{BatchPublishingRouter, PublishingRouter, RawReplyRouter, RouterWith, forms};
 
 // ---------------------------------------------------------------------------------------------
 // The three builder-producing entry points.
 
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def>
-    RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def> for forms::Publishing
+impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
+    for forms::Publishing
 where
     B: Broker + 'static,
 {
-    type Out = RouterPublishing<B, Routes, RouteCodec, RouteLayers, Source, Def, DefaultReply>;
+    type Out = RouterPublishing<B, Routes, RouteCodec, RouteLayers, Def, DefaultReply>;
 
-    fn begin_on(
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
-        RouterWith::new(source, def, router)
+    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
+        RouterWith::new(def, router)
     }
 }
 
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def>
-    RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def> for forms::RawReply
+impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
+    for forms::RawReply
 where
     B: Broker + 'static,
 {
-    type Out = RouterRawReply<B, Routes, RouteCodec, RouteLayers, Source, Def, DefaultBareReply>;
+    type Out = RouterRawReply<B, Routes, RouteCodec, RouteLayers, Def, DefaultBareReply>;
 
-    fn begin_on(
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
-        RouterWith::new(source, def, router)
+    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
+        RouterWith::new(def, router)
     }
 }
 
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def>
-    RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def> for forms::BatchPublishing
+impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
+    for forms::BatchPublishing
 where
     B: Broker + 'static,
 {
-    type Out = RouterBatchPublishing<B, Routes, RouteCodec, RouteLayers, Source, Def, DefaultReply>;
+    type Out = RouterBatchPublishing<B, Routes, RouteCodec, RouteLayers, Def, DefaultReply>;
 
-    fn begin_on(
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
-        RouterWith::new(source, def, router)
+    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
+        RouterWith::new(def, router)
     }
 }
 
@@ -81,21 +71,20 @@ where
 // policy-driven commit live on different type constructors (disjoint impls, no negative
 // reasoning needed).
 
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def, Policy>
-    RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def>
-    for WithSource<Policy>
+impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
+    RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Def> for WithSource<Policy>
 where
     B: Broker + 'static,
     RouteCodec: MountCodec,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Subscriber: Send + 'static,
     Def: PublishingDef + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    SourceSubscriber<B, Def::Source>: Send + 'static,
     Def::Input: DecodeWith<RouteCodec::Codec>,
     Policy: 'static,
 {
     type Out = PublishingRouter<
         B,
-        Source,
+        Def::Source,
         Def,
         RouteCodec::Codec,
         Policy,
@@ -105,26 +94,22 @@ where
         Routes,
     >;
 
-    fn commit(
-        self,
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
+    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         let codec = router.codec.mount_codec();
+        let source = def.source();
         // No slot attachment on this form, so the injections resolve against the unit padding.
         router.mount_publishing_source(source, def, codec, self.into_source(), ((),))
     }
 }
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def>
-    RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def> for DefaultReply
+impl<B, Routes, RouteCodec, RouteLayers, Def>
+    RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Def> for DefaultReply
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
     WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>:
-        RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def>,
+        RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Def>,
 {
     type Out = <WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>> as RouterCommit<
         PublishMount,
@@ -132,40 +117,33 @@ where
         Routes,
         RouteCodec,
         RouteLayers,
-        Source,
         Def,
     >>::Out;
 
-    fn commit(
-        self,
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
+    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         // The typed default reply: the broker's plain publish policy under the default codec,
         // committed as if `.publisher(TypedPublisher::new(<policy>))` had been chained.
         WithSource::new(TypedPublisher::new(
             <B::Connected as DefaultPublish>::Policy::default(),
         ))
-        .commit(source, def, router)
+        .commit(def, router)
     }
 }
 
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def, Policy>
-    RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Source, Def>
-    for WithSource<Policy>
+impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
+    RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def> for WithSource<Policy>
 where
     B: Broker + 'static,
     RouteCodec: MountCodec,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Subscriber: Send + 'static,
     Def: PublishingDef + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    SourceSubscriber<B, Def::Source>: Send + 'static,
     Def::Input: DecodeWith<RouteCodec::Codec>,
     Policy: 'static,
 {
     type Out = RawReplyRouter<
         B,
-        Source,
+        Def::Source,
         Def,
         RouteCodec::Codec,
         Policy,
@@ -175,25 +153,20 @@ where
         Routes,
     >;
 
-    fn commit(
-        self,
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
+    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         let codec = router.codec.mount_codec();
+        let source = def.source();
         router.mount_raw_reply_source(source, def, codec, self.into_source(), ((),))
     }
 }
 
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def>
-    RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Source, Def>
-    for DefaultBareReply
+impl<B, Routes, RouteCodec, RouteLayers, Def>
+    RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def> for DefaultBareReply
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
     WithSource<<B::Connected as DefaultPublish>::Policy>:
-        RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Source, Def>,
+        RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def>,
 {
     type Out = <WithSource<<B::Connected as DefaultPublish>::Policy> as RouterCommit<
         RawReplyMount,
@@ -201,36 +174,28 @@ where
         Routes,
         RouteCodec,
         RouteLayers,
-        Source,
         Def,
     >>::Out;
 
-    fn commit(
-        self,
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
-        WithSource::new(<B::Connected as DefaultPublish>::Policy::default())
-            .commit(source, def, router)
+    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
+        WithSource::new(<B::Connected as DefaultPublish>::Policy::default()).commit(def, router)
     }
 }
 
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def, Policy>
-    RouterCommit<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def>
-    for WithSource<Policy>
+impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
+    RouterCommit<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Def> for WithSource<Policy>
 where
     B: Broker + 'static,
     RouteCodec: MountCodec,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Subscriber: crate::BatchSubscriber + Send + 'static,
     Def: BatchPublishingDef + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Input: DecodeWith<RouteCodec::Codec>,
     Policy: 'static,
 {
     type Out = BatchPublishingRouter<
         B,
-        Source,
+        Def::Source,
         Def,
         RouteCodec::Codec,
         Policy,
@@ -240,26 +205,21 @@ where
         Routes,
     >;
 
-    fn commit(
-        self,
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
+    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         let codec = router.codec.mount_codec();
+        let source = def.source();
         router.mount_batch_publishing_source(source, def, codec, self.into_source(), ((),))
     }
 }
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-impl<B, Routes, RouteCodec, RouteLayers, Source, Def>
-    RouterCommit<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def>
-    for DefaultReply
+impl<B, Routes, RouteCodec, RouteLayers, Def>
+    RouterCommit<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Def> for DefaultReply
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
     WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>:
-        RouterCommit<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Source, Def>,
+        RouterCommit<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Def>,
 {
     type Out = <WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>> as RouterCommit<
         BatchPublishMount,
@@ -267,19 +227,13 @@ where
         Routes,
         RouteCodec,
         RouteLayers,
-        Source,
         Def,
     >>::Out;
 
-    fn commit(
-        self,
-        source: Source,
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self::Out {
+    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         WithSource::new(TypedPublisher::new(
             <B::Connected as DefaultPublish>::Policy::default(),
         ))
-        .commit(source, def, router)
+        .commit(def, router)
     }
 }

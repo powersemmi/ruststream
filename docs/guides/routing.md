@@ -6,11 +6,12 @@ scope.
 
 ## Building a router
 
-A `Router` mirrors the broker scope: `include` / `include_batch` (and their `_on` variants for an
-explicit source) mount every definition form, picked by the definition itself, next to `with_codec`
-(switches the chain's decode codec, see [Codecs](codecs.md#per-handler)) and the manual `handle` /
-`subscribe` registrations. Every call consumes the router and returns a new one, so registrations
-chain:
+A `Router` mirrors the broker scope: `include` and `include_batch` mount every definition form,
+picked by the definition itself, next to `with_codec` (switches the chain's decode codec, see
+[Codecs](codecs.md#per-handler)) and the manual `handle` / `subscribe` registrations. The
+subscription source always comes from the definition - `#[subscriber(..)]` takes the broker's own
+source expression, builder chain included - so there is nothing to name at the mount site. Every
+call consumes the router and returns a new one, so registrations chain:
 
 ```rust title="routes.rs"
 use ruststream::runtime::Router;

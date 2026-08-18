@@ -45,8 +45,7 @@ use super::{
 /// an opaque nested tuple, so a builder function returns `impl RouterDef<B>` instead of naming the
 /// type.
 ///
-/// The codec parameter `C` is the codec `include` / `include_on` / `include_publishing*` decode
-/// with. It starts as `()`, meaning the [`DefaultCodec`](crate::codec::DefaultCodec); switch it
+/// The codec parameter `C` is the codec the `include` family decodes with. It starts as `()`, meaning the [`DefaultCodec`](crate::codec::DefaultCodec); switch it
 /// for the rest of the chain with [`with_codec`](Self::with_codec).
 ///
 /// The layer parameter `Layers` is the router's own middleware stack, grown with
@@ -107,8 +106,8 @@ impl<B: Broker + 'static> Router<B, ()> {
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     Router<B, Routes, RouteCodec, RouteLayers>
 {
-    /// Sets the codec that subsequent `include` / `include_on` / `include_publishing*` calls
-    /// decode with, replacing the default.
+    /// Sets the codec that subsequent `include` / `include_batch` calls decode with, replacing
+    /// the default.
     ///
     /// Registrations already in the chain keep the codec they were mounted with, so the codec can
     /// change mid-chain.
@@ -256,8 +255,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
-    /// `include` / `include_on` forms.
+    /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the plain and
+    /// raw `include` forms.
     pub(super) fn mount_subscriber<Source, Def, DecodeCodec>(
         self,
         source: Source,
@@ -295,7 +294,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     }
 
     /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
-    /// `include_batch` / `include_batch_on` forms.
+    /// plain `include_batch` form.
     pub(super) fn mount_batch<Source, Def, DecodeCodec>(
         self,
         source: Source,

@@ -49,7 +49,7 @@ async fn batch(orders: &[Order]) -> HandlerResult {
     HandlerResult::Ack
 }
 
-#[subscriber(batch("sc-batch-ignored"))]
+#[subscriber(batch("sc-batch-on"))]
 async fn batch_on(orders: &[Order]) -> HandlerResult {
     BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerResult::Ack
@@ -99,9 +99,9 @@ async fn bpout_on_check(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// One codec scope, every non-`include` scope-codec variant mounted: `include_on`,
-/// `include_batch`, `include_batch_on`, `include_publishing`, `include_publishing_on`,
-/// `include_batch_publishing`, and `include_batch_publishing_on`.
+/// One codec scope, every scope-codec variant mounted: the plain and batch `include`s, plus
+/// `include_publishing`, `include_publishing_on`, `include_batch_publishing`, and
+/// `include_batch_publishing_on`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scope_codec_include_family_dispatches() {
     let broker = MemoryBroker::new();
@@ -109,9 +109,9 @@ async fn scope_codec_include_family_dispatches() {
 
     let app =
         RustStream::new(AppInfo::new("sc", "0.1.0")).with_broker_codec(broker, JsonCodec, |b| {
-            b.include_on(Name::new("sc-plain-on"), plain_on);
+            b.include(plain_on);
             b.include_batch(batch);
-            b.include_batch_on(Name::new("sc-batch-on"), batch_on);
+            b.include_batch(batch_on);
             b.include(relay)
                 .publisher(TypedPublisher::new(MemoryPublish));
             b.include_publishing_on(
@@ -175,7 +175,7 @@ async fn d_plain_on(_o: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
-#[subscriber(batch("d-batch-ignored"))]
+#[subscriber(batch("d-batch-on"))]
 async fn d_batch_on(orders: &[Order]) -> HandlerResult {
     D_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerResult::Ack
@@ -203,17 +203,17 @@ async fn d_bpout_on_check(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// The default-codec block's explicit-source variants: `include_on`, `include_batch_on`,
-/// `include_publishing_on`, and `include_batch_publishing_on` (the own-source forms are covered
-/// by the other integration tests).
+/// The default-codec block's remaining variants: the plain and batch `include`s next to
+/// `include_publishing_on` and `include_batch_publishing_on` (the other own-source forms are
+/// covered by the other integration tests).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn default_codec_include_on_family_dispatches() {
+async fn default_codec_include_family_dispatches() {
     let broker = MemoryBroker::new();
     let driver = broker.clone().publisher();
 
     let app = RustStream::new(AppInfo::new("dsc", "0.1.0")).with_broker(broker, |b| {
-        b.include_on(Name::new("d-plain-on"), d_plain_on);
-        b.include_batch_on(Name::new("d-batch-on"), d_batch_on);
+        b.include(d_plain_on);
+        b.include_batch(d_batch_on);
         b.include_publishing_on(
             Name::new("d-pin-on"),
             d_relay_on,

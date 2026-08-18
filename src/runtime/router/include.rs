@@ -6,6 +6,10 @@
 //! that take an attachment hand back a registration builder; because a router is a consuming
 //! builder, the builder commits through an explicit terminal (`.publisher(policy)`, `.mount()`,
 //! `.out(marker, policy)` per slot) and returns the grown router.
+//!
+//! The subscription source always comes from the definition: `#[subscriber(..)]` takes the
+//! broker's own source expression, builder chain included, so there is nothing to override from
+//! the mount site.
 
 use serde::de::DeserializeOwned;
 
@@ -16,7 +20,7 @@ use crate::runtime::metadata::HandlerMetadata;
 
 use super::SubscribedBatchRouter;
 use super::builder::Router;
-use super::mount::{IncludeDef, MountCodec, RouterMount, RouterMountOn};
+use super::mount::{IncludeDef, MountCodec, RouterMount};
 
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     Router<B, Routes, RouteCodec, RouteLayers>
@@ -64,27 +68,6 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         <Def::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, Def>>::begin(def, self)
     }
 
-    /// Mounts a single-message definition on an explicit subscription `source`, overriding the
-    /// macro's own.
-    ///
-    /// Useful to retarget a handler - mount it on an in-memory source in tests, or a different
-    /// broker descriptor per deployment. The subscription name in metadata comes from `source`.
-    /// A handler with [`Out`](crate::runtime::Out) slots has no source-override form: its
-    /// definition is only instantiated once the slots are bound.
-    pub fn include_on<Source, Def>(
-        self,
-        source: Source,
-        def: Def,
-    ) -> <Def::Form as RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def>>::Out
-    where
-        Def: IncludeDef,
-        Def::Form: RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def>,
-    {
-        <Def::Form as RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def>>::begin_on(
-            source, def, self,
-        )
-    }
-
     /// Mounts a `#[subscriber(batch(..))]` definition on its own source; the `publish("dest")`
     /// and `Out`-taking shapes hand back a registration builder, exactly like
     /// [`include`](Self::include).
@@ -101,22 +84,6 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Def::Form: RouterMount<B, Routes, RouteCodec, RouteLayers, Def>,
     {
         <Def::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, Def>>::begin(def, self)
-    }
-
-    /// Mounts a batch definition on an explicit subscription `source`, overriding the macro's
-    /// own. See [`include_on`](Self::include_on).
-    pub fn include_batch_on<Source, Def>(
-        self,
-        source: Source,
-        def: Def,
-    ) -> <Def::Form as RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def>>::Out
-    where
-        Def: IncludeDef,
-        Def::Form: RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def>,
-    {
-        <Def::Form as RouterMountOn<B, Routes, RouteCodec, RouteLayers, Source, Def>>::begin_on(
-            source, def, self,
-        )
     }
 
     /// Attaches a slice handler to a batch subscription described by `source`, decoding each

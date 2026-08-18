@@ -21,7 +21,7 @@ use ruststream::runtime::{
     TypedPublisher,
 };
 use ruststream::{
-    BuildContext, Field, Headers, IncomingMessage, Name, OutgoingMessage, Publisher, subscriber,
+    BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -70,7 +70,7 @@ async fn rp_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber("rp-ignored", publish("rp-out-on"))]
+#[subscriber("rp-in-on", publish("rp-out-on"))]
 async fn rp_relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
@@ -87,7 +87,7 @@ async fn rp_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Default-codec `include` / `include_on` on the publishing form: replies reach the reply topics.
+/// Default-codec `include` on the publishing form, twice over: replies reach the reply topics.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_publishing_replies() {
     let broker = MemoryBroker::new();
@@ -96,7 +96,7 @@ async fn default_codec_router_publishing_replies() {
     let router = Router::<MemoryBroker>::new()
         .include(rp_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include_on(Name::new("rp-in-on"), rp_relay_on)
+        .include(rp_relay_on)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("rp", "0.1.0")).with_broker(broker, |b| {
@@ -120,7 +120,7 @@ async fn rpc_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber("rpc-ignored", publish("rpc-out-on"))]
+#[subscriber("rpc-in-on", publish("rpc-out-on"))]
 async fn rpc_relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
@@ -137,8 +137,8 @@ async fn rpc_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Chain-codec `include` / `include_on` on the publishing form: the input decodes with the
-/// `with_codec` codec, the reply goes through the publisher's own.
+/// Chain-codec `include` on the publishing form: the input decodes with the `with_codec` codec,
+/// the reply goes through the publisher's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_publishing_replies() {
     let broker = MemoryBroker::new();
@@ -148,7 +148,7 @@ async fn chain_codec_router_publishing_replies() {
         .with_codec(JsonCodec)
         .include(rpc_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include_on(Name::new("rpc-in-on"), rpc_relay_on)
+        .include(rpc_relay_on)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("rpc", "0.1.0")).with_broker(broker, |b| {
@@ -177,7 +177,7 @@ async fn bp_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("bp-ignored"), publish("bp-out-on"))]
+#[subscriber(batch("bp-in-on"), publish("bp-out-on"))]
 async fn bp_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -194,8 +194,8 @@ async fn bp_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Default-codec `include_batch` / `include_batch_on` on the publishing form: every batch element
-/// is republished to the reply topic.
+/// Default-codec `include_batch` on the publishing form: every batch element is republished to
+/// the reply topic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_batch_publishing_replies() {
     let broker = MemoryBroker::new();
@@ -204,7 +204,7 @@ async fn default_codec_router_batch_publishing_replies() {
     let router = Router::<MemoryBroker>::new()
         .include_batch(bp_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include_batch_on(Name::new("bp-in-on"), bp_relay_on)
+        .include_batch(bp_relay_on)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(broker, |b| {
@@ -228,7 +228,7 @@ async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("bpc-ignored"), publish("bpc-out-on"))]
+#[subscriber(batch("bpc-in-on"), publish("bpc-out-on"))]
 async fn bpc_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -245,8 +245,8 @@ async fn bpc_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Chain-codec `include_batch` / `include_batch_on` on the publishing form: elements decode with
-/// the `with_codec` codec, replies go through the publisher's own.
+/// Chain-codec `include_batch` on the publishing form: elements decode with the `with_codec`
+/// codec, replies go through the publisher's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_batch_publishing_replies() {
     let broker = MemoryBroker::new();
@@ -256,7 +256,7 @@ async fn chain_codec_router_batch_publishing_replies() {
         .with_codec(JsonCodec)
         .include_batch(bpc_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include_batch_on(Name::new("bpc-in-on"), bpc_relay_on)
+        .include_batch(bpc_relay_on)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(broker, |b| {

@@ -20,7 +20,7 @@ use ruststream::memory::{
 };
 use ruststream::runtime::{AppInfo, HandlerResult, Out, Router, RustStream, Seek};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, Name, OutSlot, OutgoingMessage, Publisher, Seeker, subscriber};
+use ruststream::{Broker, OutSlot, OutgoingMessage, Publisher, Seeker, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -291,11 +291,16 @@ async fn a_router_mounts_the_byte_reply_form() {
         .with_raw(b"frame");
 }
 
+#[subscriber("rp.raw.on.in", raw, publish_raw("rp.raw.on.out"))]
+async fn echo_frame_on(frame: &[u8]) -> Vec<u8> {
+    frame.to_vec()
+}
+
 /// The same form with an explicit bare policy instead of the default.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_takes_an_explicit_bare_reply_policy() {
     let router = Router::<MemoryBroker>::new()
-        .include_on(Name::new("rp.raw.on.in"), echo_frame)
+        .include(echo_frame_on)
         .publisher(MemoryPublish);
     let app = RustStream::new(AppInfo::new("rp-raw-on", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -308,7 +313,7 @@ async fn a_router_takes_an_explicit_bare_reply_policy() {
     tb.settle().await.expect("settle");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.raw.out")
+        .published::<Vec<u8>>("rp.raw.on.out")
         .assert_called_once()
         .with_raw(b"frame");
 }
