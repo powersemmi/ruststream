@@ -1222,31 +1222,26 @@ pub enum TransactionPublishError<E> {
 mod tests {
     use super::*;
 
-    /// Fixtures the in-memory broker cannot express: a codec that always refuses, and a
-    /// transactional publisher rigged to fail one step of the batch protocol.
+    /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
+    /// transactional publisher rigged to fail one step of the protocol, and a policy that
+    /// refuses to pair.
     #[cfg(feature = "json")]
     mod fixtures {
+        use std::collections::HashMap;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        use bytes::BytesMut;
-        use serde::Serialize;
-        use serde::de::DeserializeOwned;
         use thiserror::Error;
 
-        use crate::codec::{Codec, CodecError};
+        #[cfg(feature = "memory")]
+        use crate::memory::{ConnectedMemoryBroker, MemoryTransaction};
         use crate::{OutgoingMessage, Publisher, TransactionalPublisher};
+        #[cfg(feature = "memory")]
+        use crate::{OwnedTransactions, PairError, PublishPolicy};
 
-        /// Refuses every value, so the encode arm of each publish path is reachable.
-        pub(super) struct RefuseEncode;
-
-        impl Codec for RefuseEncode {
-            fn encode<T: Serialize>(&self, _value: &T) -> Result<BytesMut, CodecError> {
-                Err(CodecError::Encode(Box::from("the codec refused the value")))
-            }
-
-            fn decode<T: DeserializeOwned>(&self, _bytes: &[u8]) -> Result<T, CodecError> {
-                Err(CodecError::Decode(Box::from("the codec refused the bytes")))
-            }
+        /// A value JSON cannot encode: an object key must be a string, and this map's are
+        /// tuples. Encoding one is a real codec failure, not a stubbed one.
+        pub(super) fn unencodable() -> HashMap<(u8, u8), u8> {
+            HashMap::from([((1, 2), 3)])
         }
 
         /// The failure the rigged publisher reports.
@@ -1265,6 +1260,13 @@ mod tests {
             pub(super) aborted: AtomicUsize,
         }
 
+        impl Rigged {
+            /// One protocol step, rigged or not.
+            fn step(fail: bool) -> Result<(), RiggedError> {
+                if fail { Err(RiggedError) } else { Ok(()) }
+            }
+        }
+
         impl Publisher for Rigged {
             type Error = RiggedError;
 
@@ -1276,25 +1278,46 @@ mod tests {
 
         impl TransactionalPublisher for Rigged {
             async fn begin_transaction(&self) -> Result<(), Self::Error> {
-                if self.fail_begin {
-                    return Err(RiggedError);
-                }
-                Ok(())
+                Self::step(self.fail_begin)
             }
 
             async fn commit(&self) -> Result<(), Self::Error> {
-                if self.fail_commit {
-                    return Err(RiggedError);
-                }
-                Ok(())
+                Self::step(self.fail_commit)
             }
 
             async fn abort(&self) -> Result<(), Self::Error> {
                 self.aborted.fetch_add(1, Ordering::SeqCst);
-                if self.fail_abort {
-                    return Err(RiggedError);
-                }
-                Ok(())
+                Self::step(self.fail_abort)
+            }
+        }
+
+        // The publisher a broker hands out is opened per call; refusing to open one is how a
+        // broker reports that the handle is unusable.
+        #[cfg(feature = "memory")]
+        impl OwnedTransactions for Rigged {
+            type Transaction = MemoryTransaction;
+
+            async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
+                Err(RiggedError)
+            }
+        }
+
+        /// A policy that fails to pair, standing in for a broker whose publisher needs real work
+        /// to come alive (a transactional producer initializing).
+        #[cfg(feature = "memory")]
+        pub(super) struct RefusePairing;
+
+        #[cfg(feature = "memory")]
+        impl PublishPolicy<ConnectedMemoryBroker> for RefusePairing {
+            type Live = Rigged;
+
+            async fn pair(
+                self,
+                _connected: &ConnectedMemoryBroker,
+            ) -> Result<Self::Live, PairError> {
+                Err(PairError::from_boxed(Box::from(
+                    "the policy refused to pair",
+                )))
             }
         }
     }
@@ -1583,30 +1606,36 @@ mod tests {
     /// the single-message and the batch reply route.
     #[cfg(all(feature = "memory", feature = "json"))]
     #[tokio::test]
-    async fn a_refusing_codec_stops_both_reply_paths() {
-        use fixtures::RefuseEncode;
+    async fn an_unencodable_reply_stops_both_reply_paths() {
+        use fixtures::unencodable;
         use futures::StreamExt;
 
         use crate::Subscriber;
+        use crate::codec::JsonCodec;
         use crate::memory::MemoryBroker;
 
         let broker = MemoryBroker::new();
         let mut subscriber = broker.subscribe("out");
-        let publisher = TypedPublisher::with_codec(broker.publisher(), RefuseEncode);
+        let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
         let headers = Headers::new();
         let cx = PublishContext::new("in", &headers, &());
 
         let single = publisher
-            .publish("out", &1_u32, &PublishIdentity, &cx)
+            .publish("out", &unencodable(), &PublishIdentity, &cx)
             .await
-            .expect_err("a refusing codec cannot produce a payload");
+            .expect_err("the codec cannot encode this reply");
         assert!(
             single.to_string().contains("encode failed"),
             "the codec error must reach the caller: {single}",
         );
 
         let batched = publisher
-            .publish_batch("out", &[1_u32, 2], &PublishIdentity, &cx)
+            .publish_batch(
+                "out",
+                &[unencodable(), unencodable()],
+                &PublishIdentity,
+                &cx,
+            )
             .await
             .expect_err("the batch path encodes per reply");
         assert!(
@@ -1818,14 +1847,52 @@ mod tests {
         );
     }
 
-    /// A reply that cannot be produced aborts the whole batch; when the abort itself fails, the
-    /// original error still travels and the abort failure is only logged.
-    #[cfg(all(feature = "json", feature = "logging"))]
+    /// A reply that cannot be produced aborts the whole batch, so no half-published batch stays
+    /// visible.
+    #[cfg(all(feature = "json", feature = "memory"))]
     #[tokio::test]
-    async fn a_failed_reply_aborts_the_batch_and_a_failed_abort_only_warns() {
+    async fn a_failed_reply_aborts_the_whole_batch() {
         use std::sync::atomic::Ordering;
 
-        use fixtures::{RefuseEncode, Rigged};
+        use fixtures::{Rigged, unencodable};
+
+        use crate::codec::JsonCodec;
+
+        let wiring = TypedPublisher::with_codec(Rigged::default(), JsonCodec).transactional();
+        let headers = Headers::new();
+        let cx = PublishContext::new("in", &headers, &());
+
+        let err = wiring
+            .publish_batch(
+                "out",
+                &[unencodable(), unencodable()],
+                &PublishIdentity,
+                &cx,
+            )
+            .await
+            .expect_err("a reply that cannot be encoded fails the batch");
+
+        assert!(
+            err.to_string().contains("encode failed"),
+            "the caller acts on the failure that broke the batch: {err}",
+        );
+        assert_eq!(
+            wiring.inner.publisher.aborted.load(Ordering::SeqCst),
+            1,
+            "the open transaction must be aborted exactly once",
+        );
+    }
+
+    /// When the abort itself fails, the original error still travels and the abort failure is
+    /// only logged: the caller acts on the failure that broke the batch.
+    #[cfg(all(feature = "json", feature = "memory", feature = "logging"))]
+    #[tokio::test]
+    async fn a_failed_abort_is_logged_rather_than_propagated() {
+        use std::sync::atomic::Ordering;
+
+        use fixtures::{Rigged, unencodable};
+
+        use crate::codec::JsonCodec;
 
         let (events, guard) = capture_events();
 
@@ -1834,14 +1901,14 @@ mod tests {
                 fail_abort: true,
                 ..Rigged::default()
             },
-            RefuseEncode,
+            JsonCodec,
         )
         .transactional();
         let headers = Headers::new();
         let cx = PublishContext::new("in", &headers, &());
 
         let err = wiring
-            .publish_batch("out", &[1_u32, 2], &PublishIdentity, &cx)
+            .publish_batch("out", &[unencodable()], &PublishIdentity, &cx)
             .await
             .expect_err("a reply that cannot be encoded fails the batch");
         drop(guard);
@@ -1908,15 +1975,17 @@ mod tests {
     #[cfg(feature = "json")]
     #[tokio::test]
     async fn a_scoped_publish_reports_an_encode_failure_without_settling() {
-        use fixtures::{RefuseEncode, Rigged};
+        use fixtures::{Rigged, unencodable};
 
-        let wiring = TypedPublisher::with_codec(Rigged::default(), RefuseEncode).transactional();
+        use crate::codec::JsonCodec;
+
+        let wiring = TypedPublisher::with_codec(Rigged::default(), JsonCodec).transactional();
         let mut scope = wiring.begin().await.expect("begin failed");
 
         let err = scope
-            .publish("out", &1_u32)
+            .publish("out", &unencodable())
             .await
-            .expect_err("a refusing codec cannot produce a payload");
+            .expect_err("the codec cannot encode this value");
         assert!(
             matches!(err, TransactionPublishError::Encode(_)),
             "the encode arm must be distinguishable from a broker rejection: {err:?}",
@@ -1933,7 +2002,7 @@ mod tests {
     #[cfg(all(feature = "memory", feature = "json"))]
     #[tokio::test]
     async fn an_owned_transaction_encodes_and_discards_on_abort() {
-        use fixtures::RefuseEncode;
+        use fixtures::unencodable;
         use futures::StreamExt;
 
         use crate::Subscriber;
@@ -1955,16 +2024,91 @@ mod tests {
             "an aborted buffer never reaches the bus",
         );
 
-        let refusing = TypedPublisher::with_codec(broker.publisher(), RefuseEncode);
-        let mut txn = refusing.transaction().await.expect("open failed");
+        let mut txn = publisher.transaction().await.expect("open failed");
         let err = txn
-            .publish("owned", &3_u32)
+            .publish("owned", &unencodable())
             .await
-            .expect_err("a refusing codec cannot produce a payload");
+            .expect_err("the codec cannot encode this value");
         assert!(
             matches!(err, TransactionPublishError::Encode(_)),
             "the encode arm must be distinguishable from a broker rejection: {err:?}",
         );
         txn.abort().await.expect("abort failed");
+    }
+
+    /// A policy that fails to pair fails the whole wiring stack: neither shape hands out a
+    /// half-built publisher, and the error travels to the startup that asked for it.
+    #[cfg(all(feature = "memory", feature = "json"))]
+    #[tokio::test]
+    async fn a_refused_pairing_fails_the_whole_wiring() {
+        use fixtures::RefusePairing;
+
+        use crate::Broker;
+        use crate::codec::JsonCodec;
+        use crate::memory::MemoryBroker;
+
+        let connected = MemoryBroker::new().connect().await.expect("connect failed");
+
+        let plain = TypedPublisher::with_codec(RefusePairing, JsonCodec)
+            .pair(&connected)
+            .await
+            .expect_err("the policy refuses to pair");
+        assert!(
+            plain.to_string().contains("refused to pair"),
+            "the policy's reason must survive the stack: {plain}",
+        );
+
+        let transactional = TypedPublisher::with_codec(RefusePairing, JsonCodec)
+            .transactional()
+            .pair(&connected)
+            .await
+            .expect_err("the policy refuses to pair");
+        assert!(
+            transactional.to_string().contains("refused to pair"),
+            "the transactional wrapper must not swallow it: {transactional}",
+        );
+    }
+
+    /// A broker that refuses to open the handle's transaction surfaces its error from `begin`,
+    /// so no scope exists over a transaction the broker does not have.
+    #[cfg(feature = "json")]
+    #[tokio::test]
+    async fn a_refused_begin_reports_the_publisher_error() {
+        use fixtures::Rigged;
+
+        use crate::codec::JsonCodec;
+
+        let wiring = TypedPublisher::with_codec(
+            Rigged {
+                fail_begin: true,
+                ..Rigged::default()
+            },
+            JsonCodec,
+        )
+        .transactional();
+
+        let err = wiring
+            .begin()
+            .await
+            .expect_err("the publisher refuses to begin");
+        assert_eq!(err.to_string(), "the rigged publisher refused");
+    }
+
+    /// Likewise for the owned kind: a refused open is reported, not papered over with an empty
+    /// buffer that would silently drop everything published into it.
+    #[cfg(all(feature = "memory", feature = "json"))]
+    #[tokio::test]
+    async fn a_refused_owned_transaction_reports_the_publisher_error() {
+        use fixtures::Rigged;
+
+        use crate::codec::JsonCodec;
+
+        let publisher = TypedPublisher::with_codec(Rigged::default(), JsonCodec);
+
+        let err = publisher
+            .transaction()
+            .await
+            .expect_err("the publisher refuses to open a transaction");
+        assert_eq!(err.to_string(), "the rigged publisher refused");
     }
 }

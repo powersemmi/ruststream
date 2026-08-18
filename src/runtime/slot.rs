@@ -822,6 +822,8 @@ impl_bind_slot! {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[derive(Debug)]
@@ -860,10 +862,19 @@ mod tests {
         }
     }
 
-    /// A dictionary message with no header contract.
+    /// A dictionary message with no header contract, and a payload JSON cannot encode: an
+    /// object key must be a string, and this map's are tuples.
     #[derive(Serialize)]
     struct Progress {
-        percent: u8,
+        samples: HashMap<(u8, u8), u8>,
+    }
+
+    impl Progress {
+        fn new() -> Self {
+            Self {
+                samples: HashMap::from([((1, 2), 3)]),
+            }
+        }
     }
 
     impl OutMessage<Events> for Progress {
@@ -874,13 +885,33 @@ mod tests {
         type Contract = NoHeaders;
     }
 
-    /// Headers a header map cannot carry: entries are scalars, and this one nests a struct.
+    /// Headers a header map can carry: one scalar field.
     #[derive(Serialize)]
-    struct NestedMeta {
-        inner: Progress,
+    struct Meta {
+        task_id: u64,
     }
 
-    /// A dictionary message whose contract demands the (unrepresentable) typed headers above.
+    /// Headers it cannot: entries are scalars, and this one nests a struct.
+    #[derive(Serialize)]
+    struct NestedMeta {
+        inner: Meta,
+    }
+
+    /// A contract-carrying message with the same unencodable payload.
+    #[derive(Serialize)]
+    struct Blob {
+        samples: HashMap<(u8, u8), u8>,
+    }
+
+    impl OutMessage<Events> for Blob {
+        const CHANNEL: &'static str = "events.blob";
+    }
+
+    impl MessageHeaders for Blob {
+        type Contract = WithHeaders<Meta>;
+    }
+
+    /// A contract-carrying message that encodes, so the headers are what fails.
     #[derive(Serialize)]
     struct Done {
         key: &'static str,
@@ -892,19 +923,6 @@ mod tests {
 
     impl MessageHeaders for Done {
         type Contract = WithHeaders<NestedMeta>;
-    }
-
-    /// Refuses every value, so the encode arm of the typed publish paths is reachable.
-    struct RefuseEncode;
-
-    impl Codec for RefuseEncode {
-        fn encode<T: Serialize>(&self, _value: &T) -> Result<bytes::BytesMut, CodecError> {
-            Err(CodecError::Encode(Box::from("the codec refused the value")))
-        }
-
-        fn decode<T: serde::de::DeserializeOwned>(&self, _bytes: &[u8]) -> Result<T, CodecError> {
-            Err(CodecError::Decode(Box::from("the codec refused the bytes")))
-        }
     }
 
     /// The unrestricted declaration documents whatever the marker declares, so a handler that
@@ -996,19 +1014,20 @@ mod tests {
 
     /// The typed slot delegates the borrowed transaction protocol too, so a capability-refined
     /// `Out` slot settles through the wrapper.
-    #[cfg(feature = "memory")]
+    #[cfg(all(feature = "memory", feature = "json"))]
     #[tokio::test]
     async fn a_typed_slot_delegates_the_transaction_protocol() {
         use futures::StreamExt;
 
         use crate::Subscriber;
+        use crate::codec::JsonCodec;
         use crate::memory::MemoryBroker;
 
         let broker = MemoryBroker::new();
         let mut subscriber = broker.subscribe("slots.ledger");
         let slot = TypedSlot::<_, (), Events, _>::new(
             SlotPublisher::<_, Events>::new(broker.publisher()),
-            RefuseEncode,
+            JsonCodec,
         );
 
         slot.begin_transaction().await.expect("begin failed");
@@ -1024,38 +1043,40 @@ mod tests {
         );
     }
 
-    /// A codec failure is reported by both typed publish forms, with the payload never leaving.
-    #[cfg(feature = "memory")]
+    /// A payload the codec cannot encode is reported by both typed publish forms, and nothing
+    /// leaves for the broker.
+    #[cfg(all(feature = "memory", feature = "json"))]
     #[tokio::test]
-    async fn a_refusing_codec_stops_both_typed_publish_forms() {
+    async fn an_unencodable_payload_stops_both_typed_publish_forms() {
+        use crate::codec::JsonCodec;
         use crate::memory::MemoryBroker;
 
         let broker = MemoryBroker::new();
         let slot = TypedSlot::<_, (), Events, _>::new(
             SlotPublisher::<_, Events>::new(broker.publisher()),
-            RefuseEncode,
+            JsonCodec,
         );
 
         let plain = slot
-            .publish_typed(&Progress { percent: 100 })
+            .publish_typed(&Progress::new())
             .await
-            .expect_err("a refusing codec cannot produce a payload");
+            .expect_err("the codec cannot encode this payload");
         assert!(
             matches!(plain, PublishTypedError::Encode(_)),
             "the encode arm must be distinguishable from a broker rejection: {plain:?}",
         );
 
-        let headers = NestedMeta {
-            inner: Progress { percent: 100 },
-        };
+        let meta = Meta { task_id: 7 };
         let with_headers = slot
-            .with_headers(&headers)
-            .publish_typed(&Done { key: "out/1" })
+            .with_headers(&meta)
+            .publish_typed(&Blob {
+                samples: Progress::new().samples,
+            })
             .await
-            .expect_err("a refusing codec cannot produce a payload");
+            .expect_err("the codec cannot encode this payload");
         assert!(
             matches!(with_headers, PublishTypedError::Encode(_)),
-            "the encode arm must be distinguishable: {with_headers:?}",
+            "the payload is encoded before the headers are serialized: {with_headers:?}",
         );
     }
 
@@ -1078,7 +1099,7 @@ mod tests {
         );
 
         let headers = NestedMeta {
-            inner: Progress { percent: 100 },
+            inner: Meta { task_id: 7 },
         };
         let err = slot
             .with_headers(&headers)
