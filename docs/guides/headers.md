@@ -37,15 +37,7 @@ construction - an element whose payload or headers fail to materialize is settle
 `on_failure(decode = ..)` policy and never reaches the handler, exactly as on the single-message
 path. The bare `FromHeaders<T>` is rejected there, naming the vector form.
 
-```rust
-#[subscriber(batch("chunks"))]
-async fn bulk(chunks: &[Chunk], FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>) -> HandlerResult {
-    for (chunk, meta) in chunks.iter().zip(&meta) {
-        let _ = (chunk, meta.task_id);
-    }
-    HandlerResult::Ack
-}
-```
+--8<-- "examples/typed_headers.rs:batch"
 
 Mount that handler with `b.include_batch(bulk)` on a broker scope; the `Router` batch path
 carries plain batch handlers only.

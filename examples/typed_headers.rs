@@ -115,6 +115,25 @@ async fn status(req: &StatusRequest) -> StatusReply {
 }
 // --8<-- [end:reply]
 
+// Headers stay per-delivery on a batch too, so the contracts arrive as one per element: the two
+// slices line up index for index, and an element failing either the payload decode or the
+// contract is settled by the decode policy instead of reaching the handler.
+// --8<-- [start:batch]
+#[subscriber(batch("chunks.bulk"))]
+async fn bulk(
+    reports: &[Progress],
+    FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>,
+) -> HandlerResult {
+    for (report, meta) in reports.iter().zip(&meta) {
+        println!(
+            "task {}: chunk {} of {} at {}%",
+            meta.task_id, meta.chunk_no, meta.chunks_total, report.percent,
+        );
+    }
+    HandlerResult::Ack
+}
+// --8<-- [end:batch]
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --8<-- [start:mounts]
@@ -123,6 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         |b| {
             b.include(convert).out(Events, MemoryPublish).mount();
             b.include(status);
+            b.include_batch(bulk);
         },
     );
     // --8<-- [end:mounts]
