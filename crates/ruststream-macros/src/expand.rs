@@ -273,6 +273,42 @@ fn from_headers_ty(ty: &Type) -> Option<&Type> {
     Some(contract)
 }
 
+/// The element type of a `Vec<T>`-shaped type, when the type has that shape. A batch handler's
+/// header contract arrives as one per element, so its parameter is spelled `FromHeaders<Vec<T>>`.
+fn vec_inner_ty(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Vec" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let element = types.next()?;
+    if types.next().is_some() {
+        return None;
+    }
+    Some(element)
+}
+
+/// The per-element header contract of a batch handler: the `H` of a `FromHeaders<Vec<H>>`
+/// parameter, with the parameter's pattern so the expansion can rebind it.
+fn batch_headers_param<'a>(
+    extractors: &[(&'a Pat, &'a Type)],
+) -> Option<(&'a Pat, &'a Type, &'a Type)> {
+    extractors.iter().find_map(|(pat, ty)| {
+        let contract = from_headers_ty(ty)?;
+        let element = vec_inner_ty(contract)?;
+        Some((*pat, *ty, element))
+    })
+}
+
 /// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
 fn ctx_extractor_key(ty: &Type) -> Option<&Type> {
     let Type::Path(path) = ty else {
@@ -477,16 +513,25 @@ fn headers_schema_method(
         && let Some((_, ty)) = extractors
             .iter()
             .find(|(_, ty)| from_headers_ty(ty).is_some())
+        && batch_headers_param(extractors).is_none()
     {
         return Err(Error::new_spanned(
             ty,
-            "FromHeaders is per-delivery and does not apply to batch(..) forms: a batch spans \
-             many deliveries, each with its own headers",
+            "headers are per-delivery and a batch spans many deliveries: take the per-element \
+             contracts as a vector, FromHeaders<Vec<_>>",
         ));
     }
+    // On a batch form the contract is declared per element, so the schema describes the element.
     let method = extractors
         .iter()
         .find_map(|(_, ty)| from_headers_ty(ty))
+        .map(|contract| {
+            if args.batch {
+                vec_inner_ty(contract).unwrap_or(contract)
+            } else {
+                contract
+            }
+        })
         .map_or_else(
             || {
                 if args.raw.is_some() {
@@ -1193,6 +1238,47 @@ fn expand_batch_publishing(
     })
 }
 
+/// The pieces that distinguish a batch handler reading a per-element header contract from a plain
+/// one: the handler trait, the extra argument carrying the contracts, the binding that rebuilds
+/// the declared parameter, the include form, and the extra def impl.
+fn batch_handler_shape(
+    headers_param: Option<(&Pat, &Type, &Type)>,
+    input_ty: &Type,
+    state_in_ctx: &TokenStream2,
+    name: &Ident,
+) -> (
+    TokenStream2,
+    TokenStream2,
+    TokenStream2,
+    TokenStream2,
+    TokenStream2,
+) {
+    match headers_param {
+        Some((headers_pat, headers_ty, element_ty)) => (
+            quote!(::ruststream::runtime::SliceHandlerWithHeaders<
+                #input_ty,
+                #element_ty,
+                #state_in_ctx,
+            >),
+            quote!(__rs_headers: ::std::vec::Vec<#element_ty>,),
+            quote!(let #headers_pat: #headers_ty = ::ruststream::runtime::FromHeaders(__rs_headers);),
+            quote!(::ruststream::runtime::forms::BatchWithHeaders),
+            quote! {
+                impl ::ruststream::runtime::BatchWithHeadersDef for #name {
+                    type Headers = #element_ty;
+                }
+            },
+        ),
+        None => (
+            quote!(::ruststream::runtime::SliceHandler<#input_ty, #state_in_ctx>),
+            quote!(),
+            quote!(),
+            quote!(::ruststream::runtime::forms::Batch),
+            quote!(),
+        ),
+    }
+}
+
 fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
     let HandlerParts {
         vis,
@@ -1234,8 +1320,19 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
             quote!(__RsState),
         ),
     };
-    // The batch context is always `()`; extractors resolve against it.
+    // The batch context is always `()`; extractors resolve against it. A `FromHeaders<Vec<H>>`
+    // parameter is the exception: the decode adapter parses one contract per element next to the
+    // payload, so it is bound from the handler's own argument instead of through `FromContext`.
     let unit_ctx = quote!(());
+    let headers_param = batch_headers_param(extractors);
+    let rest: Vec<(&Pat, &Type)> = extractors
+        .iter()
+        .filter(|(pat, _)| {
+            headers_param.is_none_or(|(headers_pat, _, _)| !std::ptr::eq(*pat, headers_pat))
+        })
+        .copied()
+        .collect();
+    let extractors = &rest[..];
     let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
     let prelude = extractor_prelude(
         extractors,
@@ -1250,29 +1347,35 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ),
     );
 
+    let (handler_trait, headers_arg, headers_binding, form, headers_def) =
+        batch_handler_shape(headers_param, input_ty, &state_in_ctx, name);
+
     quote! {
             #[derive(Clone, Copy)]
             #[allow(non_camel_case_types)]
             #vis struct #name;
 
-            impl #impl_generics
-                ::ruststream::runtime::SliceHandler<#input_ty, #state_in_ctx> for #name
+            impl #impl_generics #handler_trait for #name
                 #where_clause
             {
                 async fn handle_slice(
                     &self,
                     #pat: &[#input_ty],
+                    #headers_arg
                     #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
                 ) -> ::ruststream::runtime::BatchResult {
                     #prelude
+                    #headers_binding
                     let outcome: #outcome_ty = (async move #block).await;
                     ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)
                 }
             }
 
             impl ::ruststream::runtime::IncludeDef for #name {
-                type Form = ::ruststream::runtime::forms::Batch;
+                type Form = #form;
             }
+
+            #headers_def
 
             impl ::ruststream::runtime::BatchDef for #name {
                 type Input = ::ruststream::runtime::Decoded<#input_ty>;

@@ -41,7 +41,10 @@ pub use app::{
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
-pub use batch::{BatchDef, BatchResult, IntoBatchResult, SliceHandler, TypedBatch};
+pub use batch::{
+    BatchDef, BatchResult, BatchWithHeadersDef, IntoBatchResult, SliceHandler,
+    SliceHandlerWithHeaders, TypedBatch, TypedBatchWithHeaders,
+};
 pub use batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
 pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
 pub use context::{After, Context};

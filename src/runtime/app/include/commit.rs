@@ -21,7 +21,10 @@ use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
 
 use super::ScopeCodec;
-use super::{DefaultBareReply, DefaultReply, PublishMount};
+use super::{DefaultBareReply, PublishMount};
+// The typed default reply exists only with a default codec to encode it, like the impl below.
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use super::DefaultReply;
 use crate::runtime::app::scope::BrokerScope;
 
 // ---------------------------------------------------------------------------------------------

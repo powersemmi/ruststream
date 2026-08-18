@@ -6,14 +6,14 @@
 // imports are gated with the default codec they require.
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::SliceHandler;
-use crate::runtime::batch::BatchDef;
+use crate::runtime::batch::{BatchDef, BatchWithHeadersDef};
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler};
 use crate::runtime::input::{DecodeWith, InputKind, RawBytes};
 use crate::runtime::middleware::Layer;
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
+use crate::runtime::{SliceHandler, SliceHandlerWithHeaders};
 
 use super::{IncludeMount, ScopeCodec, forms};
 use crate::runtime::app::scope::BrokerScope;
@@ -163,5 +163,33 @@ where
         let source = def.source();
         let codec = scope.codec.scope_codec();
         scope.mount_batch(source, def, codec);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Batch with a per-element header contract: eager, like the plain batch form.
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::BatchWithHeaders
+where
+    B: Broker + 'static,
+    C: ScopeCodec,
+    Def: BatchWithHeadersDef,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
+    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Handler: SliceHandlerWithHeaders<
+            <Def::Input as InputKind>::Owned,
+            <Def as BatchWithHeadersDef>::Headers,
+            State,
+        > + 'static,
+    State: Send + Sync + 'static,
+{
+    type Out = ();
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let source = def.source();
+        let codec = scope.codec.scope_codec();
+        scope.mount_batch_with_headers(source, def, codec);
     }
 }

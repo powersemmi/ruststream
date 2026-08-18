@@ -66,6 +66,10 @@ pub mod forms {
     /// A batch subscriber (`#[subscriber(batch("in"))]`).
     #[derive(Debug, Clone, Copy)]
     pub struct Batch;
+    /// A batch subscriber reading a typed header contract per element
+    /// (`#[subscriber(batch("in"))]` with a `FromHeaders<Vec<H>>` parameter).
+    #[derive(Debug, Clone, Copy)]
+    pub struct BatchWithHeaders;
     /// A batch reply-publishing subscriber (`#[subscriber(batch("in"), publish("out"))]`).
     #[derive(Debug, Clone, Copy)]
     pub struct BatchPublishing;

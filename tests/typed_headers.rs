@@ -14,7 +14,8 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Message, OutMessages, OutSlot, OutgoingMessage, Publisher, TransactionalPublisher, subscriber,
+    Buffered, Message, Name, OutMessages, OutSlot, OutgoingMessage, Publisher,
+    TransactionalPublisher, nonzero, subscriber,
 };
 use serde::{Deserialize, Serialize};
 
@@ -388,4 +389,88 @@ mod generic_message_derives {
 
     #[derive(Message)]
     struct Fixed<const N: usize>([u8; N]);
+}
+
+/// Records the shape of each batch invocation: the payload slice next to the header vector, so
+/// the test can assert they line up element for element.
+/// One batch invocation: the payload sequence numbers next to the header contracts behind them.
+type BatchShape = (Vec<u64>, Vec<(u64, u32)>);
+
+static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec::new());
+
+// A size-capped buffer, so a batch closes on the cap rather than on delivery timing and the
+// per-element alignment is actually exercised across more than one element. The wait bound stays
+// at its 10 ms default: a longer one would only make the suite wait for the tail batch.
+#[subscriber(batch(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2))))]
+async fn bulk(chunks: &[Chunk], FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>) -> HandlerResult {
+    let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
+    seen.push((
+        chunks.iter().map(|chunk| chunk.seq).collect(),
+        meta.iter().map(|m| (m.task_id, m.chunk_no)).collect(),
+    ));
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_handler_reads_one_header_contract_per_element() {
+    let app = RustStream::new(AppInfo::new("typed-headers-batch", "1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include_batch(bulk);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("start");
+    let broker = tb.broker::<MemoryBroker>();
+
+    // The second delivery carries no contract at all, so it is the one the decode policy drops
+    // from inside an otherwise good batch.
+    for seq in [1u64, 2, 3, 4] {
+        if seq == 2 {
+            broker
+                .publish("chunks.bulk", &Chunk { seq })
+                .await
+                .expect("publish");
+            continue;
+        }
+        let meta = ChunkMeta {
+            task_id: 7,
+            chunk_no: u32::try_from(seq).expect("small"),
+            trace: None,
+        };
+        broker
+            .publish_with_headers("chunks.bulk", &Chunk { seq }, &meta)
+            .await
+            .expect("publish");
+    }
+    tb.settle().await.expect("settle");
+
+    let seen = BATCH_SEEN
+        .lock()
+        .expect("the test holds no poisoned lock")
+        .clone();
+    for (payloads, headers) in &seen {
+        assert_eq!(
+            payloads.len(),
+            headers.len(),
+            "the header vector must have one entry per delivered element",
+        );
+        for (seq, (_, chunk_no)) in payloads.iter().zip(headers) {
+            assert_eq!(
+                u64::from(*chunk_no),
+                *seq,
+                "header {chunk_no} landed against payload {seq}",
+            );
+        }
+    }
+    let delivered: Vec<u64> = seen
+        .iter()
+        .flat_map(|(payloads, _)| payloads)
+        .copied()
+        .collect();
+    assert_eq!(
+        delivered,
+        vec![1, 3, 4],
+        "the element failing the header contract must be dropped, the rest handled in order",
+    );
+    tb.shutdown().await.expect("shutdown");
 }

@@ -30,8 +30,25 @@ header, unparsable value) never reaches the body - the delivery settles by the s
 --8<-- "examples/typed_headers.rs:handler"
 
 `FromHeaders` composes with `raw` (bytes body, typed headers) and with every other extractor.
-It does not apply to `batch(..)` forms - a batch spans many deliveries, each with its own
-header map - and the macro rejects the combination.
+
+On a `batch(..)` form the headers stay per-delivery, so the parameter takes one contract per
+element: `FromHeaders<Vec<T>>`. `meta[i]` belongs to `chunks[i]`, and the two line up by
+construction - an element whose payload or headers fail to materialize is settled by the same
+`on_failure(decode = ..)` policy and never reaches the handler, exactly as on the single-message
+path. The bare `FromHeaders<T>` is rejected there, naming the vector form.
+
+```rust
+#[subscriber(batch("chunks"))]
+async fn bulk(chunks: &[Chunk], FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>) -> HandlerResult {
+    for (chunk, meta) in chunks.iter().zip(&meta) {
+        let _ = (chunk, meta.task_id);
+    }
+    HandlerResult::Ack
+}
+```
+
+Mount that handler with `b.include_batch(bulk)` on a broker scope; the `Router` batch path
+carries plain batch handlers only.
 
 When one channel carries messages whose headers differ per event kind, keep the standard
 extractor out of it and write your own [`FromContext`] extractor: read the discriminator

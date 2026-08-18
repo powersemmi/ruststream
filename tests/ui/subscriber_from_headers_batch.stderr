@@ -1,4 +1,4 @@
-error: FromHeaders is per-delivery and does not apply to batch(..) forms: a batch spans many deliveries, each with its own headers
+error: headers are per-delivery and a batch spans many deliveries: take the per-element contracts as a vector, FromHeaders<Vec<_>>
   --> tests/ui/subscriber_from_headers_batch.rs:17:54
    |
 17 | async fn bill(_orders: &[Order], FromHeaders(_meta): FromHeaders<Meta>) -> HandlerResult {
