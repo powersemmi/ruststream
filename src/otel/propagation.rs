@@ -299,4 +299,33 @@ mod tests {
         headers.insert(TRACEPARENT, HEADER);
         assert_eq!(HeaderExtractor(&headers).keys(), vec![TRACEPARENT]);
     }
+
+    #[test]
+    fn the_publish_transform_carries_the_incoming_trace_onto_the_reply() {
+        use crate::runtime::{Outgoing, PublishContext};
+
+        let mut incoming = Headers::new();
+        incoming.insert(TRACEPARENT, HEADER);
+        incoming.insert(TRACESTATE, "vendor=opaque");
+        let cx = PublishContext::new("orders", &incoming, &());
+
+        let mut out = Outgoing::new("replies", b"body".as_slice());
+        PublishTransform::apply(&TracePropagation, &mut out, &cx);
+
+        // Without both headers the downstream span would start a new trace instead of continuing.
+        assert_eq!(out.headers().get_str(TRACEPARENT), Some(HEADER));
+        assert_eq!(out.headers().get_str(TRACESTATE), Some("vendor=opaque"));
+    }
+
+    #[test]
+    fn a_delivery_without_a_trace_leaves_the_reply_untouched() {
+        use crate::runtime::{Outgoing, PublishContext};
+
+        let incoming = Headers::new();
+        let cx = PublishContext::new("orders", &incoming, &());
+
+        let mut out = Outgoing::new("replies", b"body".as_slice());
+        PublishTransform::apply(&TracePropagation, &mut out, &cx);
+        assert!(!out.headers().contains(TRACEPARENT));
+    }
 }

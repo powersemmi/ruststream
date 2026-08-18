@@ -104,7 +104,14 @@ where
     A: App,
     F: FnOnce() -> A,
 {
-    match execute(build) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    report(execute(&args, build))
+}
+
+/// Maps a dispatch outcome onto the process exit code, printing the error to stderr. Split from
+/// [`run_main`] so the mapping is reachable without the process arguments.
+fn report(outcome: Result<(), CliError>) -> ExitCode {
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("ruststream: {err}");
@@ -113,13 +120,12 @@ where
     }
 }
 
-fn execute<A, F>(build: F) -> Result<(), CliError>
+fn execute<A, F>(args: &[String], build: F) -> Result<(), CliError>
 where
     A: App,
     F: FnOnce() -> A,
 {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match parse(&args)? {
+    match parse(args)? {
         Command::Run => {
             // Install the colored console logger so a freshly scaffolded service prints logs out
             // of the box. Ignore the error: it only fails if the app already installed its own
@@ -190,10 +196,24 @@ fn generate_spec<A: App>(_app: &A, _out: Option<&str>, _yaml: bool) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, parse};
+    #[cfg(feature = "memory")]
+    use std::io;
+    use std::process::ExitCode;
+
+    #[cfg(feature = "memory")]
+    use crate::memory::MemoryBroker;
+    #[cfg(feature = "memory")]
+    use crate::runtime::{App, AppInfo, RustStream, RustStreamError};
+
+    use super::{CliError, Command, execute, parse, report};
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// `ExitCode` is opaque (no `PartialEq`), so compare the rendered form.
+    fn code_of(outcome: Result<(), CliError>) -> String {
+        format!("{:?}", report(outcome))
     }
 
     #[test]
@@ -227,5 +247,112 @@ mod tests {
         assert!(parse(&args(&["frobnicate"])).is_err());
         assert!(parse(&args(&["asyncapi", "lint"])).is_err());
         assert!(parse(&args(&["asyncapi", "gen", "--nope"])).is_err());
+    }
+
+    #[test]
+    fn the_exit_code_follows_the_dispatch_outcome() {
+        assert_eq!(code_of(Ok(())), format!("{:?}", ExitCode::SUCCESS));
+        assert_eq!(
+            code_of(Err(CliError::UnknownCommand("frobnicate".to_owned()))),
+            format!("{:?}", ExitCode::FAILURE),
+        );
+    }
+
+    /// The service the dispatch tests generate a spec for: one broker, no handlers.
+    #[cfg(feature = "memory")]
+    fn demo_app() -> impl App {
+        RustStream::new(AppInfo::new("cli-demo", "0.1.0")).register_broker(MemoryBroker::new())
+    }
+
+    #[cfg(feature = "memory")]
+    #[test]
+    fn an_unknown_command_surfaces_before_the_service_runs() {
+        let outcome = execute(&args(&["frobnicate"]), demo_app);
+        let err = outcome.expect_err("an unrecognized command must not run the service");
+        assert!(matches!(err, CliError::UnknownCommand(cmd) if cmd == "frobnicate"));
+        assert_eq!(
+            code_of(execute(&args(&["asyncapi", "lint"]), demo_app)),
+            format!("{:?}", ExitCode::FAILURE),
+        );
+    }
+
+    /// The `run` arm builds its own runtime and drives the service to completion, so a plain
+    /// `#[test]` (no ambient runtime) is required. A failing startup is what makes the arm
+    /// observable without a termination signal.
+    #[cfg(feature = "memory")]
+    #[test]
+    fn run_surfaces_a_startup_failure() {
+        let build = || {
+            RustStream::new(AppInfo::new("cli-broken", "0.1.0"))
+                .on_startup(async move |()| {
+                    Err::<(), _>(io::Error::other("state producer refused"))
+                })
+                .with_broker(MemoryBroker::new(), |_b| {})
+        };
+        let err = execute(&args(&["run"]), build).expect_err("the failing state producer");
+        assert!(
+            matches!(err, CliError::Run(RustStreamError::Startup(_))),
+            "got: {err:?}",
+        );
+    }
+
+    #[cfg(all(feature = "memory", feature = "asyncapi"))]
+    #[test]
+    fn asyncapi_gen_writes_json_and_yaml_to_a_file() {
+        let dir = std::env::temp_dir();
+        let json_path = dir.join(format!("ruststream-cli-{}-spec.json", std::process::id()));
+        let json_out = json_path.to_str().expect("utf-8 temp path").to_owned();
+        execute(
+            &args(&["asyncapi", "gen", "-o", json_out.as_str()]),
+            demo_app,
+        )
+        .expect("the spec must be written");
+        let text = std::fs::read_to_string(&json_path).expect("the spec file exists");
+        let spec: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(spec["info"]["title"], "cli-demo");
+        std::fs::remove_file(&json_path).expect("cleanup");
+
+        let yaml_path = dir.join(format!("ruststream-cli-{}-spec.yaml", std::process::id()));
+        let yaml_out = yaml_path.to_str().expect("utf-8 temp path").to_owned();
+        execute(
+            &args(&["asyncapi", "gen", "-o", yaml_out.as_str(), "--yaml"]),
+            demo_app,
+        )
+        .expect("the spec must be written");
+        let text = std::fs::read_to_string(&yaml_path).expect("the spec file exists");
+        let spec: serde_norway::Value = serde_norway::from_str(&text).expect("valid YAML");
+        assert_eq!(spec["info"]["title"].as_str(), Some("cli-demo"));
+        std::fs::remove_file(&yaml_path).expect("cleanup");
+    }
+
+    #[cfg(all(feature = "memory", feature = "asyncapi"))]
+    #[test]
+    fn asyncapi_gen_defaults_to_stdout() {
+        // Nothing to read back (the document goes to stdout), so the assertion is that the
+        // stdout arm reports success rather than falling through to a write error.
+        execute(&args(&["asyncapi", "gen"]), demo_app).expect("the spec must reach stdout");
+    }
+
+    #[cfg(all(feature = "memory", feature = "asyncapi"))]
+    #[test]
+    fn asyncapi_gen_reports_the_path_it_could_not_write() {
+        let missing = std::env::temp_dir()
+            .join("ruststream-cli-absent-directory")
+            .join("spec.json");
+        let out = missing.to_str().expect("utf-8 temp path").to_owned();
+        let err = execute(&args(&["asyncapi", "gen", "-o", out.as_str()]), demo_app)
+            .expect_err("a spec cannot be written into a missing directory");
+        let CliError::WriteSpec { path, .. } = err else {
+            panic!("expected a write error, got: {err:?}");
+        };
+        assert_eq!(path, out, "the error names the output path");
+    }
+
+    #[cfg(all(feature = "memory", not(feature = "asyncapi")))]
+    #[test]
+    fn asyncapi_gen_without_the_feature_is_rejected() {
+        let err = execute(&args(&["asyncapi", "gen"]), demo_app)
+            .expect_err("the spec needs the asyncapi feature");
+        assert!(matches!(err, CliError::AsyncApiDisabled), "got: {err:?}");
     }
 }

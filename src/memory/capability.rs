@@ -822,6 +822,59 @@ mod tests {
         assert_eq!(publisher.commit().await, Err(MemoryError::ShutDown));
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_request_without_a_responder_times_out_naming_the_subject() {
+        let broker = MemoryBroker::new();
+        // Subscribed but never answering: the request must expire instead of hanging.
+        let _service = broker.subscribe("svc.silent");
+        let requester = broker.requester();
+
+        let outcome = requester
+            .request(
+                OutgoingMessage::new("svc.silent", b"ping".as_slice()),
+                Duration::from_secs(5),
+            )
+            .await;
+
+        match outcome {
+            Err(RequestError::Timeout { subject, timeout }) => {
+                assert_eq!(subject, "svc.silent");
+                assert_eq!(timeout, Duration::from_secs(5));
+            }
+            other => panic!("expected a timeout naming the subject, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_owned_transaction_dropped_unsettled_discards_its_buffer() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("orders");
+        let publisher = broker.publisher();
+
+        let mut transaction = publisher.transaction().await.unwrap();
+        transaction
+            .publish(OutgoingMessage::new("orders", b"buffered".as_slice()))
+            .await
+            .unwrap();
+        assert!(format!("{transaction:?}").contains("buffered: 1"));
+
+        // Dropping without commit or abort is an implicit abort: nothing becomes visible.
+        drop(transaction);
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert!(futures::poll!(stream.next()).is_pending());
+    }
+
+    #[test]
+    fn the_capability_debug_forms_name_their_subject_without_leaking_state() {
+        let broker = MemoryBroker::new();
+        assert!(format!("{:?}", broker.requester()).contains("MemoryRequester"));
+
+        let seeker = broker.subscribe("seek.debug").seeker();
+        let rendered = format!("{seeker:?}");
+        // A seeker is only meaningful against its name, so Debug has to carry it.
+        assert!(rendered.contains("seek.debug"), "{rendered}");
+    }
+
     #[tokio::test]
     async fn requester_errors_after_shutdown() {
         let broker = MemoryBroker::new();

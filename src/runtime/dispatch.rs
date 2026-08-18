@@ -819,6 +819,8 @@ mod tests {
 
     use super::*;
     use crate::memory::MemoryBroker;
+    use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
+    use crate::runtime::handler::IntoSettle;
     use crate::{AckError, Headers, IncomingMessage, OutgoingMessage, Publisher};
 
     /// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
@@ -851,6 +853,123 @@ mod tests {
         }
     }
 
+    /// A delivery whose settlement always fails, so the dispatcher's ack-failure path runs.
+    struct UnsettleableMessage;
+
+    impl IncomingMessage for UnsettleableMessage {
+        fn payload(&self) -> &[u8] {
+            b"body"
+        }
+
+        fn headers(&self) -> &Headers {
+            static EMPTY: std::sync::LazyLock<Headers> = std::sync::LazyLock::new(Headers::new);
+            &EMPTY
+        }
+
+        async fn ack(self) -> Result<(), AckError> {
+            Err(AckError::Timeout)
+        }
+
+        async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+            Err(AckError::Unsupported)
+        }
+    }
+
+    /// A publisher that always rejects, standing in for a broker that died between the nack and
+    /// the deferred republish.
+    struct RejectingPublisher;
+
+    impl Publisher for RejectingPublisher {
+        type Error = std::io::Error;
+
+        async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+            Err(std::io::Error::other("connection closed"))
+        }
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("subscriber stream failed")]
+    struct StreamFault;
+
+    /// Replays a fixed script of stream items, so a test can put a delivery behind a stream error.
+    struct ScriptedSubscriber {
+        items: Vec<Result<PlainMessage, StreamFault>>,
+    }
+
+    impl Subscriber for ScriptedSubscriber {
+        type Message = PlainMessage;
+        type Error = StreamFault;
+
+        fn stream(
+            &mut self,
+        ) -> impl futures::Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+            futures::stream::iter(std::mem::take(&mut self.items))
+        }
+    }
+
+    /// Reports every delivery it handled, so the test can await progress instead of sleeping.
+    struct ReportingHandler {
+        seen: mpsc::UnboundedSender<Bytes>,
+    }
+
+    impl Handler<PlainMessage, (), ()> for ReportingHandler {
+        fn handle(
+            &self,
+            msg: &PlainMessage,
+            _ctx: &mut Context<'_, (), ()>,
+        ) -> impl Future<Output = crate::runtime::Settle> + Send {
+            let sent = self.seen.send(msg.payload.clone());
+            async move {
+                sent.expect("the test holds the receiver");
+                HandlerResult::Ack.into_settle()
+            }
+        }
+    }
+
+    fn scripted(payloads: &[&'static str]) -> ScriptedSubscriber {
+        // The fault comes first so the loop has to survive it to reach any delivery.
+        let mut items: Vec<Result<PlainMessage, StreamFault>> = vec![Err(StreamFault)];
+        items.extend(payloads.iter().map(|payload| {
+            Ok(PlainMessage {
+                payload: Bytes::from_static(payload.as_bytes()),
+                headers: Headers::new(),
+                settled: Arc::new(AtomicU8::new(0)),
+            })
+        }));
+        ScriptedSubscriber { items }
+    }
+
+    fn dispatch_failure() -> DispatchFailure {
+        DispatchFailure::new(
+            FailurePolicies::default(),
+            ErrorShutdown::new(CancellationToken::new()),
+        )
+    }
+
+    /// Drives one scripted subscriber through `workers` and returns the payloads that reached the
+    /// handler, in arrival order.
+    async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<Bytes> {
+        let (seen, mut arrived) = mpsc::unbounded_channel();
+        let joined = spawn_dispatch_workers(
+            scripted(payloads),
+            Arc::new(ReportingHandler { seen }),
+            CancellationToken::new(),
+            Arc::from("orders"),
+            Arc::new(()),
+            Arc::new(Delivery::empty()),
+            dispatch_failure(),
+            workers,
+        );
+
+        let mut handled = Vec::with_capacity(payloads.len());
+        for _ in payloads {
+            handled.push(arrived.recv().await.expect("delivery should be handled"));
+        }
+        // The script ends, so the loop terminates on its own rather than on shutdown.
+        joined.await.expect("dispatch task should not panic");
+        handled
+    }
+
     fn plain(name_headers: &[(&str, &str)], settled: &Arc<AtomicU8>) -> PlainMessage {
         let mut headers = Headers::new();
         for (k, v) in name_headers {
@@ -861,6 +980,106 @@ mod tests {
             headers,
             settled: Arc::clone(settled),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stream_error_does_not_stop_the_sequential_loop() {
+        let handled = dispatched_under(Workers::sequential(), &["first", "second"]).await;
+        assert_eq!(
+            handled,
+            vec![Bytes::from_static(b"first"), Bytes::from_static(b"second")]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stream_error_does_not_stop_the_worker_pool() {
+        let handled =
+            dispatched_under(Workers::pool(NonZeroUsize::new(2).unwrap()), &["a", "b"]).await;
+        // The pool loses global order by design, so assert the set, not the sequence.
+        let mut handled = handled;
+        handled.sort();
+        assert_eq!(
+            handled,
+            vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stream_error_does_not_stop_the_keyed_lanes() {
+        // Keyless deliveries rotate over the lanes, so both lanes get exercised.
+        let handled =
+            dispatched_under(Workers::keyed(NonZeroUsize::new(2).unwrap()), &["a", "b"]).await;
+        let mut handled = handled;
+        handled.sort();
+        assert_eq!(
+            handled,
+            vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
+        // Settlement is best-effort: a broker that rejects the ack must not take the loop down.
+        settle_outcome(
+            UnsettleableMessage,
+            HandlerResult::Ack,
+            "orders",
+            &Delivery::empty(),
+        )
+        .await;
+        settle_outcome(
+            UnsettleableMessage,
+            HandlerResult::drop(),
+            "orders",
+            &Delivery::empty(),
+        )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
+        let delivery = Delivery::detached(Some(Arc::new(RejectingPublisher)), TaskTracker::new());
+        let settled = Arc::new(AtomicU8::new(0));
+        settle_nack_after(
+            plain(&[], &settled),
+            "orders",
+            Duration::from_secs(1),
+            &delivery,
+        )
+        .await
+        .unwrap();
+
+        // The original is already dropped, so the failed republish loses the message; the point
+        // is that the deferred task reports it instead of panicking the runtime.
+        assert_eq!(settled.load(Ordering::SeqCst), 1);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+    }
+
+    #[test]
+    fn the_default_worker_policy_is_sequential() {
+        assert_eq!(Workers::default(), Workers::sequential());
+        assert!(Workers::default().is_sequential());
+        // One worker of either shape is the sequential loop, not a pool of one.
+        assert!(Workers::pool(NonZeroUsize::new(1).unwrap()).is_sequential());
+        assert!(!Workers::pool(NonZeroUsize::new(2).unwrap()).is_sequential());
+    }
+
+    #[test]
+    fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
+        let empty = format!("{:?}", Delivery::empty());
+        assert!(empty.contains("retry_publisher: false"), "{empty}");
+        assert!(empty.contains("pending_continuations: 0"), "{empty}");
+
+        let wired = Delivery::detached(Some(Arc::new(RejectingPublisher)), TaskTracker::new());
+        assert!(format!("{wired:?}").contains("retry_publisher: true"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panicking_worker_is_reported_when_joined() {
+        let joined = tokio::spawn(async { panic!("worker down") }).await;
+        assert!(joined.is_err());
+        log_worker_exit(joined.map(|()| ()));
     }
 
     #[tokio::test(start_paused = true)]

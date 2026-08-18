@@ -182,13 +182,13 @@ jobs:
       - name: Run tests under coverage
         run: cargo llvm-cov --no-report --workspace --all-features --no-fail-fast
 
-      # Line-coverage gate, sitting at the 90% DoD target. Raise it here and in the justfile
+      # Line-coverage gate, sitting at the 95% DoD target. Raise it here and in the justfile
       # together if coverage climbs further. The summary is written before the gate's exit code
       # propagates, so it shows up even on a failure.
       - name: Coverage summary and gate
         run: |
           set +e
-          cargo llvm-cov report --summary-only --fail-under-lines 90 | tee coverage.txt
+          cargo llvm-cov report --summary-only --fail-under-lines 95 | tee coverage.txt
           rc=${PIPESTATUS[0]}
           {
             echo '## Coverage'

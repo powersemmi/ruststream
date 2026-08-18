@@ -448,3 +448,62 @@ impl<T: DeserializeOwned> PublishedAssertions<T> {
             .collect()
     }
 }
+
+#[cfg(all(test, feature = "json"))]
+mod tests {
+    use super::*;
+    use crate::codec::JsonCodec;
+
+    #[derive(Debug, PartialEq, serde::Deserialize)]
+    struct Order {
+        id: u64,
+    }
+
+    fn undecodable() -> PublishedAssertions<Order> {
+        PublishedAssertions::new(
+            "orders".to_owned(),
+            vec![RawMessage::new("orders", b"not json".as_slice())],
+        )
+    }
+
+    #[test]
+    fn published_assertions_read_back_what_was_logged() {
+        let logged = PublishedAssertions::<Order>::new(
+            "orders".to_owned(),
+            vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+        );
+        assert_eq!(logged.decoded_with(&JsonCodec), vec![Order { id: 7 }]);
+        logged.with_codec(&JsonCodec, &Order { id: 7 });
+    }
+
+    #[test]
+    fn an_empty_channel_names_itself_when_asserted_on() {
+        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new());
+        let failure = std::panic::catch_unwind(move || empty.decoded_with(&JsonCodec));
+        assert!(
+            failure.is_ok(),
+            "no messages is an empty result, not a panic"
+        );
+    }
+
+    // A decode failure inside an assertion is a test-authoring mistake, so the panic has to name
+    // the channel and the type it could not produce.
+    #[test]
+    #[should_panic(expected = "channel \"orders\" published a payload that did not decode")]
+    fn a_published_payload_that_does_not_decode_names_the_channel_and_type() {
+        undecodable().with_codec(&JsonCodec, &Order { id: 7 });
+    }
+
+    #[test]
+    #[should_panic(expected = "did not decode as")]
+    fn decoding_every_published_payload_reports_the_first_failure() {
+        let _ = undecodable().decoded_with(&JsonCodec);
+    }
+
+    #[test]
+    #[should_panic(expected = "nothing was published to \"orders\"")]
+    fn asserting_on_a_channel_that_published_nothing_says_so() {
+        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new());
+        empty.with_codec(&JsonCodec, &Order { id: 7 });
+    }
+}

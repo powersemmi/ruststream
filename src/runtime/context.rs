@@ -519,6 +519,26 @@ mod tests {
     }
 
     #[test]
+    fn the_debug_forms_report_the_subscription_and_pending_work() {
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = Headers::new();
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+
+        let rendered = format!("{ctx:?}");
+        assert!(rendered.contains("orders"), "{rendered}");
+        assert!(rendered.contains("after_hooks: 0"), "{rendered}");
+
+        let after = ctx.after(HandlerResult::Ack);
+        // The gate is what decides whether the continuation runs, so Debug must name it.
+        assert!(format!("{after:?}").contains("Ack"));
+
+        ctx.after_settle(async {});
+        assert!(format!("{ctx:?}").contains("after_hooks: 1"));
+        run_all(ctx.take_hooks_for(HandlerResult::Ack));
+    }
+
+    #[test]
     fn take_hooks_runs_only_the_matching_gate() {
         let state = ();
         let delivery = Delivery::empty();

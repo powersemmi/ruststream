@@ -294,3 +294,92 @@ where
         async move { result }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+
+    use super::*;
+    use crate::Headers;
+    use crate::runtime::dispatch::Delivery;
+
+    #[derive(Debug, Deserialize)]
+    struct Meta {
+        task_id: u64,
+    }
+
+    #[derive(Default)]
+    struct Offset;
+
+    impl ContextField for Offset {
+        type Context = u64;
+        type Value = u64;
+
+        fn read(self, src: &u64) -> u64 {
+            *src
+        }
+    }
+
+    fn headers_with(task_id: &'static str) -> Headers {
+        let mut headers = Headers::new();
+        headers.insert("task_id", task_id);
+        headers
+    }
+
+    #[test]
+    fn a_satisfied_header_contract_binds_the_typed_value() {
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = headers_with("7");
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+
+        let FromHeaders(meta) =
+            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::Drop).expect("contract holds");
+        assert_eq!(meta.task_id, 7);
+    }
+
+    #[test]
+    fn a_violated_contract_settles_by_the_configured_policy() {
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = headers_with("not a number");
+
+        // Drop is the default: the delivery is settled away rather than requeued forever.
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+        assert_eq!(
+            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::Drop).map(|_| ()),
+            Err(HandlerResult::drop()),
+        );
+
+        // Retry keeps the delivery in play, in case the contract violation is transient wiring.
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+        assert_eq!(
+            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::Retry).map(|_| ()),
+            Err(HandlerResult::retry()),
+        );
+
+        // Fail-fast still settles the delivery; the service teardown is signalled separately.
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+        assert_eq!(
+            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::FailFast).map(|_| ()),
+            Err(HandlerResult::drop()),
+        );
+    }
+
+    #[tokio::test]
+    async fn the_plain_extractor_path_defaults_to_dropping_the_delivery() {
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = headers_with("not a number");
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+
+        let outcome = <FromHeaders<Meta> as FromContext<(), ()>>::from_context(&mut ctx).await;
+        assert_eq!(outcome.map(|_| ()), Err(HandlerResult::drop()));
+    }
+
+    #[test]
+    fn a_context_field_parameter_shows_its_value_when_debugged() {
+        // The extractor is what a handler sees, so its Debug has to reach the value itself.
+        assert_eq!(format!("{:?}", Ctx::<Offset>(42)), "Ctx(42)");
+    }
+}

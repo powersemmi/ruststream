@@ -308,3 +308,221 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
         Err(self.unsupported("a nested struct"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::fmt;
+
+    use bytes::Bytes;
+    use serde::de::{DeserializeOwned, Deserializer, IgnoredAny};
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+
+    #[derive(Debug, Deserialize)]
+    struct One<T> {
+        field: T,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Unit;
+
+    #[derive(Debug, Deserialize)]
+    struct Newtype(u8);
+
+    // Only the shape matters: a tuple struct is rejected before any field is read.
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct Pair(u8, u8);
+
+    #[derive(Debug, Deserialize)]
+    struct Nested {
+        inner: u8,
+    }
+
+    #[derive(Debug, PartialEq, Deserialize, Serialize)]
+    enum Encoding {
+        Binary,
+    }
+
+    // Asks for whatever the value carries, which is the self-describing path no derive takes.
+    #[derive(Debug, PartialEq)]
+    enum AnyValue {
+        Text(String),
+        Bytes(Vec<u8>),
+    }
+
+    impl<'de> Deserialize<'de> for AnyValue {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct AnyVisitor;
+
+            impl Visitor<'_> for AnyVisitor {
+                type Value = AnyValue;
+
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("any header value")
+                }
+
+                fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                    Ok(AnyValue::Text(v.to_owned()))
+                }
+
+                fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                    Ok(AnyValue::Bytes(v.to_vec()))
+                }
+            }
+
+            deserializer.deserialize_any(AnyVisitor)
+        }
+    }
+
+    // Byte fields travel through `deserialize_bytes`, the shape serde_bytes produces.
+    #[derive(Debug, PartialEq)]
+    struct Blob(Vec<u8>);
+
+    impl<'de> Deserialize<'de> for Blob {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct BlobVisitor;
+
+            impl Visitor<'_> for BlobVisitor {
+                type Value = Blob;
+
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("raw bytes")
+                }
+
+                fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+                    Ok(Blob(v.to_vec()))
+                }
+            }
+
+            deserializer.deserialize_byte_buf(BlobVisitor)
+        }
+    }
+
+    fn headers_with(value: impl Into<Bytes>) -> Headers {
+        let mut headers = Headers::new();
+        headers.insert("field", value);
+        headers
+    }
+
+    fn field<T: DeserializeOwned>(value: &'static str) -> Result<T, DeserializeHeadersError> {
+        headers_with(value)
+            .to_typed::<One<T>>()
+            .map(|one| one.field)
+    }
+
+    fn field_err<T: DeserializeOwned + fmt::Debug>(value: &'static str) -> DeserializeHeadersError {
+        field::<T>(value).expect_err("value should not satisfy the field's type")
+    }
+
+    #[track_caller]
+    fn assert_unsupported(error: &DeserializeHeadersError, expected_kind: &str) {
+        match error {
+            DeserializeHeadersError::UnsupportedShape { header, kind } => {
+                assert_eq!(header, "field");
+                assert_eq!(*kind, expected_kind);
+            }
+            other => panic!("expected an unsupported-shape error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_scalar_field_kind_parses_from_its_string_form() {
+        assert!(field::<bool>("true").unwrap());
+        assert_eq!(field::<i8>("-8").unwrap(), -8);
+        assert_eq!(field::<i16>("-16").unwrap(), -16);
+        assert_eq!(field::<i32>("-32").unwrap(), -32);
+        assert_eq!(field::<i64>("-64").unwrap(), -64);
+        assert_eq!(field::<i128>("-128").unwrap(), -128);
+        assert_eq!(field::<u8>("8").unwrap(), 8);
+        assert_eq!(field::<u16>("16").unwrap(), 16);
+        assert_eq!(field::<u32>("32").unwrap(), 32);
+        assert_eq!(field::<u64>("64").unwrap(), 64);
+        assert_eq!(field::<u128>("128").unwrap(), 128);
+        assert!((field::<f32>("1.5").unwrap() - 1.5).abs() < f32::EPSILON);
+        assert!((field::<f64>("2.5").unwrap() - 2.5).abs() < f64::EPSILON);
+        assert_eq!(field::<char>("x").unwrap(), 'x');
+        assert_eq!(field::<String>("text").unwrap(), "text");
+        assert_eq!(field::<Newtype>("7").unwrap().0, 7);
+        assert_eq!(field::<Encoding>("Binary").unwrap(), Encoding::Binary);
+        assert_eq!(field::<Option<u8>>("9").unwrap(), Some(9));
+        assert_eq!(field::<Blob>("raw").unwrap(), Blob(b"raw".to_vec()));
+    }
+
+    #[test]
+    fn a_value_that_does_not_parse_names_the_header_and_the_expected_type() {
+        match field_err::<u8>("not a number") {
+            DeserializeHeadersError::Parse {
+                header,
+                expected,
+                value,
+            } => {
+                assert_eq!(header, "field");
+                assert_eq!(expected, "u8");
+                assert_eq!(value, "not a number");
+            }
+            other => panic!("expected a parse error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shapes_a_header_value_cannot_carry_name_the_header() {
+        assert_unsupported(&field_err::<()>("x"), "a unit");
+        assert_unsupported(&field_err::<Unit>("x"), "a unit struct");
+        assert_unsupported(&field_err::<Vec<u8>>("x"), "a sequence");
+        assert_unsupported(&field_err::<(u8, u8)>("x"), "a tuple");
+        assert_unsupported(&field_err::<Pair>("x"), "a tuple struct");
+        assert_unsupported(&field_err::<BTreeMap<String, u8>>("x"), "a map");
+        assert_unsupported(&field_err::<Nested>("x"), "a nested struct");
+    }
+
+    #[test]
+    fn a_self_describing_field_takes_the_value_as_it_travels() {
+        assert_eq!(
+            field::<AnyValue>("text").unwrap(),
+            AnyValue::Text("text".to_owned())
+        );
+
+        let one: One<AnyValue> = headers_with(Bytes::from_static(&[0xff, 0xfe]))
+            .to_typed()
+            .unwrap();
+        assert_eq!(one.field, AnyValue::Bytes(vec![0xff, 0xfe]));
+    }
+
+    #[test]
+    fn unknown_headers_are_ignored_rather_than_read() {
+        // `IgnoredAny` is what serde uses for a field it decided to skip, at either level.
+        let mut headers = Headers::new();
+        headers.insert("field", "value");
+        headers.to_typed::<IgnoredAny>().unwrap();
+
+        let map: BTreeMap<String, IgnoredAny> = headers.to_typed().unwrap();
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn the_top_level_type_may_wrap_the_struct_it_reads() {
+        #[derive(Debug, Deserialize)]
+        struct Wrapper(Nested);
+
+        let mut headers = Headers::new();
+        headers.insert("inner", "3");
+        let wrapper: Wrapper = headers.to_typed().unwrap();
+        assert_eq!(wrapper.0.inner, 3);
+    }
+
+    #[test]
+    fn a_map_contract_reads_every_header_as_an_entry() {
+        let mut headers = Headers::new();
+        headers.insert("first", "1");
+        headers.insert("second", "2");
+
+        let map: BTreeMap<String, u8> = headers.to_typed().unwrap();
+        assert_eq!(
+            map,
+            BTreeMap::from([("first".into(), 1), ("second".into(), 2)])
+        );
+    }
+}

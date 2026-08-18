@@ -372,6 +372,24 @@ mod tests {
     }
 
     #[test]
+    fn a_custom_serialize_failure_is_reported_as_written() {
+        struct Refuses;
+
+        impl Serialize for Refuses {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("this value refuses to travel"))
+            }
+        }
+
+        let mut headers = Headers::new();
+        let err = headers
+            .insert_typed(&Refuses)
+            .expect_err("the custom failure must surface");
+        // A user-written Serialize failure keeps its own wording, so the cause stays findable.
+        assert!(err.to_string().contains("this value refuses to travel"));
+    }
+
+    #[test]
     fn top_level_scalar_is_rejected_both_ways() {
         let mut headers = Headers::new();
         assert!(matches!(

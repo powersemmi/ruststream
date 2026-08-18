@@ -206,6 +206,96 @@ mod tests {
             .unwrap()
     }
 
+    #[derive(Debug, thiserror::Error)]
+    #[error("subscriber stream failed")]
+    struct StreamFault;
+
+    struct Frame(Vec<u8>);
+
+    impl IncomingMessage for Frame {
+        fn payload(&self) -> &[u8] {
+            &self.0
+        }
+
+        fn headers(&self) -> &crate::Headers {
+            static EMPTY: std::sync::LazyLock<crate::Headers> =
+                std::sync::LazyLock::new(crate::Headers::new);
+            &EMPTY
+        }
+
+        async fn ack(self) -> Result<(), crate::AckError> {
+            Ok(())
+        }
+
+        async fn nack(self, _requeue: bool) -> Result<(), crate::AckError> {
+            Ok(())
+        }
+    }
+
+    /// Replays a fixed script, so a test can place a fault or the end of the stream mid-batch.
+    struct ScriptedSubscriber(Vec<Result<Frame, StreamFault>>);
+
+    impl Subscriber for ScriptedSubscriber {
+        type Message = Frame;
+        type Error = StreamFault;
+
+        fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+            futures::stream::iter(std::mem::take(&mut self.0))
+        }
+    }
+
+    fn scripted(script: Vec<Result<Frame, StreamFault>>) -> BufferedSubscriber<ScriptedSubscriber> {
+        BufferedSubscriber {
+            inner: ScriptedSubscriber(script),
+            // Large enough that only a fault or the end of the stream can close a batch.
+            max_size: NonZeroUsize::new(8).expect("test sizes are nonzero"),
+            max_wait: Duration::from_secs(60),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fault_mid_batch_is_carried_until_after_the_batch_it_interrupted() {
+        let mut sub = scripted(vec![
+            Ok(Frame(b"a".to_vec())),
+            Err(StreamFault),
+            Ok(Frame(b"b".to_vec())),
+        ]);
+        let mut stream = std::pin::pin!(sub.batches());
+
+        // The batch collected so far goes out first; the fault cannot jump ahead of it.
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].payload(), b"a");
+
+        assert!(stream.next().await.unwrap().is_err());
+
+        // Batching resumes after the fault rather than ending the subscription.
+        let resumed = stream.next().await.unwrap().unwrap();
+        assert_eq!(resumed[0].payload(), b"b");
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fault_as_the_first_item_is_yielded_without_a_batch() {
+        let mut sub = scripted(vec![Err(StreamFault), Ok(Frame(b"a".to_vec()))]);
+        let mut stream = std::pin::pin!(sub.batches());
+
+        assert!(stream.next().await.unwrap().is_err());
+        let recovered = stream.next().await.unwrap().unwrap();
+        assert_eq!(recovered[0].payload(), b"a");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stream_ending_mid_batch_flushes_it_before_terminating() {
+        let mut sub = scripted(vec![Ok(Frame(b"a".to_vec())), Ok(Frame(b"b".to_vec()))]);
+        let mut stream = std::pin::pin!(sub.batches());
+
+        // The end of the stream is carried the same way a fault is: the partial batch goes out.
+        let flushed = stream.next().await.unwrap().unwrap();
+        assert_eq!(flushed.len(), 2);
+        assert!(stream.next().await.is_none());
+    }
+
     #[tokio::test]
     async fn size_cap_closes_the_batch() {
         let broker = MemoryBroker::new();

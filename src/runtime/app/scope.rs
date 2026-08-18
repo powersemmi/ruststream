@@ -506,3 +506,61 @@ impl<B: Broker, Layers, C, State, Pipeline> fmt::Debug
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(all(test, feature = "memory"))]
+mod tests {
+    use std::pin::pin;
+
+    use futures::StreamExt as _;
+
+    use crate::memory::MemoryBroker;
+    use crate::runtime::publisher_registry::ErasedPublisher;
+    use crate::runtime::{AppInfo, RustStream};
+    use crate::{IncomingMessage, Subscriber};
+
+    use super::Arc;
+
+    /// The deferred-retry fallback is only reachable through a broker without native delayed
+    /// redelivery (the in-memory one has it), so what the scope owes is the wiring: the publisher
+    /// handed to `retry_via` is held erased and still reaches the broker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retry_via_holds_a_live_erased_publisher() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("retry.fallback");
+        let publisher = broker.publisher();
+
+        let mut fallback: Option<Arc<dyn ErasedPublisher>> = None;
+        let _app = RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(broker, |b| {
+            assert!(
+                b.retry_publisher.is_none(),
+                "a fresh scope has no fallback publisher",
+            );
+            b.retry_via(publisher);
+            fallback = b.retry_publisher.clone();
+        });
+
+        let fallback = fallback.expect("retry_via must wire the deferred-retry publisher");
+        fallback
+            .publish_bytes("retry.fallback", b"deferred")
+            .await
+            .expect("the erased fallback publish failed");
+
+        let mut stream = pin!(subscriber.stream());
+        let msg = stream
+            .next()
+            .await
+            .expect("the fallback publish must reach the broker")
+            .expect("delivery");
+        assert_eq!(msg.payload(), b"deferred");
+    }
+
+    #[test]
+    fn scope_debug_reports_its_registrations() {
+        let _app =
+            RustStream::new(AppInfo::new("dbg", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                let rendered = format!("{b:?}");
+                assert!(rendered.starts_with("BrokerScope"), "{rendered}");
+                assert!(rendered.contains("sink"), "{rendered}");
+            });
+    }
+}

@@ -879,6 +879,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_reconnect_revives_a_bus_that_was_shut_down() {
+        let broker = MemoryBroker::new();
+        let connected = broker.clone().connect().await.unwrap();
+        assert!(format!("{connected:?}").contains("ConnectedMemoryBroker"));
+        connected.shutdown().await.unwrap();
+
+        // The lazy-connect contract lets the same configuration open a fresh bus afterwards.
+        let reconnected = broker.connect().await.unwrap();
+        let mut subscriber = reconnected.subscribe("orders").await.unwrap();
+        reconnected
+            .publisher()
+            .publish(OutgoingMessage::new("orders", b"after".as_slice()))
+            .await
+            .unwrap();
+
+        let mut stream = std::pin::pin!(subscriber.stream());
+        let delivered = stream.next().await.unwrap().unwrap();
+        assert_eq!(delivered.payload(), b"after");
+    }
+
+    #[tokio::test]
     async fn shutdown_reports_dropped_registrations() {
         let broker = MemoryBroker::new();
         let connected = broker
