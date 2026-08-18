@@ -60,7 +60,7 @@ async fn transactional_replies_compose_with_a_batch_pool() {
 
     let replies = TypedPublisher::new(MemoryPublish).transactional();
     let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(tx_confirm).publisher(replies);
+        b.include(tx_confirm).publisher(replies);
     });
 
     let running = app.start().await.expect("startup failed");
@@ -111,7 +111,7 @@ async fn buffered_sources_compose_with_a_batch_pool() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("buf", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(buffered_drain));
+        .with_broker(broker, |b| b.include(buffered_drain));
 
     let running = app.start().await.expect("startup failed");
 

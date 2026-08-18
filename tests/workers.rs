@@ -154,8 +154,8 @@ async fn batch_pool_dispatches_batches() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(settle));
+    let app =
+        RustStream::new(AppInfo::new("pages", "0.1.0")).with_broker(broker, |b| b.include(settle));
 
     let running = app.start().await.expect("startup failed");
 

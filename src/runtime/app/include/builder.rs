@@ -18,7 +18,7 @@ use crate::runtime::app::scope::BrokerScope;
 
 /// A registration builder over one attachment, generic over its mount token.
 ///
-/// Commits when dropped (the end of the `b.include(..)` / `b.include_batch(..)` statement);
+/// Commits when dropped (the end of the `b.include(..)` statement);
 /// [`publisher`](Self::publisher) replaces the reply source (defaulted when the call is
 /// omitted). The per-form names are aliases: [`IncludePublishing`],
 /// [`IncludeBatchPublishing`].
@@ -46,7 +46,7 @@ pub type IncludePublishing<'s, B, Layers, C, State, Pipeline, Def, Source> =
 pub type IncludeOut<'s, B, Layers, C, State, Pipeline, Def, Slots> =
     IncludeSlots<'s, InjectMount, B, Layers, C, State, Pipeline, Def, Slots>;
 
-/// The builder [`BrokerScope::include_batch`] returns for a `batch(.., publish("dest"))`
+/// The builder [`BrokerScope::include`] returns for a `batch(.., publish("dest"))`
 /// definition.
 ///
 /// The attachment is the batch reply source: a typed stack, or its
@@ -54,7 +54,7 @@ pub type IncludeOut<'s, B, Layers, C, State, Pipeline, Def, Slots> =
 pub type IncludeBatchPublishing<'s, B, Layers, C, State, Pipeline, Def, Source> =
     IncludeWith<'s, BatchPublishMount, B, Layers, C, State, Pipeline, Def, Source>;
 
-/// The builder [`BrokerScope::include_batch`] returns for a batch handler with
+/// The builder [`BrokerScope::include`] returns for a batch handler with
 /// [`Out`](crate::runtime::Out) parameters.
 pub type IncludeBatchOut<'s, B, Layers, C, State, Pipeline, Def, Slots> =
     IncludeSlots<'s, BatchInjectMount, B, Layers, C, State, Pipeline, Def, Slots>;

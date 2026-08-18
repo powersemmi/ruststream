@@ -74,7 +74,7 @@ pub type RouterPublishing<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
 pub type RouterRawReply<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
     RouterWith<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
 
-/// The builder [`Router::include_batch`](super::Router::include_batch) returns for a
+/// The builder [`Router::include`](super::Router::include) returns for a
 /// `batch(.., publish("dest"))` definition.
 ///
 /// The attachment is the batch reply source: a typed stack, or its
@@ -88,7 +88,7 @@ pub type RouterBatchPublishing<B, Routes, RouteCodec, RouteLayers, Def, Fallback
 pub type RouterOut<B, Routes, RouteCodec, RouteLayers, Def, Slots> =
     RouterSlots<InjectMount, B, Routes, RouteCodec, RouteLayers, Def, Slots>;
 
-/// The builder [`Router::include_batch`](super::Router::include_batch) returns for a batch
+/// The builder [`Router::include`](super::Router::include) returns for a batch
 /// handler with [`Out`](crate::runtime::Out) parameters.
 pub type RouterBatchOut<B, Routes, RouteCodec, RouteLayers, Def, Slots> =
     RouterSlots<BatchInjectMount, B, Routes, RouteCodec, RouteLayers, Def, Slots>;
@@ -112,7 +112,7 @@ pub type RouterRawReplyOut<B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots
         Slots,
     >;
 
-/// The builder [`Router::include_batch`](super::Router::include_batch) returns for a
+/// The builder [`Router::include`](super::Router::include) returns for a
 /// `batch(.., publish("dest"))` definition whose handler also takes
 /// [`Out`](crate::runtime::Out) parameters.
 pub type RouterBatchPublishingOut<B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> =

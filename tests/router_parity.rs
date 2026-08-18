@@ -160,7 +160,7 @@ async fn a_router_mounts_a_batch_out_slot() {
         .expect("memory connect is infallible");
 
     let router = Router::<MemoryBroker>::new()
-        .include_batch(forward_page)
+        .include(forward_page)
         .publisher(MemoryPublish);
     let app = RustStream::new(AppInfo::new("rp-page", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -221,7 +221,7 @@ async fn a_router_mounts_a_batch_seek_parameter() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
 
-    let router = Router::<MemoryBroker>::new().include_batch(rewind_page);
+    let router = Router::<MemoryBroker>::new().include(rewind_page);
     let app = RustStream::new(AppInfo::new("rp-seek-page", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -435,7 +435,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
         .expect("memory connect is infallible");
 
     let router = Router::<MemoryBroker>::new()
-        .include_batch(settle_page)
+        .include(settle_page)
         .publisher(TypedPublisher::new(MemoryPublish))
         .out(ruststream::runtime::DefaultSlot, MemoryPublish)
         .mount();
@@ -506,9 +506,7 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
         .await
         .expect("memory connect is infallible");
 
-    let router = Router::<MemoryBroker>::new()
-        .include_batch(bulk_relay)
-        .mount();
+    let router = Router::<MemoryBroker>::new().include(bulk_relay).mount();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -529,12 +527,12 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
 fn every_new_route_kind_reports_its_metadata_in_registration_order() {
     let router = Router::<MemoryBroker>::new()
         .include(rewind)
-        .include_batch(rewind_page)
+        .include(rewind_page)
         .include(echo_frame)
         .mount()
         .include(relay)
         .mount()
-        .include_batch(bulk_relay)
+        .include(bulk_relay)
         .mount();
 
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();

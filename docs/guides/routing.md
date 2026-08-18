@@ -6,8 +6,9 @@ scope.
 
 ## Building a router
 
-A `Router` mirrors the broker scope: `include` and `include_batch` mount every definition form,
-picked by the definition itself, next to `with_codec` (switches the chain's decode codec, see
+A `Router` mirrors the broker scope: `include` is the one entry point, mounting every definition
+form - plain, raw, batch, reply-publishing, injected - picked by the definition itself, next to
+`with_codec` (switches the chain's decode codec, see
 [Codecs](codecs.md#per-handler)) and the manual `handle` / `subscribe` registrations. The
 subscription source always comes from the definition - `#[subscriber(..)]` takes the broker's own
 source expression, builder chain included - so there is nothing to name at the mount site. Every

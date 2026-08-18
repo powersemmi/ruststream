@@ -222,8 +222,8 @@ where
 
 /// A [`TypedPublisher`] whose batch replies are published inside one broker transaction.
 ///
-/// Built with [`TypedPublisher::transactional`]; accepted by the
-/// `include_batch_publishing` mounts. Per batch, the runtime begins a transaction, publishes
+/// Built with [`TypedPublisher::transactional`]; accepted by the batch reply-publishing
+/// mounts. Per batch, the runtime begins a transaction, publishes
 /// every reply, then commits before the incoming batch is acked; any failure aborts the
 /// transaction and the batch is retried, so replies are never half-visible.
 pub struct Transactional<P, C, PL = PublishTransformIdentity, BL = BatchTransformIdentity> {

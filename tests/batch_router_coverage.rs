@@ -105,7 +105,7 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
         )
         .include(brc_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include_batch(brc_batch_relay)
+        .include(brc_batch_relay)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     assert!(format!("{router:?}").contains("Router"));
@@ -199,7 +199,7 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_publishing_route_reports_a_refused_reply_publisher() {
     let router = Router::<MemoryBroker>::new()
-        .include_batch(brc_batch_relay)
+        .include(brc_batch_relay)
         .publisher(TypedPublisher::new(RefusedPublish));
 
     let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(

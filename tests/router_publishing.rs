@@ -194,7 +194,7 @@ async fn bp_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Default-codec `include_batch` on the publishing form: every batch element is republished to
+/// Default-codec `include` on the batch publishing form: every batch element is republished to
 /// the reply topic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_batch_publishing_replies() {
@@ -202,9 +202,9 @@ async fn default_codec_router_batch_publishing_replies() {
     let publisher = broker.publisher();
 
     let router = Router::<MemoryBroker>::new()
-        .include_batch(bp_relay)
+        .include(bp_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include_batch(bp_relay_on)
+        .include(bp_relay_on)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(broker, |b| {
@@ -245,7 +245,7 @@ async fn bpc_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Chain-codec `include_batch` on the publishing form: elements decode with the `with_codec`
+/// Chain-codec `include` on the batch publishing form: elements decode with the `with_codec`
 /// codec, replies go through the publisher's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_batch_publishing_replies() {
@@ -254,9 +254,9 @@ async fn chain_codec_router_batch_publishing_replies() {
 
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include_batch(bpc_relay)
+        .include(bpc_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include_batch(bpc_relay_on)
+        .include(bpc_relay_on)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(broker, |b| {
@@ -371,7 +371,7 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
     let publisher = broker.publisher();
 
     let router = Router::<MemoryBroker>::new()
-        .include_batch(bl_relay)
+        .include(bl_relay)
         .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bl", "0.1.0"))

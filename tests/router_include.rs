@@ -86,8 +86,8 @@ async fn default_codec_router_includes_dispatch() {
     let router = Router::<MemoryBroker>::new()
         .include(ri_plain)
         .include(ri_on)
-        .include_batch(ri_batch)
-        .include_batch(ri_batch_on);
+        .include(ri_batch)
+        .include(ri_batch_on);
 
     let app = RustStream::new(AppInfo::new("ri", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -143,8 +143,8 @@ async fn chain_codec_router_includes_dispatch() {
         .with_codec(JsonCodec)
         .include(rc_plain)
         .include(rc_on)
-        .include_batch(rc_batch)
-        .include_batch(rc_batch_on);
+        .include(rc_batch)
+        .include(rc_batch_on);
 
     let app = RustStream::new(AppInfo::new("rc", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));

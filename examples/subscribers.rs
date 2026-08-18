@@ -100,10 +100,10 @@ fn app() -> RustStream {
         b.include(handle);
         b.include(with_context);
         // --8<-- [start:batch_mount]
-        b.include_batch(settle);
+        b.include(settle);
         // --8<-- [end:batch_mount]
-        b.include_batch(reconcile);
-        b.include_batch(drain);
+        b.include(reconcile);
+        b.include(drain);
         b.include(fan_out);
         b.include(per_customer);
         // --8<-- [start:manual]

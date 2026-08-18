@@ -277,7 +277,7 @@ async fn a_batch_handler_composes_with_a_seek_parameter() {
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("pages", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(page_work);
+        b.include(page_work);
     });
     let running = app.start().await.expect("startup failed");
 
@@ -385,7 +385,7 @@ async fn a_batch_publishing_handler_composes_with_a_seek_parameter() {
         .expect("memory connect is infallible");
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(ledger);
+        b.include(ledger);
     });
     let running = app.start().await.expect("startup failed");
 

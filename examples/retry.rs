@@ -53,6 +53,6 @@ async fn reconcile_page(payments: &[Payment]) -> Vec<HandlerResult> {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(reconcile);
-        b.include_batch(reconcile_page);
+        b.include(reconcile_page);
     })
 }

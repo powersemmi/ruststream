@@ -484,7 +484,7 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(absorb);
+        b.include(absorb);
     });
 
     let running = app.start().await.expect("startup failed");

@@ -54,6 +54,6 @@ pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposi
     Router::new()
         .layer(metrics.consume_layer())
         .include(payments::process_payment)
-        .include_batch(payments::settle)
+        .include(payments::settle)
         .publisher(settlements)
 }

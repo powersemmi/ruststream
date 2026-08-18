@@ -417,7 +417,7 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
     let app = RustStream::new(AppInfo::new("typed-headers-batch", "1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include_batch(bulk);
+            b.include(bulk);
         },
     );
     let tb = TestApp::start(app).await.expect("start");
@@ -494,7 +494,7 @@ async fn the_router_path_carries_the_batch_header_contract() {
     // default-codec one shares the same mount.
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include_batch(routed);
+        .include(routed);
     let app = RustStream::new(AppInfo::new("typed-headers-router", "1.0")).with_broker(
         MemoryBroker::new(),
         |b| {

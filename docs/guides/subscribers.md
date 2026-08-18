@@ -200,7 +200,7 @@ one bulk API call.
 --8<-- "examples/subscribers.rs:batch"
 ```
 
-Mount it with `include_batch` (the batch counterpart of `include`):
+Mount it with `include`, like any other form - the definition carries the batch shape:
 
 ```rust
 --8<-- "examples/subscribers.rs:batch_mount"

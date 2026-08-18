@@ -142,7 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         |b| {
             b.include(convert).out(Events, MemoryPublish).mount();
             b.include(status);
-            b.include_batch(bulk);
+            b.include(bulk);
         },
     );
     // --8<-- [end:mounts]

@@ -106,8 +106,7 @@ impl<B: Broker + 'static> Router<B, ()> {
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     Router<B, Routes, RouteCodec, RouteLayers>
 {
-    /// Sets the codec that subsequent `include` / `include_batch` calls decode with, replacing
-    /// the default.
+    /// Sets the codec that subsequent `include` calls decode with, replacing the default.
     ///
     /// Registrations already in the chain keep the codec they were mounted with, so the codec can
     /// change mid-chain.
@@ -294,7 +293,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     }
 
     /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
-    /// plain `include_batch` form.
+    /// plain batch `include` form.
     pub(super) fn mount_batch<Source, Def, DecodeCodec>(
         self,
         source: Source,
@@ -657,7 +656,7 @@ impl<B, S, H, Routes, RouteCodec, RouteLayers>
     Router<B, (BatchRoute<S, H>, Routes), RouteCodec, RouteLayers>
 {
     /// Sets the concurrency policy of the batch registration just added (the preceding
-    /// `subscribe_batch` / `include_batch` call), replacing its default.
+    /// `subscribe_batch` / batch `include` call), replacing its default.
     ///
     /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed lanes order single
     /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves

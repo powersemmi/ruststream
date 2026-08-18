@@ -1,10 +1,8 @@
 //! Form-token dispatch: the vocabulary both registration surfaces mount through.
 //!
 //! A definition ties itself to a form token ([`IncludeDef::Form`]), and one entry point per
-//! shape - [`Router::include`](super::Router::include) /
-//! [`include_batch`](super::Router::include_batch),
-//! [`BrokerScope::include`](crate::runtime::BrokerScope::include) /
-//! [`include_batch`](crate::runtime::BrokerScope::include_batch) - resolves the token to the
+//! surface - [`Router::include`](super::Router::include) and
+//! [`BrokerScope::include`](crate::runtime::BrokerScope::include) - resolves the token to the
 //! machinery that form needs, at compile time. The subscription source is never named at a
 //! mount site: it belongs to the definition, which takes the broker's own source expression.
 
@@ -99,16 +97,15 @@ pub struct RawReplyInjectMount;
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishInjectMount;
 
-/// Form-token dispatch for [`Router::include`](super::Router::include) and
-/// [`include_batch`](super::Router::include_batch): implemented by the tokens in
-/// [`forms`](super::forms),
-/// generic over the definition and the router chain. Machinery; you never implement or name it.
+/// Form-token dispatch for [`Router::include`](super::Router::include): implemented by the
+/// tokens in [`forms`](super::forms), generic over the definition and the router chain.
+/// Machinery; you never implement or name it.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "this definition's form cannot be mounted on a router",
     label = "the form token `{Self}` has no router mount",
-    note = "check that the definition's shape matches the entry point: batch definitions mount \
-            with .include_batch(..), single-message ones with .include(..)"
+    note = "every `#[subscriber]` form mounts with .include(..); check that the definition is a \
+            generated one and that its broker matches the router's"
 )]
 pub trait RouterMount<B: Broker, Routes, RouteCodec, RouteLayers, Def> {
     /// What `include` hands back: the grown router for eager forms, a registration builder for

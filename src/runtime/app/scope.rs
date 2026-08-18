@@ -241,7 +241,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     }
 
     /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
-    /// tail of the `include_batch` forms. Batch handlers are not wrapped by the global stack:
+    /// tail of the batch `include` forms. Batch handlers are not wrapped by the global stack:
     /// per-message layers cannot wrap a whole-batch handler.
     pub(super) fn mount_batch<Source, Def, DecodeCodec>(
         &mut self,

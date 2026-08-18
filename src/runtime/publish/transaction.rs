@@ -17,7 +17,7 @@ use crate::{OutgoingMessage, OwnedTransactions, Transaction, TransactionalPublis
 /// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
 /// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
 /// publish after settling is a compile error. This is the manual counterpart of the per-batch
-/// transaction the runtime drives for `include_batch_publishing` mounts.
+/// transaction the runtime drives for batch reply-publishing mounts.
 ///
 /// The scope encodes values with the wrapper's codec and sends them directly: the reply
 /// [`PublishTransform`](crate::runtime::PublishTransform) stack and the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer)

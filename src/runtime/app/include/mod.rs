@@ -1,8 +1,8 @@
 //! The `include` family on [`BrokerScope`]: mounting macro-generated definitions.
 //!
-//! `include` is one entry point for every single-message definition form and `include_batch` for
-//! both batch forms; which machinery runs is picked by the definition's form token
-//! ([`IncludeDef::Form`]), so `b.include(handle)`, `b.include(respond).publisher(..)` and
+//! `include` is the one entry point for every definition form, single-message and batch alike;
+//! which machinery runs is picked by the definition's form token ([`IncludeDef::Form`]), so
+//! `b.include(handle)`, `b.include(bulk)`, `b.include(respond).publisher(..)` and
 //! `b.include(forward).publisher(..)` all read the same. Publisher-producing forms return a
 //! registration builder that commits when the statement ends; `.publisher(..)` attaches the
 //! publish policy (or a [`Bound`](crate::runtime::Bound) token for a cross-broker target).
@@ -34,28 +34,15 @@ pub trait IncludeMount<'s, B: Broker, Layers, C, State, Pipeline, Def> {
 }
 
 impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
-    /// Mounts a single-message `#[subscriber]` definition: a plain handler mounts eagerly, a
-    /// `publish("dest")` or `Out`-taking handler returns a registration builder that commits
-    /// at the end of the statement; chain [`publisher`](IncludePublishing::publisher) on it to
+    /// Mounts a `#[subscriber]` definition of any form: a plain or batch handler mounts eagerly,
+    /// a `publish("dest")` or `Out`-taking one returns a registration builder that commits at
+    /// the end of the statement; chain [`publisher`](IncludePublishing::publisher) on it to
     /// attach the publish policy.
     ///
     /// Decoding uses the scope codec when one was set
     /// ([`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)), else the
     /// [`DefaultCodec`](crate::codec::DefaultCodec).
     pub fn include<'s, Def>(
-        &'s mut self,
-        def: Def,
-    ) -> <Def::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, Def>>::Out
-    where
-        Def: crate::runtime::IncludeDef,
-        Def::Form: IncludeMount<'s, B, Layers, C, State, Pipeline, Def>,
-    {
-        <Def::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, Def>>::begin(def, self)
-    }
-
-    /// Mounts a batch `#[subscriber(batch(..))]` definition; the `publish("dest")` form returns
-    /// a registration builder, exactly like [`include`](Self::include).
-    pub fn include_batch<'s, Def>(
         &'s mut self,
         def: Def,
     ) -> <Def::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, Def>>::Out
