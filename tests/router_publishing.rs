@@ -87,19 +87,17 @@ async fn rp_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Default-codec `include_publishing` / `include_publishing_on`: replies reach the reply topics.
+/// Default-codec `include` / `include_on` on the publishing form: replies reach the reply topics.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_publishing_replies() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
     let router = Router::<MemoryBroker>::new()
-        .include_publishing(rp_relay, TypedPublisher::new(MemoryPublish))
-        .include_publishing_on(
-            Name::new("rp-in-on"),
-            rp_relay_on,
-            TypedPublisher::new(MemoryPublish),
-        );
+        .include(rp_relay)
+        .publisher(TypedPublisher::new(MemoryPublish))
+        .include_on(Name::new("rp-in-on"), rp_relay_on)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("rp", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);
@@ -139,7 +137,7 @@ async fn rpc_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Chain-codec `include_publishing` / `include_publishing_on`: the input decodes with the
+/// Chain-codec `include` / `include_on` on the publishing form: the input decodes with the
 /// `with_codec` codec, the reply goes through the publisher's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_publishing_replies() {
@@ -148,12 +146,10 @@ async fn chain_codec_router_publishing_replies() {
 
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include_publishing(rpc_relay, TypedPublisher::new(MemoryPublish))
-        .include_publishing_on(
-            Name::new("rpc-in-on"),
-            rpc_relay_on,
-            TypedPublisher::new(MemoryPublish),
-        );
+        .include(rpc_relay)
+        .publisher(TypedPublisher::new(MemoryPublish))
+        .include_on(Name::new("rpc-in-on"), rpc_relay_on)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("rpc", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);
@@ -198,7 +194,7 @@ async fn bp_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Default-codec `include_batch_publishing` / `include_batch_publishing_on`: every batch element
+/// Default-codec `include_batch` / `include_batch_on` on the publishing form: every batch element
 /// is republished to the reply topic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_batch_publishing_replies() {
@@ -206,12 +202,10 @@ async fn default_codec_router_batch_publishing_replies() {
     let publisher = broker.publisher();
 
     let router = Router::<MemoryBroker>::new()
-        .include_batch_publishing(bp_relay, TypedPublisher::new(MemoryPublish))
-        .include_batch_publishing_on(
-            Name::new("bp-in-on"),
-            bp_relay_on,
-            TypedPublisher::new(MemoryPublish),
-        );
+        .include_batch(bp_relay)
+        .publisher(TypedPublisher::new(MemoryPublish))
+        .include_batch_on(Name::new("bp-in-on"), bp_relay_on)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);
@@ -251,7 +245,7 @@ async fn bpc_check_on(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// Chain-codec `include_batch_publishing` / `include_batch_publishing_on`: elements decode with
+/// Chain-codec `include_batch` / `include_batch_on` on the publishing form: elements decode with
 /// the `with_codec` codec, replies go through the publisher's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_batch_publishing_replies() {
@@ -260,12 +254,10 @@ async fn chain_codec_router_batch_publishing_replies() {
 
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include_batch_publishing(bpc_relay, TypedPublisher::new(MemoryPublish))
-        .include_batch_publishing_on(
-            Name::new("bpc-in-on"),
-            bpc_relay_on,
-            TypedPublisher::new(MemoryPublish),
-        );
+        .include_batch(bpc_relay)
+        .publisher(TypedPublisher::new(MemoryPublish))
+        .include_batch_on(Name::new("bpc-in-on"), bpc_relay_on)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);
@@ -325,7 +317,8 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
     let publisher = broker.publisher();
 
     let router = Router::<MemoryBroker>::new()
-        .include_publishing(rl_relay, TypedPublisher::new(MemoryPublish));
+        .include(rl_relay)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("rl", "0.1.0"))
         .publish_layer(StampApp)
@@ -378,7 +371,8 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
     let publisher = broker.publisher();
 
     let router = Router::<MemoryBroker>::new()
-        .include_batch_publishing(bl_relay, TypedPublisher::new(MemoryPublish));
+        .include_batch(bl_relay)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("bl", "0.1.0"))
         .publish_layer(StampApp)
@@ -465,10 +459,9 @@ async fn router_publishing_threads_typed_delivery_context() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let router = Router::<MemoryBroker>::new().include_publishing(
-        tc_relay,
-        TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation),
-    );
+    let router = Router::<MemoryBroker>::new()
+        .include(tc_relay)
+        .publisher(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation));
 
     let app = RustStream::new(AppInfo::new("tc", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);

@@ -240,8 +240,9 @@ async fn decode_skip_acks_past_bad_input_and_continues() {
 async fn publishing_decode_failure_is_dropped_and_continues() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let router =
-        Router::<MemoryBroker>::new().include_publishing(rpcd, TypedPublisher::new(MemoryPublish));
+    let router = Router::<MemoryBroker>::new()
+        .include(rpcd)
+        .publisher(TypedPublisher::new(MemoryPublish));
     let app = RustStream::new(AppInfo::new("rpcd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
@@ -312,7 +313,8 @@ async fn batch_publishing_decode_failure_is_dropped() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let router = Router::<MemoryBroker>::new()
-        .include_batch_publishing(bpd, TypedPublisher::new(MemoryPublish));
+        .include_batch(bpd)
+        .publisher(TypedPublisher::new(MemoryPublish));
     let app = RustStream::new(AppInfo::new("bpd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 

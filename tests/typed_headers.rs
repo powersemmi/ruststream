@@ -494,7 +494,7 @@ async fn the_router_path_carries_the_batch_header_contract() {
     // default-codec one shares the same mount.
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include_batch_with_headers(routed);
+        .include_batch(routed);
     let app = RustStream::new(AppInfo::new("typed-headers-router", "1.0")).with_broker(
         MemoryBroker::new(),
         |b| {

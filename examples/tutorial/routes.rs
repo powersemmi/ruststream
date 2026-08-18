@@ -10,7 +10,8 @@ use crate::orders;
 pub(crate) fn orders() -> impl RouterDef<MemoryBroker> {
     let replies = TypedPublisher::new(MemoryPublish);
     Router::new()
-        .include_publishing(orders::confirm, replies)
+        .include(orders::confirm)
+        .publisher(replies)
         .include(orders::handle)
 }
 // --8<-- [end:routes]

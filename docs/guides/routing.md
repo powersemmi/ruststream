@@ -6,12 +6,11 @@ scope.
 
 ## Building a router
 
-A `Router` mirrors the broker scope: alongside `include` / `include_on` and `include_publishing` /
-`include_publishing_on` (which take the reply wiring positionally - a `TypedPublisher` stack over
-a publish policy, since a consuming builder cannot chain a postfix `.publisher(..)`) it has
-`with_codec` (switches the chain's decode codec, see
-[Codecs](codecs.md#per-handler)) and the manual `handle` / `subscribe` registrations. Every call
-consumes the router and returns a new one, so registrations chain:
+A `Router` mirrors the broker scope: `include` / `include_batch` (and their `_on` variants for an
+explicit source) mount every definition form, picked by the definition itself, next to `with_codec`
+(switches the chain's decode codec, see [Codecs](codecs.md#per-handler)) and the manual `handle` /
+`subscribe` registrations. Every call consumes the router and returns a new one, so registrations
+chain:
 
 ```rust title="routes.rs"
 use ruststream::runtime::Router;
@@ -26,8 +25,15 @@ RustStream::new(info).with_broker(broker, |b| {
 });
 ```
 
-Handlers that publish a reply register on the router the same way as on the scope, with a
-`TypedPublisher` stack over a publish policy - a pure declaration, so the router needs no broker:
+Handlers that need an attachment - a reply publisher, an
+[`Out`](publishing.md#publishing-from-inside-a-handler) slot - register on the router the same way
+as on the scope, except that the registration commits
+through an explicit terminal: `.publisher(policy)` names the wiring, `.mount()` takes the broker's
+own default publish policy, and `.out(marker, policy)` binds one named slot before `.mount()`. A
+consuming builder cannot commit when it goes out of scope the way the scope's does, since dropping
+it cannot hand back the router the registration grew into - so a forgotten terminal never becomes a
+router, and the chain fails to compile. The policies stay pure declaration, so the router still
+needs no broker:
 
 ```rust title="routes.rs"
 --8<-- "examples/tutorial/routes.rs:routes"

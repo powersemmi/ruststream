@@ -35,9 +35,9 @@ pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as crate::Subscrib
 
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchOut, IncludeBatchPublishing,
-    IncludeBatchPublishingOut, IncludeDef, IncludeOut, IncludePublishing, IncludePublishingOut,
-    IncludeSlots, IncludeSlotsWithReply, IncludeWith, RunningApp, RustStream, RustStreamError,
-    Setup, SlotCommit, Wired, forms,
+    IncludeBatchPublishingOut, IncludeOut, IncludePublishing, IncludePublishingOut, IncludeSlots,
+    IncludeSlotsWithReply, IncludeWith, RunningApp, RustStream, RustStreamError, Setup, SlotCommit,
+    Wired,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
@@ -74,7 +74,13 @@ pub use publish::{
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
-pub use router::{Router, RouterDef, RouterHandlers, RouterSink};
+pub use router::{
+    IncludeDef, Router, RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterDef,
+    RouterHandlers, RouterOut, RouterPublishing, RouterPublishingOut, RouterRawReply,
+    RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
+};
+#[doc(hidden)]
+pub use router::{RouterCommit, RouterMount, RouterMountOn, RouterSlotCommit};
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{

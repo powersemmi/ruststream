@@ -14,11 +14,33 @@
 //! with the app's [`BlanketLayer`](crate::runtime::BlanketLayer) global when the router is mounted.
 
 mod builder;
+mod builders;
+mod form_eager;
+mod form_out;
+mod form_publish;
+pub mod forms;
 mod include;
+mod mount;
 mod routes;
+mod routes_inject;
+mod routes_publish;
 mod sink;
 
 pub use builder::Router;
+pub use builders::{
+    RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterOut, RouterPublishing,
+    RouterPublishingOut, RouterRawReply, RouterRawReplyOut, RouterSlots, RouterSlotsWithReply,
+    RouterWith,
+};
+#[doc(hidden)]
+pub use builders::{RouterCommit, RouterSlotCommit};
+pub use mount::IncludeDef;
+pub(crate) use mount::{
+    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultBareReply, DefaultReply,
+    InjectMount, MountCodec, PublishInjectMount, PublishMount,
+};
+#[doc(hidden)]
+pub use mount::{RouterMount, RouterMountOn};
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
@@ -27,7 +49,9 @@ use crate::runtime::input::Decoded;
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
-use routes::{BatchPublishingRoute, BatchRoute, PublishingRoute, SubscribeRoute};
+use routes::{BatchRoute, SubscribeRoute};
+use routes_inject::{BatchInjectRoute, InjectRoute};
+use routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
 pub(crate) use crate::runtime::SourceMessage;
 
@@ -36,6 +60,7 @@ pub(crate) use crate::runtime::SourceMessage;
 type TypedRoute<B, S, D, C> = SubscribeRoute<
     S,
     Typed<SourceMessage<B, S>, <D as SubscriberDef>::Input, C, <D as SubscriberDef>::Handler>,
+    <D as SubscriberDef>::Context,
 >;
 
 /// The router that mounting a [`SubscriberDef`] `D` on source `S` (decoded with `C`) onto `R`
@@ -71,17 +96,30 @@ type BatchWithHeadersTypedRoute<B, S, D, C> = BatchRoute<
 type IncludedBatchWithHeadersRouter<B, S, D, C, RC, RL, R> =
     Router<B, (BatchWithHeadersTypedRoute<B, S, D, C>, R), RC, RL>;
 
+/// The router that mounting an injected definition `D` on source `S` (decoded with `C`,
+/// resolving its startup injections against the attachment `E`) onto `R` produces.
+type InjectedRouter<B, S, D, C, E, RC, RL, R> = Router<B, (InjectRoute<S, D, C, E>, R), RC, RL>;
+
+/// The batch counterpart of [`InjectedRouter`].
+type BatchInjectedRouter<B, S, D, C, E, RC, RL, R> =
+    Router<B, (BatchInjectRoute<S, D, C, E>, R), RC, RL>;
+
 /// The router that mounting a publishing [`PublishingDef`](crate::runtime::PublishingDef) `D` on
-/// source `S` (decoded with `C`, replying through a `P`/`PC`/`PL` publisher) onto `R` produces.
-/// `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
-type PublishingRouter<B, S, D, C, P, PC, PL, RC, RL, R> =
-    Router<B, (PublishingRoute<S, D, C, P, PC, PL>, R), RC, RL>;
+/// source `S` (decoded with `C`, replying through the policy `RP` and resolving its startup
+/// injections against the attachment `E`) onto `R` produces. `RC` / `RL` are the router's own
+/// codec and layer parameters, carried unchanged.
+type PublishingRouter<B, S, D, C, RP, E, RC, RL, R> =
+    Router<B, (PublishingRoute<S, D, C, RP, E>, R), RC, RL>;
+
+/// The byte-reply counterpart of [`PublishingRouter`].
+type RawReplyRouter<B, S, D, C, RP, E, RC, RL, R> =
+    Router<B, (RawReplyRoute<S, D, C, RP, E>, R), RC, RL>;
 
 /// The router that mounting a batch publishing
 /// [`BatchPublishingDef`](crate::runtime::BatchPublishingDef) `D` on source `S` (decoded with `C`,
-/// replying through the [`ReplyPublisher`](crate::runtime::ReplyPublisher) `RP`) onto `R` produces.
-type BatchPublishingRouter<B, S, D, C, RP, RC, RL, R> =
-    Router<B, (BatchPublishingRoute<S, D, C, RP>, R), RC, RL>;
+/// replying through the policy `RP`) onto `R` produces.
+type BatchPublishingRouter<B, S, D, C, RP, E, RC, RL, R> =
+    Router<B, (BatchPublishingRoute<S, D, C, RP, E>, R), RC, RL>;
 
 /// The router that a [`Router::subscribe_batch`] closure registration produces: the slice
 /// handler `H` is wrapped in a [`TypedBatch`] decoding elements to `T` with `C`.

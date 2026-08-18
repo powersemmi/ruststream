@@ -103,8 +103,10 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
             |_batch: &[Order], _ctx: &mut Context| async { HandlerResult::Ack },
             HandlerMetadata::raw("brc-meta-batch"),
         )
-        .include_publishing(brc_relay, TypedPublisher::new(MemoryPublish))
-        .include_batch_publishing(brc_batch_relay, TypedPublisher::new(MemoryPublish));
+        .include(brc_relay)
+        .publisher(TypedPublisher::new(MemoryPublish))
+        .include_batch(brc_batch_relay)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     assert!(format!("{router:?}").contains("Router"));
 
@@ -174,11 +176,9 @@ fn assert_subscribe_error(result: Result<impl Sized, RustStreamError>, expected:
 /// A reply publisher that cannot pair fails startup instead of dispatching without a publisher.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_route_reports_a_refused_reply_publisher() {
-    let router = Router::<MemoryBroker>::new().include_publishing_on(
-        Name::new("brc-pair-in"),
-        brc_relay,
-        TypedPublisher::new(RefusedPublish),
-    );
+    let router = Router::<MemoryBroker>::new()
+        .include_on(Name::new("brc-pair-in"), brc_relay)
+        .publisher(TypedPublisher::new(RefusedPublish));
 
     let app =
         RustStream::new(AppInfo::new("brc-pair", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -192,11 +192,9 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
 /// startup failure, not a per-batch one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_publishing_route_reports_a_refused_reply_publisher() {
-    let router = Router::<MemoryBroker>::new().include_batch_publishing_on(
-        Name::new("brc-batch-pair-in"),
-        brc_batch_relay,
-        TypedPublisher::new(RefusedPublish),
-    );
+    let router = Router::<MemoryBroker>::new()
+        .include_batch_on(Name::new("brc-batch-pair-in"), brc_batch_relay)
+        .publisher(TypedPublisher::new(RefusedPublish));
 
     let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(
         MemoryBroker::new(),
@@ -212,11 +210,9 @@ async fn batch_publishing_route_reports_a_refused_reply_publisher() {
 /// publisher has already paired.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_route_reports_a_source_that_never_opens() {
-    let router = Router::<MemoryBroker>::new().include_publishing_on(
-        ClosedSource,
-        brc_relay,
-        TypedPublisher::new(MemoryPublish),
-    );
+    let router = Router::<MemoryBroker>::new()
+        .include_on(ClosedSource, brc_relay)
+        .publisher(TypedPublisher::new(MemoryPublish));
 
     let app = RustStream::new(AppInfo::new("brc-source", "0.1.0")).with_broker(
         MemoryBroker::new(),

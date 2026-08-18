@@ -36,15 +36,16 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
 
     Router::new()
         .layer(metrics.consume_layer())
-        .include_publishing(orders::confirm, confirmations)
+        .include(orders::confirm)
+        .publisher(confirmations)
         .include(orders::on_cancel)
 }
 
 /// The payments router: a charge handler spread across keyed worker lanes, plus a batch handler
 /// that settles cleared payments through a transactional publisher.
 ///
-/// `.transactional()` marks the wiring: `include_batch_publishing` then publishes a page's
-/// replies inside one broker transaction, visible atomically on commit. It type-checks because
+/// `.transactional()` marks the wiring: the batch registration then publishes a page's replies
+/// inside one broker transaction, visible atomically on commit. It type-checks because
 /// the `MemoryPublish` policy pairs into a `MemoryPublisher`, which implements
 /// `TransactionalPublisher`; a broker without transactions fails to compile at the registration.
 pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
@@ -53,5 +54,6 @@ pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposi
     Router::new()
         .layer(metrics.consume_layer())
         .include(payments::process_payment)
-        .include_batch_publishing(payments::settle, settlements)
+        .include_batch(payments::settle)
+        .publisher(settlements)
 }

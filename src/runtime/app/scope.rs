@@ -30,7 +30,7 @@ use crate::runtime::router::{RouterDef, RouterSink};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
-use super::include::ScopeCodec;
+use super::include::MountCodec;
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 
 /// A handler-registration scope bound to one broker.
@@ -327,7 +327,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         ReplySource: PublishPolicy<Connected<B>> + Send + 'static,
         ReplySource::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
         OutExtra: Send + Sync + 'static,
-        SC: ScopeCodec,
+        SC: MountCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
         Layers: Layer<PublishingHandler<Def, SC::Codec, ReplySource::Live, Pipeline>>
@@ -341,7 +341,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let codec = self.codec.scope_codec();
+        let codec = self.codec.mount_codec();
         let pipeline = self.pipeline.clone();
         let global = self.global.clone();
         // The injected primitive: the reply source pairs against the connected broker and the
@@ -394,7 +394,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
             + 'static,
         Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
         Extra: Send + Sync + 'static,
-        SC: ScopeCodec,
+        SC: MountCodec,
         State: Send + Sync + 'static,
         Layers: Layer<InjectHandler<Def, SC::Codec>> + Clone + Send + 'static,
         Layers::Handler:
@@ -404,7 +404,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let codec = self.codec.scope_codec();
+        let codec = self.codec.mount_codec();
         let global = self.global.clone();
         self.sink.push_injected_workers(
             source,
@@ -444,14 +444,14 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Def::Input: DecodeWith<SC::Codec>,
         Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
         Extra: Send + Sync + 'static,
-        SC: ScopeCodec,
+        SC: MountCodec,
         State: Send + Sync + 'static,
         B::Connected: 'static,
     {
         let meta = batch_inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let codec = self.codec.scope_codec();
+        let codec = self.codec.mount_codec();
         self.sink.push_injected_batch(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
@@ -495,7 +495,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
         BatchReply: ReplyPublisher + 'static,
         OutExtra: Send + Sync + 'static,
-        SC: ScopeCodec,
+        SC: MountCodec,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
         B::Connected: 'static,
@@ -503,7 +503,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let codec = self.codec.scope_codec();
+        let codec = self.codec.mount_codec();
         let pipeline = self.pipeline.clone();
         self.sink.push_injected_batch(
             source,

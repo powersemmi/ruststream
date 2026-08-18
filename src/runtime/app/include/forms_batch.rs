@@ -33,7 +33,7 @@ use crate::runtime::{SliceHandler, SourceMessage, SourceSubscriber};
 use super::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, CommitVia, DefaultReply,
     IncludeBatchOut, IncludeBatchPublishing, IncludeBatchPublishingOut, IncludeMount, IncludeSlots,
-    IncludeSlotsWithReply, IncludeWith, ScopeCodec, SlotCommit, forms,
+    IncludeSlotsWithReply, IncludeWith, MountCodec, SlotCommit, forms,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -44,14 +44,14 @@ impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, Stat
     for forms::BatchSeek
 where
     B: Broker + 'static,
-    C: ScopeCodec,
+    C: MountCodec,
     Def: BatchInjectCall<State> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
         BatchSubscriber + Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + 'static,
-    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
     Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ((),)>
         + Send
         + Sync
@@ -75,7 +75,7 @@ macro_rules! impl_batch_inject_out_commit {
             for ($(WithSource<$attach>,)+)
         where
             B: Broker + 'static,
-            C: ScopeCodec,
+            C: MountCodec,
             Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: BatchInjectCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
@@ -92,7 +92,7 @@ macro_rules! impl_batch_inject_out_commit {
             fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
-                let codec = scope.codec.scope_codec();
+                let codec = scope.codec.mount_codec();
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_batch_inject(source, def, extra);
@@ -135,14 +135,14 @@ impl<B, Layers, C, State, Pipeline, Def>
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
-    C: ScopeCodec,
+    C: MountCodec,
     Def: BatchPublishingCall<State> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
         BatchSubscriber + Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + 'static,
-    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
     Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ((),)>
         + Send
         + Sync
@@ -164,14 +164,14 @@ impl<B, Layers, C, State, Pipeline, Def, Source, BatchReply>
     CommitVia<BatchPublishMount, B, Layers, C, State, Pipeline, Def> for WithSource<Source>
 where
     B: Broker + 'static,
-    C: ScopeCodec,
+    C: MountCodec,
     Def: BatchPublishingCall<State> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
         BatchSubscriber + Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + 'static,
-    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
     Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ((),)>
         + Send
         + Sync
@@ -244,7 +244,7 @@ macro_rules! impl_batch_publishing_out_commit {
             for (WithSource<Source>, ($(WithSource<$attach>,)+))
         where
             B: Broker + 'static,
-            C: ScopeCodec,
+            C: MountCodec,
             Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: BatchPublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
@@ -266,7 +266,7 @@ macro_rules! impl_batch_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
-                let codec = scope.codec.scope_codec();
+                let codec = scope.codec.mount_codec();
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_batch_publishing_source(source, def, reply.into_source(), extra);
@@ -322,9 +322,9 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         <Source::Subscriber as Subscriber>::Message: 'static,
-        C: ScopeCodec,
+        C: MountCodec,
         Def: SubscriberDef,
-        Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
         Def::Handler: 'static,
         Def::Context: BuildContext<<Source::Subscriber as Subscriber>::Message> + Send + 'static,
         State: Send + Sync + 'static,
@@ -334,7 +334,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Layers::Handler:
             Handler<<Source::Subscriber as Subscriber>::Message, Def::Context, State> + 'static,
     {
-        let codec = self.codec.scope_codec();
+        let codec = self.codec.mount_codec();
         self.mount_subscriber(source, def, codec);
     }
 
@@ -344,13 +344,13 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        C: ScopeCodec,
+        C: MountCodec,
         Def: BatchDef,
-        Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
         Def::Handler: SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
         State: Send + Sync + 'static,
     {
-        let codec = self.codec.scope_codec();
+        let codec = self.codec.mount_codec();
         self.mount_batch(source, def, codec);
     }
 }
@@ -369,9 +369,9 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
-        C: ScopeCodec,
+        C: MountCodec,
         Def: PublishingCall<State> + 'static,
-        Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
         Def::Injections: FromStartup<B, Source::Subscriber, ((),)> + Send + Sync + 'static,
         Def::Reply: Send + Sync + 'static,
         Def::Context:
@@ -402,9 +402,9 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + 'static,
-        C: ScopeCodec,
+        C: MountCodec,
         Def: BatchPublishingCall<State> + 'static,
-        Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+        Def::Input: DecodeWith<<C as MountCodec>::Codec>,
         Def::Injections: FromStartup<B, Source::Subscriber, ((),)> + Send + Sync + 'static,
         Def::Reply: Serialize + Send + Sync + 'static,
         ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
