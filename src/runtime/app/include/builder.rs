@@ -50,7 +50,7 @@ pub type IncludeOut<'s, B, Layers, C, State, Pipeline, Def, Slots> =
 /// definition.
 ///
 /// The attachment is the batch reply source: a typed stack, or its
-/// [`transactional`](TypedPublisher::transactional) form for one transaction per batch.
+/// [`transactional`](crate::runtime::TypedPublisher::transactional) form for one transaction per batch.
 pub type IncludeBatchPublishing<'s, B, Layers, C, State, Pipeline, Def, Source> =
     IncludeWith<'s, BatchPublishMount, B, Layers, C, State, Pipeline, Def, Source>;
 
@@ -77,7 +77,7 @@ where
         }
     }
 
-    /// Attaches the reply source: a [`TypedPublisher`] stack naming the reply codec and
+    /// Attaches the reply source: a [`TypedPublisher`](crate::runtime::TypedPublisher) stack naming the reply codec and
     /// transforms, a bare policy on the byte-reply form, or a [`Bound`](crate::runtime::Bound)
     /// token wrapping one for a cross-broker target. The runtime pairs it after the brokers
     /// connect.

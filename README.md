@@ -79,8 +79,7 @@ cargo install ruststream --features cli
 
 ```rust
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::subscriber;
+use ruststream::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 

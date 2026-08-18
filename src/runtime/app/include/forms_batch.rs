@@ -8,12 +8,11 @@ use serde::Serialize;
 use crate::codec::DefaultCodec;
 // The default-reply commits build a `TypedPublisher` over the broker's default policy, so those
 // imports are gated with the default codec they require.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::Publisher;
 use crate::{
-    BatchSubscriber, Broker, BuildContext, Connected, DefaultPublish, PublishPolicy, Subscriber,
-    SubscriptionSource,
+    BatchSubscriber, Broker, BuildContext, Connected, PublishPolicy, Subscriber, SubscriptionSource,
 };
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::{DefaultPublish, Publisher};
 
 use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_inject::BatchInjectCall;

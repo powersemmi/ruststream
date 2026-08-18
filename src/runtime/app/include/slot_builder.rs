@@ -33,7 +33,7 @@ pub trait SlotCommit<Mount, B: Broker, Layers, C, State, Pipeline, Def>: Sized {
 /// one named slot (in any order), and the terminal [`mount`](Self::mount) commits - it exists
 /// only once every slot is bound, so a forgotten binding is a compile error naming the slot. A
 /// handler with a single slot skips the ceremony: [`publisher`](Self::publisher) binds it and
-/// commits in one call. The per-form names are aliases: [`IncludeOut`], [`IncludeBatchOut`].
+/// commits in one call. The per-form names are aliases: [`IncludeOut`](crate::runtime::IncludeOut), [`IncludeBatchOut`](crate::runtime::IncludeBatchOut).
 #[must_use = "an Out handler registers nothing until .publisher(policy) or .out(..)+.mount() commits it"]
 pub struct IncludeSlots<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>
 where

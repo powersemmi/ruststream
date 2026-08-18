@@ -51,7 +51,7 @@ impl<P, C: Codec + Clone, PL, BL> ReplyWiring for Transactional<P, C, PL, BL> {
 /// Implemented by a plain [`TypedPublisher`] (each reply published independently) and by a
 /// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by
 /// exactly those two types. `Cx` is the originating batch handler's context type, threaded so the
-/// static [`PublishTransform`] reads the delivery while publishing each reply.
+/// static [`PublishTransform`](crate::runtime::PublishTransform) reads the delivery while publishing each reply.
 pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
     /// The codec replies are encoded with (also reused as the decode codec when a batch
     /// publishing handler is mounted without an explicit one).
@@ -184,7 +184,7 @@ where
     /// transaction, so one scope per wrapper is open at a time. Brokers whose transactions are
     /// client buffers additionally offer the owned kind through
     /// [`TypedPublisher::transaction`], where every call opens an independent buffer-owning
-    /// [`TypedTransaction`].
+    /// [`TypedTransaction`](crate::runtime::TypedTransaction).
     ///
     /// ```
     /// # #[cfg(all(feature = "memory", feature = "json"))]

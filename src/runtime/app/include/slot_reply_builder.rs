@@ -17,7 +17,7 @@ use crate::runtime::app::scope::BrokerScope;
 /// A registration builder for a publishing handler that also takes
 /// [`Out`](crate::runtime::Out) slots: the reply attachment next to the slot tuple.
 ///
-/// The reply side defaults like [`IncludeWith`] (override with
+/// The reply side defaults like [`IncludeWith`](crate::runtime::IncludeWith) (override with
 /// [`publisher`](Self::publisher)); each slot binds with [`out`](Self::out), and the terminal
 /// [`mount`](Self::mount) commits - it exists only once every slot is bound, so a forgotten
 /// binding is a compile error naming the slot. The per-form names are aliases:
@@ -92,7 +92,7 @@ where
         (def, reply, slots, scope)
     }
 
-    /// Attaches the reply source, like [`IncludeWith::publisher`].
+    /// Attaches the reply source, like [`IncludeWith::publisher`](crate::runtime::IncludeWith::publisher).
     ///
     /// # Panics
     ///
@@ -117,7 +117,7 @@ where
         IncludeSlotsWithReply::new(def, WithSource::new(source), slots, scope)
     }
 
-    /// Binds one named [`Out`](crate::runtime::Out) slot, like [`IncludeSlots::out`]: by
+    /// Binds one named [`Out`](crate::runtime::Out) slot, like [`IncludeSlots::out`](crate::runtime::IncludeSlots::out): by
     /// marker, in any order, next to the (optional) reply-side
     /// [`publisher`](Self::publisher). Finish with [`mount`](Self::mount).
     ///

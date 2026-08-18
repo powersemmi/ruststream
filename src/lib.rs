@@ -31,6 +31,12 @@
 //!
 //! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,
 //! runtime, and dispatch remain. Add back only what you need.
+//!
+//! # Getting the imports
+//!
+//! [`prelude`] carries what a service writes every time (the application object, the handler
+//! surface, the extractor parameters, the macros): `use ruststream::prelude::*;`. The broker and
+//! the codec stay explicit, since those are the choices a service makes for itself.
 
 #![forbid(unsafe_code)]
 
@@ -41,6 +47,7 @@ mod error;
 mod field;
 mod headers;
 mod message;
+pub mod prelude;
 mod publisher;
 mod schema;
 mod subscriber;

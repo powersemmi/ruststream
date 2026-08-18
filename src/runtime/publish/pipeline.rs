@@ -11,13 +11,13 @@ use crate::{OutgoingMessage, Publisher};
 /// A static, app-wide publish pipeline: an around-style chain of [`PublishLayer`] ending in
 /// the broker send.
 ///
-/// The publish-side analog of the consume-side static [`Stack`](super::Stack) /
-/// [`Identity`](super::Identity): the
+/// The publish-side analog of the consume-side static [`Stack`](crate::runtime::Stack) /
+/// [`Identity`](crate::runtime::Identity): the
 /// app's publish middleware (added with
-/// [`RustStream::publish_layer`](super::RustStream::publish_layer)) compose into a concrete type, so
+/// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer)) compose into a concrete type, so
 /// the default path ([`PublishIdentity`], no middleware) is a zero-cost direct send with no `dyn`
 /// dispatch. You rarely name this trait; it is built for you. (A runtime-composed escape hatch, the
-/// publish counterpart of [`DynStack`](super::DynStack), can be layered in later without changing
+/// publish counterpart of [`DynStack`](crate::runtime::DynStack), can be layered in later without changing
 /// this contract.)
 pub trait PublishPipeline: Send + Sync {
     /// Runs `out` through the remaining middleware, then sends it via `send`.
@@ -29,7 +29,7 @@ pub trait PublishPipeline: Send + Sync {
 }
 
 /// The terminal [`PublishPipeline`]: no middleware, just the broker send. The default for an app
-/// with no [`publish_layer`](super::RustStream::publish_layer).
+/// with no [`publish_layer`](crate::runtime::RustStream::publish_layer).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishIdentity;
 
@@ -46,7 +46,7 @@ impl PublishPipeline for PublishIdentity {
 }
 
 /// Prepends a [`PublishLayer`] `Head` to a [`PublishPipeline`] `Tail`. Built by
-/// [`RustStream::publish_layer`](super::RustStream::publish_layer); you rarely name it directly.
+/// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer); you rarely name it directly.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishStack<Head, Tail> {
     head: Head,
@@ -81,7 +81,7 @@ impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack
 /// Each middleware inspects / mutates `out`, then calls [`PublishNext::run`] to continue; the chain
 /// ends in the actual broker publish. Static (no `dyn` dispatch): a middleware is generic over the
 /// rest of the pipeline `N`, so the whole chain monomorphizes. Added app-wide with
-/// [`RustStream::publish_layer`](super::RustStream::publish_layer).
+/// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer).
 pub trait PublishLayer: Send + Sync {
     /// Handle the outgoing message, calling `next` to continue the pipeline.
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
@@ -169,9 +169,9 @@ impl fmt::Debug for PublishDynNext<'_> {
 /// A single static [`PublishLayer`] wrapping a runtime-built, frozen list of
 /// [`PublishDynLayer`].
 ///
-/// The publish-side counterpart of the consume-side [`DynStack`](super::DynStack): the opt-in
+/// The publish-side counterpart of the consume-side [`DynStack`](crate::runtime::DynStack): the opt-in
 /// escape hatch for a middleware set decided at runtime (from config, a loop, feature flags) that
-/// therefore cannot be a compile-time [`publish_layer`](super::RustStream::publish_layer) chain.
+/// therefore cannot be a compile-time [`publish_layer`](crate::runtime::RustStream::publish_layer) chain.
 /// Add it like any other middleware; only the middleware inside it pay one boxed future per layer.
 ///
 /// ```

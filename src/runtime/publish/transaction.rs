@@ -12,7 +12,7 @@ use crate::codec::{Codec, CodecError};
 use super::TypedPublisher;
 use crate::{OutgoingMessage, OwnedTransactions, Transaction, TransactionalPublisher};
 
-/// A live broker transaction, opened by [`Transactional::begin`].
+/// A live broker transaction, opened by [`Transactional::begin`](crate::runtime::Transactional::begin).
 ///
 /// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
 /// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
@@ -20,7 +20,7 @@ use crate::{OutgoingMessage, OwnedTransactions, Transaction, TransactionalPublis
 /// transaction the runtime drives for `include_batch_publishing` mounts.
 ///
 /// The scope encodes values with the wrapper's codec and sends them directly: the reply
-/// [`PublishTransform`] stack and the app-wide [`publish_layer`](super::RustStream::publish_layer)
+/// [`PublishTransform`](crate::runtime::PublishTransform) stack and the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer)
 /// middleware do not run here - both belong to the dispatch path, where a delivery context
 /// exists.
 ///
@@ -53,7 +53,7 @@ where
     ///
     /// # Cancel safety
     ///
-    /// As with [`Publisher::publish`], cancel safety is broker-defined: dropping the future
+    /// As with [`Publisher::publish`](crate::Publisher::publish), cancel safety is broker-defined: dropping the future
     /// mid-flight may leave the message in an indeterminate state inside the transaction.
     pub async fn publish<T: Serialize + Sync>(
         &mut self,
@@ -76,7 +76,7 @@ where
     ///
     /// Returns the publisher's error when the broker rejects the commit. Per the
     /// [`TransactionalPublisher`] contract a failed commit closes the transaction, so the spent
-    /// scope leaves the handle free for a fresh [`begin`](Transactional::begin).
+    /// scope leaves the handle free for a fresh [`begin`](crate::runtime::Transactional::begin).
     ///
     /// # Cancel safety
     ///
@@ -136,7 +136,7 @@ where
     /// Opens an owned broker transaction and returns the [`TypedTransaction`] that owns it.
     ///
     /// This is the typed sugar over the owned transaction kind ([`OwnedTransactions`]), the
-    /// counterpart of the borrowed [`Transactional::begin`]: every call opens its own
+    /// counterpart of the borrowed [`Transactional::begin`](crate::runtime::Transactional::begin): every call opens its own
     /// independent transaction and the returned value owns its buffer, so any number can be
     /// open on one publisher at a time - settling one never touches another. Kafka-like
     /// brokers, whose client holds exactly one transaction per producer, offer only the
@@ -186,8 +186,8 @@ where
 /// [`abort`](Self::abort), both of which consume the value, so a double commit or a publish
 /// after settling is a compile error.
 ///
-/// Like the scope, it encodes values and sends them directly: the reply [`PublishTransform`]
-/// stack and the app-wide [`publish_layer`](super::RustStream::publish_layer) middleware belong
+/// Like the scope, it encodes values and sends them directly: the reply [`PublishTransform`](crate::runtime::PublishTransform)
+/// stack and the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware belong
 /// to the dispatch path, where a delivery context exists, and do not run here.
 ///
 /// Dropping an unsettled value discards the client buffer like an abort - unlike the scope, no
