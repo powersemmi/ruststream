@@ -1569,20 +1569,18 @@ mod tests {
             3,
             "every middleware must see a cursor: {seen:?}"
         );
+        let (static_cursor, first_dynamic, last_dynamic) = (&seen[0], &seen[1], &seen[2]);
         assert!(
-            seen[0].starts_with("PublishNext"),
-            "the static cursor names itself: {}",
-            seen[0],
+            static_cursor.starts_with("PublishNext"),
+            "the static cursor names itself: {static_cursor}",
         );
         assert!(
-            seen[1].contains("remaining: 1"),
-            "the first dynamic middleware still has one ahead of it: {}",
-            seen[1],
+            first_dynamic.contains("remaining: 1"),
+            "the first dynamic middleware still has one ahead of it: {first_dynamic}",
         );
         assert!(
-            seen[2].contains("remaining: 0"),
-            "the last dynamic middleware hands back to the static tail: {}",
-            seen[2],
+            last_dynamic.contains("remaining: 0"),
+            "the last dynamic middleware hands back to the static tail: {last_dynamic}",
         );
     }
 
