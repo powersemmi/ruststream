@@ -2,7 +2,8 @@
 
 With the `asyncapi` feature, RustStream generates an [AsyncAPI 3.0](https://www.asyncapi.com/)
 document from the application's handlers: each subscriber becomes a channel and a `receive`
-operation, and payload types contribute schemas.
+operation, and payload types contribute schemas. Handlers that share a channel each keep their own
+operation - they open separate subscriptions, so the document shows one per handler.
 
 ```toml
 ruststream = { version = "0.6", features = ["macros", "memory", "asyncapi"] }

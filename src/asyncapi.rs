@@ -482,7 +482,7 @@ fn add_receive(
         );
 
     operations.insert(
-        operation_id(name),
+        receive_operation_id(operations, name),
         Operation {
             action: "receive".to_owned(),
             channel: Reference::new(format!("#/channels/{name}")),
@@ -631,8 +631,23 @@ fn add_outgoing(
 }
 
 /// Derives a stable `receive` operation id from a subscription name.
-fn operation_id(name: &str) -> String {
-    format!("receive_{}", sanitize_id(name))
+///
+/// Several handlers may share one channel (each opens its own subscription), so the name alone
+/// does not identify an operation: a collision takes a deterministic numeric suffix instead of
+/// overwriting the operation already there, as on the send side.
+fn receive_operation_id(operations: &BTreeMap<String, Operation>, name: &str) -> String {
+    let base = format!("receive_{}", sanitize_id(name));
+    if !operations.contains_key(&base) {
+        return base;
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{base}_{suffix}");
+        if !operations.contains_key(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 /// Derives a stable `send` operation id from the publishing handler's subscription name and
