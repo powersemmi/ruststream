@@ -8,7 +8,10 @@ use serde::de::DeserializeOwned;
 use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::{BatchDef, SliceHandler, TypedBatch, batch_metadata, typed_batch};
+use crate::runtime::batch::{
+    BatchDef, BatchWithHeadersDef, SliceHandler, TypedBatch, TypedBatchWithHeaders, batch_metadata,
+    typed_batch,
+};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
@@ -27,8 +30,8 @@ use super::routes::{
 };
 use super::sink::RouterSink;
 use super::{
-    BatchPublishingRouter, IncludedBatchRouter, IncludedRouter, MergedRouter, PublishingRouter,
-    SourceMessage, SubscribedBatchRouter,
+    BatchPublishingRouter, IncludedBatchRouter, IncludedBatchWithHeadersRouter, IncludedRouter,
+    MergedRouter, PublishingRouter, SourceMessage, SubscribedBatchRouter,
 };
 
 /// A statically-typed, lazily-bound group of handler registrations, not attached to any broker.
@@ -309,6 +312,47 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         // kind explicitly.
         let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
             .with_decode(policies.decode);
+        Router {
+            routes: (
+                BatchRoute {
+                    source,
+                    handler,
+                    meta,
+                    policies,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
+    /// Mounts a batch definition whose handler also reads a typed header contract per element,
+    /// the [`mount_batch`](Self::mount_batch) counterpart for that form.
+    pub(super) fn mount_batch_with_headers<Source, Def, DecodeCodec>(
+        self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+    ) -> IncludedBatchWithHeadersRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, Routes>
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchWithHeadersDef,
+        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Handler: 'static,
+        DecodeCodec: Send + Sync + 'static,
+    {
+        let meta = batch_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let handler = TypedBatchWithHeaders::<_, Def::Input, _, Def::Headers, _>::over(
+            codec,
+            def.into_handler(),
+        )
+        .with_decode(policies.decode);
         Router {
             routes: (
                 BatchRoute {

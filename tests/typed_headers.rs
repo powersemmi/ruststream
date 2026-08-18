@@ -10,8 +10,9 @@
     feature = "testing"
 ))]
 
+use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
+use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
     Buffered, Message, Name, OutMessages, OutSlot, OutgoingMessage, Publisher,
@@ -472,5 +473,52 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
         vec![1, 3, 4],
         "the element failing the header contract must be dropped, the rest handled in order",
     );
+    tb.shutdown().await.expect("shutdown");
+}
+
+/// What the router-mounted handler saw, so the Router path is proven to carry the contracts too.
+static ROUTED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
+
+#[subscriber(batch("chunks.routed"))]
+async fn routed(chunks: &[Chunk], FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>) -> HandlerResult {
+    let mut seen = ROUTED_SEEN.lock().expect("the test holds no poisoned lock");
+    for (chunk, meta) in chunks.iter().zip(&meta) {
+        seen.push((chunk.seq, meta.chunk_no));
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_router_path_carries_the_batch_header_contract() {
+    // The chain codec form: mounting through `with_codec` proves both entry points, since the
+    // default-codec one shares the same mount.
+    let router = Router::<MemoryBroker>::new()
+        .with_codec(JsonCodec)
+        .include_batch_with_headers(routed);
+    let app = RustStream::new(AppInfo::new("typed-headers-router", "1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include_router(router);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("start");
+    let broker = tb.broker::<MemoryBroker>();
+
+    let meta = ChunkMeta {
+        task_id: 4,
+        chunk_no: 9,
+        trace: None,
+    };
+    broker
+        .publish_with_headers("chunks.routed", &Chunk { seq: 5 }, &meta)
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    let seen = ROUTED_SEEN
+        .lock()
+        .expect("the test holds no poisoned lock")
+        .clone();
+    assert_eq!(seen, vec![(5, 9)]);
     tb.shutdown().await.expect("shutdown");
 }

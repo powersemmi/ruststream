@@ -144,9 +144,9 @@ impl IntoBatchResult for Vec<HandlerResult> {
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a batch handler over `{T}`",
-    note = "a batch handler that reads typed headers implements SliceHandlerWithHeaders instead: \
-            declare the contracts as FromHeaders<Vec<_>> and mount it with \
-            BrokerScope::include_batch"
+    note = "a batch handler declaring FromHeaders<Vec<_>> implements SliceHandlerWithHeaders \
+            instead: mount it with BrokerScope::include_batch, or with \
+            Router::include_batch_with_headers on the router path"
 )]
 pub trait SliceHandler<T, S = ()>: Send + Sync {
     /// Handles one decoded batch, with the per-batch [`Context`] carrying the typed app state `S`.
