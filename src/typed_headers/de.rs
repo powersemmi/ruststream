@@ -498,6 +498,8 @@ mod tests {
         headers.insert("field", "value");
         headers.to_typed::<IgnoredAny>().unwrap();
 
+        // IgnoredAny is deliberately zero-sized: it is how serde skips a value it does not want.
+        #[allow(clippy::zero_sized_map_values)]
         let map: BTreeMap<String, IgnoredAny> = headers.to_typed().unwrap();
         assert_eq!(map.len(), 1);
     }

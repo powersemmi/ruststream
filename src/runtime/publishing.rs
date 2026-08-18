@@ -409,6 +409,12 @@ mod tests {
                 struct Fields(HashMap<String, String>);
 
                 impl Visit for Fields {
+                    // Without this, a string field arrives through record_debug and is captured in
+                    // its quoted Debug form, which no assertion here is written against.
+                    fn record_str(&mut self, field: &Field, value: &str) {
+                        self.0.insert(field.name().to_owned(), value.to_owned());
+                    }
+
                     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
                         self.0.insert(field.name().to_owned(), format!("{value:?}"));
                     }
@@ -528,7 +534,9 @@ mod tests {
             assert_eq!(failure.get("reply").map(String::as_str), Some("out"));
             assert_eq!(failure.get("reply_type").map(String::as_str), Some("u32"));
             assert!(
-                failure.get("error").is_some_and(|e| e.contains("shut down")),
+                failure
+                    .get("error")
+                    .is_some_and(|e| e.contains("shut down")),
                 "the diagnostic must carry the broker error: {failure:?}",
             );
             assert_eq!(settle.outcome(), HandlerResult::retry());

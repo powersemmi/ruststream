@@ -1079,7 +1079,7 @@ mod tests {
     async fn a_panicking_worker_is_reported_when_joined() {
         let joined = tokio::spawn(async { panic!("worker down") }).await;
         assert!(joined.is_err());
-        log_worker_exit(joined.map(|()| ()));
+        log_worker_exit(joined);
     }
 
     #[tokio::test(start_paused = true)]

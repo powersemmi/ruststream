@@ -346,9 +346,8 @@ mod tests {
         assert!(pending.to_string().contains("has not been opened yet"));
         assert!(format!("{token:?}").contains("resolved: false"));
 
-        // A clone shares the same slot, so both copies resolve together later.
-        let clone = token.clone();
-        assert!(format!("{clone:?}").contains("resolved: false"));
+        // A clone shares the same slot, so both copies report the same state.
+        assert!(token.clone().seeker().is_err());
 
         // The decorated source keeps the inner subscription's name for the runtime and logs.
         assert_eq!(

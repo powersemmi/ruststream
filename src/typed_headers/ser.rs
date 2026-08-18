@@ -573,12 +573,23 @@ mod tests {
         inner: u8,
     }
 
+    // One enum per variant shape a value serializer can meet.
     #[derive(Serialize)]
     enum Shape {
-        UnitVariant,
-        NewtypeVariant(u8),
-        TupleVariant(u8, u8),
-        StructVariant { a: u8 },
+        Bare,
+        Wrapping(u8),
+        Pair(u8, u8),
+        Fields { a: u8 },
+    }
+
+    #[derive(Serialize)]
+    enum TaggedNewtype {
+        Meta(Nested),
+    }
+
+    #[derive(Serialize)]
+    enum TaggedFields {
+        Meta { inner: u8 },
     }
 
     // Serializes as raw bytes, the one shape no derive produces (serde_bytes territory).
@@ -674,10 +685,7 @@ mod tests {
         assert_eq!(field("text").unwrap().as_deref(), Some("text"));
         assert_eq!(field(RawBytes(b"raw")).unwrap().as_deref(), Some("raw"));
         assert_eq!(field(Newtype(7)).unwrap().as_deref(), Some("7"));
-        assert_eq!(
-            field(Shape::UnitVariant).unwrap().as_deref(),
-            Some("UnitVariant")
-        );
+        assert_eq!(field(Shape::Bare).unwrap().as_deref(), Some("Bare"));
         assert_eq!(field(Some(9u8)).unwrap().as_deref(), Some("9"));
         assert_eq!(field(Option::<u8>::None).unwrap(), None);
     }
@@ -687,19 +695,16 @@ mod tests {
         assert_unsupported(&field_err(()), "a unit");
         assert_unsupported(&field_err(Unit), "a unit struct");
         assert_unsupported(
-            &field_err(Shape::NewtypeVariant(1)),
+            &field_err(Shape::Wrapping(1)),
             "a data-carrying enum variant",
         );
         assert_unsupported(&field_err(vec![1u8]), "a sequence");
         assert_unsupported(&field_err((1u8, 2u8)), "a tuple");
         assert_unsupported(&field_err(Pair(1, 2)), "a tuple struct");
-        assert_unsupported(&field_err(Shape::TupleVariant(1, 2)), "a tuple variant");
+        assert_unsupported(&field_err(Shape::Pair(1, 2)), "a tuple variant");
         assert_unsupported(&field_err(BTreeMap::from([("k", "v")])), "a map");
         assert_unsupported(&field_err(Nested { inner: 1 }), "a nested struct");
-        assert_unsupported(
-            &field_err(Shape::StructVariant { a: 1 }),
-            "a struct variant",
-        );
+        assert_unsupported(&field_err(Shape::Fields { a: 1 }), "a struct variant");
     }
 
     #[test]
@@ -722,11 +727,11 @@ mod tests {
         assert_top_level(&top_level_err(RawBytes(b"raw")), "bytes");
         assert_top_level(&top_level_err(()), "a unit");
         assert_top_level(&top_level_err(Unit), "a unit struct");
-        assert_top_level(&top_level_err(Shape::UnitVariant), "a unit variant");
+        assert_top_level(&top_level_err(Shape::Bare), "a unit variant");
         assert_top_level(&top_level_err(vec![1u8]), "a sequence");
         assert_top_level(&top_level_err((1u8, 2u8)), "a tuple");
         assert_top_level(&top_level_err(Pair(1, 2)), "a tuple struct");
-        assert_top_level(&top_level_err(Shape::TupleVariant(1, 2)), "a tuple variant");
+        assert_top_level(&top_level_err(Shape::Pair(1, 2)), "a tuple variant");
     }
 
     #[test]
@@ -748,25 +753,17 @@ mod tests {
         assert!(headers.is_empty());
 
         // An externally tagged newtype variant stays flat, like the untagged form.
-        #[derive(Serialize)]
-        enum Tagged {
-            Meta(Nested),
-        }
-
         let mut headers = Headers::new();
         headers
-            .insert_typed(&Tagged::Meta(Nested { inner: 3 }))
+            .insert_typed(&TaggedNewtype::Meta(Nested { inner: 3 }))
             .unwrap();
         assert_eq!(headers.get_str("inner"), Some("3"));
 
         // A struct variant is a flat field list too.
-        #[derive(Serialize)]
-        enum Variants {
-            Meta { inner: u8 },
-        }
-
         let mut headers = Headers::new();
-        headers.insert_typed(&Variants::Meta { inner: 4 }).unwrap();
+        headers
+            .insert_typed(&TaggedFields::Meta { inner: 4 })
+            .unwrap();
         assert_eq!(headers.get_str("inner"), Some("4"));
     }
 
@@ -791,14 +788,14 @@ mod tests {
         assert_non_string_key(&key_err(()));
         assert_non_string_key(&key_err(Unit));
         assert_non_string_key(&key_err(Newtype(1)));
-        assert_non_string_key(&key_err(Shape::NewtypeVariant(1)));
+        assert_non_string_key(&key_err(Shape::Wrapping(1)));
         assert_non_string_key(&key_err(vec![1u8]));
         assert_non_string_key(&key_err((1u8, 2u8)));
         assert_non_string_key(&key_err(Pair(1, 2)));
-        assert_non_string_key(&key_err(Shape::TupleVariant(1, 2)));
+        assert_non_string_key(&key_err(Shape::Pair(1, 2)));
         assert_non_string_key(&key_err(BTreeMap::from([("k", "v")])));
         assert_non_string_key(&key_err(Nested { inner: 1 }));
-        assert_non_string_key(&key_err(Shape::StructVariant { a: 1 }));
+        assert_non_string_key(&key_err(Shape::Fields { a: 1 }));
     }
 
     #[test]
@@ -812,7 +809,7 @@ mod tests {
         assert_eq!(headers.get_str("c"), Some("value"));
 
         let mut headers = Headers::new();
-        headers.insert_typed(&KeyedMap(Shape::UnitVariant)).unwrap();
-        assert_eq!(headers.get_str("UnitVariant"), Some("value"));
+        headers.insert_typed(&KeyedMap(Shape::Bare)).unwrap();
+        assert_eq!(headers.get_str("Bare"), Some("value"));
     }
 }
