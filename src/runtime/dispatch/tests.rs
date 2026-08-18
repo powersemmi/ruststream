@@ -1,4 +1,3 @@
-
 use std::sync::{
     Arc,
     atomic::{AtomicU8, Ordering},

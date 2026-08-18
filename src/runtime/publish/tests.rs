@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
