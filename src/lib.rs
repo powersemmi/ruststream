@@ -74,9 +74,7 @@ pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::{HeadersContract, Message, MessageHeaders, NoHeaders, WithHeaders};
 pub use subscriber::Subscriber;
-pub use subscription::{
-    Name, SeekerPendingError, SeekerToken, StartAt, SubscriptionSource, WithSeeker,
-};
+pub use subscription::{Name, StartAt, SubscriptionSource};
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
 
 pub mod codec;
