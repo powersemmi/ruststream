@@ -96,8 +96,9 @@ the per-message context hook cannot offer:
 --8<-- "examples/post_settle.rs:batch"
 ```
 
-Batch *publishing* (a batch handler with `publish(..)`) settles all-or-nothing under one transaction, so
-per-element `and_after` does not compose there; it applies to plain batch and single forms only.
+Batch *publishing* (a batch handler with `publish(..)`) settles all-or-nothing under one
+transaction, so per-element `and_after` does not compose there; it applies to plain batch and
+single forms only.
 
 ### Delayed redelivery
 
@@ -240,7 +241,8 @@ b.include(handle.on_failure(..));   // fine: the attribute said nothing about fa
 ```
 
 The methods come from the `SubscriberSettings` trait, which every generated definition implements;
-import it (or the [prelude](../getting-started/index.md)) to reach them.
+import it (or the
+[prelude](https://docs.rs/ruststream/latest/ruststream/prelude/index.html)) to reach them.
 
 Broker-specific settings arrive the same way, in the broker's own vocabulary. Core cannot know that
 a subscription has a JetStream stream or a durable consumer name, so it exposes one hook - a

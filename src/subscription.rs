@@ -10,7 +10,7 @@
 //! takes a source (a name string or a broker config value), the runtime resolves it once against
 //! the [`ConnectedBroker`] form produced by [`Broker::connect`](crate::Broker::connect).
 
-use std::{borrow::Cow, future::Future, marker::PhantomData};
+use std::{borrow::Cow, fmt, future::Future, marker::PhantomData};
 
 use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
 
@@ -178,8 +178,8 @@ impl<S> Clone for Unnamed<S> {
 
 impl<S> Copy for Unnamed<S> {}
 
-impl<S> std::fmt::Debug for Unnamed<S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<S> fmt::Debug for Unnamed<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Unnamed").finish_non_exhaustive()
     }
 }
@@ -254,8 +254,8 @@ impl<S, P> StartAt<S, P> {
     }
 }
 
-impl<S, P> std::fmt::Debug for StartAt<S, P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<S, P> fmt::Debug for StartAt<S, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StartAt").finish_non_exhaustive()
     }
 }

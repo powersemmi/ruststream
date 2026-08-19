@@ -10,7 +10,7 @@
 
 #[cfg(feature = "otel")]
 use std::sync::LazyLock;
-use std::{future::Future, marker::PhantomData};
+use std::{fmt, future::Future, marker::PhantomData};
 
 #[cfg(feature = "otel")]
 use opentelemetry::metrics::Histogram;
@@ -370,8 +370,8 @@ impl<M, Input, DecodeCodec, Inner> TypedBatch<M, Input, DecodeCodec, Inner> {
     }
 }
 
-impl<M, Input, DecodeCodec, Inner> std::fmt::Debug for TypedBatch<M, Input, DecodeCodec, Inner> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<M, Input, DecodeCodec, Inner> fmt::Debug for TypedBatch<M, Input, DecodeCodec, Inner> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedBatch")
             .field("decode", &self.decode)
             .finish_non_exhaustive()
@@ -437,10 +437,10 @@ impl<M, Input, DecodeCodec, HeaderContract, Inner>
     }
 }
 
-impl<M, Input, DecodeCodec, HeaderContract, Inner> std::fmt::Debug
+impl<M, Input, DecodeCodec, HeaderContract, Inner> fmt::Debug
     for TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedBatchWithHeaders")
             .field("decode", &self.decode)
             .finish_non_exhaustive()
@@ -496,8 +496,8 @@ impl<M, Inner> RawBatch<M, Inner> {
     }
 }
 
-impl<M, Inner> std::fmt::Debug for RawBatch<M, Inner> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<M, Inner> fmt::Debug for RawBatch<M, Inner> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawBatch").finish_non_exhaustive()
     }
 }
@@ -660,7 +660,7 @@ where
 /// input. Not `async`: the outcome is decided before the delivery is settled, so the borrowed
 /// error never crosses an await.
 fn rejection<S>(
-    err: &impl std::fmt::Display,
+    err: &impl fmt::Display,
     reason: &str,
     decode: FailurePolicy,
     ctx: &Context<'_, (), S>,

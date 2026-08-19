@@ -447,14 +447,16 @@ impl<D: Declared> SubscriberSettings for D {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Declared, SubscriberBuilder, SubscriberSettings};
+    use std::time::Duration;
+
+    use super::{AllOpen, Declared, SubscriberBuilder, SubscriberSettings};
+    use crate::memory::ConnectedMemoryBroker;
     use crate::runtime::dispatch::Workers;
     use crate::runtime::failure::{FailurePolicies, FailurePolicy};
     use crate::runtime::forms;
+    use crate::runtime::input::Decoded;
     use crate::runtime::subscriber_def::SubscriberDef;
-    use crate::{Name, Unnamed};
-
-    use std::time::Duration;
+    use crate::{Name, SubscriptionSource, Unnamed, nonzero};
 
     /// Stands in for a generated definition: the steps only move it around, so it carries the
     /// bare structural surface a definition has, and none of the settings.
@@ -462,7 +464,7 @@ mod tests {
     struct Stub;
 
     impl SubscriberDef for Stub {
-        type Input = crate::runtime::input::Decoded<u32>;
+        type Input = Decoded<u32>;
         type Context = ();
         type Handler = ();
         type Source = Name;
@@ -476,7 +478,7 @@ mod tests {
 
     impl Declared for Stub {
         type Form = forms::Subscribing;
-        type Settings = SubscriberBuilder<Self, Unnamed<Name>, super::AllOpen>;
+        type Settings = SubscriberBuilder<Self, Unnamed<Name>, AllOpen>;
 
         fn declare(self) -> Self::Settings {
             SubscriberBuilder::new(self, Unnamed::new())
@@ -487,15 +489,15 @@ mod tests {
     fn the_steps_collect_the_settings_the_mount_reads_back() {
         let built = Stub
             .name("orders")
-            .workers(crate::nonzero!(4))
+            .workers(nonzero!(4))
             .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip))
-            .buffered(crate::nonzero!(8), Duration::from_millis(5));
+            .buffered(nonzero!(8), Duration::from_millis(5));
 
-        assert_eq!(built.workers, Workers::pool(crate::nonzero!(4)));
+        assert_eq!(built.workers, Workers::pool(nonzero!(4)));
         assert_eq!(built.failures.decode, FailurePolicy::Skip);
         // The buffer wraps the named source, so the name survives the wrap.
         assert_eq!(
-            crate::SubscriptionSource::<crate::memory::ConnectedMemoryBroker>::name(&built.source),
+            SubscriptionSource::<ConnectedMemoryBroker>::name(&built.source),
             "orders",
         );
         // The definition rides along untouched: the builder only ever adds settings.
@@ -504,8 +506,8 @@ mod tests {
 
     #[test]
     fn keyed_lanes_are_the_same_slot_as_the_pool() {
-        let built = Stub.name("orders").workers_by_key(crate::nonzero!(2));
-        assert_eq!(built.workers, Workers::keyed(crate::nonzero!(2)));
+        let built = Stub.name("orders").workers_by_key(nonzero!(2));
+        assert_eq!(built.workers, Workers::keyed(nonzero!(2)));
     }
 
     #[test]

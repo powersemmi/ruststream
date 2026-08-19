@@ -199,8 +199,8 @@ policy at the include site with `TypedPublisher::transform`. The full program is
 
 ## Batch replies and transactions
 
-A `#[subscriber("in", publish("out"))]` handler taking `&[T]` consumes a whole decoded batch and returns the
-replies for it - the consume-transform-produce pattern. `Ok(replies)` publishes every reply to
+A `#[subscriber("in", publish("out"))]` handler taking `&[T]` consumes a whole decoded batch and
+returns the replies for it - the consume-transform-produce pattern. `Ok(replies)` publishes every reply to
 the reply name and acks the batch; `Err(result)` publishes nothing and settles the whole batch
 with `result` (all-or-nothing: selective per-element outcomes do not compose with a
 transaction):

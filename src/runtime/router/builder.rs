@@ -1,5 +1,6 @@
 //! The [`Router`] builder: chaining registrations, codecs and layers, and mounting the result.
 
+use std::fmt;
 use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
@@ -17,7 +18,7 @@ use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, RawBytes};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::PublishPipeline;
@@ -89,8 +90,8 @@ impl<B: Broker + 'static> Default for Router<B, (), (), Identity> {
     }
 }
 
-impl<B, Routes, C, Layers> std::fmt::Debug for Router<B, Routes, C, Layers> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<B, Routes, C, Layers> fmt::Debug for Router<B, Routes, C, Layers> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Router").finish_non_exhaustive()
     }
 }
@@ -342,7 +343,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef<Input = crate::runtime::RawBytes>,
+        Def: BatchDef<Input = RawBytes>,
         Def::Handler: 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);

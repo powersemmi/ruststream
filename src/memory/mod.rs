@@ -25,6 +25,7 @@ pub use capability::{
 };
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     convert::Infallible,
     fmt,
@@ -537,7 +538,7 @@ impl MemorySource {
 // The in-memory subscription needs nothing beyond a name, so it offers the name-only
 // constructor the `#[subscriber(MemorySource)]` form builds through.
 impl FromName for MemorySource {
-    fn from_name(name: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
         Self::new(name.into().into_owned())
     }
 }
