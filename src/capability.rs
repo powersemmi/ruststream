@@ -349,11 +349,12 @@ pub trait Partitioned {
 
 /// A connected broker whose subscriptions are fully determined by a name string.
 ///
-/// This is the common case (`NATS` core subjects, the in-memory broadcast broker, `Redis` pub/sub
-/// channels): no consumer group, partition, or durable-consumer configuration is needed to open a
-/// subscription, so the runtime can subscribe given just a name. Brokers whose subscriptions
-/// require richer options (`Kafka` consumer groups, `JetStream` durable consumers) do not
-/// implement `Subscribe`; callers describe those with a broker-specific
+/// A broker implements this when a name alone identifies one of its subscriptions: it maps the
+/// name onto the subscription kind it treats as its default (a `NATS` core subject, a `Redis`
+/// stream). Whatever that kind needs beyond a name, such as a consumer group or a durable
+/// subscription name, is configured once on the broker itself; a broker left without that setting
+/// rejects the subscription with an error naming the fix rather than inventing a default. Kinds
+/// outside that default are described with a broker-specific
 /// [`SubscriptionSource`](crate::SubscriptionSource) instead.
 ///
 /// Implemented on the [`ConnectedBroker`](crate::ConnectedBroker) form: a subscription needs a
