@@ -142,6 +142,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for RefusedPublish {
 }
 
 /// A source whose subscription never opens.
+#[derive(Clone)]
 struct ClosedSource;
 
 impl SubscriptionSource<ConnectedMemoryBroker> for ClosedSource {

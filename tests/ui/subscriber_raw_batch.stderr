@@ -1,5 +1,5 @@
-error: raw is not supported together with batch(..); a raw handler takes one delivery's payload as `&[u8]`
- --> tests/ui/subscriber_raw_batch.rs:4:31
+error: a raw batch handler takes the batch's payloads as a slice of byte slices: `&[&[u8]]`
+ --> tests/ui/subscriber_raw_batch.rs:6:26
   |
-4 | #[subscriber(batch("frames"), raw)]
-  |                               ^^^
+6 | async fn handle(frames: &[u8]) {}
+  |                          ^^^^

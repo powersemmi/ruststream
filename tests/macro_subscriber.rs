@@ -43,7 +43,9 @@ async fn handle(order: &Order) -> HandlerResult {
 
 /// A broker-specific subscription descriptor (stand-in for e.g. a Redis stream), named by the
 /// definition itself. Proves a macro def works on an arbitrary `SubscriptionSource`, not just a
-/// topic string.
+/// topic string. `Clone` because the mount rebuilds the source from the definition's settings
+/// builder, the way a broker descriptor is cloned per registration.
+#[derive(Clone)]
 struct StreamSource {
     name: String,
 }

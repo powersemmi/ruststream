@@ -1,0 +1,23 @@
+error[E0277]: `OneAtATime` does not deliver messages in batches
+  --> tests/ui/subscriber_batch_without_batching.rs:53:15
+   |
+53 |             b.include(handle);
+   |               ^^^^^^^ this subscription has no batching of its own
+   |
+help: the trait `BatchSubscriber` is not implemented for `OneAtATime`
+  --> tests/ui/subscriber_batch_without_batching.rs:14:1
+   |
+14 | struct OneAtATime(MemorySubscriber);
+   | ^^^^^^^^^^^^^^^^^
+   = note: a handler taking `&[T]` needs batches: add the framework's buffer at the mount site, `b.include(handle.buffered(nonzero!(64), Duration::from_millis(10)))`, or mount the definition on a subscription kind that batches on the wire
+help: the following other types implement trait `BatchSubscriber`
+  --> src/memory/capability.rs
+   |
+   | impl BatchSubscriber for MemorySubscriber {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySubscriber`
+   |
+  ::: src/buffered.rs
+   |
+   | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
+   = note: required for `Batch` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Trickle, (Open, Open, Open)>>`
