@@ -1,0 +1,246 @@
+//! The publish builder: one call shape over every surface, with the positions the message
+//! type's `#[derive(Outgoing)]` declaration leaves open.
+#![cfg(all(
+    feature = "memory",
+    feature = "macros",
+    feature = "json",
+    feature = "testing"
+))]
+
+use ruststream::codec::JsonCodec;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, TypedPublisher};
+use ruststream::testing::{TestApp, TestableBroker};
+use ruststream::{Broker, Headers, OutSlot, Outgoing, Publisher, subscriber};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct Job {
+    id: u64,
+}
+
+/// The headers contract of [`ChunkDone`]: an ordinary serde struct the derive does not touch.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct DoneMeta {
+    task_id: u64,
+}
+
+/// A message bound to one name.
+#[derive(Debug, PartialEq, Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "chunks.progress")]
+struct Progress {
+    percent: u8,
+}
+
+/// A message bound to one name, with a header contract.
+#[derive(Debug, PartialEq, Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "chunks.done", headers = DoneMeta)]
+struct ChunkDone {
+    output_key: String,
+}
+
+/// A message bound to a space of names.
+#[derive(Debug, PartialEq, Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "orders.{tenant}.{region}.v1")]
+struct OrderPlaced {
+    id: u64,
+}
+
+/// A message that is simply sent where the caller says.
+#[derive(Debug, PartialEq, Outgoing, Serialize, Deserialize)]
+struct OrderArchived {
+    id: u64,
+}
+
+#[derive(OutSlot)]
+#[publishes(ChunkDone, Progress, OrderPlaced, OrderArchived)]
+struct Events;
+
+/// Every destination form, through one slot.
+#[subscriber("jobs.in")]
+async fn convert(
+    job: &Job,
+    Out(out): Out<impl Publisher, Events, (ChunkDone, Progress, OrderPlaced, OrderArchived)>,
+) -> HandlerResult {
+    // Fixed name: nothing to say about the destination.
+    if out
+        .message(&Progress { percent: 50 })
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    // Fixed name plus the declared header contract.
+    let done = ChunkDone {
+        output_key: format!("out/{}", job.id),
+    };
+    if out
+        .message(&done)
+        .with_headers(&DoneMeta { task_id: job.id })
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    // Templated name: one setter per placeholder, in declaration order.
+    if out
+        .message(&OrderPlaced { id: job.id })
+        .to()
+        .tenant("acme")
+        .region(7_u32)
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    // Declared with the derive alone: the call site names the destination.
+    if out
+        .message(&OrderArchived { id: job.id })
+        .to("orders.archived")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    // Bytes: the same shape without a codec position.
+    let mut headers = Headers::new();
+    headers.insert("source", "jobs.in");
+    if out
+        .raw(b"frame")
+        .with_header_map(headers)
+        .to("chunks.raw")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    HandlerResult::Ack
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_destination_form_resolves_through_one_builder() {
+    let app =
+        RustStream::new(AppInfo::new("builder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(convert).out(Events, MemoryPublish).mount();
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.publish("jobs.in", &Job { id: 3 })
+        .await
+        .expect("publish");
+
+    let broker = tb.broker::<MemoryBroker>();
+    broker
+        .published::<Progress>("chunks.progress")
+        .assert_called_once()
+        .with(&Progress { percent: 50 });
+    // The templated address is rendered per publish, placeholders in declaration order.
+    broker
+        .published::<OrderPlaced>("orders.acme.7.v1")
+        .assert_called_once()
+        .with(&OrderPlaced { id: 3 });
+    broker
+        .published::<OrderArchived>("orders.archived")
+        .assert_called_once()
+        .with(&OrderArchived { id: 3 });
+
+    // The declared contract lands in the header map, one entry per field.
+    let done = broker
+        .published::<ChunkDone>("chunks.done")
+        .assert_called_once();
+    assert_eq!(done.messages()[0].headers().get_str("task_id"), Some("3"));
+
+    // The byte path carries its map as it is.
+    let raw = tb.out::<Events>();
+    let framed = raw
+        .messages()
+        .iter()
+        .find(|msg| msg.name() == "chunks.raw")
+        .expect("the raw publish is attributed to the slot");
+    assert_eq!(framed.payload(), b"frame");
+    assert_eq!(framed.headers().get_str("source"), Some("jobs.in"));
+}
+
+/// A bare publisher reaches the same builder through [`PublishExt`], encoding with the crate
+/// default codec unless the call names one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bare_publisher_publishes_through_the_builder() {
+    let broker = MemoryBroker::new();
+    let connected = broker.clone().connect().await.expect("connect");
+    let publisher = connected.publisher();
+
+    publisher
+        .message(&Progress { percent: 100 })
+        .publish()
+        .await
+        .expect("fixed name");
+    publisher
+        .message(&OrderArchived { id: 9 })
+        .with_codec(JsonCodec)
+        .to("orders.archived".to_owned())
+        .publish()
+        .await
+        .expect("call-level codec and a computed name");
+    publisher
+        .raw(b"bytes")
+        .to("audit")
+        .publish()
+        .await
+        .expect("bytes");
+
+    assert_eq!(connected.published("chunks.progress").len(), 1);
+    assert_eq!(connected.published("orders.archived").len(), 1);
+    let audit = connected.published("audit");
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].payload(), b"bytes");
+}
+
+/// The typed publisher and both transaction surfaces carry the same builder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_typed_publisher_and_transactions_carry_the_builder() {
+    let broker = MemoryBroker::new();
+    let connected = broker.clone().connect().await.expect("connect");
+    let publisher = TypedPublisher::with_codec(connected.publisher(), JsonCodec);
+
+    publisher
+        .message(&Progress { percent: 10 })
+        .publish()
+        .await
+        .expect("typed publisher");
+
+    // The borrowed transaction kind.
+    let transactional =
+        TypedPublisher::with_codec(connected.publisher(), JsonCodec).transactional();
+    let scope = transactional.begin().await.expect("begin");
+    scope
+        .message(&Progress { percent: 20 })
+        .publish()
+        .await
+        .expect("in transaction");
+    scope
+        .raw(b"trace")
+        .to("audit.trail")
+        .publish()
+        .await
+        .expect("bytes in transaction");
+    scope.commit().await.expect("commit");
+
+    // The owned transaction kind.
+    let mut owned = publisher.transaction().await.expect("owned transaction");
+    owned
+        .message(&OrderArchived { id: 1 })
+        .to("orders.archived")
+        .publish()
+        .await
+        .expect("in owned transaction");
+    owned.commit().await.expect("commit");
+
+    assert_eq!(connected.published("chunks.progress").len(), 2);
+    assert_eq!(connected.published("audit.trail").len(), 1);
+    assert_eq!(connected.published("orders.archived").len(), 1);
+}

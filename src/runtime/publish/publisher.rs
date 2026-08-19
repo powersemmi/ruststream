@@ -9,12 +9,13 @@ use crate::runtime::lifecycle::BoxError;
 // `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
 // way, so an ungated import would break `--no-default-features`.
 use super::{
-    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, Outgoing,
-    PublishContext, PublishPipeline, PublishTransform, PublishTransformIdentity,
-    PublishTransformStack,
+    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, HeadersUnset,
+    MessageBody, Outgoing, Publish, PublishContext, PublishPipeline, PublishTransform,
+    PublishTransformIdentity, PublishTransformStack, RawBody, message_of, raw_of,
 };
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
+use crate::{CallerName, OutgoingDestination};
 use crate::{ConnectedBroker, PairError, PublishPolicy, Publisher, TransactionalPublisher};
 
 /// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishTransform`] stack, ready to send
@@ -136,6 +137,59 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     #[must_use]
     pub fn transactional(self) -> Transactional<P, C, PL, BL> {
         Transactional { inner: self }
+    }
+}
+
+impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
+    /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with this publisher's
+    /// codec: `publisher.message(&done).publish().await?`.
+    ///
+    /// Which positions the call site still has to fill comes from the message type's
+    /// declaration; see [`Publish`]. The static [`PublishTransform`](super::PublishTransform)
+    /// stack and the application's publish middleware do not run here - both belong to the
+    /// dispatch path, where a delivery context exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::TypedPublisher;
+    /// use ruststream::Outgoing;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "orders.done")]
+    /// struct OrderDone {
+    ///     id: u64,
+    /// }
+    ///
+    /// let publisher = TypedPublisher::new(MemoryBroker::new().publisher());
+    /// publisher.message(&OrderDone { id: 7 }).publish().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn message<'a, T>(
+        &'a self,
+        value: &'a T,
+    ) -> Publish<&'a P, MessageBody<'a, T>, &'a C, HeadersUnset, T::Form>
+    where
+        T: OutgoingDestination,
+    {
+        message_of(&self.publisher, value, &self.codec)
+    }
+
+    /// Starts a byte publish through this publisher: the payload travels as it is, to the
+    /// destination named with `to(..)`. No codec position, by construction.
+    pub fn raw<'a, B>(
+        &'a self,
+        payload: &'a B,
+    ) -> Publish<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
+    where
+        B: AsRef<[u8]> + ?Sized,
+    {
+        raw_of(&self.publisher, payload)
     }
 }
 

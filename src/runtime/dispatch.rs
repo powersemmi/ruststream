@@ -23,7 +23,8 @@ use super::batch::BatchHandler;
 use super::context::Context;
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
-use super::publisher_registry::ErasedPublisher;
+use super::publish::raw_of;
+use super::publisher_registry::{ErasedPublisher, ErasedSink};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Record, TestHooks, in_slot_scope};
 
@@ -796,10 +797,10 @@ where
 
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;
-        if let Err(err) = publisher
-            .publish_message(&subject, &payload, &headers)
-            .await
-        {
+        let deferred = raw_of(ErasedSink(publisher.as_ref()), &payload)
+            .with_header_map(headers)
+            .to(subject.as_str());
+        if let Err(err) = deferred.publish().await {
             warn!(
                 target: "ruststream::dispatch",
                 subscription = %subject,

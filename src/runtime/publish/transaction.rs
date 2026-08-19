@@ -9,8 +9,11 @@ use tracing::warn;
 use crate::codec::{Codec, CodecError};
 // `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
 // way, so an ungated import would break `--no-default-features`.
-use super::TypedPublisher;
-use crate::{OutgoingMessage, OwnedTransactions, Transaction, TransactionalPublisher};
+use super::{HeadersUnset, MessageBody, Publish, RawBody, TypedPublisher, message_of, raw_of};
+use crate::{
+    CallerName, OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction,
+    TransactionalPublisher,
+};
 
 /// A live broker transaction, opened by [`Transactional::begin`](crate::runtime::Transactional::begin).
 ///
@@ -32,6 +35,35 @@ pub struct TransactionScope<'a, P, C> {
     pub(super) publisher: &'a P,
     pub(super) codec: &'a C,
     pub(super) open: bool,
+}
+
+impl<'s, P, C> TransactionScope<'s, P, C> {
+    /// Starts a typed publish inside the transaction, encoded with the wrapper's codec: the same
+    /// builder as everywhere else, sending into the open transaction instead of straight to the
+    /// broker.
+    ///
+    /// Nothing published this way is visible before [`commit`](Self::commit).
+    pub fn message<'a, T>(
+        &'a self,
+        value: &'a T,
+    ) -> Publish<&'s P, MessageBody<'a, T>, &'s C, HeadersUnset, T::Form>
+    where
+        T: OutgoingDestination,
+    {
+        message_of(self.publisher, value, self.codec)
+    }
+
+    /// Starts a byte publish inside the transaction: the payload travels as it is, to the
+    /// destination named with `to(..)`.
+    pub fn raw<'a, B>(
+        &'a self,
+        payload: &'a B,
+    ) -> Publish<&'s P, RawBody<'a>, (), HeadersUnset, CallerName>
+    where
+        B: AsRef<[u8]> + ?Sized,
+    {
+        raw_of(self.publisher, payload)
+    }
 }
 
 impl<P, C> TransactionScope<'_, P, C>
@@ -198,6 +230,34 @@ where
 pub struct TypedTransaction<'a, Txn, C> {
     txn: Txn,
     codec: &'a C,
+}
+
+impl<'c, Txn, C> TypedTransaction<'c, Txn, C> {
+    /// Starts a typed publish into the transaction's buffer, encoded with the publisher's codec.
+    ///
+    /// The unique borrow is what the buffer needs, so one publish is built and awaited at a
+    /// time; nothing is visible before [`commit`](Self::commit).
+    pub fn message<'a, T>(
+        &'a mut self,
+        value: &'a T,
+    ) -> Publish<&'a mut Txn, MessageBody<'a, T>, &'c C, HeadersUnset, T::Form>
+    where
+        T: OutgoingDestination,
+    {
+        message_of(&mut self.txn, value, self.codec)
+    }
+
+    /// Starts a byte publish into the transaction's buffer: the payload travels as it is, to the
+    /// destination named with `to(..)`.
+    pub fn raw<'a, B>(
+        &'a mut self,
+        payload: &'a B,
+    ) -> Publish<&'a mut Txn, RawBody<'a>, (), HeadersUnset, CallerName>
+    where
+        B: AsRef<[u8]> + ?Sized,
+    {
+        raw_of(&mut self.txn, payload)
+    }
 }
 
 impl<Txn, C> TypedTransaction<'_, Txn, C>

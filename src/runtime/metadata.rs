@@ -23,6 +23,11 @@ pub struct OutgoingMessageMetadata {
     /// The serialized JSON Schema of the type's `#[message(headers(..))]` contract, when it
     /// declares one.
     pub headers_schema: Option<String>,
+    /// The placeholder names of a templated destination (`orders.{tenant}.v1`), in the order
+    /// they appear in [`channel`](Self::channel). Empty for a fixed one; the generated document
+    /// turns them into the channel's parameters block, so the declaration and the call site
+    /// cannot drift apart.
+    pub parameters: &'static [&'static str],
 }
 
 impl OutgoingMessageMetadata {
@@ -36,7 +41,15 @@ impl OutgoingMessageMetadata {
             message_description: None,
             payload_schema: None,
             headers_schema: None,
+            parameters: &[],
         }
+    }
+
+    /// Builder-style setter for a templated destination's placeholder names.
+    #[must_use]
+    pub fn with_parameters(mut self, parameters: &'static [&'static str]) -> Self {
+        self.parameters = parameters;
+        self
     }
 
     /// Builder-style setter for the [`Message`](crate::Message) name.

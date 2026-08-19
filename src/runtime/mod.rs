@@ -65,12 +65,14 @@ pub use lifecycle::ConnectedSlot;
 pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
-    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch, Outgoing,
-    PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity,
-    PublishLayer, PublishNext, PublishPipeline, PublishStack, PublishTransform,
-    PublishTransformIdentity, PublishTransformStack, ReplyPublisher, ReplyWiring,
-    TransactionPublishError, TransactionScope, Transactional, TypedPublisher, TypedTransaction,
-    for_batch,
+    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, CallCodec, ForBatch,
+    HeadersUnset, MapHeaders, MessageBody, MissingSegment, Outgoing, Publish, PublishAt,
+    PublishCodec, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError,
+    PublishExt, PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline,
+    PublishSink, PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack,
+    RawBody, ReplyPublisher, ReplyWiring, ResolvedName, SatisfiesContract, SuppliedName,
+    TemplateAddress, TransactionPublishError, TransactionScope, Transactional, TypedHeaders,
+    TypedPublisher, TypedTransaction, for_batch,
 };
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
@@ -86,11 +88,13 @@ pub use settings::{
     AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
+#[allow(deprecated)]
+pub use slot::OutMessage;
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{
-    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessage, OutMessages, OutSlot,
-    PublishTypedError, SlotPublisher, TypedSlot, TypedSlotWithHeaders, Unrestricted,
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishTypedError,
+    SlotPublisher, TypedSlot, TypedSlotWithHeaders, Unrestricted,
 };
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

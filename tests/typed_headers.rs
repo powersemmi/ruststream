@@ -2,6 +2,11 @@
 //! before the body runs (failing by the subscriber's decode policy), and the `Out` slot
 //! dictionary publishes typed messages - destination from the marker's `#[publishes(..)]`
 //! declaration, headers from the message's `#[message(headers(..))]` contract.
+//!
+//! The publish half is the deprecated dictionary path, kept under test until it is removed (the
+//! `Vec<Frame>` entry is the case only it can express: a foreign type cannot declare a
+//! destination of its own, so the replacement is a `#[derive(Outgoing)]` newtype). The publish
+//! builder that replaces it is covered by `tests/publish_builder.rs`.
 
 #![cfg(all(
     feature = "memory",
@@ -9,6 +14,7 @@
     feature = "json",
     feature = "testing"
 ))]
+#![allow(deprecated)]
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};

@@ -12,7 +12,7 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
-use ruststream::{Message, OutSlot, Publisher, subscriber};
+use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 // The header contracts: flat structs whose fields name headers. On the wire every value is a
@@ -32,33 +32,34 @@ struct DoneMeta {
 }
 // --8<-- [end:contracts]
 
-// The outgoing messages: `#[message(headers(..))]` ties a header contract to the type, so the
-// typed publish path demands the right headers and the AsyncAPI document shows them.
+// The outgoing messages: one derive declares everything about being sent - the destination, and
+// the header contract that comes with it - so the publish builder demands the right headers and
+// the AsyncAPI document shows them next to the payload.
 // --8<-- [start:messages]
-#[derive(Message, Serialize, Deserialize, JsonSchema)]
-#[message(headers(DoneMeta))]
+#[derive(Outgoing, Serialize, Deserialize, JsonSchema)]
+#[outgoing(name = "chunks.done", headers = DoneMeta)]
 struct ChunkDone {
     output_key: String,
 }
 
-#[derive(Message, Serialize, Deserialize, JsonSchema)]
+#[derive(Outgoing, Serialize, Deserialize, JsonSchema)]
+#[outgoing(name = "chunks.progress")]
 struct Progress {
     percent: u8,
 }
 // --8<-- [end:messages]
 
-// The slot's publish dictionary: each type maps to the channel it publishes to. The destination
-// never appears in handler code, and an undeclared type does not compile.
+// The slot lists what it may publish; where each type goes is the type's own declaration.
 // --8<-- [start:dictionary]
 #[derive(OutSlot)]
-#[publishes(ChunkDone = "chunks.done", Progress = "chunks.progress")]
+#[publishes(ChunkDone, Progress)]
 struct Events;
 // --8<-- [end:dictionary]
 
 // FromHeaders parses the delivery headers into the contract before the body runs; a missing or
 // unparsable header settles the delivery by `on_failure(decode = ..)` (drop by default). The
 // Out parameter's optional third position declares the message types this handler publishes:
-// destinations come from the dictionary, headers from each message's contract - `Progress`
+// destinations come from each type's declaration, headers from its contract - `Progress`
 // publishes bare, `ChunkDone` does not compile without `.with_headers(&meta)`.
 // --8<-- [start:handler]
 #[subscriber("chunks.raw", raw)]
@@ -68,7 +69,12 @@ async fn convert(
     Out(events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
 ) -> HandlerResult {
     let percent = u8::try_from(meta.chunk_no * 100 / meta.chunks_total.max(1)).unwrap_or(100);
-    if events.publish_typed(&Progress { percent }).await.is_err() {
+    if events
+        .message(&Progress { percent })
+        .publish()
+        .await
+        .is_err()
+    {
         return HandlerResult::retry();
     }
 
@@ -80,8 +86,9 @@ async fn convert(
         duration_ms: chunk.len() as u64,
     };
     if events
+        .message(&done)
         .with_headers(&done_meta)
-        .publish_typed(&done)
+        .publish()
         .await
         .is_err()
     {
@@ -101,8 +108,10 @@ struct StatusRequest {
     task_id: u64,
 }
 
-#[derive(Message, Serialize, JsonSchema)]
-#[message(headers(DoneMeta))]
+// The reply is sent where the `publish(..)` clause says, so the type declares no name of its
+// own - only the contract that travels with it.
+#[derive(Outgoing, Serialize, JsonSchema)]
+#[outgoing(headers = DoneMeta)]
 struct StatusReply {
     done: bool,
 }

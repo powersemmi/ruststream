@@ -72,7 +72,10 @@ pub use field::{BuildContext, ContextField, Field, FieldMut};
 pub use headers::Headers;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
-pub use schema::{HeadersContract, Message, MessageHeaders, NoHeaders, WithHeaders};
+pub use schema::{
+    CallerName, DestinationForm, FixedName, HeadersContract, Message, MessageHeaders, NameTemplate,
+    NoHeaders, OutgoingDestination, WithHeaders,
+};
 pub use subscriber::Subscriber;
 pub use subscription::{FromName, Name, StartAt, SubscriptionSource, Unnamed};
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
@@ -104,6 +107,14 @@ pub use ruststream_macros::app;
 /// Available with the `macros` feature.
 #[cfg(feature = "macros")]
 pub use ruststream_macros::Message;
+
+/// Derive macro declaring everything a message type says about being sent: its destination
+/// ([`OutgoingDestination`]) and its optional header contract ([`MessageHeaders`]), plus the
+/// [`Message`] metadata the generated document reads.
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::Outgoing;
 
 /// Derive macro that implements [`FromRef`](runtime::FromRef) for each field of an application
 /// state, so handlers can inject any field with [`State<T>`](runtime::State).

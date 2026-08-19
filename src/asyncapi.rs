@@ -126,10 +126,28 @@ pub struct Info {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct Channel {
-    /// The channel address (the broker name / subject).
+    /// The channel address (the broker name / subject). A templated address keeps its
+    /// `{placeholder}` segments, and every one of them is declared in
+    /// [`parameters`](Self::parameters).
     pub address: String,
     /// Messages on this channel, keyed by message name, referencing component definitions.
     pub messages: BTreeMap<String, Reference>,
+    /// The address's parameters, one per `{placeholder}` segment; empty (and omitted) for a
+    /// fixed address.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Parameter>,
+}
+
+/// An `AsyncAPI` channel parameter: one `{placeholder}` segment of a templated address.
+///
+/// The declaration names the segments; what a service puts in them is a run-time value, so the
+/// object carries no enumeration.
+#[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
+pub struct Parameter {
+    /// Optional human description of the segment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// An `AsyncAPI` operation: an action on a channel.
@@ -474,6 +492,7 @@ fn add_receive(
         .or_insert_with(|| Channel {
             address: name.to_owned(),
             messages: BTreeMap::new(),
+            parameters: BTreeMap::new(),
         })
         .messages
         .insert(
@@ -608,6 +627,13 @@ fn add_outgoing(
         .or_insert_with(|| Channel {
             address: channel.to_owned(),
             messages: BTreeMap::new(),
+            // A templated address declares its placeholders, so the document says what the
+            // segments are instead of showing an address nothing describes.
+            parameters: outgoing
+                .parameters
+                .iter()
+                .map(|segment| ((*segment).to_owned(), Parameter::default()))
+                .collect(),
         })
         .messages
         .insert(
