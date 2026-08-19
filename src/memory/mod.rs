@@ -36,9 +36,9 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Headers, IncomingMessage,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec, Subscribe,
-    Subscriber, SubscriptionSource,
+    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName, Headers,
+    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec,
+    Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -531,6 +531,14 @@ impl MemorySource {
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
+    }
+}
+
+// The in-memory subscription needs nothing beyond a name, so it offers the name-only
+// constructor the `#[subscriber(MemorySource)]` form builds through.
+impl FromName for MemorySource {
+    fn from_name(name: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        Self::new(name.into().into_owned())
     }
 }
 

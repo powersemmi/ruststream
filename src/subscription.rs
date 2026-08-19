@@ -10,7 +10,7 @@
 //! takes a source (a name string or a broker config value), the runtime resolves it once against
 //! the [`ConnectedBroker`] form produced by [`Broker::connect`](crate::Broker::connect).
 
-use std::{borrow::Cow, future::Future};
+use std::{borrow::Cow, future::Future, marker::PhantomData};
 
 use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
 
@@ -37,6 +37,13 @@ use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
 ///     source.subscribe(connected).await
 /// }
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not open a subscription on `{C}`",
+    label = "not a subscription source for this broker",
+    note = "a subscriber left unnamed carries `Unnamed<..>` until the mount site names it: \
+            `b.include(handle.name(\"orders\"))`",
+    note = "otherwise the source belongs to a different broker than the one being mounted on"
+)]
 pub trait SubscriptionSource<C: ConnectedBroker> {
     /// The subscriber type this source opens.
     type Subscriber: Subscriber;
@@ -81,6 +88,99 @@ impl Name {
     #[must_use]
     pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
         Self(name.into())
+    }
+}
+
+/// A subscription kind identified by a name and nothing else.
+///
+/// Every source in the broker family is constructed from one string - `new(topic)` for Kafka,
+/// `new(subject)` for NATS, `new(key)` or `new(channel)` for Redis - and this trait says so, so
+/// the mount site can build the kind once the name arrives:
+/// `#[subscriber(RedisStream)]` names the kind and leaves the value to
+/// `b.include(handle.name(subject))`.
+///
+/// A kind that genuinely needs more than a name to exist (a Pulsar source takes a topic *and* a
+/// subscription name) does not implement it, and the name-only attribute form does not compile
+/// for that kind. That is the honest boundary: nothing is ever built from thin air, and no
+/// source needs a `Default` that would make a stream without a key representable.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{FromName, Name};
+///
+/// fn build<S: FromName>(name: &'static str) -> S {
+///     S::from_name(name)
+/// }
+///
+/// let source: Name = build("orders");
+/// # let _ = source;
+/// ```
+pub trait FromName {
+    /// Builds the source bound to `name`.
+    #[must_use]
+    fn from_name(name: impl Into<Cow<'static, str>>) -> Self;
+}
+
+impl FromName for Name {
+    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(name)
+    }
+}
+
+/// The stand-in a definition carries while its subscription has no name yet.
+///
+/// `#[subscriber]` and `#[subscriber(Kind)]` fix the subscription *kind* and leave its value to
+/// the mount site, so the definition's source starts as `Unnamed<Kind>`. It deliberately
+/// implements no [`SubscriptionSource`]: mounting a definition that was never named is a compile
+/// error, not a startup one. [`name`](crate::runtime::SubscriberSettings::name) replaces it with
+/// the kind itself, built through [`FromName`].
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{FromName, Name, Unnamed};
+///
+/// let placeholder: Unnamed<Name> = Unnamed::new();
+/// let named: Name = placeholder.into_named("orders");
+/// # let _ = named;
+/// ```
+pub struct Unnamed<S>(PhantomData<fn() -> S>);
+
+impl<S> Unnamed<S> {
+    /// The placeholder for a subscription of kind `S` whose name is still missing.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+
+    /// Builds the subscription kind now that its name is known.
+    #[must_use]
+    pub fn into_named(self, name: impl Into<Cow<'static, str>>) -> S
+    where
+        S: FromName,
+    {
+        S::from_name(name)
+    }
+}
+
+impl<S> Default for Unnamed<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S> Clone for Unnamed<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for Unnamed<S> {}
+
+impl<S> std::fmt::Debug for Unnamed<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Unnamed").finish_non_exhaustive()
     }
 }
 
@@ -137,6 +237,7 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone)]
 pub struct StartAt<S, P> {
     inner: S,
     position: P,
