@@ -354,7 +354,9 @@ impl_contains_message! {
     message = "`{Self}` does not define a message set for the `{M}` slot",
     note = "the third Out argument is a tuple of types, `()` (unrestricted), a \
             #[derive(Outgoing)] type (declares itself and where it goes), or a \
-            #[derive(OutMessages)] enum (declares its variants' models)"
+            #[derive(OutMessages)] enum (declares its variants' models); a \
+            #[derive(Message)] type declares itself only while the marker still names its \
+            channel in the deprecated #[publishes({Self} = \"<channel>\")] form"
 )]
 pub trait OutMessages<M: OutSlot> {
     /// The set's declared outgoing messages, for the generated document. Called once at
