@@ -192,6 +192,55 @@ The macro reads the type out of the constructor call, and also accepts a builder
 kinds (pub/sub versus streams) with different subscriber types - or, as the
 [NATS example](example-nats.md) does, serve them all from one descriptor that branches internally.
 
+Derive `Clone` on the descriptor: it is configuration, and the mount rebuilds it per registration
+so one definition can be mounted on two brokers.
+
+### Naming a kind by one string
+
+A kind identified by a name and nothing else also implements `FromName`, whose single
+constructor builds it from that name:
+
+<!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
+```rust
+impl FromName for OrdersStream {
+    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(name)
+    }
+}
+```
+
+That is what makes `#[subscriber(OrdersStream)]` legal: the attribute fixes the kind, and the
+mount site supplies the value. A kind that genuinely needs more than a name to exist (a topic
+*and* a subscription name) does not implement it, and that form does not compile for it - which is
+the honest boundary, and spares the descriptor a `Default` that would make an unusable value
+representable.
+
+### Settings in your own vocabulary
+
+Core cannot know that a subscription has a stream, a durable name or a consumer group, so it
+exposes one hook - `map_source`, a transform over the source the mount site is building - and your
+crate layers its own trait on top, bound to your source type:
+
+<!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
+```rust
+pub trait NatsSubscriber {
+    fn jetstream(self, stream: impl Into<String>) -> Self;
+    fn durable(self, name: impl Into<String>) -> Self;
+}
+
+impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (W, F, P)> {
+    fn jetstream(self, stream: impl Into<String>) -> Self {
+        self.map_source(|source| source.jetstream(stream))
+    }
+    // ..
+}
+```
+
+The trait is local to your crate, so the orphan rule is satisfied, and the bound on the source type
+means the methods simply do not exist on a builder for another broker. Users import the trait to
+reach them, as with any extension trait. This is the same extension shape the `Out` slot vocabulary
+uses below.
+
 ## Capability traits
 
 Implement only the capabilities your broker supports; none are part of the mandatory interface.

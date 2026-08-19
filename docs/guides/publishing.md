@@ -109,8 +109,8 @@ what this handler sends (`Out<impl Publisher, Marker, (A, B)>`, a single type, o
 destinations and header contracts, feeding the `send` operations of the generated AsyncAPI
 document. See [typed headers](headers.md).
 
-The parameter composes with every subscriber form: next to a `Seek` parameter, on a `raw`
-handler, and on `batch(..)` handlers (`b.include(f).publisher(..)` - the whole page in,
+The parameter composes with every subscriber form: next to a `Seek` parameter, on a byte-input
+handler, and on batch handlers (`b.include(f).publisher(..)` - the whole page in,
 per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
 their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
 publisher attaches with `.out(marker, ..)` plus the terminal `.mount()` (`DefaultSlot` for a
@@ -199,7 +199,7 @@ policy at the include site with `TypedPublisher::transform`. The full program is
 
 ## Batch replies and transactions
 
-A `#[subscriber(batch(..), publish(..))]` handler consumes a whole decoded batch and returns the
+A `#[subscriber("in", publish("out"))]` handler taking `&[T]` consumes a whole decoded batch and returns the
 replies for it - the consume-transform-produce pattern. `Ok(replies)` publishes every reply to
 the reply name and acks the batch; `Err(result)` publishes nothing and settles the whole batch
 with `result` (all-or-nothing: selective per-element outcomes do not compose with a

@@ -29,9 +29,9 @@ header, unparsable value) never reaches the body - the delivery settles by the s
 
 --8<-- "examples/typed_headers.rs:handler"
 
-`FromHeaders` composes with `raw` (bytes body, typed headers) and with every other extractor.
+`FromHeaders` composes with a byte body (`&[u8]`, typed headers) and with every other extractor.
 
-On a `batch(..)` form the headers stay per-delivery, so the parameter takes one contract per
+On a batch handler the headers stay per-delivery, so the parameter takes one contract per
 element: `FromHeaders<Vec<T>>`. `meta[i]` belongs to `chunks[i]`, and the two line up by
 construction - an element whose payload or headers fail to materialize is settled by the same
 `on_failure(decode = ..)` policy and never reaches the handler, exactly as on the single-message

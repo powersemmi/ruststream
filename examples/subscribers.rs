@@ -1,5 +1,5 @@
-//! The handler forms from the Subscribers guide: the basic contract, the context parameter, and
-//! the manual (macro-free) registration.
+//! The handler forms from the Subscribers guide: the basic contract, the context parameter, the
+//! settings a mount site fills in, and the manual (macro-free) registration.
 //!
 //! ```text
 //! cargo run --example subscribers --features macros,memory,json -- run
@@ -8,10 +8,13 @@
 use std::time::Duration;
 
 use ruststream::codec::JsonCodec;
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream, typed};
+use ruststream::memory::{MemoryBroker, MemorySource};
+use ruststream::runtime::{
+    AppInfo, Context, FailurePolicies, FailurePolicy, HandlerMetadata, HandlerResult, RustStream,
+    SubscriberSettings, typed,
+};
 use ruststream::subscriber;
-use ruststream::{Buffered, Name, nonzero};
+use ruststream::{Name, nonzero};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -37,14 +40,41 @@ async fn with_context(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
 }
 // --8<-- [end:context]
 
+// --8<-- [start:deferred_name]
+/// The by-name source with its value left out: the mount site names the subscription.
+#[subscriber]
+async fn audit(order: &Order) -> HandlerResult {
+    println!("auditing order {}", order.id);
+    HandlerResult::Ack
+}
+// --8<-- [end:deferred_name]
+
+// --8<-- [start:named_kind]
+/// A named kind carrying only what it needs to exist; the value arrives at the mount site.
+#[subscriber(MemorySource)]
+async fn archive(order: &Order) -> HandlerResult {
+    println!("archiving order {}", order.id);
+    HandlerResult::Ack
+}
+// --8<-- [end:named_kind]
+
 // --8<-- [start:batch]
-/// Settles a whole page of orders in one go.
-#[subscriber(batch("orders"))]
+/// Settles a whole page of orders in one go: the slice parameter is what says so.
+#[subscriber("orders")]
 async fn settle(orders: &[Order]) -> HandlerResult {
     println!("settling {} orders", orders.len());
     HandlerResult::Ack
 }
 // --8<-- [end:batch]
+
+// --8<-- [start:raw_batch]
+/// A batch of payloads: the batch shape without the decode step.
+#[subscriber("frames")]
+async fn ingest(frames: &[&[u8]]) -> HandlerResult {
+    println!("ingesting {} frames", frames.len());
+    HandlerResult::Ack
+}
+// --8<-- [end:raw_batch]
 
 // --8<-- [start:workers]
 /// Up to 16 orders processed concurrently; global order is lost by design.
@@ -66,7 +96,7 @@ async fn per_customer(order: &Order) -> HandlerResult {
 
 // --8<-- [start:batch_selective]
 /// Retries only the entries that are not ready yet; the rest of the page settles.
-#[subscriber(batch("orders"))]
+#[subscriber("orders")]
 async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
     orders
         .iter()
@@ -81,29 +111,51 @@ async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
 }
 // --8<-- [end:batch_selective]
 
-// --8<-- [start:batch_buffered]
-// Client-side batching for sources without native batches: close a batch at 128 deliveries or
-// 20 ms after its first one. The macro recovers the source type from the constructor path, so
-// the generic parameter is spelled out.
-#[subscriber(batch(Buffered::<Name>::new(Name::new("orders"))
-    .max_size(nonzero!(128))
-    .max_wait(Duration::from_millis(20))))]
+/// Whether batches arrive at all is a property of the broker, so it is settled at the mount.
+#[subscriber]
 async fn drain(orders: &[Order]) -> HandlerResult {
     println!("draining {} orders", orders.len());
     HandlerResult::Ack
 }
-// --8<-- [end:batch_buffered]
+
+/// A handler whose declarative settings are all left to the mount site.
+#[subscriber]
+async fn bill(order: &Order) -> HandlerResult {
+    println!("billing order {}", order.id);
+    HandlerResult::Ack
+}
 
 #[ruststream::app]
 fn app() -> RustStream {
+    let shard = 7;
     RustStream::new(AppInfo::new("subscribers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(handle);
         b.include(with_context);
+        // --8<-- [start:name_mount]
+        b.include(audit.name(format!("audit-{shard}")));
+        // --8<-- [end:name_mount]
+        b.include(archive.name("archive"));
         // --8<-- [start:batch_mount]
         b.include(settle);
         // --8<-- [end:batch_mount]
+        b.include(ingest);
         b.include(reconcile);
-        b.include(drain);
+        // --8<-- [start:batch_buffered]
+        // Client-side batching for subscriptions without native batches: close a batch at 128
+        // deliveries, or 20 ms after its first one.
+        b.include(
+            drain
+                .name("orders")
+                .buffered(nonzero!(128), Duration::from_millis(20)),
+        );
+        // --8<-- [end:batch_buffered]
+        // --8<-- [start:builder_settings]
+        b.include(
+            bill.name("orders")
+                .workers(nonzero!(4))
+                .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
+        );
+        // --8<-- [end:builder_settings]
         b.include(fan_out);
         b.include(per_customer);
         // --8<-- [start:manual]
