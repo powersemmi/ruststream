@@ -366,7 +366,7 @@ fn template_builder(
 
             #(#setters)*
 
-            impl<Cont: ::ruststream::runtime::PublishAt> To<Cont #(, #bound)*> {
+            impl<Cont> To<Cont #(, #bound)*> {
                 /// Renders the declared name with the bound segments and publishes to it.
                 ///
                 /// # Errors
@@ -374,6 +374,9 @@ fn template_builder(
                 /// Returns [`PublishError`](::ruststream::runtime::PublishError) when the
                 /// payload cannot be encoded, the typed headers cannot be serialized, or the
                 /// broker rejects the message.
+                // The bound sits on the method, not on the impl block: carried by the block it
+                // turns a publish the message's own declarations reject into "method not
+                // found", which drops the guidance those declarations come with.
                 pub async fn publish(
                     self,
                 ) -> ::core::result::Result<
@@ -381,7 +384,10 @@ fn template_builder(
                     ::ruststream::runtime::PublishError<
                         <Cont as ::ruststream::runtime::PublishAt>::Error,
                     >,
-                > {
+                >
+                where
+                    Cont: ::ruststream::runtime::PublishAt,
+                {
                     // A templated address is rendered per publish: that allocation is what
                     // computing an address at run time costs, and the fixed form avoids it.
                     let address = ::std::format!(#format_string #(, #format_args)*);

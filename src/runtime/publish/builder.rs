@@ -403,8 +403,7 @@ where
     Sink: PublishSink,
     T: OutgoingDestination + MessageHeaders + Serialize + Sync,
     Enc: PublishCodec,
-    Hdrs: PublishHeaders + SatisfiesContract<T::Contract>,
-    Dest: ResolvedName,
+    Hdrs: PublishHeaders,
 {
     /// Encodes the value with the resolved codec and publishes it to the resolved destination.
     ///
@@ -417,7 +416,14 @@ where
     ///
     /// As cancel-safe as the sink's own send: dropping the future mid-flight may leave the
     /// message in an indeterminate state.
-    pub async fn publish(self) -> Result<(), PublishError<Sink::Error>> {
+    // The two position bounds sit on the method, not on the impl block: a bound the impl block
+    // carries makes an under-specified publish "method not found", which drops the guidance
+    // these traits declare, while a bound the method carries reports it.
+    pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
+    where
+        Hdrs: SatisfiesContract<T::Contract>,
+        Dest: ResolvedName,
+    {
         let Self {
             sink,
             body,
@@ -450,7 +456,6 @@ impl<Sink, Hdrs, Dest> Publish<Sink, RawBody<'_>, (), Hdrs, Dest>
 where
     Sink: PublishSink,
     Hdrs: PublishHeaders,
-    Dest: ResolvedName,
 {
     /// Publishes the bytes as they are, to the destination named at the call site.
     ///
@@ -463,7 +468,12 @@ where
     ///
     /// As cancel-safe as the sink's own send: dropping the future mid-flight may leave the
     /// message in an indeterminate state.
-    pub async fn publish(self) -> Result<(), PublishError<Sink::Error>> {
+    // On the method for the same reason as on the typed terminal: a bytes publish that never
+    // named its destination has to read as the missing `to(..)`, not as a missing method.
+    pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
+    where
+        Dest: ResolvedName,
+    {
         let Self {
             sink,
             body,

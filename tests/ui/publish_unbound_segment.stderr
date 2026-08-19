@@ -19,3 +19,7 @@ error[E0599]: no method named `publish` found for struct `To<ruststream::runtime
    = note: the following traits define an item `publish`, perhaps you need to implement one of them:
            candidate #1: `Publisher`
            candidate #2: `Transaction`
+help: one of the expressions' fields has a method of the same name
+   |
+29 |         .cont.publish()
+   |          +++++
