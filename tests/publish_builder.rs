@@ -230,6 +230,13 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
         .expect("bytes in transaction");
     scope.commit().await.expect("commit");
 
+    publisher
+        .raw(b"wire")
+        .to("audit.wire")
+        .publish()
+        .await
+        .expect("bytes through the typed publisher");
+
     // The owned transaction kind.
     let mut owned = publisher.transaction().await.expect("owned transaction");
     owned
@@ -238,9 +245,47 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
         .publish()
         .await
         .expect("in owned transaction");
+    owned
+        .raw(b"ledger")
+        .to("audit.ledger")
+        .publish()
+        .await
+        .expect("bytes in owned transaction");
     owned.commit().await.expect("commit");
 
     assert_eq!(connected.published("chunks.progress").len(), 2);
     assert_eq!(connected.published("audit.trail").len(), 1);
+    assert_eq!(connected.published("audit.wire").len(), 1);
     assert_eq!(connected.published("orders.archived").len(), 1);
+    assert_eq!(connected.published("audit.ledger").len(), 1);
+}
+
+/// A builder in flight keeps its wiring out of Debug: it holds a live publisher, and a
+/// diagnostic dump must not print one.
+#[test]
+fn a_publish_builder_hides_its_wiring() {
+    let publisher = MemoryBroker::new().publisher();
+    let pending = publisher.message(&Progress { percent: 1 });
+    assert_eq!(format!("{pending:?}"), "Publish { .. }");
+}
+
+/// The typed headers of a message with no contract are rejected, but an arbitrary transport map
+/// still travels with it: the map stands for no declaration.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_contract_less_message_still_carries_a_header_map() {
+    let broker = MemoryBroker::new();
+    let connected = broker.clone().connect().await.expect("connect");
+
+    let mut headers = Headers::new();
+    headers.insert("x-trace", "abc");
+    connected
+        .publisher()
+        .message(&Progress { percent: 5 })
+        .with_header_map(headers)
+        .publish()
+        .await
+        .expect("map headers on a contract-less message");
+
+    let published = connected.published("chunks.progress");
+    assert_eq!(published[0].headers().get_str("x-trace"), Some("abc"));
 }

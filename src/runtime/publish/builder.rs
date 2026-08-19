@@ -27,7 +27,8 @@ use super::sink::{CallCodec, PublishCodec, PublishSink};
 ///
 /// Built by the `message(..)` and `raw(..)` entry points of every publish surface (an
 /// [`Out`](crate::runtime::Out) slot, a [`TypedPublisher`](super::TypedPublisher), a transaction
-/// scope, any [`Publisher`](crate::Publisher) through [`PublishExt`]), and finished by
+/// scope, any [`Publisher`](crate::Publisher) through [`PublishExt`](super::PublishExt)), and
+/// finished by
 /// [`publish`](Self::publish). The type parameters are the positions:
 ///
 /// * `Sink` - where the bytes go, a [`PublishSink`].

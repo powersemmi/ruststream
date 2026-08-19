@@ -27,11 +27,11 @@ pub trait Message {
 
 /// Declares a message type's typed header contract.
 ///
-/// `#[derive(Message)]` implements it: `#[message(headers(Meta))]` on the type sets the
-/// contract to [`WithHeaders<Meta>`], and a derive without the attribute sets [`NoHeaders`].
-/// The contract types both message documentation (the `AsyncAPI` headers schema of the
-/// message) and the typed publish path: a slot's
-/// [`publish_typed`](crate::runtime::TypedSlot::publish_typed) compiles only with the
+/// `#[derive(Outgoing)]` implements it: `#[outgoing(headers = Meta)]` on the type sets the
+/// contract to [`WithHeaders<Meta>`], and a declaration without it sets [`NoHeaders`]
+/// (`#[derive(Message)]` with `#[message(headers(Meta))]` does the same for a type that
+/// declares no destination). The contract types both message documentation (the `AsyncAPI`
+/// headers schema of the message) and the publish builder: `publish()` compiles only with the
 /// headers the contract declares (none for [`NoHeaders`]).
 ///
 /// The two contract shapes are a closed vocabulary ([`HeadersContract`] is sealed), so the
@@ -48,7 +48,7 @@ pub trait Message {
 ///
 /// struct ChunkDone;
 ///
-/// // What `#[derive(Message)]` + `#[message(headers(ChunkMeta))]` generates:
+/// // What `#[derive(Outgoing)]` + `#[outgoing(headers = ChunkMeta)]` generates:
 /// impl MessageHeaders for ChunkDone {
 ///     type Contract = WithHeaders<ChunkMeta>;
 /// }

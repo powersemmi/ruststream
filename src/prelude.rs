@@ -21,8 +21,8 @@
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, Context, Ctx, FromHeaders, FromRef, HandlerResult, Out, Router, RunningApp,
-    RustStream, Seek, State, SubscriberSettings, TypedPublisher,
+    App, AppInfo, Context, Ctx, FromHeaders, FromRef, HandlerResult, Out, PublishExt, Router,
+    RunningApp, RustStream, Seek, State, SubscriberSettings, TypedPublisher,
 };
 pub use crate::{
     Broker, Headers, IncomingMessage, Message, Name, OutSlot, OutgoingMessage, PublishPolicy,
@@ -31,6 +31,8 @@ pub use crate::{
 
 // The attribute macros and the derives share their names with the traits they implement (the
 // `Message` trait and its derive, `OutSlot`, `FromRef`), which is why the re-exports above
-// already carry the derive where the trait lives at the crate root.
+// already carry the derive where the trait lives at the crate root. `Outgoing` is the exception:
+// the derive lives at the root while the publish pipeline's message type of the same name lives
+// in `runtime`, so a service that writes a publish transform imports that one explicitly.
 #[cfg(feature = "macros")]
-pub use crate::{FromRef, app, subscriber};
+pub use crate::{FromRef, Outgoing, app, subscriber};
