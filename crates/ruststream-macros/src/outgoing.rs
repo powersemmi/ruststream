@@ -310,10 +310,11 @@ fn template_builder(
             }
         });
 
-    let defaults = markers
+    // The state parameters carry no defaults on purpose: rustc elides a defaulted parameter when
+    // it renders a type, and eliding the unbound segment is exactly what the error must not do.
+    let unbound = markers
         .iter()
-        .zip(&states)
-        .map(|(marker, state)| quote!(#state = ::ruststream::runtime::MissingSegment<#marker>));
+        .map(|marker| quote!(::ruststream::runtime::MissingSegment<#marker>));
     let start_fields = fields
         .iter()
         .map(|field| quote!(#field: ::ruststream::runtime::MissingSegment::new()));
@@ -351,12 +352,12 @@ fn template_builder(
             /// The publish terminal appears once every placeholder is bound; until then the
             /// unbound ones ride in this type, so the compile error names them.
             #[must_use = "an address builder does nothing until publish() is awaited"]
-            pub struct To<Cont #(, #defaults)*> {
+            pub struct To<Cont #(, #states)*> {
                 pub(super) cont: Cont,
                 #(pub(super) #struct_fields,)*
             }
 
-            impl<Cont> To<Cont> {
+            impl<Cont> To<Cont #(, #unbound)*> {
                 /// Opens the address builder over the publish it finishes.
                 pub(super) fn start(cont: Cont) -> Self {
                     Self { cont #(, #start_fields)* }
@@ -393,7 +394,7 @@ fn template_builder(
             for #name #ty_generics
         #template_where_clause
         {
-            type Builder = #module::To<__RsCont>;
+            type Builder = #module::To<__RsCont #(, ::ruststream::runtime::MissingSegment<#module::#markers>)*>;
 
             fn begin(cont: __RsCont) -> Self::Builder {
                 #module::To::start(cont)

@@ -1,0 +1,13 @@
+error[E0599]: the method `publish` exists for struct `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Archived>, &__RsOutCodec0, HeadersUnset, CallerName>`, but its trait bounds were not satisfied
+  --> tests/ui/publish_no_destination.rs:24:53
+   |
+24 |     let _ = out.message(&Archived { id: order.id }).publish().await;
+   |                                                     ^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: src/schema.rs
+   |
+   | pub struct CallerName;
+   | --------------------- doesn't satisfy `CallerName: ResolvedName`
+   |
+   = note: the following trait bounds were not satisfied:
+           `CallerName: ResolvedName`

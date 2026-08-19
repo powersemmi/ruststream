@@ -1,0 +1,29 @@
+error: empty placeholder in the declared name: name the segment, as in `{tenant}`
+ --> tests/ui/outgoing_bad_name.rs:6:19
+  |
+6 | #[outgoing(name = "orders.{}.v1")]
+  |                   ^^^^^^^^^^^^^^
+
+error: `tenant` appears twice in the declared name: one setter cannot bind two segments
+  --> tests/ui/outgoing_bad_name.rs:13:19
+   |
+13 | #[outgoing(name = "orders.{tenant}.{tenant}")]
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: `name` is a string literal: the destination (and its `{placeholder}` segments) is read at compile time
+  --> tests/ui/outgoing_bad_name.rs:20:19
+   |
+20 | #[outgoing(name = 7)]
+   |                   ^
+
+error: every #[outgoing(..)] parameter is `key = value`: `name = "orders.done"`, `headers = OrderMeta`
+  --> tests/ui/outgoing_bad_name.rs:27:12
+   |
+27 | #[outgoing(headers)]
+   |            ^^^^^^^
+
+error: unknown #[outgoing(..)] parameter: expected `name` or `headers`
+  --> tests/ui/outgoing_bad_name.rs:34:12
+   |
+34 | #[outgoing(topic = "orders")]
+   |            ^^^^^

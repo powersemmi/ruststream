@@ -1,0 +1,20 @@
+error[E0599]: the method `publish` exists for struct `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Done>, &__RsOutCodec0, HeadersUnset, FixedName>`, but its trait bounds were not satisfied
+  --> tests/ui/publish_missing_headers.rs:33:10
+   |
+29 |       let _ = out
+   |  _____________-
+30 | |         .message(&Done {
+31 | |             key: order.id.to_string(),
+32 | |         })
+33 | |         .publish()
+   | |         -^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   | |_________|
+   |
+   |
+  ::: src/runtime/publish/builder.rs
+   |
+   |   pub struct HeadersUnset;
+   |   ----------------------- doesn't satisfy `_: SatisfiesContract<WithHeaders<DoneMeta>>`
+   |
+   = note: the following trait bounds were not satisfied:
+           `HeadersUnset: SatisfiesContract<WithHeaders<DoneMeta>>`

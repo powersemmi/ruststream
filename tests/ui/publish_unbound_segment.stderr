@@ -1,0 +1,21 @@
+error[E0599]: no method named `publish` found for struct `To<ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>, String, MissingSegment<Region>>` in the current scope
+  --> tests/ui/publish_unbound_segment.rs:29:10
+   |
+11 |   #[derive(Outgoing, Serialize)]
+   |            -------- method `publish` not found for this struct
+...
+25 |       let _ = out
+   |  _____________-
+26 | |         .message(&Placed { id: order.id })
+27 | |         .to()
+28 | |         .tenant("acme")
+29 | |         .publish()
+   | |         -^^^^^^^ method not found in `To<ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>, String, MissingSegment<Region>>`
+   | |_________|
+   |
+   |
+   = note: the method was found for `To<Cont, String, String>`
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `publish`, perhaps you need to implement one of them:
+           candidate #1: `Publisher`
+           candidate #2: `Transaction`

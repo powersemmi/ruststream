@@ -166,7 +166,7 @@ mod tests {
     #[tokio::test]
     async fn the_erased_error_carries_the_broker_message() {
         let error = ErasedPublishError(Box::new(std::io::Error::other("broker refused")));
-        assert!(error.to_string().contains("broker refused"), "got: {error}",);
+        assert!(error.to_string().contains("broker refused"), "got: {error}");
         assert!(
             format!("{:?}", ErasedSink(&MemoryBroker::new().publisher())).starts_with("ErasedSink")
         );

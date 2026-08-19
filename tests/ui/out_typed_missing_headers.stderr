@@ -1,3 +1,11 @@
+warning: use of deprecated method `ruststream::runtime::TypedSlot::<P, Body, M, EncodeCodec>::publish_typed`: use the publish builder: out.message(&value).publish()
+  --> tests/ui/out_typed_missing_headers.rs:34:10
+   |
+34 |         .publish_typed(&Done {
+   |          ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
 error[E0271]: type mismatch resolving `<Done as MessageHeaders>::Contract == NoHeaders`
   --> tests/ui/out_typed_missing_headers.rs:34:24
    |

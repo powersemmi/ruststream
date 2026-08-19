@@ -353,9 +353,8 @@ impl_contains_message! {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not define a message set for the `{M}` slot",
     note = "the third Out argument is a tuple of types, `()` (unrestricted), a \
-            #[derive(Message)] type (declares itself), or a #[derive(OutMessages)] enum \
-            (declares its variants' models); every member must be in the marker's \
-            #[publishes(..)] dictionary"
+            #[derive(Outgoing)] type (declares itself and where it goes), or a \
+            #[derive(OutMessages)] enum (declares its variants' models)"
 )]
 pub trait OutMessages<M: OutSlot> {
     /// The set's declared outgoing messages, for the generated document. Called once at

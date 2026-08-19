@@ -1,4 +1,4 @@
-error: this type is already in the slot's publish dictionary: one type maps to one channel per slot (use a second slot for a second destination)
+error: this type is already listed on the slot: a type appears once (with the deprecated `= "channel"` form, a second entry would also make its destination ambiguous)
   --> tests/ui/out_slot_duplicate_publishes.rs:12:40
    |
 12 | #[publishes(Report = "reports.hourly", Report = "reports.daily")]
