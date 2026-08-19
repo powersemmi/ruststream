@@ -260,6 +260,50 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
     assert_eq!(connected.published("audit.ledger").len(), 1);
 }
 
+/// The batch publishing path carries the builder too: the reply travels its own wiring while
+/// the handler's own publishes go through the slot, in one handler.
+#[subscriber(batch("jobs.bulk"), publish("jobs.settled"))]
+async fn settle(
+    jobs: &[Job],
+    Out(out): Out<impl Publisher, Events, Progress>,
+) -> Result<Vec<Job>, HandlerResult> {
+    for job in jobs {
+        if out
+            .message(&Progress {
+                percent: u8::try_from(job.id).unwrap_or(u8::MAX),
+            })
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerResult::retry());
+        }
+    }
+    Ok(jobs.iter().map(|job| Job { id: job.id }).collect())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_publishing_handler_carries_the_builder() {
+    let app =
+        RustStream::new(AppInfo::new("bulk", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(settle)
+                .publisher(TypedPublisher::new(MemoryPublish))
+                .out(Events, MemoryPublish)
+                .mount();
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.publish("jobs.bulk", &Job { id: 4 })
+        .await
+        .expect("publish");
+
+    tb.out::<Events>().assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Progress>("chunks.progress")
+        .assert_called_once()
+        .with(&Progress { percent: 4 });
+}
+
 /// A builder in flight keeps its wiring out of Debug: it holds a live publisher, and a
 /// diagnostic dump must not print one.
 #[test]
