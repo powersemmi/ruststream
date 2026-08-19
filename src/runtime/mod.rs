@@ -94,7 +94,7 @@ pub use slot::OutMessage;
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishTypedError,
-    SlotPublisher, TypedSlot, TypedSlotWithHeaders, Unrestricted,
+    PublishedThrough, SlotPublisher, TypedSlot, TypedSlotWithHeaders, Unrestricted,
 };
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

@@ -77,11 +77,14 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
 // A handler with several injected publishers names a slot marker per parameter; the include
 // site binds each marker to its own policy, in any order. No broker publisher type appears in
 // the signature, so the same handler mounts on a production broker and on its in-process test
-// transport unchanged.
+// transport unchanged. Each marker lists what may leave through it, which is both what the
+// generated document reports and what the publish builder admits.
 #[derive(OutSlot)]
+#[publishes(Event)]
 struct Primary;
 
 #[derive(OutSlot)]
+#[publishes(Event)]
 struct Shadow;
 
 #[subscriber("mirror")]

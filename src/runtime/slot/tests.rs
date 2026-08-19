@@ -73,6 +73,8 @@ impl OutgoingDestination for Progress {
     const ADDRESS: &'static str = "events.progress";
 }
 
+impl PublishedThrough<Events> for Progress {}
+
 /// Headers a header map can carry: one scalar field.
 #[derive(Serialize)]
 struct Meta {
@@ -117,6 +119,8 @@ impl OutgoingDestination for Done {
     type Form = FixedName;
     const ADDRESS: &'static str = "events.done";
 }
+
+impl PublishedThrough<Events> for Done {}
 
 /// The unrestricted declaration documents whatever the marker declares, so a handler that
 /// pins no message set still contributes the slot's dictionary to the document.

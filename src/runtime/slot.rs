@@ -6,6 +6,8 @@
 //! from the attachment's [`PublishPolicy::Live`](crate::PublishPolicy::Live) - fully monomorphized, no erasure. The pieces:
 //!
 //! - [`OutSlot`] / [`DefaultSlot`]: the marker vocabulary (`#[derive(OutSlot)]` for named ones).
+//! - [`PublishedThrough`]: membership in a marker's `#[publishes(..)]` dictionary, so what the
+//!   document reports as leaving a slot is exactly what the publish builder admits.
 //! - [`SlotPublisher`]: the transparent wrapper the handler actually receives; it delegates the
 //!   publisher capabilities and, under the `testing` feature, attributes publishes to the slot.
 //! - [`HasSlots`] / [`BindSlots`]: the macro-implemented contract on a definition (the marker
@@ -87,6 +89,53 @@ pub struct DefaultSlot;
 impl OutSlot for DefaultSlot {
     const NAME: &'static str = "default";
 }
+
+/// Membership of a message type in a slot marker's `#[publishes(..)]` dictionary: the type may
+/// leave through a slot identified by `Slot`.
+///
+/// `#[derive(OutSlot)]` emits one impl per listed type, in either dictionary form, and the
+/// publish builder's typed entry point ([`TypedSlot::message`]) requires it. That is what keeps
+/// the generated document honest: an unrestricted `Out<impl Publisher, Marker>` reports the
+/// marker's dictionary as what the handler sends, so a message outside it would be a publish the
+/// document never declared.
+///
+/// The membership is declared on the message type rather than on the marker, matching
+/// [`OutMessage`] and keeping the compile error about the message: with the marker as `Self`
+/// and the message as the parameter, a single-entry dictionary would leave the message type to
+/// be inferred from the one impl, and the call site would report a type mismatch against the
+/// listed type instead of the missing membership.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::{OutSlot, PublishedThrough};
+///
+/// struct Progress;
+///
+/// struct Events;
+///
+/// impl OutSlot for Events {
+///     const NAME: &'static str = "Events";
+/// }
+///
+/// // What `#[derive(OutSlot)]` + `#[publishes(Progress)]` generates:
+/// impl PublishedThrough<Events> for Progress {}
+///
+/// fn admits<T: PublishedThrough<Slot>, Slot>() {}
+/// admits::<Progress, Events>();
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "the `{Slot}` slot does not publish `{Self}`",
+    note = "the marker lists what leaves through the slot, and the generated document reports \
+            that list: add the type to it (`#[derive(OutSlot)] #[publishes({Self}, ..)]`), or \
+            publish through a slot that lists it"
+)]
+pub trait PublishedThrough<Slot> {}
+
+// The implicit slot is the one a handler gets without naming a marker, so there is no
+// declaration site to list types on and nothing for the document to report; narrowing it would
+// leave `Out<impl Publisher>` with no typed publish at all.
+impl<T> PublishedThrough<DefaultSlot> for T {}
 
 /// The live publisher an [`Out`](super::Out) slot injects: the attachment's paired publisher,
 /// wrapped with the slot identity.
@@ -528,8 +577,9 @@ where
 impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     /// Starts a typed publish through the slot, encoded with the include site's scope codec.
     ///
-    /// The message type has to be in the parameter's declared message set; everything else -
-    /// the destination and the header contract - comes from the type's `#[derive(Outgoing)]`
+    /// The message type has to be in the marker's `#[publishes(..)]` dictionary (see
+    /// [`PublishedThrough`]) and in the parameter's declared message set; everything else - the
+    /// destination and the header contract - comes from the type's `#[derive(Outgoing)]`
     /// declaration, so the builder demands exactly the positions that declaration leaves open
     /// (see [`Publish`]).
     ///
@@ -572,7 +622,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     ) -> Publish<&'a P, MessageBody<'a, T>, &'a EncodeCodec, HeadersUnset, T::Form>
     where
         Body: ContainsMessage<T, Index>,
-        T: OutgoingDestination,
+        T: OutgoingDestination + PublishedThrough<M>,
     {
         message_of(&self.slot, value, &self.codec)
     }

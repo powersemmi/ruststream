@@ -15,7 +15,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Attribute, DeriveInput, Expr, ItemFn, Meta, Token, Type, parse_macro_input};
+use syn::{Attribute, DeriveInput, Expr, Ident, ItemFn, Meta, Token, Type, parse_macro_input};
 
 use parse::{SubscriberArgs, doc_description};
 
@@ -432,7 +432,9 @@ pub fn derive_from_ref(item: TokenStream) -> TokenStream {
 ///
 /// The optional `#[publishes(Type, ..)]` attribute lists the message types the slot may
 /// publish, which is what the generated document reports for a handler leaving its `Out`
-/// parameter unrestricted. Each listed type declares its own destination with
+/// parameter unrestricted. The list is enforced, not only documented: publishing a type it does
+/// not name is a compile error (see `PublishedThrough` in the core crate), so the document cannot
+/// fall behind what handlers send. Each listed type declares its own destination with
 /// `#[derive(Outgoing)]`; listing one type twice is an error.
 ///
 /// The name-carrying form `#[publishes(Type = "channel", ..)]` is deprecated: it maps the type
@@ -485,57 +487,7 @@ pub fn derive_out_slot(item: TokenStream) -> TokenStream {
     let name = &input.ident;
     let name_str = name.to_string();
 
-    let outgoing = if dictionary.is_empty() {
-        quote!()
-    } else {
-        // A listed type declaring its own destination contributes what it declares; one carrying
-        // the deprecated `= "channel"` form is described from the marker, as before.
-        let entries = dictionary.iter().map(|entry| {
-            let ty = &entry.ty;
-            let Some(channel) = &entry.channel else {
-                return quote! {
-                    __rs_entries.extend(
-                        <#ty as ::ruststream::runtime::OutMessages<#name>>::outgoing(),
-                    );
-                };
-            };
-            quote! {
-                __rs_entries.push(
-                    ::ruststream::runtime::OutgoingMessageMetadata::new(
-                        #channel,
-                        ::core::any::type_name::<#ty>(),
-                    )
-                    .with_message_name({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoMessageProbe as _;
-                        ::ruststream::__private::Probe::<#ty>::new().message_name()
-                    })
-                    .with_message_description({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoMessageProbe as _;
-                        ::ruststream::__private::Probe::<#ty>::new().message_description()
-                    })
-                    .with_payload_schema({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoSchemaProbe as _;
-                        ::ruststream::__private::Probe::<#ty>::new().schema_json()
-                    })
-                    .with_headers_schema({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoHeadersSchemaProbe as _;
-                        ::ruststream::__private::Probe::<#ty>::new().headers_schema_json()
-                    }),
-                );
-            }
-        });
-        quote! {
-            fn outgoing() -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata> {
-                let mut __rs_entries = ::std::vec::Vec::new();
-                #(#entries)*
-                __rs_entries
-            }
-        }
-    };
+    let outgoing = slot_outgoing_metadata(name, &dictionary);
     let channels = dictionary.iter().filter_map(|entry| {
         let ty = &entry.ty;
         let channel = entry.channel.as_ref()?;
@@ -544,6 +496,14 @@ pub fn derive_out_slot(item: TokenStream) -> TokenStream {
                 const CHANNEL: &'static str = #channel;
             }
         })
+    });
+    // The list is the whole membership, in either form: what the document reports as leaving the
+    // slot is exactly what the publish builder admits.
+    let memberships = dictionary.iter().map(|entry| {
+        let ty = &entry.ty;
+        quote! {
+            impl ::ruststream::runtime::PublishedThrough<#name> for #ty {}
+        }
     });
 
     quote! {
@@ -554,8 +514,65 @@ pub fn derive_out_slot(item: TokenStream) -> TokenStream {
         }
 
         #(#channels)*
+
+        #(#memberships)*
     }
     .into()
+}
+
+/// The marker's `outgoing()` override, reporting its `#[publishes(..)]` dictionary as the
+/// document's outgoing messages. A listed type declaring its own destination contributes what it
+/// declares; one carrying the deprecated `= "channel"` form is described from the marker, as
+/// before. An empty dictionary keeps the trait's own default (nothing declared).
+fn slot_outgoing_metadata(name: &Ident, dictionary: &[PublishesEntry]) -> TokenStream2 {
+    if dictionary.is_empty() {
+        return quote!();
+    }
+    let entries = dictionary.iter().map(|entry| {
+        let ty = &entry.ty;
+        let Some(channel) = &entry.channel else {
+            return quote! {
+                __rs_entries.extend(
+                    <#ty as ::ruststream::runtime::OutMessages<#name>>::outgoing(),
+                );
+            };
+        };
+        quote! {
+            __rs_entries.push(
+                ::ruststream::runtime::OutgoingMessageMetadata::new(
+                    #channel,
+                    ::core::any::type_name::<#ty>(),
+                )
+                .with_message_name({
+                    #[allow(unused_imports)]
+                    use ::ruststream::__private::NoMessageProbe as _;
+                    ::ruststream::__private::Probe::<#ty>::new().message_name()
+                })
+                .with_message_description({
+                    #[allow(unused_imports)]
+                    use ::ruststream::__private::NoMessageProbe as _;
+                    ::ruststream::__private::Probe::<#ty>::new().message_description()
+                })
+                .with_payload_schema({
+                    #[allow(unused_imports)]
+                    use ::ruststream::__private::NoSchemaProbe as _;
+                    ::ruststream::__private::Probe::<#ty>::new().schema_json()
+                })
+                .with_headers_schema({
+                    #[allow(unused_imports)]
+                    use ::ruststream::__private::NoHeadersSchemaProbe as _;
+                    ::ruststream::__private::Probe::<#ty>::new().headers_schema_json()
+                }),
+            );
+        }
+    });
+    quote! {
+        fn outgoing() -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata> {
+            let mut __rs_entries = ::std::vec::Vec::new();
+            #(#entries)*
+            __rs_entries
+        }
+    }
 }
 
 /// Derives a declared message set (`OutMessages` in the core crate) from an enum whose

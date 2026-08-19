@@ -1,0 +1,31 @@
+error[E0277]: the `Events` slot does not publish `Rogue`
+  --> tests/ui/publish_outside_dictionary.rs:32:18
+   |
+32 |           .message(&Rogue {
+   |  __________-------_^
+   | |          |
+   | |          required by a bound introduced by this call
+33 | |             note: order.id.to_string(),
+34 | |         })
+   | |_________^ unsatisfied trait bound
+   |
+help: the trait `PublishedThrough<Events>` is not implemented for `Rogue`
+  --> tests/ui/publish_outside_dictionary.rs:18:1
+   |
+18 | struct Rogue {
+   | ^^^^^^^^^^^^
+   = note: the marker lists what leaves through the slot, and the generated document reports that list: add the type to it (`#[derive(OutSlot)] #[publishes(Rogue, ..)]`), or publish through a slot that lists it
+help: the trait `PublishedThrough<Events>` is implemented for `Progress`
+  --> tests/ui/publish_outside_dictionary.rs:22:10
+   |
+22 | #[derive(OutSlot)]
+   |          ^^^^^^^
+note: required by a bound in `TypedSlot::<P, Body, M, EncodeCodec>::message`
+  --> src/runtime/slot.rs
+   |
+   |     pub fn message<'a, T, Index>(
+   |            ------- required by a bound in this associated function
+...
+   |         T: OutgoingDestination + PublishedThrough<M>,
+   |                                  ^^^^^^^^^^^^^^^^^^^ required by this bound in `TypedSlot::<P, Body, M, EncodeCodec>::message`
+   = note: this error originates in the derive macro `OutSlot` (in Nightly builds, run with -Z macro-backtrace for more info)

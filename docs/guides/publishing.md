@@ -117,8 +117,13 @@ with a diagnostic naming the missing capability. The slot marker is also the ide
 The `Out` parameter's optional third position declares what this handler sends
 (`Out<impl Publisher, Marker, (A, B)>`, a single type, or a `#[derive(OutMessages)]` set enum);
 a marker's own `#[publishes(A, B)]` list says what the slot may publish, which is what the
-generated document reports for a handler that leaves the position unrestricted. See
-[typed headers](headers.md).
+generated document reports for a handler that leaves the position unrestricted. The list is
+enforced rather than only documented: a typed publish of a type the marker does not name is a
+compile error naming the missing membership, so the document cannot fall behind what handlers
+send. A marker listing nothing therefore publishes nothing typed, and byte publishes through
+`raw(..)` are unaffected - they carry no message type to list. The implicit `DefaultSlot` of a
+single unnamed `Out<impl Publisher>` has no declaration site to list types on, so it admits
+every declared message. See [typed headers](headers.md).
 
 ### Declaring where a message goes
 
