@@ -2,6 +2,7 @@
 //!
 //! `use ruststream::prelude::*;` brings in the application object and its builder, the handler
 //! surface (the settlement enum, the per-delivery context, the extractor parameters), the
+//! subscriber settings a mount site fills in, the
 //! publishing types a handler reaches for, and - with the `macros` feature - the attribute
 //! macros and derives. It deliberately stops there: brokers, codecs and the optional feature
 //! modules (`asyncapi`, `metrics`, `logging`, `otel`, `testing`) stay explicit imports, because
@@ -21,7 +22,7 @@
 
 pub use crate::runtime::{
     App, AppInfo, Context, Ctx, FromHeaders, FromRef, HandlerResult, Out, Router, RunningApp,
-    RustStream, Seek, State, TypedPublisher,
+    RustStream, Seek, State, SubscriberSettings, TypedPublisher,
 };
 pub use crate::{
     Broker, Headers, IncomingMessage, Message, Name, OutSlot, OutgoingMessage, PublishPolicy,

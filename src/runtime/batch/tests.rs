@@ -545,3 +545,55 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
         Some(AckError::Timeout.to_string().as_str())
     );
 }
+
+/// A batch handler over undecoded payloads, for the raw batch adapter below.
+struct Frames(Arc<Mutex<Vec<Vec<u8>>>>);
+
+impl RawSliceHandler for Frames {
+    async fn handle_slice(&self, batch: &[&[u8]], _ctx: &mut Context<'_>) -> BatchResult {
+        self.0
+            .lock()
+            .unwrap()
+            .extend(batch.iter().map(|frame| frame.to_vec()));
+        BatchResult::Uniform(HandlerResult::Ack)
+    }
+}
+
+#[tokio::test]
+async fn a_raw_batch_lends_the_payloads_and_settles_the_deliveries() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("raw-batch");
+    publish_payloads(&broker, "raw-batch", &[b"one", b"two"]).await;
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let handler = RawBatch::over(Frames(Arc::clone(&seen)));
+    assert!(format!("{handler:?}").contains("RawBatch"));
+
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = Headers::new();
+    let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
+    let batch = pull_batch(&mut sub).await;
+    handler.handle_batch(batch, &mut ctx).await;
+
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        [b"one".to_vec(), b"two".to_vec()],
+    );
+}
+
+#[tokio::test]
+async fn an_empty_raw_batch_reaches_no_handler() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let handler = RawBatch::over(Frames(Arc::clone(&seen)));
+
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = Headers::new();
+    let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
+    handler
+        .handle_batch(Vec::<MemoryMessage>::new(), &mut ctx)
+        .await;
+
+    assert!(seen.lock().unwrap().is_empty());
+}

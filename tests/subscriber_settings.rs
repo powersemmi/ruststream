@@ -52,11 +52,7 @@ async fn a_bare_attribute_is_named_at_the_mount_site() {
         .publish(OutgoingMessage::new(&subject, &order_bytes(11)))
         .await
         .expect("publish failed");
-    wait_for(
-        || !NAMED.lock().unwrap().is_empty(),
-        Duration::from_secs(5),
-    )
-    .await;
+    wait_for(|| !NAMED.lock().unwrap().is_empty(), Duration::from_secs(5)).await;
     assert_eq!(NAMED.lock().unwrap().as_slice(), [11]);
     running.shutdown().await.expect("shutdown failed");
 }
@@ -127,11 +123,7 @@ async fn the_builder_supplies_the_worker_policy() {
             .await
             .expect("publish failed");
     }
-    wait_for(
-        || PEAK.load(Ordering::SeqCst) > 1,
-        Duration::from_secs(5),
-    )
-    .await;
+    wait_for(|| PEAK.load(Ordering::SeqCst) > 1, Duration::from_secs(5)).await;
     running.shutdown().await.expect("shutdown failed");
 }
 
@@ -244,15 +236,7 @@ async fn the_builder_supplies_the_buffer() {
             .expect("publish failed");
     }
     wait_for(
-        || {
-            BUFFERED
-                .lock()
-                .unwrap()
-                .iter()
-                .map(Vec::len)
-                .sum::<usize>()
-                >= 3
-        },
+        || BUFFERED.lock().unwrap().iter().map(Vec::len).sum::<usize>() >= 3,
         Duration::from_secs(5),
     )
     .await;
@@ -279,8 +263,8 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include(ingest));
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(ingest));
     let running = app.start().await.expect("startup failed");
 
     for frame in [b"one".as_slice(), b"two".as_slice()] {
@@ -289,11 +273,7 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
             .await
             .expect("publish failed");
     }
-    wait_for(
-        || FRAMES.lock().unwrap().len() >= 2,
-        Duration::from_secs(5),
-    )
-    .await;
+    wait_for(|| FRAMES.lock().unwrap().len() >= 2, Duration::from_secs(5)).await;
     assert_eq!(
         FRAMES.lock().unwrap().as_slice(),
         [b"one".to_vec(), b"two".to_vec()],
