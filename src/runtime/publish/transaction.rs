@@ -78,6 +78,16 @@ where
     /// [`abort`](Self::abort). Aborting is the safe default - after an error the broker-side
     /// transaction state is implementation-defined.
     ///
+    /// Unlike the rest of the pre-builder surface this is not deprecated, because the builder
+    /// does not cover it. [`message`](Self::message) reads the destination form off the value's
+    /// type through [`OutgoingDestination`], which `#[derive(Outgoing)]` implements - so a
+    /// `Serialize` type the service does not own is out of reach: the orphan rule forbids both
+    /// the derive and a hand-written impl on a foreign type. Defaulting the form for types that
+    /// declare nothing would need a blanket impl, which collides with every derived one, and
+    /// picking the derived impl over the blanket is specialization, unavailable on stable. Own
+    /// the type, derive `Outgoing` on it and publish it through the builder wherever that is
+    /// possible; this method stays for the case where it is not.
+    ///
     /// # Errors
     ///
     /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
@@ -270,6 +280,11 @@ where
     ///
     /// A failed publish does not settle the transaction; the caller decides between retrying
     /// and [`abort`](Self::abort).
+    ///
+    /// Not deprecated, for the reason spelled out on
+    /// [`TransactionScope::publish`](TransactionScope::publish): a `Serialize` type the service
+    /// does not own cannot declare an [`OutgoingDestination`], so the builder's
+    /// [`message`](Self::message) entry point does not reach it.
     ///
     /// # Errors
     ///

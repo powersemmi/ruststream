@@ -155,6 +155,13 @@ channel, a template becomes a templated address whose parameters block is filled
 placeholders, and a type declaring no destination contributes nothing, which is what it says
 about itself.
 
+The derive is what makes a value publishable this way, the third case included, so a `Serialize`
+type owned by another crate stays outside the builder: the orphan rule forbids deriving on it,
+and there is no way to default the destination for types that declare nothing (a blanket
+implementation would collide with every derived one, and preferring the derived one is
+specialization, which stable Rust does not have). Wrap such a value in a newtype that derives
+`Outgoing`, or, inside a transaction, keep the scope's `publish(name, &value)`.
+
 ```rust
 --8<-- "examples/publishing.rs:declared_mount"
 ```
