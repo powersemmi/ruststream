@@ -13,7 +13,7 @@ use crate::runtime::middleware::Layer;
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
-use super::{IncludeMount, IncludeOut, IncludeSlots, InjectMount, ScopeCodec, SlotCommit, forms};
+use super::{IncludeMount, IncludeOut, IncludeSlots, InjectMount, MountCodec, SlotCommit, forms};
 use crate::runtime::app::scope::BrokerScope;
 
 // ---------------------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ macro_rules! impl_inject_out_commit {
             for ($(WithSource<$attach>,)+)
         where
             B: Broker + 'static,
-            C: ScopeCodec,
+            C: MountCodec,
             Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: InjectCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
@@ -53,7 +53,7 @@ macro_rules! impl_inject_out_commit {
             fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
-                let codec = scope.codec.scope_codec();
+                let codec = scope.codec.mount_codec();
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_inject(source, def, extra);

@@ -38,7 +38,7 @@ use parse::{SubscriberArgs, doc_description};
 /// async fn confirm(req: &Request) -> Result<Response, HandlerResult> { /* ... */ }
 ///
 /// // batch form: the handler takes the whole decoded batch as a slice; the source's
-/// // subscriber must implement BatchSubscriber. Mounted with include_batch.
+/// // subscriber must implement BatchSubscriber.
 /// #[subscriber(batch("orders"))]
 /// async fn bill(orders: &[Order]) -> HandlerResult { /* settles the whole batch */ }
 ///
@@ -81,8 +81,8 @@ use parse::{SubscriberArgs, doc_description};
 /// from the constructor path, so a generic source spells its parameters:
 /// `batch(Buffered::<Name>::new(Name::new("orders")))`.
 ///
-/// Combining `batch(..)` with `publish(..)` produces a `BatchPublishingDef` (mounted with
-/// `include_batch_publishing`): the handler returns `Vec<Reply>` (or
+/// Combining `batch(..)` with `publish(..)` produces a `BatchPublishingDef`: the handler returns
+/// `Vec<Reply>` (or
 /// `Result<Vec<Reply>, HandlerResult>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
 /// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply

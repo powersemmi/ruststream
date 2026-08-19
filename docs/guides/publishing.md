@@ -110,7 +110,7 @@ destinations and header contracts, feeding the `send` operations of the generate
 document. See [typed headers](headers.md).
 
 The parameter composes with every subscriber form: next to a `Seek` parameter, on a `raw`
-handler, and on `batch(..)` handlers (`b.include_batch(f).publisher(..)` - the whole page in,
+handler, and on `batch(..)` handlers (`b.include(f).publisher(..)` - the whole page in,
 per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
 their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
 publisher attaches with `.out(marker, ..)` plus the terminal `.mount()` (`DefaultSlot` for a
@@ -209,7 +209,7 @@ transaction):
 --8<-- "examples/publishing.rs:batch_publishing"
 ```
 
-Mount it with `include_batch`, chaining the reply wiring with `.publisher(..)`:
+Mount it with `include`, chaining the reply wiring with `.publisher(..)`:
 
 ```rust
 --8<-- "examples/publishing.rs:batch_publishing_mount"

@@ -41,8 +41,9 @@ async fn handle(order: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// A broker-specific subscription descriptor (stand-in for e.g. a Redis stream): mounted with
-/// `include_on`, not by name. Proves a macro def works on an arbitrary `SubscriptionSource`.
+/// A broker-specific subscription descriptor (stand-in for e.g. a Redis stream), named by the
+/// definition itself. Proves a macro def works on an arbitrary `SubscriptionSource`, not just a
+/// topic string.
 struct StreamSource {
     name: String,
 }
@@ -75,46 +76,6 @@ impl SubscriptionSource<ConnectedMemoryBroker> for StreamSource {
     ) -> Result<MemorySubscriber, MemoryError> {
         Subscribe::subscribe(connected, &self.name).await
     }
-}
-
-static HANDLED_ON_STREAM: AtomicU32 = AtomicU32::new(0);
-static HANDLED_ON_STREAM_NOTIFY: Notify = Notify::const_new();
-
-#[subscriber("ignored-on-the-include_on-path")]
-async fn on_stream(order: &Order) -> HandlerResult {
-    HANDLED_ON_STREAM.fetch_add(order.id, Ordering::SeqCst);
-    HANDLED_ON_STREAM_NOTIFY.notify_one();
-    HandlerResult::Ack
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn macro_def_mounts_on_arbitrary_source() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_on(
-            StreamSource {
-                name: "events.stream".to_owned(),
-            },
-            on_stream,
-        );
-    });
-
-    let running = app.start().await.expect("startup failed");
-
-    // The source subscribed to "events.stream", not the macro's name.
-    let payload = serde_json::to_vec(&Order { id: 4, total: 1.0 }).unwrap();
-    publisher
-        .publish(OutgoingMessage::new("events.stream", &payload))
-        .await
-        .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), HANDLED_ON_STREAM_NOTIFY.notified())
-        .await
-        .expect("include_on handler did not run");
-    assert_eq!(HANDLED_ON_STREAM.load(Ordering::SeqCst), 4);
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 static HANDLED_CTOR: AtomicU32 = AtomicU32::new(0);

@@ -1,5 +1,5 @@
 //! Integration tests for the batch subscriber pipeline: the `#[subscriber(batch(..))]` form,
-//! `include_batch` mounting, per-element decode failures, and the `Buffered` adapter.
+//! batch mounting through `include`, per-element decode failures, and the `Buffered` adapter.
 //!
 //! Apps come up through `start()`, which resolves only after subscriptions are open, so each
 //! message is published exactly once; the tests wait on the handlers' recorded state.
@@ -48,8 +48,8 @@ async fn batch_macro_def_receives_batches() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(bill));
+    let app =
+        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(bill));
 
     let running = app.start().await.expect("startup failed");
 
@@ -96,8 +96,8 @@ async fn undecodable_elements_never_reach_the_handler() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(sift));
+    let app =
+        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(sift));
 
     let running = app.start().await.expect("startup failed");
 
@@ -146,8 +146,8 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    // Mounted through the Router path to cover include_batch there as well.
-    let router = Router::<MemoryBroker>::new().include_batch(drain);
+    // Mounted through the Router path to cover the batch form there as well.
+    let router = Router::<MemoryBroker>::new().include(drain);
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
@@ -191,7 +191,7 @@ async fn per_element_outcomes_retry_individually() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(reconcile));
+        .with_broker(broker, |b| b.include(reconcile));
 
     let running = app.start().await.expect("startup failed");
 
@@ -268,7 +268,7 @@ async fn batch_replies_publish_transactionally() {
 
     let replies = TypedPublisher::new(MemoryPublish).transactional();
     let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(confirm).publisher(replies);
+        b.include(confirm).publisher(replies);
     });
 
     let running = app.start().await.expect("startup failed");
@@ -294,7 +294,7 @@ fn batch_publishing_def_records_metadata() {
     let broker = MemoryBroker::new();
     let replies = TypedPublisher::new(MemoryPublish);
     let app = RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(audit).publisher(replies);
+        b.include(audit).publisher(replies);
     });
 
     assert_eq!(app.handlers().len(), 1);
@@ -309,8 +309,8 @@ fn batch_publishing_def_records_metadata() {
 #[test]
 fn batch_def_records_metadata() {
     let broker = MemoryBroker::new();
-    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(bill));
+    let app =
+        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(bill));
 
     assert_eq!(app.handlers().len(), 1);
     assert_eq!(app.handlers()[0].name, "orders");
@@ -346,7 +346,7 @@ async fn batch_handler_reads_typed_state() {
 
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
         .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
-        .with_broker(broker, |b| b.include_batch(scale));
+        .with_broker(broker, |b| b.include(scale));
 
     let running = app.start().await.expect("startup failed");
 

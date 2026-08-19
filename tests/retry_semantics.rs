@@ -250,7 +250,7 @@ async fn batch_pool_overlaps_batches() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("overlap", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(overlap));
+        .with_broker(broker, |b| b.include(overlap));
 
     let running = app.start().await.expect("startup failed");
 

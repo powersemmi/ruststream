@@ -2,7 +2,6 @@
 
 use std::marker::PhantomData;
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::codec::Codec;
@@ -12,26 +11,30 @@ use crate::runtime::batch::{
     BatchDef, BatchWithHeadersDef, SliceHandler, TypedBatch, TypedBatchWithHeaders, batch_metadata,
     typed_batch,
 };
+use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
+use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::DecodeWith;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
-use crate::runtime::publish::{PublishPipeline, PublishTransform, TypedPublisher};
+use crate::runtime::publish::PublishPipeline;
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
 use super::routes::{
-    BatchPublishingRoute, BatchRoute, HandleRoute, MountRoute, PublishingRoute, RouteMeta,
-    RouterDef, RouterHandlers, SubscribeRoute,
+    BatchRoute, HandleRoute, MountRoute, RouteMeta, RouterDef, RouterHandlers, SubscribeRoute,
 };
+use super::routes_inject::{BatchInjectRoute, InjectRoute};
+use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 use super::sink::RouterSink;
 use super::{
-    BatchPublishingRouter, IncludedBatchRouter, IncludedBatchWithHeadersRouter, IncludedRouter,
-    MergedRouter, PublishingRouter, SourceMessage, SubscribedBatchRouter,
+    BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter,
+    IncludedBatchWithHeadersRouter, IncludedRouter, InjectedRouter, MergedRouter, PublishingRouter,
+    RawReplyRouter, SourceMessage, SubscribedBatchRouter,
 };
 
 /// A statically-typed, lazily-bound group of handler registrations, not attached to any broker.
@@ -42,8 +45,7 @@ use super::{
 /// an opaque nested tuple, so a builder function returns `impl RouterDef<B>` instead of naming the
 /// type.
 ///
-/// The codec parameter `C` is the codec `include` / `include_on` / `include_publishing*` decode
-/// with. It starts as `()`, meaning the [`DefaultCodec`](crate::codec::DefaultCodec); switch it
+/// The codec parameter `C` is the codec the `include` family decodes with. It starts as `()`, meaning the [`DefaultCodec`](crate::codec::DefaultCodec); switch it
 /// for the rest of the chain with [`with_codec`](Self::with_codec).
 ///
 /// The layer parameter `Layers` is the router's own middleware stack, grown with
@@ -104,8 +106,7 @@ impl<B: Broker + 'static> Router<B, ()> {
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     Router<B, Routes, RouteCodec, RouteLayers>
 {
-    /// Sets the codec that subsequent `include` / `include_on` / `include_publishing*` calls
-    /// decode with, replacing the default.
+    /// Sets the codec that subsequent `include` calls decode with, replacing the default.
     ///
     /// Registrations already in the chain keep the codec they were mounted with, so the codec can
     /// change mid-chain.
@@ -210,6 +211,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies: FailurePolicies::default(),
                     workers: Workers::sequential(),
+                    _context: PhantomData,
                 },
                 self.routes,
             ),
@@ -252,8 +254,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the
-    /// `include` / `include_on` forms.
+    /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the plain and
+    /// raw `include` forms.
     pub(super) fn mount_subscriber<Source, Def, DecodeCodec>(
         self,
         source: Source,
@@ -280,6 +282,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    _context: PhantomData,
                 },
                 self.routes,
             ),
@@ -290,7 +293,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     }
 
     /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
-    /// `include_batch` / `include_batch_on` forms.
+    /// plain batch `include` form.
     pub(super) fn mount_batch<Source, Def, DecodeCodec>(
         self,
         source: Source,
@@ -370,21 +373,101 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
+    /// Mounts an injected definition on `source`: its startup injections (an attached publish
+    /// policy pairing into an `Out` parameter, the subscription's own seeker for a `Seek` one)
+    /// resolve right after the subscription opens, so the handler holds live handles by
+    /// construction. The shared tail of the `Seek` and `Out` forms.
+    pub(super) fn mount_inject<Source, Def, DecodeCodec, Extra>(
+        self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+        extra: Extra,
+    ) -> InjectedRouter<B, Source, Def, DecodeCodec, Extra, RouteCodec, RouteLayers, Routes>
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        Def: InjectDef + 'static,
+        Def::Input: DecodeWith<DecodeCodec>,
+        DecodeCodec: Send + Sync + 'static,
+    {
+        let meta = inject_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        Router {
+            routes: (
+                InjectRoute {
+                    source,
+                    def,
+                    codec,
+                    extra,
+                    meta,
+                    policies,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
+    /// The batch counterpart of [`mount_inject`](Self::mount_inject): the shared tail of the
+    /// `BatchSeek` and `BatchOut` forms.
+    pub(super) fn mount_batch_inject<Source, Def, DecodeCodec, Extra>(
+        self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+        extra: Extra,
+    ) -> BatchInjectedRouter<B, Source, Def, DecodeCodec, Extra, RouteCodec, RouteLayers, Routes>
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchInjectDef + 'static,
+        Def::Input: DecodeWith<DecodeCodec>,
+        DecodeCodec: Send + Sync + 'static,
+    {
+        let meta = batch_inject_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        Router {
+            routes: (
+                BatchInjectRoute {
+                    source,
+                    def,
+                    codec,
+                    extra,
+                    meta,
+                    policies,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
     /// Mounts a batch publishing definition on `source`, decoding with `codec` and replying
-    /// through `publisher`. The shared tail of the `include_batch_publishing` /
-    /// `include_batch_publishing_on` forms.
-    pub(super) fn mount_batch_publishing<Source, Def, DecodeCodec, ReplySource>(
+    /// through the `publisher` policy, paired by the runtime after connect. The shared tail of
+    /// the `BatchPublishing` and `BatchPublishingOut` forms.
+    pub(super) fn mount_batch_publishing_source<Source, Def, DecodeCodec, ReplySource, Extra>(
         self,
         source: Source,
         def: Def,
         codec: DecodeCodec,
         publisher: ReplySource,
+        extra: Extra,
     ) -> BatchPublishingRouter<
         B,
         Source,
         Def,
         DecodeCodec,
         ReplySource,
+        Extra,
         RouteCodec,
         RouteLayers,
         Routes,
@@ -394,7 +477,6 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Source::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchPublishingDef + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
-        Def::Reply: Serialize + Send + Sync + 'static,
         DecodeCodec: Send + Sync + 'static,
         ReplySource: 'static,
     {
@@ -413,6 +495,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     def,
                     codec,
                     publisher,
+                    extra,
                     meta,
                     policies,
                     workers,
@@ -425,22 +508,24 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Mounts a publishing definition on `source`, decoding with `codec` and replying through
-    /// `publisher`. The shared tail of the `include_publishing` / `include_publishing_on` forms.
-    pub(super) fn mount_publishing<Source, Def, DecodeCodec, Leaf, ReplyCodec, Transforms>(
+    /// Mounts a publishing definition on `source` whose reply travels the encoded wiring: the
+    /// shared tail of the `Publishing` and `PublishingOut` forms. See
+    /// [`mount_batch_publishing_source`](Self::mount_batch_publishing_source) for why the
+    /// handler is deferred.
+    pub(super) fn mount_publishing_source<Source, Def, DecodeCodec, ReplySource, Extra>(
         self,
         source: Source,
         def: Def,
         codec: DecodeCodec,
-        publisher: TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        publisher: ReplySource,
+        extra: Extra,
     ) -> PublishingRouter<
         B,
         Source,
         Def,
         DecodeCodec,
-        Leaf,
-        ReplyCodec,
-        Transforms,
+        ReplySource,
+        Extra,
         RouteCodec,
         RouteLayers,
         Routes,
@@ -450,19 +535,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
-        Def::Reply: Serialize + Send + Sync + 'static,
         DecodeCodec: Codec + 'static,
-        Leaf: 'static,
-        ReplyCodec: Codec + 'static,
-        Transforms: PublishTransform<Def::Context> + 'static,
+        ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        // Defer building the handler: the app's publish pipeline is only known at mount time and
-        // the live reply publisher only exists once the broker connects, so mounting captures the
-        // pieces in a starter that pairs and builds at startup (see `PublishingRoute`), letting a
-        // router-mounted publishing handler pick up the app-wide `publish_layer` chain.
         Router {
             routes: (
                 PublishingRoute {
@@ -470,6 +548,59 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     def,
                     codec,
                     publisher,
+                    extra,
+                    meta,
+                    policies,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
+    /// The byte-reply counterpart of
+    /// [`mount_publishing_source`](Self::mount_publishing_source): the reply bytes go out as-is
+    /// through a bare publisher. The shared tail of the `RawReply` and `RawReplyOut` forms.
+    pub(super) fn mount_raw_reply_source<Source, Def, DecodeCodec, ReplySource, Extra>(
+        self,
+        source: Source,
+        def: Def,
+        codec: DecodeCodec,
+        publisher: ReplySource,
+        extra: Extra,
+    ) -> RawReplyRouter<
+        B,
+        Source,
+        Def,
+        DecodeCodec,
+        ReplySource,
+        Extra,
+        RouteCodec,
+        RouteLayers,
+        Routes,
+    >
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: Send + 'static,
+        Def: PublishingDef + 'static,
+        Def::Input: DecodeWith<DecodeCodec>,
+        DecodeCodec: Codec + 'static,
+        ReplySource: 'static,
+    {
+        let meta = publishing_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        Router {
+            routes: (
+                RawReplyRoute {
+                    source,
+                    def,
+                    codec,
+                    publisher,
+                    extra,
                     meta,
                     policies,
                     workers,
@@ -483,8 +614,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     }
 }
 
-impl<B, S, H, Routes, RouteCodec, RouteLayers>
-    Router<B, (SubscribeRoute<S, H>, Routes), RouteCodec, RouteLayers>
+impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers>
+    Router<B, (SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers>
 {
     /// Sets the concurrency policy of the registration just added (the preceding `subscribe` /
     /// `include` call), replacing its default.
@@ -525,7 +656,7 @@ impl<B, S, H, Routes, RouteCodec, RouteLayers>
     Router<B, (BatchRoute<S, H>, Routes), RouteCodec, RouteLayers>
 {
     /// Sets the concurrency policy of the batch registration just added (the preceding
-    /// `subscribe_batch` / `include_batch` call), replacing its default.
+    /// `subscribe_batch` / batch `include` call), replacing its default.
     ///
     /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed lanes order single
     /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves

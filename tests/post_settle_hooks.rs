@@ -206,7 +206,7 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("batched", "0.1.0"))
-        .with_broker(broker, |b| b.include_batch(handle_batch));
+        .with_broker(broker, |b| b.include(handle_batch));
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = Arc::clone(&shutdown);

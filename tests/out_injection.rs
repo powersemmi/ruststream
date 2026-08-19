@@ -172,7 +172,7 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
         .expect("memory connect is infallible");
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(forward_page).publisher(MemoryPublish);
+        b.include(forward_page).publisher(MemoryPublish);
     });
     let running = app.start().await.expect("startup failed");
 
@@ -273,7 +273,7 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
         .expect("memory connect is infallible");
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(settle_page)
+        b.include(settle_page)
             .out(DefaultSlot, MemoryPublish)
             .mount();
     });

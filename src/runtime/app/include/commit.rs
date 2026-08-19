@@ -20,7 +20,7 @@ use crate::runtime::publish::TypedPublisher;
 use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
 
-use super::ScopeCodec;
+use super::MountCodec;
 use super::{DefaultBareReply, PublishMount};
 // The typed default reply exists only with a default codec to encode it, like the impl below.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
@@ -93,13 +93,13 @@ impl<B, Layers, C, State, Pipeline, Def, Source>
     CommitVia<PublishMount, B, Layers, C, State, Pipeline, Def> for WithSource<Source>
 where
     B: Broker + 'static,
-    C: ScopeCodec,
+    C: MountCodec,
     Def: PublishingCall<State> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
-    Def::Input: DecodeWith<<C as ScopeCodec>::Codec>,
+    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
     Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ((),)>
         + Send
         + Sync
@@ -114,7 +114,7 @@ where
     Source::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
     Pipeline: PublishPipeline + Clone + Send + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<PublishingHandler<Def, <C as ScopeCodec>::Codec, Source::Live, Pipeline>>
+    Layers: Layer<PublishingHandler<Def, <C as MountCodec>::Codec, Source::Live, Pipeline>>
         + Clone
         + Send
         + 'static,

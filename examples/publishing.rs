@@ -224,7 +224,7 @@ fn app() -> impl App {
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes
             // independently.
-            b.include_batch(confirm)
+            b.include(confirm)
                 .publisher(TypedPublisher::new(MemoryPublish).transactional());
             // --8<-- [end:batch_publishing_mount]
         })

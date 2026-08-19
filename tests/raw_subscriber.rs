@@ -498,7 +498,7 @@ async fn workers_and_panic_policy_apply_to_raw() {
         .settled(HandlerResult::Ack);
 }
 
-// --- a Router mounts raw definitions through include_raw ---
+// --- a Router mounts raw definitions through the form-dispatched include ---
 
 static ROUTED: AtomicUsize = AtomicUsize::new(0);
 
@@ -510,7 +510,7 @@ async fn routed(frame: &[u8]) -> HandlerResult {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn router_mounts_raw_definitions() {
-    let router = Router::<MemoryBroker>::new().include_raw(routed);
+    let router = Router::<MemoryBroker>::new().include(routed);
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
 

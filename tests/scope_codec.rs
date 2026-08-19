@@ -16,7 +16,7 @@ use common::wait_for;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
-use ruststream::{Name, OutgoingMessage, Publisher, subscriber};
+use ruststream::{OutgoingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,7 +49,7 @@ async fn batch(orders: &[Order]) -> HandlerResult {
     HandlerResult::Ack
 }
 
-#[subscriber(batch("sc-batch-ignored"))]
+#[subscriber(batch("sc-batch-on"))]
 async fn batch_on(orders: &[Order]) -> HandlerResult {
     BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerResult::Ack
@@ -60,7 +60,7 @@ async fn relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber("sc-pin-ignored", publish("sc-pout-on"))]
+#[subscriber("sc-pin-on", publish("sc-pout-on"))]
 async fn relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
@@ -70,7 +70,7 @@ async fn batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("sc-bpin-ignored"), publish("sc-bpout-on"))]
+#[subscriber(batch("sc-bpin-on"), publish("sc-bpout-on"))]
 async fn batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -99,9 +99,8 @@ async fn bpout_on_check(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// One codec scope, every non-`include` scope-codec variant mounted: `include_on`,
-/// `include_batch`, `include_batch_on`, `include_publishing`, `include_publishing_on`,
-/// `include_batch_publishing`, and `include_batch_publishing_on`.
+/// One codec scope, every scope-codec variant mounted: the plain and batch `include`s, and both
+/// reply-publishing shapes, each registered twice so the scope codec is proven on every path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scope_codec_include_family_dispatches() {
     let broker = MemoryBroker::new();
@@ -109,23 +108,17 @@ async fn scope_codec_include_family_dispatches() {
 
     let app =
         RustStream::new(AppInfo::new("sc", "0.1.0")).with_broker_codec(broker, JsonCodec, |b| {
-            b.include_on(Name::new("sc-plain-on"), plain_on);
-            b.include_batch(batch);
-            b.include_batch_on(Name::new("sc-batch-on"), batch_on);
+            b.include(plain_on);
+            b.include(batch);
+            b.include(batch_on);
             b.include(relay)
                 .publisher(TypedPublisher::new(MemoryPublish));
-            b.include_publishing_on(
-                Name::new("sc-pin-on"),
-                relay_on,
-                TypedPublisher::new(MemoryPublish),
-            );
-            b.include_batch(batch_relay)
+            b.include(relay_on)
                 .publisher(TypedPublisher::new(MemoryPublish));
-            b.include_batch_publishing_on(
-                Name::new("sc-bpin-on"),
-                batch_relay_on,
-                TypedPublisher::new(MemoryPublish),
-            );
+            b.include(batch_relay)
+                .publisher(TypedPublisher::new(MemoryPublish));
+            b.include(batch_relay_on)
+                .publisher(TypedPublisher::new(MemoryPublish));
             b.include(pout_check);
             b.include(pout_on_check);
             b.include(bpout_check);
@@ -175,18 +168,18 @@ async fn d_plain_on(_o: &Order) -> HandlerResult {
     HandlerResult::Ack
 }
 
-#[subscriber(batch("d-batch-ignored"))]
+#[subscriber(batch("d-batch-on"))]
 async fn d_batch_on(orders: &[Order]) -> HandlerResult {
     D_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerResult::Ack
 }
 
-#[subscriber("d-pin-ignored", publish("d-pout-on"))]
+#[subscriber("d-pin-on", publish("d-pout-on"))]
 async fn d_relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber(batch("d-bpin-ignored"), publish("d-bpout-on"))]
+#[subscriber(batch("d-bpin-on"), publish("d-bpout-on"))]
 async fn d_batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -203,27 +196,20 @@ async fn d_bpout_on_check(_r: &Receipt) -> HandlerResult {
     HandlerResult::Ack
 }
 
-/// The default-codec block's explicit-source variants: `include_on`, `include_batch_on`,
-/// `include_publishing_on`, and `include_batch_publishing_on` (the own-source forms are covered
-/// by the other integration tests).
+/// The same family on the default-codec block: the plain and batch `include`s next to both
+/// reply-publishing shapes, decoding with the default codec rather than a named one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn default_codec_include_on_family_dispatches() {
+async fn default_codec_include_family_dispatches() {
     let broker = MemoryBroker::new();
     let driver = broker.clone().publisher();
 
     let app = RustStream::new(AppInfo::new("dsc", "0.1.0")).with_broker(broker, |b| {
-        b.include_on(Name::new("d-plain-on"), d_plain_on);
-        b.include_batch_on(Name::new("d-batch-on"), d_batch_on);
-        b.include_publishing_on(
-            Name::new("d-pin-on"),
-            d_relay_on,
-            TypedPublisher::new(MemoryPublish),
-        );
-        b.include_batch_publishing_on(
-            Name::new("d-bpin-on"),
-            d_batch_relay_on,
-            TypedPublisher::new(MemoryPublish),
-        );
+        b.include(d_plain_on);
+        b.include(d_batch_on);
+        b.include(d_relay_on)
+            .publisher(TypedPublisher::new(MemoryPublish));
+        b.include(d_batch_relay_on)
+            .publisher(TypedPublisher::new(MemoryPublish));
         b.include(d_pout_on_check);
         b.include(d_bpout_on_check);
     });

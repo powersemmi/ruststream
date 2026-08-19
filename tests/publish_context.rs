@@ -153,7 +153,7 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let reply_pub = TypedPublisher::new(MemoryPublish).batch_transform(for_batch(MarkBatched));
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(batch_echo).publisher(reply_pub);
+        b.include(batch_echo).publisher(reply_pub);
         b.include(batch_capture);
     });
 

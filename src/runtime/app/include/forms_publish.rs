@@ -21,8 +21,8 @@ use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::{
     CommitVia, DefaultBareReply, DefaultReply, IncludeMount, IncludePublishing,
-    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, PublishInjectMount, PublishMount,
-    ScopeCodec, SlotCommit, forms,
+    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, MountCodec, PublishInjectMount,
+    PublishMount, SlotCommit, forms,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -123,7 +123,7 @@ macro_rules! impl_publishing_out_commit {
             for (WithSource<Source>, ($(WithSource<$attach>,)+))
         where
             B: Broker + 'static,
-            C: ScopeCodec,
+            C: MountCodec,
             Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Bound: PublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
@@ -152,7 +152,7 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
-                let codec = scope.codec.scope_codec();
+                let codec = scope.codec.mount_codec();
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 scope.mount_publishing_source(source, def, reply.into_source(), extra);

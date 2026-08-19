@@ -39,9 +39,9 @@ path. The bare `FromHeaders<T>` is rejected there, naming the vector form.
 
 --8<-- "examples/typed_headers.rs:batch"
 
-Mounting is the usual pair: `b.include_batch(bulk)` on a broker scope, or
-`Router::include_batch_with_headers` (and the `_on` form for an explicit source) on the router
-path, which needs its own entry point because the contract type travels in the route.
+Mounting reads the same as every other form and on both surfaces: `b.include(bulk)` on a broker
+scope, `Router::include` on the router path. The contract type travels in the route, and the
+definition's own form token is what picks that route.
 
 When one channel carries messages whose headers differ per event kind, keep the standard
 extractor out of it and write your own [`FromContext`] extractor: read the discriminator

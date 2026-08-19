@@ -46,7 +46,7 @@ impl<P, C: Codec + Clone, PL, BL> ReplyWiring for Transactional<P, C, PL, BL> {
     }
 }
 
-/// The reply wiring accepted by the `include_batch_publishing` mounts.
+/// The reply wiring accepted by the batch reply-publishing mounts.
 ///
 /// Implemented by a plain [`TypedPublisher`] (each reply published independently) and by a
 /// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by

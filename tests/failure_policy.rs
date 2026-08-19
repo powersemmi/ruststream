@@ -240,8 +240,9 @@ async fn decode_skip_acks_past_bad_input_and_continues() {
 async fn publishing_decode_failure_is_dropped_and_continues() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let router =
-        Router::<MemoryBroker>::new().include_publishing(rpcd, TypedPublisher::new(MemoryPublish));
+    let router = Router::<MemoryBroker>::new()
+        .include(rpcd)
+        .publisher(TypedPublisher::new(MemoryPublish));
     let app = RustStream::new(AppInfo::new("rpcd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
@@ -277,7 +278,7 @@ async fn batch_decode_failure_drops_the_bad_element() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("bd", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(bd);
+        b.include(bd);
     });
 
     let running = app.start().await.expect("startup failed");
@@ -312,7 +313,8 @@ async fn batch_publishing_decode_failure_is_dropped() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let router = Router::<MemoryBroker>::new()
-        .include_batch_publishing(bpd, TypedPublisher::new(MemoryPublish));
+        .include(bpd)
+        .publisher(TypedPublisher::new(MemoryPublish));
     let app = RustStream::new(AppInfo::new("bpd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
@@ -348,7 +350,7 @@ async fn batch_handler_panic_fails_fast() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("batchboom", "0.1.0")).with_broker(broker, |b| {
-        b.include_batch(batch_boom);
+        b.include(batch_boom);
     });
 
     let result = run_until_torn_down(app, publisher, "batchboom", order_bytes(1)).await;
