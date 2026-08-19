@@ -8,7 +8,7 @@ use crate::{BatchSubscriber, Broker, Connected, Publisher, Subscriber, Subscript
 
 use crate::PublishPolicy;
 use crate::runtime::batch::{
-    BatchDef, BatchWithHeadersDef, TypedBatch, TypedBatchWithHeaders, batch_metadata,
+    BatchDef, BatchWithHeadersDef, RawBatch, TypedBatch, TypedBatchWithHeaders, batch_metadata,
 };
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler, batch_inject_metadata};
 use crate::runtime::batch_publishing::{
@@ -265,6 +265,24 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         // the adapter names the def's input kind explicitly.
         let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
             .with_decode(policies.decode);
+        self.sink
+            .push_subscribe_batch(source, handler, meta, policies, workers);
+    }
+
+    /// Mounts a raw batch definition on `source`: no codec anywhere, the handler borrows the
+    /// batch's payloads as they arrived.
+    pub(super) fn mount_raw_batch<Source, Def>(&mut self, source: Source, def: Def)
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchDef<Input = crate::runtime::RawBytes>,
+        Def::Handler: crate::runtime::RawSliceHandler<State> + 'static,
+        State: Send + Sync + 'static,
+    {
+        let meta = batch_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let handler = RawBatch::over(def.into_handler());
         self.sink
             .push_subscribe_batch(source, handler, meta, policies, workers);
     }
