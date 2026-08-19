@@ -577,8 +577,9 @@ async fn dispatch<H, M, C, St>(
     // Build the broker's typed per-delivery context from the message, then attach the fail-fast
     // handle.
     let cx = C::build(&msg);
-    let mut ctx =
-        Context::new(name, msg.headers(), state, cx, delivery).with_failfast(&failure.shutdown);
+    let mut ctx = Context::new(name, msg.headers(), state, cx, delivery)
+        .with_failfast(&failure.shutdown)
+        .with_decode_policy(failure.policies.decode);
     // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
     // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
     // the future borrows `&mut ctx`; that state is discarded with the failed delivery.
@@ -685,7 +686,9 @@ async fn run_batch<H, M, St>(
     let empty = Headers::new();
     // A batch has no single broker message, so its per-delivery context is unit (`C = ()`); the
     // shared app state is threaded the same way as on the single-message path.
-    let mut ctx = Context::new(name, &empty, state, (), delivery).with_failfast(&failure.shutdown);
+    let mut ctx = Context::new(name, &empty, state, (), delivery)
+        .with_failfast(&failure.shutdown)
+        .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness's slot scope attributes `Out` publishes to their slot.
     #[cfg(feature = "testing")]
     let result = in_slot_scope(
