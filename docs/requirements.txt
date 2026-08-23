@@ -6,7 +6,8 @@
 # dependency on mkdocs, so pip installs both; only the `properdocs` command is used.
 properdocs>=1.6
 mkdocs-material>=9.5
-# Russian and Chinese pages live next to their English original as `<page>.<locale>.md`.
+# Russian and Chinese pages live in a tree of their own under `docs/<locale>/`, mirroring the
+# English paths.
 # The plugin targets MkDocs, and properdocs aliases the `mkdocs` package and reads the
 # `mkdocs.plugins` entry-point group, so it loads unchanged under `properdocs build`.
 mkdocs-static-i18n>=1.3

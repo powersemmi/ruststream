@@ -49,6 +49,12 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - toc:
       permalink: true
+      # The default slugifier drops every non-ASCII character, so a Russian or Chinese heading
+      # gets an empty id and the table of contents links to nothing. This one keeps the script
+      # and leaves ASCII headings with exactly the ids they already have.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -103,6 +109,8 @@ plugins:
             Observability: Наблюдаемость
             Testing: Тестирование
             Brokers: Брокеры
+            Broker authors: Авторам брокеров
+            API reference: Справочник API
         - locale: zh
           name: Chinese
           build: true
