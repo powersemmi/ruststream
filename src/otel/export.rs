@@ -581,11 +581,11 @@ impl PublishLayer for OtelPublishLayer {
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
     {
-        if self.stamp_publish_time {
-            if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                out.headers_mut()
-                    .insert(PUBLISH_TIME_HEADER, now.as_millis().to_string());
-            }
+        if self.stamp_publish_time
+            && let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH)
+        {
+            out.headers_mut()
+                .insert(PUBLISH_TIME_HEADER, now.as_millis().to_string());
         }
         let name = out.name().to_owned();
         #[allow(clippy::cast_possible_truncation)] // Payloads beyond u64 bytes do not exist.

@@ -24,7 +24,7 @@ struct Event {
 /// the injected publisher exists for.
 #[subscriber("out.in")]
 async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
-    let dest = if event.id % 2 == 0 {
+    let dest = if event.id.is_multiple_of(2) {
         "out.even"
     } else {
         "out.odd"

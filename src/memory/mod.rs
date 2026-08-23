@@ -196,10 +196,11 @@ impl MemoryState {
                 // (`_inbox.`) are excluded: their reply is consumed by the requester, not a dispatch
                 // loop, so it carries no coordinator and is never decremented.
                 #[cfg(feature = "testing")]
-                if sent.is_ok() && !delivery.name.starts_with("_inbox.") {
-                    if let Some(coordinator) = self.coordinator.get() {
-                        coordinator.enqueued();
-                    }
+                if sent.is_ok()
+                    && !delivery.name.starts_with("_inbox.")
+                    && let Some(coordinator) = self.coordinator.get()
+                {
+                    coordinator.enqueued();
                 }
                 #[cfg(not(feature = "testing"))]
                 let _ = sent;
@@ -817,10 +818,10 @@ impl IncomingMessage for MemoryMessage {
             // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
             // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
             #[cfg(feature = "testing")]
-            if sent.is_ok() {
-                if let Some(coordinator) = &self.coordinator {
-                    coordinator.enqueued();
-                }
+            if sent.is_ok()
+                && let Some(coordinator) = &self.coordinator
+            {
+                coordinator.enqueued();
             }
             #[cfg(not(feature = "testing"))]
             let _ = sent;

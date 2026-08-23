@@ -13,10 +13,9 @@ serde = { version = "1", features = ["derive"] }
 `Serialize`.
 
 !!! note "Edition and MSRV"
-    RustStream targets **edition 2024** and a minimum supported Rust version of **1.85** (native
-    `async fn in trait`). Set `edition = "2024"` in your `Cargo.toml`. CI builds and tests the
-    crate on the floor and on current stable, and builds it on beta, so any floor at or above
-    1.85 works.
+    RustStream targets **edition 2024** and a minimum supported Rust version of **1.88**. Set
+    `edition = "2024"` in your `Cargo.toml`. CI builds and tests the crate on the floor and on
+    current stable, and builds it on beta, so any floor at or above 1.88 works.
     Broker crates may require a newer toolchain than the core when their underlying clients do;
     check the broker crate's own `rust-version`.
 

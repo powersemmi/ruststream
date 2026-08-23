@@ -59,10 +59,8 @@ jobs:
 
   translation-parity:
     name: Translation parity
-    # A change to what a page says belongs in every language that page exists in. The way out
-    # is this label, and it is for an edit confined to one language: spelling, grammar, or a
-    # word choice that was already right elsewhere. It suppresses this job only - the site
-    # still has to build and the translated pages still have to match their originals.
+    # The label is for an edit confined to one language: spelling, grammar, or a word choice
+    # that was already right elsewhere. It suppresses this job only.
     if: >-
       github.event_name == 'pull_request'
       && !contains(github.event.pull_request.labels.*.name, 'docs-single-language')

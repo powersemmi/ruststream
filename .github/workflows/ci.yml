@@ -61,13 +61,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Three toolchains, each answering a different question, which is the shape axum
-        # and tokio both settled on: the floor is what the MSRV promise rests on, stable is
-        # what users build with, and beta is the early warning for a compiler or lint change
-        # before it reaches stable. The minor versions in between were dropped: they only ran
-        # `cargo check`, and code that fails to build on 1.90 fails on 1.85 as well, so they
-        # cost a dozen runners to restate what the floor already proves.
-        toolchain: [stable, beta, "1.85"]
+        # The floor, what users build with, and the early warning. Releases in between add
+        # nothing: what fails on a later one fails on the floor too.
+        toolchain: [stable, beta, "1.88"]
+    # Installing a toolchain does not select it: `rust-toolchain.toml` outranks the rustup
+    # default the install action sets. RUSTUP_TOOLCHAIN outranks the file.
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -90,11 +90,8 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
-      # The same lint set six weeks early, and deliberately not a gate. A clippy release
-      # adds lints, and the workspace warns on whole groups, so a new lint turns into a red
-      # build the day it reaches stable, with no warning. Running it here surfaces the lint
-      # while it is still in beta, in a step that reports without blocking, so the fix lands
-      # on its own schedule instead of on the release's.
+      # Advisory, not a gate: surfaces a lint added by the next clippy release six weeks
+      # before it turns the build red.
       - name: cargo clippy (beta, advisory)
         if: matrix.toolchain == 'beta'
         continue-on-error: true
@@ -115,15 +112,8 @@ jobs:
           cargo check --locked --no-default-features --features cbor,memory,macros
           cargo check --locked --no-default-features --features msgpack,memory,macros
 
-      # The trybuild UI snapshots in tests/ui are rustc-version-sensitive, so they
-      # run on stable only: RUN_UI_TESTS=1 opts the `ui` test in here, every other
-      # run (the beta and 1.85 jobs, the coverage job, a local `cargo test`) leaves it
-      # unset and the test skips itself. Beta is excluded for exactly that reason: its
-      # rustc renders diagnostics that stable has not shipped yet, so the snapshots
-      # would fail there on wording months before the wording is real. RUN_SCAFFOLD_BUILD=1
-      # opts in the heavy `ruststream new` compile-check the same way (a nested `cargo build`
-      # of the rendered memory template), so template rot fails CI instead of a user's
-      # first build.
+      # Stable only: the UI snapshots record rustc's exact wording, and beta renders wording
+      # stable has not shipped. Unset elsewhere, the two tests skip themselves.
       - name: cargo test
         env:
           RUN_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
@@ -132,10 +122,8 @@ jobs:
         # the log then lists every red test, not just the first binary's.
         run: cargo test --locked --workspace --all-features --no-fail-fast
 
-      # The suite above compiles every doc example with all features on, which hides an example
-      # that names a feature-gated item without gating itself: it then fails for the user who
-      # installs the crate with defaults, or with none. Run the doc examples at both ends of the
-      # feature range so that gap fails here instead.
+      # All-features hides a doc example that names a feature-gated item without gating itself.
+      # Both ends of the range catch it.
       - name: cargo test --doc (feature edges)
         if: matrix.toolchain == 'stable'
         run: |
@@ -171,17 +159,9 @@ jobs:
         with:
           tool: cargo-hack
 
-      # The whole public surface sits behind additive features, and the matrix above builds only
-      # the two ends of the range, so a feature that stops compiling on its own reaches a release
-      # and fails for the first user who enables it alone. This is a guard, not a fix: it finds
-      # nothing today, and that is the expected result.
-      #
-      # --no-dev-deps matters: with dev-dependencies in scope, a missing feature gate in the
-      # library is masked by a dependency that some test happens to pull in.
-      #
-      # --locked is deliberately absent here, and only here. --no-dev-deps rewrites the manifests
-      # in place, which makes cargo want to rewrite the lock file, and --locked forbids exactly
-      # that. Every other job in this workflow keeps the lock honest.
+      # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
+      # It also rewrites the manifests in place, which is why this is the one job without
+      # --locked.
       - name: cargo hack check (each feature)
         run: cargo hack check --workspace --each-feature --no-dev-deps
 
@@ -201,36 +181,31 @@ jobs:
       - name: Install nightly (resolver only)
         uses: dtolnay/rust-toolchain@nightly
 
+      # The floor, for the build step below. Keep the version in step with
+      # `rust-version` in the workspace manifest.
+      - name: Install the MSRV toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # A requirement in Cargo.toml is a lower bound and a claim that the crate works from that
-      # version up, and cargo resolving to the newest compatible release means the claim is never
-      # exercised. Resolve the other way instead.
-      #
-      # The full -Z minimal-versions is used rather than -Z direct-minimal-versions on purpose:
-      # the narrow flag checks only this crate's own bounds and leaves the assembled graph
-      # unverified, and it is the assembled graph a user builds. The cost is the pinning list
-      # below, which grows by a line whenever a third-party manifest declares a bound that is too
-      # loose. Each line names the dependency and why it had to move back up.
+      # The full flag rather than -Z direct-minimal-versions: the narrow one leaves the assembled
+      # graph unverified, and that is what a user builds. It costs the pinning list below.
       - name: Resolve minimal versions
         run: cargo +nightly update -Z minimal-versions
 
-      # termcolor: trybuild 1.0.0 asks for `termcolor = "1.0"` but its banner code copies a `Color`
-      # out of a slice, and `Color` is only `Copy` from termcolor 1.0.4 on. A too-loose bound in a
-      # third-party manifest, not in ours. Remove this line if trybuild's floor here ever moves
-      # above 1.0.0.
+      # trybuild 1.0.0 declares `termcolor = "1.0"` but needs `Color: Copy`, added in 1.0.4.
+      # A too-loose bound in a third-party manifest; drop this when trybuild's floor moves.
       - name: Pin dependencies whose declared bounds are too loose
         run: cargo update -p termcolor --precise 1.0.4
 
-      # The compiler half of this check is still open. The intent is to build and test the minimum
-      # dependency set on the MSRV toolchain, so the worst case a user can assemble is exercised in
-      # one job. That cannot run green yet: ruststream-macros needs let-chains (1.88) while the
-      # workspace declares 1.85, and no job in this workflow noticed, because the checked-in
-      # rust-toolchain.toml overrides the toolchain dtolnay/rust-toolchain installs and every
-      # matrix entry really compiles on stable. Until the floor is either restored or moved, this
-      # job gates the dependency graph on stable and the compiler half stays unverified.
+      # Minimum dependencies on the minimum compiler: the worst case a user can assemble.
+      # Resolution above needs nightly, so only this step drops to the floor.
       - name: Build and test against minimal versions
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
         run: |
           cargo check --locked --workspace --all-targets --all-features
           cargo test --locked --workspace --all-features --no-fail-fast
@@ -248,10 +223,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # cargo-check-external-types reads rustdoc JSON, whose format is unstable, so it works only
-      # against the nightly it was built for. Pinned to a date rather than to `nightly` so the job
-      # does not break on an unrelated format change; move it forward when the tool's README names
-      # a newer one (it currently names this date), and expect to bump the tool in the same edit.
+      # The tool reads rustdoc JSON, whose format is unstable, so it works only against the
+      # nightly it was built for. Move this date and the tool version together.
       - name: Install nightly for rustdoc JSON
         uses: dtolnay/rust-toolchain@master
         with:
@@ -263,10 +236,8 @@ jobs:
       - name: Install cargo-check-external-types
         run: cargo install --locked cargo-check-external-types@0.5.0
 
-      # Which types from dependencies the public API is allowed to name, per the allow-list in
-      # Cargo.toml. Every entry there turns a version bump of that dependency into a breaking
-      # change for every broker crate downstream, so a new leak has to be argued for and added
-      # rather than discovered by a user's build after 1.0.
+      # Allow-list in Cargo.toml. Every entry makes a version bump of that dependency breaking
+      # for every broker crate downstream, so a new leak is added deliberately or not at all.
       - name: cargo check-external-types
         run: cargo +nightly-2026-03-20 check-external-types --all-features
 
@@ -293,10 +264,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # The cache restores llvm-cov-target from previous runs, and stale instrumented
-      # artifacts double-count files in the report (a file can show more measured lines than
-      # it physically has, cratering the total). Clear the coverage state while keeping the
-      # dependency cache.
+      # Stale instrumented artifacts from the cache double-count files and crater the total.
       - name: Clean stale coverage artifacts
         run: cargo llvm-cov clean --workspace
 
@@ -334,11 +302,8 @@ jobs:
           name: coverage-lcov
           path: lcov.info
 
-      # Feeds the README coverage badge. Coveralls accepts the default GITHUB_TOKEN for public
-      # repositories, so no extra secret is required; uploaded even when the gate fails so the
-      # badge reflects reality rather than the last green run. The upload is advisory: a
-      # Coveralls outage must not fail the pipeline (the enforced coverage gate is the
-      # fail-under step above).
+      # Uploaded even when the gate fails, so the badge shows reality. Advisory: a Coveralls
+      # outage must not fail the pipeline.
       - name: Upload to Coveralls
         if: always()
         uses: coverallsapp/github-action@v2
@@ -363,14 +328,10 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Package the published artifacts without uploading. Both packages in one invocation
-      # (multi-package packaging, stable since cargo 1.90): packaging strips the path from the
-      # lockstep `ruststream-macros` dependency, and between a version bump and the release that
-      # version does not exist on crates.io, so packaging ruststream alone cannot resolve it. The
-      # multi-package form resolves in-workspace dependencies through a local overlay instead.
-      #
-      # CARGO_HTTP_MULTIPLEXING=false works around recurring "[16] Error in the HTTP2 framing
-      # layer" curl failures on the runners when this job re-downloads registry deps.
+      # Both packages in one invocation: packaging strips the path from the lockstep
+      # `ruststream-macros` dependency, and between a version bump and the release that version
+      # is not on crates.io yet, so packaging ruststream alone cannot resolve it.
+      # CARGO_HTTP_MULTIPLEXING=false works around HTTP2 framing failures on the runners.
       - name: cargo publish dry-run (no upload)
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
@@ -411,12 +372,9 @@ jobs:
         with:
           tool: cargo-generate
 
-      # The template-contract drift check: render the in-memory scaffold and compile it, so an API
-      # change that breaks the template fails here, not a user's first `cargo build`. The rendered
-      # project pins `ruststream` by version; until 0.5 is published, patch it to this checkout so
-      # the scaffold builds against the local crate. Each broker repo mirrors this for its templates.
-      # No --locked: the scaffold is generated fresh and has no lock file, which is precisely the
-      # situation a user starts from.
+      # Renders the scaffold and compiles it, so template drift fails here and not on a user's
+      # first build. The rendered project is patched to this checkout. No --locked: a fresh
+      # scaffold has no lock file, which is the situation a user starts from.
       - name: Render and check templates/memory
         run: |
           cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
