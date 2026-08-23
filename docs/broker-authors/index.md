@@ -243,7 +243,7 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 ```
 
 The trait is local to your crate, so the orphan rule is satisfied, and the bound on the source type
-means the methods simply do not exist on a builder for another broker. Users import the trait to
+means the methods do not exist on a builder for another broker. Users import the trait to
 reach them, as with any extension trait. This is the same extension shape the `Out` slot vocabulary
 uses below.
 

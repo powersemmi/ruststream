@@ -1,8 +1,8 @@
 # Memory
 
-The `memory` feature provides `MemoryBroker`, an in-process broker. It needs no external service,
-which suits examples, unit tests, and prototypes; the default `cargo generate` template
-(`templates/memory`) uses it so a fresh project runs with zero dependencies.
+`MemoryBroker`, behind the `memory` feature, keeps the whole broker inside your process, so
+examples, unit tests, and prototypes need no external service at all. The default `cargo generate`
+template (`templates/memory`) uses it, and a fresh project runs with zero dependencies.
 
 ```toml
 ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
