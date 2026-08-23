@@ -6,7 +6,7 @@ Broker 负责把 RustStream 接到某种消息传输上。框架自带一个内�
 处理器、路由器、编解码器和中间件都与具体 Broker 无关，因此在不同 Broker 之间切换，只是 `with_broker`
 处的一行改动。
 
-每个 Broker crate 都有自己的文档站点，可以从下表的「文档」列，或者 **Broker** 菜单进入。
+每个 Broker crate 都有自己的文档站点，可以从下表的“文档”列，或者 **Broker** 菜单进入。
 
 | Broker | Crate | 传输 | 文档 |
 |---|---|---|---|
@@ -112,6 +112,6 @@ Broker 负责把 RustStream 接到某种消息传输上。框架自带一个内�
     }
     ```
 
-每个 Broker crate 都会记录自己的 `Config` 和连接选项。需要 Broker 专有选项（消费者组、持久化名称）
-的订阅，在 `#[subscriber(..)]` 属性中使用该 Broker 的描述符；参见
+每个 Broker crate 都会记录自己的 `Config` 和连接选项。订阅如果需要 Broker 专有选项（消费者组、
+持久化名称），就在 `#[subscriber(..)]` 属性中使用该 Broker 的描述符；参见
 [Broker 专有的描述符](../guides/subscribers.md#broker-specific-descriptors)。

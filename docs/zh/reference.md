@@ -3,11 +3,11 @@
 完整的 Rust API 参考由 rustdoc 生成并发布在 docs.rs 上。本站点讲的是概念与指南；每个类型、trait 和
 函数签名，以 docs.rs 为准。
 
-- **[docs.rs 上的 ruststream](https://docs.rs/ruststream)**，即这个 crate。启用全部 feature 构建它，
+- **[docs.rs 上的 ruststream](https://docs.rs/ruststream)**，即该 crate。启用全部 feature 构建它，
   就能看到运行时、编解码器、AsyncAPI、指标和 conformance 这几个模块：
   [docs.rs/ruststream（全部 feature）](https://docs.rs/crate/ruststream/latest/features)。
 
-`ruststream` 这个命令行工具就是同一个 crate 的 `cli` feature，并非独立的 crate；参见
+`ruststream` 命令行工具就是同一个 crate 的 `cli` feature，并非独立的 crate；参见
 [CLI 指南](guides/cli.md)。
 
 ## 在本地构建参考文档

@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 ```
 
 处理器返回一个 [`HandlerResult`](../guides/subscribers.md#acking)：要么是 `Ack`，要么是一个丢弃或
-重新入队该消息的 `nack`。返回 `()` 或 `Result<(), E>` 同样可行，它们会被转换成一个结果（`Ok` 表示
+重新入队该消息的 `nack`。返回 `()` 或 `Result<(), E>` 同样可行，它们会转换成一个结果（`Ok` 表示
 ack，`Err` 表示丢弃）。
 
 ## 3. 接入应用
@@ -73,8 +73,8 @@ cargo run -- run
 --8<-- "examples/tutorial/orders.rs:confirm"
 ```
 
-用普通的 `include` 挂载它即可；回复会经由 Broker 的默认发布策略、以默认编解码器发出（想为回复指定
-另一个编解码器或加上变换，就再链式调用 `.publisher(..)` 并传入一个 `TypedPublisher` 栈）：
+用普通的 `include` 挂载它即可；回复会经由 Broker 的默认发布策略发出，编码用的是默认编解码器（想为
+回复指定另一个编解码器或加上变换，就再链式调用 `.publisher(..)` 并传入一个 `TypedPublisher` 栈）：
 
 <!-- inline-rust: minimal mount fragment isolating the reply wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
 ```rust
@@ -113,10 +113,10 @@ cargo run -- asyncapi gen
 `NatsBroker::new("nats://localhost:4222")`），处理器、路由器和编解码器都不用动。可用的 Broker，以及
 每一种 Broker 的对照写法，参见 [Broker](../brokers/index.md#switching-brokers)。
 
-!!! info "完整的服务是一个会被编译的示例"
+!!! info "完整的服务是一个会参与编译的示例"
     本页的每一段代码都嵌自仓库中的
     [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)，
-    CI 在每次改动时都会构建它。你也可以用
+    CI 在每次改动时都会构建它。也可以用
     `cargo run --example tutorial --features macros,memory,json -- run` 自己跑一遍。
 
 ## 下一步
