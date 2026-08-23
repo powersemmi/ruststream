@@ -347,6 +347,21 @@ impl<S> MissingSegment<S> {
     }
 }
 
+/// One address placeholder that carries a value, and so can be rendered into the destination.
+///
+/// The publish terminal of a generated address builder takes this witness once per placeholder,
+/// so an address with a placeholder still in its [`MissingSegment`] state is rejected by a bound
+/// the compiler can explain rather than by the terminal not existing. Implemented for the bound
+/// representation only; you never implement it by hand.
+#[diagnostic::on_unimplemented(
+    message = "this address still has an unbound placeholder",
+    note = "a name template opens one setter per placeholder, and the publish appears once \
+            every one of them is bound"
+)]
+pub trait BoundSegment: fmt::Display {}
+
+impl BoundSegment for String {}
+
 /// A publish whose destination is rendered by a generated address builder.
 ///
 /// The terminal a templated `to()` chain calls once every placeholder is bound; the rendered

@@ -65,14 +65,14 @@ pub use lifecycle::ConnectedSlot;
 pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
-    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, CallCodec, ForBatch,
-    HeadersUnset, MapHeaders, MessageBody, MissingSegment, Outgoing, Publish, PublishAt,
-    PublishCodec, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError,
-    PublishExt, PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline,
-    PublishSink, PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack,
-    RawBody, ReplyPublisher, ReplyWiring, ResolvedName, SatisfiesContract, SuppliedName,
-    TemplateAddress, TransactionPublishError, TransactionScope, Transactional, TypedHeaders,
-    TypedPublisher, TypedTransaction, for_batch,
+    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
+    CallCodec, ForBatch, HeadersUnset, MapHeaders, MessageBody, MissingSegment, Outgoing, Publish,
+    PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
+    PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer, PublishNext,
+    PublishPipeline, PublishSink, PublishStack, PublishTransform, PublishTransformIdentity,
+    PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring, ResolvedName, SatisfiesContract,
+    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, Transactional,
+    TypedHeaders, TypedPublisher, TypedTransaction, for_batch,
 };
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;

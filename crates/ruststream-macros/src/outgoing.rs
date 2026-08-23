@@ -275,7 +275,7 @@ fn parse_template(literal: &LitStr) -> syn::Result<Template> {
 }
 
 /// The generated address builder of a templated name: one setter per placeholder, and a publish
-/// terminal that exists only once every one of them is bound.
+/// terminal callable only once every one of them is bound.
 fn template_builder(
     name: &Ident,
     vis: &syn::Visibility,
@@ -329,7 +329,9 @@ fn template_builder(
         .enumerate()
         .map(|(index, placeholder)| setter(index, placeholder, &markers, &fields, &states));
 
-    let bound = fields.iter().map(|_| quote!(::std::string::String));
+    let bound = states
+        .iter()
+        .map(|state| quote!(#state: ::ruststream::runtime::BoundSegment));
     let format_string = template.format_string();
     let format_args = fields.iter().map(|field| quote!(self.#field));
     let (_, ty_generics, _) = generics.split_for_impl();
@@ -349,8 +351,8 @@ fn template_builder(
 
             /// One publish whose templated address is being bound, segment by segment.
             ///
-            /// The publish terminal appears once every placeholder is bound; until then the
-            /// unbound ones ride in this type, so the compile error names them.
+            /// The publish terminal is callable once every placeholder is bound; until then
+            /// the unbound ones ride in this type, so the compile error names them.
             #[must_use = "an address builder does nothing until publish() is awaited"]
             pub struct To<Cont #(, #states)*> {
                 pub(super) cont: Cont,
@@ -366,7 +368,7 @@ fn template_builder(
 
             #(#setters)*
 
-            impl<Cont> To<Cont #(, #bound)*> {
+            impl<Cont #(, #states)*> To<Cont #(, #states)*> {
                 /// Renders the declared name with the bound segments and publishes to it.
                 ///
                 /// # Errors
@@ -374,9 +376,11 @@ fn template_builder(
                 /// Returns [`PublishError`](::ruststream::runtime::PublishError) when the
                 /// payload cannot be encoded, the typed headers cannot be serialized, or the
                 /// broker rejects the message.
-                // The bound sits on the method, not on the impl block: carried by the block it
-                // turns a publish the message's own declarations reject into "method not
-                // found", which drops the guidance those declarations come with.
+                // Every bound sits on the method, not on the impl block: on the block they
+                // turn a publish the message's own declarations reject into "method not
+                // found", which drops the guidance those declarations come with. The segment
+                // witnesses are here for the same reason, so a forgotten placeholder is
+                // reported by the witness instead of by the terminal being absent.
                 pub async fn publish(
                     self,
                 ) -> ::core::result::Result<
@@ -387,6 +391,7 @@ fn template_builder(
                 >
                 where
                     Cont: ::ruststream::runtime::PublishAt,
+                    #(#bound,)*
                 {
                     // A templated address is rendered per publish: that allocation is what
                     // computing an address at run time costs, and the fixed form avoids it.
