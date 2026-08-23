@@ -1,11 +1,13 @@
 //! The tutorial's message types and handlers.
 
+// --8<-- [start:order]
 use ruststream::runtime::HandlerResult;
+use ruststream::schemars::JsonSchema;
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
-// --8<-- [start:order]
-#[derive(Debug, Deserialize)]
+/// An order placed by a customer.
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct Order {
     pub(crate) id: u64,
     pub(crate) quantity: u32,
@@ -19,7 +21,8 @@ pub(crate) async fn handle(order: &Order) -> HandlerResult {
 // --8<-- [end:order]
 
 // --8<-- [start:confirm]
-#[derive(Debug, Serialize)]
+/// The service's answer to an order.
+#[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct Confirmation {
     pub(crate) id: u64,
     pub(crate) accepted: bool,

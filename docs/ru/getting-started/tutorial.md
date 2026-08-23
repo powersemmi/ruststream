@@ -29,10 +29,6 @@ serde = { version = "1", features = ["derive"] }
 самой функции.
 
 ```rust title="src/orders.rs"
-use ruststream::runtime::HandlerResult;
-use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
-
 --8<-- "examples/tutorial/orders.rs:order"
 ```
 
@@ -40,17 +36,14 @@ use serde::{Deserialize, Serialize};
 который отбрасывает сообщение или возвращает его в очередь. Подойдёт и `()`, и `Result<(), E>` - они
 преобразуются в результат (`Ok` подтверждает, `Err` отбрасывает).
 
+Именно вывод `JsonSchema` кладёт схему полезной нагрузки в AsyncAPI-документ из шага 6, а
+doc-комментарий типа становится описанием сообщения. Отдельная зависимость для этого не нужна: фича
+`asyncapi` реэкспортирует `schemars`.
+
 ## 3. Свяжите обработчик с приложением
 
 ```rust title="src/main.rs"
-mod orders;
-
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream};
-
-use crate::orders::handle;
-
---8<-- "examples/quickstart.rs:app"
+--8<-- "examples/tutorial/first_app.rs:app"
 ```
 
 Макрос превращает `handle` в значение с тем же именем, что у функции, поэтому его достаточно
@@ -76,14 +69,11 @@ cargo run -- run
 --8<-- "examples/tutorial/orders.rs:confirm"
 ```
 
-Монтируется он обычным `include`: ответ уходит через политику публикации брокера по умолчанию и
-кодируется кодеком по умолчанию (чтобы назвать кодек ответа или добавить преобразования, добавьте в
-цепочку `.publisher(..)` со стеком `TypedPublisher`):
+Смонтируйте его рядом с `handle` тем же обычным `include`: ответ уходит через политику публикации
+брокера по умолчанию и кодируется кодеком по умолчанию.
 
-<!-- inline-rust: minimal mount fragment isolating the reply wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
-```rust
-// inside with_broker(...), with `confirm` imported from the orders module
-b.include(confirm);
+```rust title="src/main.rs"
+--8<-- "examples/tutorial/reply_app.rs:reply"
 ```
 
 Полная картина, включая публикацию изнутри обработчика, - в разделе
@@ -98,6 +88,12 @@ b.include(confirm);
 --8<-- "examples/tutorial/routes.rs:routes"
 ```
 
+Роутер не держит брокер, поэтому регистрация не фиксируется сама при сбросе, как это делает билдер
+области: она завершается явным терминалом. `.publisher(..)` задаёт связывание ответа - политика
+публикации остаётся чистой декларацией, поэтому роутеру по-прежнему не нужен брокер, - а `.mount()`
+берёт собственную политику публикации брокера по умолчанию, то есть явно записывает то, что шаг 4
+получал сам. Остальная поверхность роутера разобрана в разделе [Роутинг](../guides/routing.md).
+
 ```rust title="src/main.rs"
 --8<-- "examples/tutorial/main.rs:main"
 ```
@@ -108,9 +104,12 @@ b.include(confirm);
 cargo run -- asyncapi gen
 ```
 
-Каждый подписчик превращается в канал и операцию `receive`; типы полезной нагрузки, для которых
-выведен `schemars::JsonSchema`, добавляют ещё и схемы. Флаги вывода (`-o`, `--yaml`) и сам документ
-разобраны в [руководстве по AsyncAPI](../guides/asyncapi.md).
+Каждый подписчик превращается в канал и операцию `receive`. Обработчики `handle` и `confirm` делят
+канал `orders` и всё равно получают по своей операции, потому что открывают отдельные подписки;
+ответ добавляет операцию `send` на канале `confirmations`. Оба типа полезной нагрузки выводят
+`schemars::JsonSchema`, поэтому документ несёт их схемы в `components.messages`, и описанием каждой
+служит doc-комментарий типа. Флаги вывода (`-o`, `--yaml`) и сам документ разобраны в
+[руководстве по AsyncAPI](../guides/asyncapi.md).
 
 ## 7. Перейдите на настоящий брокер
 
@@ -123,8 +122,10 @@ cargo run -- asyncapi gen
 !!! info "Готовый сервис - это компилируемый пример"
     Каждый фрагмент на этой странице подтянут из
     [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
-    в репозитории, который CI собирает при каждом изменении. Запустить его самостоятельно можно
-    командой `cargo run --example tutorial --features macros,memory,json -- run`.
+    в репозитории, который CI собирает при каждом изменении: `first_app.rs` и `reply_app.rs` - это
+    сервис в том виде, в каком его оставляют шаги 3 и 4, а `main.rs` - готовый. Запустить его
+    самостоятельно можно командой
+    `cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
 
 ## Что дальше
 
