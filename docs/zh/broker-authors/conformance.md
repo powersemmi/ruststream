@@ -36,14 +36,14 @@ use ruststream::conformance::harness;
 | 场景 | 断言内容 |
 |---|---|
 | 顺序 | 消息按发布顺序投递 |
-| 订阅之后再发布 | 订阅者只会收到它挂上之后发布的消息；更早的发布不会被缓冲 |
-| ack 消费掉投递 | 已经 ack 的消息不会被重新投递 |
+| 订阅之后再发布 | 订阅者只会收到它挂上之后发布的消息；更早的发布不会进入缓冲 |
+| ack 消费掉投递 | 已经 ack 的消息不会重新投递 |
 | 带重新入队的 nack 会重新投递 | `nack(requeue = true)` 会再次投递这条消息 |
 | 不重新入队的 nack 丢弃消息 | `nack(requeue = false)` 不会重新投递 |
 | 消息头会传递 | 消息头在一次往返之后仍然完好 |
 | 发布日志能观察到发布 | `published(name)` 记录下每一条已发布的消息 |
 
-这些是核心路由方面的保证，是每个 Broker 都必须满足的契约。这套校验套件**不会**测试 Broker 专有的语义
+这些是核心路由方面的保证，是每个 Broker 都必须满足的契约。该校验套件**不会**测试 Broker 专有的语义
 （持久化续传、超时重新投递、分区分配）；那些不属于该契约，要由你自己针对真实服务器的端到端测试集来验证。
 
 ## 生命周期检查
@@ -79,7 +79,7 @@ async fn passes_lifecycle() {
 - **`make_publisher`** 从已连接形态产出一个发布者。
 
 没有 ack 语义的 Broker（Core NATS）只要从 `ack` 返回 `AckError::Unsupported` 就算通过；这项检查既接受
-这种结果，也接受一次成功的 ack。由于 `lifecycle` 会执行一次真实的 `connect`，请针对一台真实运行的
+这种结果，也接受一次成功的 ack。由于 `lifecycle` 会执行一次真实的 `connect`，要针对一台真实运行的
 服务器来跑它（用类似 `NATS_TEST_URL` 的环境变量把它挡住）；内存 Broker 则可以在进程内跑。
 
 ## 能力套件 { #capability-suites }
@@ -124,7 +124,7 @@ async fn passes_request_reply() {
 
 - [ ] 已实现 `Broker`、`ConnectedBroker`、`Subscribe`（或一个 `SubscriptionSource`）、`Subscriber`、
       `IncomingMessage`、`Publisher`，以及一个能与之配对的 `PublishPolicy`。
-- [ ] `shutdown` 完成了所有可失败的清理工作，并且既不阻塞也不 panic。
+- [ ] `shutdown` 完成了所有可失败的清理工作，并且绝不阻塞、绝不 panic。
 - [ ] ack 消费 `self`；nack 遵守 `requeue` 标志。
 - [ ] crate 自己拥有它的 `Config`；没有合理默认值的字段不提供 `Default`。
 - [ ] 只有 Broker 确实支持的能力才实现对应的能力 trait，并且每一项已实现的能力都通过了它在
@@ -134,7 +134,7 @@ async fn passes_request_reply() {
 - [ ] `harness::run_suite` 通过（路由接口）。
 - [ ] `harness::lifecycle` 针对真实服务器通过，并由一个环境变量挡住（这条阶梯是：同步的 `new`、消费
       `self` 的 `connect`、订阅、ack、消费 `self` 的 `shutdown`，以及在此之后别名句柄的报错）。
-- [ ] 有一个端到端测试集覆盖 Broker 专有的语义，同样由那个环境变量挡住。
+- [ ] 有一个端到端测试集覆盖 Broker 专有的语义，同样由该环境变量挡住。
 - [ ] `Cargo.toml` 的元数据完整（`description`、`license`、`repository`、`keywords`、`categories`），
       并且 CI 会检查 `--no-default-features` 和 `--all-features`。
 

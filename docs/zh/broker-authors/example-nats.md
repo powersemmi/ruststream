@@ -6,8 +6,8 @@ Broker：`Broker` -> `ConnectedBroker` 阶梯、用一个 `SubscribeOptions` 描
 JetStream 的单一订阅类型、一个会转发消息头的发布者，以及原生的请求-响应能力。
 
 !!! note
-    各个条目的名字跟随你所依赖的 `async-nats` 版本（这里是 0.46）；如果这个 crate 的 API 有了变动，
-    请按下面标注的那几处自行调整。
+    各个条目的名字跟随你所依赖的 `async-nats` 版本（这里是 0.46）；如果该 crate 的 API 有了变动，
+    就自行调整下面标注的那几处。
 
 ```toml title="Cargo.toml"
 [package]
@@ -63,8 +63,8 @@ pub enum NatsError {
 
 `new` 是同步的，只记录地址：正因如此，NATS 服务才能与同步的 `#[ruststream::app]` 构建器组合起来。
 消费 `self` 的 `connect` 负责拨号，并返回已连接形态，它直接持有活跃的客户端。只剩下一个共享 cell：
-在应用还在组装、`connect` 尚未运行的时候就可以构建发布者，而它通过 `connect` 填充的那个 cell 读取
-客户端。这个 cell 是为发布者而存在的（同一种发布者类型同时服务于早期路径和已连接路径）；已连接形态
+在应用还在组装、`connect` 尚未运行的时候就可以构建发布者，而它通过 `connect` 填充的 cell 读取
+客户端。该 cell 是为发布者而存在的（同一种发布者类型同时服务于早期路径和已连接路径）；已连接形态
 自身的操作从不检查它。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
@@ -157,7 +157,7 @@ impl ConnectedBroker for ConnectedNatsBroker {
 }
 ```
 
-消费 `self` 意味着在所有者这条路径上不存在第二次 `connect`，也不存在需要收拾的「关闭之后再发布」；
+消费 `self` 意味着在所有者这条路径上不存在第二次 `connect`，也不存在需要收拾的“关闭之后再发布”；
 先前创建的发布者仍然握着它的 cell，而在 drain 之后再发布，浮现出来的是客户端自己的错误（这正是
 生命周期检查所验证的别名句柄契约）。`shutdown` 完成全部可失败的拆除工作，并且绝不 panic，契约要求
 的正是这样。
@@ -273,7 +273,7 @@ impl Subscribe for ConnectedNatsBroker {
 
 已连接形态自己的 `subscribe` 会先校验选项，然后只分支一次（`queue_group_ref`、`stream_ref` 和
 `durable_ref` 是几个返回 `Option<&str>` 的小 `pub(crate)` getter）；它直接持有客户端，因此根本没有
-「未连接」这条路径需要处理：
+“未连接”这条路径需要处理：
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -371,7 +371,7 @@ impl Subscriber for NatsSubscriber {
 ## 消息
 
 `NatsMessage` 是一个枚举：要么是 core 投递（没有 ack），要么是 JetStream 投递（有真正的 ack）。两者
-都做了装箱，因为被包装的 `async-nats` 消息很大。对 core 投递调用 `ack`/`nack` 会返回
+都做了装箱，因为其中包装的 `async-nats` 消息很大。对 core 投递调用 `ack`/`nack` 会返回
 `AckError::Unsupported`，这是运行时接受的非错误结果；在 JetStream 上它们才真正生效，其中 `nack` 在
 处理器要求重新投递时映射为 `nak`（重投），在处理器不要求时映射为 `term`（丢弃毒消息）。
 
@@ -519,14 +519,14 @@ impl RequestReply for NatsPublisher {
 ```
 
 只实现传输层真正支持的能力：Core NATS 没有批量订阅、没有事务性发布，也没有可回放的日志，因此
-`BatchSubscriber`、`TransactionalPublisher` 和 `Seekable` 都被略去（NATS 的 `Seekable` 该待的地方是
+这里略去了 `BatchSubscriber`、`TransactionalPublisher` 和 `Seekable`（NATS 的 `Seekable` 该待的地方是
 JetStream 消费者，它的流本身就是一份可回放的日志）。`ruststream-nats` 目前也没有实现
-`DescribeServer`；如果你希望这个 Broker 在 AsyncAPI 文档里作为 server 出现，就把它补上。
+`DescribeServer`；如果你希望该 Broker 在 AsyncAPI 文档里作为 server 出现，就把它补上。
 
 ## 发布策略
 
 `NatsPublisher` 是活的那一半；声明的那一半由 `PublishPolicy` 提供，于是在任何连接存在之前，注册代码
-就能指名一个发布者。NATS 的发布不带任何选项，所以这个策略只是一个单元标记（与内存 Broker 的
+就能指名一个发布者。NATS 的发布不带任何选项，所以该策略只是一个单元标记（与内存 Broker 的
 `MemoryPublish` 如出一辙），而配对就是已连接形态自己的 `publisher()`：这里不会失败；如果某个 Broker
 要做真正的工作才能让发布者活起来（比如事务性生产者），就用 `PairError::new` 包装它的失败。由于默认
 配置可以直接拿来用，已连接形态还可以实现 `DefaultPublish`（参见[契约](index.md#publishpolicy)），
@@ -551,7 +551,7 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 
 ## 接入到应用里
 
-有了这个 Broker，应用写起来和其他任何应用完全一样；处理器和编解码器都没有任何 NATS 专有的东西。
+有了该 Broker，应用写起来和其他任何应用完全一样；处理器和编解码器都没有任何 NATS 专有的东西。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -568,5 +568,5 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 在 `testing` feature 下提供一个进程内传输，让它的已连接形态实现 `TestableBroker`（该已连接类型用
 `register_testable_broker!` 注册），并且只做核心路由（一个 subject 匹配器，把发布出去的消息扇出给
-各个订阅者），然后拿 conformance 校验套件跑它。这个传输不得模拟 JetStream 的游标、重新投递计时器或
+各个订阅者），然后拿 conformance 校验套件跑它。该传输不得模拟 JetStream 的游标、重新投递计时器或
 保留策略；那些要端到端地对着真实的 `nats-server` 来验证。参见 [Conformance](conformance.md)。

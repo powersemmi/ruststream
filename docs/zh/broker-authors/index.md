@@ -8,7 +8,7 @@ trait 接口和运行时，既不会带上自带的 JSON 编解码器，也不�
 ruststream = { version = "0.6", default-features = false }
 ```
 
-本页就是那份契约。实现必需的 trait，暴露你自己的 `Config`，为你的 Broker 支持的功能补上能力 trait，
+本页就是这份契约。实现必需的 trait，暴露你自己的 `Config`，为你的 Broker 支持的功能补上能力 trait，
 然后用 [conformance 校验套件](conformance.md)证明结果。想看一份基于真实客户端的完整实现，参见
 [NATS 完整示例](example-nats.md)。
 
@@ -42,14 +42,14 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 构造过程是**同步且不做 I/O 的**：`new(addrs)` 只记录配置，所有网络工作都发生在 `connect` 里（由运行时
 在启动时调用一次），而已连接形态直接持有活的客户端，它自身的操作永远不必检查“也许已连接”的状态。
 Broker 还可以额外保留一个由 `connect` 填充的共享单元（或者像内存 Broker 那样，保留一份可共享的进程内
-状态），这样在应用还在组装、`connect` 尚未运行时就能先把发布者发出去；这个单元服务的是那些提前拿到的
+状态），这样在应用还在组装、`connect` 尚未运行时就能先把发布者发出去；该单元服务的是那些提前拿到的
 句柄，而不是已连接形态。[NATS 示例](example-nats.md)展示的就是基于单元的变体。正是这份契约让服务
 可以用同步的 `#[ruststream::app]` 构建器组装起来；[conformance 校验套件](conformance.md)会端到端地
 证明这一点。
 
 消费 `self` 的状态转移让持有者一侧的误用无法表达：在一个已经关闭的 Broker 上，根本没有发布或订阅方法
 可调用。剩下那条仍属运行时的规则来自传输层的现实，而不是契约的记账：与连接互为别名的句柄（从已连接
-形态发出去的发布者、可共享 Broker 的克隆）在关闭之后被使用时必须报错，绝不能在一条已死的连接上悄悄地
+形态发出去的发布者、可共享 Broker 的克隆）在关闭之后使用时必须报错，绝不能在一条已死的连接上悄悄地
 返回成功。生命周期检查同样会走到这条路径。
 
 ### `Subscribe`
@@ -77,8 +77,8 @@ pub trait Subscriber: Send {
 }
 ```
 
-`stream` 取的是 `&mut self`，因此两次 poll 之间缓冲的状态都存放在这个可变借用之后，
-这保证了它的取消安全。
+`stream` 取的是 `&mut self`，因此两次 poll 之间缓冲的状态都存放在该可变借用之后，
+从而保证了它的取消安全。
 
 ### `IncomingMessage`
 
@@ -121,7 +121,7 @@ pub trait Publisher: Send + Sync {
 
 这是发布接口，而不是服务代码要写的那一个：应用通过构建器发布
 （`publisher.message(&value).publish()`、`publisher.raw(&bytes).to(dest).publish()`），由构建器解析
-目的地、编解码器和消息头，然后恰好调用一次这个方法。Broker 只要实现 `publish`，就免费得到整个构建器，
+目的地、编解码器和消息头，然后恰好调用一次该方法。Broker 只要实现 `publish`，就免费得到整个构建器，
 没有别的东西要提供，构建器上也没有任何东西需要 Broker crate 跟着同步。
 
 ### `PublishPolicy`
@@ -143,7 +143,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 `C::Error`：配对在启动时对每个发布者只做一次，绝不出现在热路径上；而且跨 Broker 的令牌配对的是包含它
 的作用域之外的另一个 Broker，所以一个按 Broker 定型的错误类型本来也说不清究竟是哪一个 Broker。
 
-每一种真正意义上的发布**模式**都提供一对策略与活形态，并且让模式的选择成为策略类型之间的转移，而不是
+为每一种真正意义上的发布**模式**提供一对策略与活形态，并且让模式的选择成为策略类型之间的转移，而不是
 一个运行时标志：普通策略配对出普通的发布者，而 `transactional_id(..)` 这一步构建器调用会转移到另一个
 独立的事务性策略类型，其活形态实现 `TransactionalPublisher`，于是普通发布者上压根没有事务接口。内存
 Broker 的 `MemoryPublish` / `MemoryRequest` 是最小的参考实现（没有选项，所以它们是单元标记类型）；
@@ -151,7 +151,7 @@ Broker 的 `MemoryPublish` / `MemoryRequest` 是最小的参考实现（没有�
 之上组合编解码器和变换。
 
 如果普通策略用默认值就能用（多数如此），那就在已连接形态上再实现 `DefaultPublish` 来指明它。正是它
-让运行时能在一个 `publish("dest")` 处理器不带显式 `.publisher(..)` 被挂载时构造出默认的回复发布者，
+让运行时能在挂载一个不带显式 `.publisher(..)` 的 `publish("dest")` 处理器时构造出默认的回复发布者，
 此时只写 `b.include(def)` 也能编译通过。发布者总是需要显式选项的 Broker 不实现它，它们的用户要在每次
 注册时附上一个策略。
 
@@ -183,11 +183,11 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 上，一个 Broker 可以提供多种订阅方式（pub/sub 与流），各带不同的订阅者类型；也可以像
 [NATS 示例](example-nats.md)那样，用一个在内部分支的描述符把它们全部承载起来。
 
-给描述符派生 `Clone`：它是配置，挂载时会为每次注册重新构造它，这样同一个定义可以挂到两个 Broker 上。
+给描述符派生 `Clone`：它是配置，挂载点会为每次注册重新构造它，这样同一个定义可以挂到两个 Broker 上。
 
 ### 用一个字符串命名一种订阅方式
 
-如果一种订阅方式除了名字之外没有别的标识信息，那它还会实现 `FromName`，其唯一的构造函数用这个名字把
+如果一种订阅方式除了名字之外没有别的标识信息，那它还会实现 `FromName`，其唯一的构造函数用该名字把
 它构造出来：
 
 <!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
@@ -224,7 +224,7 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 }
 ```
 
-这个 trait 属于你自己的 crate，因此孤儿规则得到满足；而对源类型的 trait 约束意味着，这些方法在别的
+该 trait 属于你自己的 crate，因此孤儿规则得到满足；而对源类型的 trait 约束意味着，这些方法在别的
 Broker 的构建器上根本不存在。用户像用任何扩展 trait 那样导入它，就能用到这些方法。下文中 `Out` 槽位的
 词汇采用的也是同一种扩展形态。
 
@@ -243,10 +243,10 @@ Broker 的构建器上根本不存在。用户像用任何扩展 trait 那样导
 | `Positioned` | 能报告自身日志位置的投递 |
 | `DescribeServer` | 为 AsyncAPI 报告一个 `ServerSpec` |
 
-`Seekable` 会在流借用订阅者之前铸出它的 `Seeker` 句柄，因此一个正在运行的订阅可以从分发循环之外被重新
-定位。位置由 Broker 自己拥有（在你自己的类型上提供 `KafkaPosition` 风格的构造函数）；通过
-`Positioned::position` 从一条已投递消息上捕获的位置带有钉住的契约，定位到它会精确地重新投递那一条
-消息，而构造出来的位置则保持你的位置类型所记载的语义。请写清楚一次定位的作用范围（一个消费者实例，
+`Seekable` 会在流借用订阅者之前铸出它的 `Seeker` 句柄，因此可以从分发循环之外重新定位一个正在运行的
+订阅。位置由 Broker 自己拥有（在你自己的类型上提供 `KafkaPosition` 风格的构造函数）。通过
+`Positioned::position` 从一条已投递消息上捕获的位置带有钉住的契约：定位到它会精确地重新投递那一条
+消息；而构造出来的位置则保持你的位置类型所记载的语义。写清楚一次定位的作用范围（一个消费者实例，
 还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。
 
 ### 扩展 `Out` 槽位的词汇
@@ -254,7 +254,7 @@ Broker 的构建器上根本不存在。用户像用任何扩展 trait 那样导
 处理器参数 `Out<impl X, Marker>` 接受运行时的 `SlotPublisher` 包装器实现了的任意 `X`；核心会转发它
 自己的那套能力（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`）。当你
 配对出来的值提供的能力不止于此，或者它根本就不是发布者（一个按分区的 producer 缓存、一个分片路由器）
-时，就声明你自己的能力 trait，为这个值实现它，再用一个通过 `SlotPublisher::inner` 转发的全覆盖实现把
+时，就声明你自己的能力 trait，为该值实现它，再用一个通过 `SlotPublisher::inner` 转发的全覆盖实现把
 它嫁接到包装器上。此后处理器就用你的 trait 约束自己的槽位，而具体类型依然不会出现在应用代码里：
 
 ```rust
@@ -312,14 +312,14 @@ Broker crate。如果某个配置字段没有合理的默认值，就不要为�
 ## 错误
 
 用 `thiserror` 写一个 crate 级别的错误枚举，变体按来源划分。公开的错误枚举标记 `#[non_exhaustive]`。
-库 crate 里绝不使用 `anyhow`。
+切勿在库 crate 里使用 `anyhow`。
 
 ## 测试支持 { #test-support }
 
 在 `testing` feature 下提供一个进程内传输，在它的**已连接形态**上实现 `TestableBroker`（用
-`register_testable_broker!` 为那个已连接的类型注册，因为套件会先连接每一个 Broker，然后才取回它的
-传输），这样用户就能用 `TestApp` 测试套件对着你的 Broker 单元测试处理器。这个传输**只做核心路由**：把
-发布出去的消息分发给匹配的订阅者，并把 ack/nack 当作实质上的空操作。不要在里面模拟 Broker 专有的语义
+`register_testable_broker!` 为该已连接类型注册，因为套件会先连接每一个 Broker，然后才取回它的
+传输），这样用户就能用 `TestApp` 测试套件对着你的 Broker 单元测试处理器。该传输**只做核心路由**：把
+发布出去的消息分发给匹配的订阅者，并把 ack/nack 当作实质上的空操作。切勿在其中模拟 Broker 专有的语义
 （持久游标、重新投递定时器、偏移量、死信路由）；那些要对着一台真实的服务器端到端地验证。
 
 参考实现就是内存 Broker 自己的那一份（在 `ConnectedMemoryBroker` 上）：
@@ -328,7 +328,7 @@ Broker crate。如果某个配置字段没有合理的默认值，就不要为�
 --8<-- "src/memory/mod.rs:testable"
 ```
 
-这个传输在每次把消息入队给某个订阅者时调用 `Coordinator::enqueued`，在一次投递被结算或丢弃时调用
+该传输在每次把消息入队给某个订阅者时调用 `Coordinator::enqueued`，在结算或丢弃一次投递时调用
 `Coordinator::consumed`（这样套件才能判断反应何时尘埃落定），并把延迟的重新投递交给
 `Coordinator::schedule_redelivery` 去路由。于是同一个类型既适用于 `TestApp`，也适用于 conformance
 校验套件。面向用户的那一侧参见[测试](../guides/testing.md)；用 `run_suite` 和 `lifecycle` 阶梯检查来证明
