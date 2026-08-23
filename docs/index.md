@@ -1,8 +1,8 @@
 # RustStream
 
-**RustStream** is an async messaging framework for Rust: a broker-agnostic core of traits and a
-router runtime, plus codecs, AsyncAPI generation, Prometheus metrics, and a conformance harness for
-broker authors.
+**RustStream** subscribes a Rust service to event streams and publishes to them without binding the
+service to one message broker. The core is traits and a router runtime; codecs, AsyncAPI generation,
+Prometheus metrics, and a conformance harness for broker authors ship with it.
 
 Two architectural commitments shape the framework:
 
