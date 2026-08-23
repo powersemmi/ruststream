@@ -19,8 +19,8 @@ at two levels:
     RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns; test them in the
     [integration suite](#integration-tests-against-a-real-broker).
 
-    `MemoryBroker` is a real broker (local in-process queues), not a test double - the harness drives
-    it through the same dispatch path the production runtime uses.
+    What `MemoryBroker` is and is not is stated on its own page: [the memory
+    broker](../brokers/memory.md).
 
 ## Unit-testing a service with `TestApp`
 
