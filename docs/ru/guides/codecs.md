@@ -36,7 +36,7 @@
 
 === "Router"
 
-    <!-- inline-rust: отдельный фрагмент сборки Router; компилируемая форма - вкладка with_broker ниже (codecs.rs:per_handler), которая монтирует ту же цепочку через include_router -->
+    <!-- inline-rust: standalone Router-builder fragment; the compiled form is the with_broker tab below (codecs.rs:per_handler), which mounts the same chain via include_router -->
     ```rust
     router.with_codec(CborCodec).include(handle);
     ```
