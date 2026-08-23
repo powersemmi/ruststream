@@ -14,74 +14,84 @@ use crate::parse::{
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
-    reject_raw_combinations(args, func)?;
+    reject_reply_combinations(args)?;
     let parts = handler_parts(args, func)?;
-    let body = if args.raw.is_some() {
-        // The remaining combinations are already rejected above; publish_raw(..) selects the
-        // byte reply form, otherwise raw is the plain form (injected when the signature
-        // carries Out / Seek parameters - the input axis makes raw compose with them).
-        match &args.publish_raw {
-            Some(reply_topic) => expand_publishing(&parts, func, reply_topic, true, true)?,
-            None if !parts.outs.is_empty() || parts.seek.is_some() => expand_injected(&parts, true),
-            None => expand_subscribing(&parts, true),
-        }
-    } else if let Some(reply_topic) = &args.publish_raw {
-        expand_publishing(&parts, func, reply_topic, true, false)?
-    } else {
-        match (&args.batch, &args.publish) {
-            (true, Some(reply_topic)) => expand_batch_publishing(&parts, func, reply_topic)?,
-            (true, None) if !parts.outs.is_empty() || parts.seek.is_some() => {
-                expand_batch_injected(&parts, func)
+    reject_shape_combinations(args, func, &parts)?;
+    let injected = !parts.outs.is_empty() || parts.seek.is_some();
+    let body = match parts.shape {
+        Shape::RawBatch => expand_raw_batch(&parts, func),
+        Shape::Batch => match &args.publish {
+            Some(reply_topic) => expand_batch_publishing(&parts, func, reply_topic)?,
+            None if injected => expand_batch_injected(&parts, func),
+            None => expand_batch(&parts, func),
+        },
+        // The input axis is a flag, not a form, so the byte input composes with every
+        // single-message form.
+        Shape::Single | Shape::Raw => {
+            let raw = parts.shape == Shape::Raw;
+            if let Some(reply_topic) = &args.publish_raw {
+                expand_publishing(&parts, func, reply_topic, true, raw)?
+            } else if let Some(reply_topic) = &args.publish {
+                expand_publishing(&parts, func, reply_topic, false, raw)?
+            } else if injected {
+                expand_injected(&parts, raw)
+            } else {
+                expand_subscribing(&parts, raw)
             }
-            (true, None) => expand_batch(&parts, func),
-            (false, Some(reply_topic)) => {
-                expand_publishing(&parts, func, reply_topic, false, false)?
-            }
-            (false, None) if !parts.outs.is_empty() || parts.seek.is_some() => {
-                expand_injected(&parts, false)
-            }
-            (false, None) => expand_subscribing(&parts, false),
         }
     };
     Ok(body.into())
 }
 
-/// Rejects the argument combinations the byte-level forms do not take: `raw` with batches (one
-/// delivery's bytes only) or the decode failure policy (there is no decode step), an encoded
-/// `publish(..)` reply off raw bytes (the reply of a raw handler is bytes - `publish_raw`), both
-/// reply clauses at once, and a batch with a byte reply.
-fn reject_raw_combinations(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<()> {
+/// The combinations that are wrong before the signature is even read: two reply clauses at once.
+fn reject_reply_combinations(args: &SubscriberArgs) -> syn::Result<()> {
     if let (Some(_), Some(publish_raw)) = (&args.publish, &args.publish_raw) {
         return Err(Error::new_spanned(
             publish_raw,
             "publish(..) and publish_raw(..) are mutually exclusive: one reply, one destination",
         ));
     }
-    if let Some(publish_raw) = &args.publish_raw
-        && args.batch
-    {
+    Ok(())
+}
+
+/// The combinations the inferred shape rules out: an encoded reply off undecoded bytes (the reply
+/// of a raw handler is bytes), a byte reply off a batch, a decode policy where nothing is
+/// materialized, and the injection parameters the raw batch form does not carry yet.
+fn reject_shape_combinations(
+    args: &SubscriberArgs,
+    func: &ItemFn,
+    parts: &HandlerParts<'_>,
+) -> syn::Result<()> {
+    let raw_input = matches!(parts.shape, Shape::Raw | Shape::RawBatch);
+    let batched = matches!(parts.shape, Shape::Batch | Shape::RawBatch);
+    if raw_input && let Some(publish) = &args.publish {
         return Err(Error::new_spanned(
-            publish_raw,
-            "publish_raw(..) is not supported together with batch(..) yet; publish per message \
-             or use the encoded batch reply form",
-        ));
-    }
-    let Some(raw) = &args.raw else {
-        return Ok(());
-    };
-    if args.publish.is_some() {
-        return Err(Error::new(
-            raw.span(),
+            publish,
             "the reply of a raw handler is bytes and is never encoded; use \
              publish_raw(\"dest\") instead of publish(..)",
         ));
     }
-    if args.batch {
-        return Err(Error::new(
-            raw.span(),
-            "raw is not supported together with batch(..); a raw handler takes one delivery's \
-             payload as `&[u8]`",
+    if batched && let Some(publish_raw) = &args.publish_raw {
+        return Err(Error::new_spanned(
+            publish_raw,
+            "publish_raw(..) is not supported together with a batch handler yet; publish per \
+             message or use the encoded batch reply form",
         ));
+    }
+    if parts.shape == Shape::RawBatch {
+        if !parts.outs.is_empty() || parts.seek.is_some() {
+            return Err(Error::new_spanned(
+                &func.sig,
+                "a raw batch handler does not take Out / Seek parameters yet; take the batch as \
+                 `&[T]` for the decoded form, or the payload as `&[u8]` per delivery",
+            ));
+        }
+        if let Some(publish) = &args.publish {
+            return Err(Error::new_spanned(
+                publish,
+                "a raw batch handler has no reply form yet; publish from the body",
+            ));
+        }
     }
     // With a FromHeaders parameter the decode policy still has a job on a raw handler: it
     // settles a header contract that fails to parse.
@@ -90,14 +100,16 @@ fn reject_raw_combinations(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<
         .inputs
         .iter()
         .any(|arg| matches!(arg, FnArg::Typed(pt) if from_headers_ty(&pt.ty).is_some()));
-    if let Some(failure) = &args.on_failure
+    if raw_input
+        && let Some(failure) = &args.on_failure
         && failure.decode.is_some()
         && !has_from_headers
     {
-        return Err(Error::new(
-            raw.span(),
-            "on_failure(decode = ..) does not apply to raw: the payload is not decoded and \
-             there is no FromHeaders parameter; keep only on_failure(panic = ..)",
+        return Err(Error::new_spanned(
+            func.sig.inputs.first(),
+            "on_failure(decode = ..) does not apply to an undecoded payload: this handler takes \
+             the bytes as delivered and declares no FromHeaders parameter; keep only \
+             on_failure(panic = ..)",
         ));
     }
     Ok(())
@@ -121,13 +133,54 @@ struct HandlerParts<'a> {
     extractors: Vec<(&'a Pat, &'a Type)>,
     outs: Vec<OutParam<'a>>,
     seek: Option<(&'a Pat, &'a Type)>,
-    workers_method: TokenStream2,
-    failure_method: TokenStream2,
-    /// The `FailurePolicy` value applied to `FromHeaders` extraction (the `decode` key).
-    headers_policy: TokenStream2,
+    /// What the handler consumes per invocation, inferred from its message parameter.
+    shape: Shape,
+    /// The builder calls the attribute's settings expand into, chained onto
+    /// `SubscriberBuilder::new(..)` inside the generated `Declared::declare`.
+    settings_chain: TokenStream2,
+    /// The source type the declared builder ends up over: the attribute's source, wrapped in
+    /// `StartAt<_, _>` when the attribute names a start position.
+    settings_source_ty: TokenStream2,
+    /// Which settings the attribute fixed, as the builder's `(workers, failures, position)`
+    /// state tuple.
+    settings_state_ty: TokenStream2,
     /// The `headers_schema()` def-method override lifted from the first `FromHeaders<T>`
     /// parameter's contract type, or empty when the handler takes none.
     headers_schema: TokenStream2,
+}
+
+/// The `Declared` impl every expansion emits next to its definition: the mount form, and the
+/// builder the attribute's settings expand into.
+///
+/// This is what makes the attribute sugar over the builder rather than a second implementation:
+/// `#[subscriber("orders", workers(4))]` produces exactly the calls a user would write at the
+/// mount site.
+fn declaration(parts: &HandlerParts<'_>, form: &TokenStream2) -> TokenStream2 {
+    let HandlerParts {
+        name,
+        source_expr,
+        settings_chain,
+        settings_source_ty,
+        settings_state_ty,
+        ..
+    } = parts;
+    quote! {
+        impl ::ruststream::runtime::Declared for #name {
+            type Form = #form;
+            type Settings = ::ruststream::runtime::SubscriberBuilder<
+                #name,
+                #settings_source_ty,
+                #settings_state_ty,
+            >;
+
+            fn declare(self) -> Self::Settings {
+                #[allow(unused_imports)]
+                use ::ruststream::runtime::SubscriberSettings as _;
+                ::ruststream::runtime::SubscriberBuilder::new(self, #source_expr)
+                    #settings_chain
+            }
+        }
+    }
 }
 
 /// The per-delivery context type the handler named in its `ctx: &mut Context<'_, C>` parameter,
@@ -439,22 +492,26 @@ fn extractor_where(
 /// extraction runs `reject` (a `return` settling the delivery by the rejection's `HandlerResult`).
 ///
 /// A `FromHeaders<T>` parameter takes the policy-aware path instead of the generic
-/// [`FromContext`] call, so the subscriber's `on_failure(decode = ..)` policy (interpolated as
-/// `headers_policy`) applies to the header contract exactly like it applies to the payload codec.
+/// [`FromContext`] call, and reads the policy off the delivery context rather than off the
+/// attribute: the effective materialization policy is the one the mount resolved, whether it was
+/// named in `on_failure(..)` or on the builder.
 fn extractor_prelude(
     extractors: &[(&Pat, &Type)],
     ctx_param: &TokenStream2,
     ctx_ty: &TokenStream2,
     state: &TokenStream2,
-    headers_policy: &TokenStream2,
     reject: &TokenStream2,
 ) -> TokenStream2 {
     let binds = extractors.iter().map(|(pat, ty)| {
         if from_headers_ty(ty).is_some() {
             return quote! {
-                let #pat = match <#ty>::extract(&mut *#ctx_param, #headers_policy) {
-                    ::core::result::Result::Ok(__rs_value) => __rs_value,
-                    ::core::result::Result::Err(__rs_err) => { #reject; }
+                let #pat = {
+                    // Read before the mutable borrow the extraction takes.
+                    let __rs_policy = #ctx_param.decode_policy();
+                    match <#ty>::extract(&mut *#ctx_param, __rs_policy) {
+                        ::core::result::Result::Ok(__rs_value) => __rs_value,
+                        ::core::result::Result::Err(__rs_err) => { #reject; }
+                    }
                 };
             };
         }
@@ -472,10 +529,10 @@ fn extractor_prelude(
     quote!(#(#binds)*)
 }
 
-/// Renders the `on_failure(..)` clause as an override of the def's defaulted `failure_policies`
-/// method, or nothing when the clause is absent. Only the keys named in the clause are set; the
-/// rest keep the runtime defaults.
-fn failure_method(args: &SubscriberArgs) -> TokenStream2 {
+/// Renders the `on_failure(..)` clause as the builder step it expands into, or nothing when the
+/// clause is absent. Only the keys named in the clause are set; the rest keep the runtime
+/// defaults.
+fn failure_step(args: &SubscriberArgs) -> TokenStream2 {
     let Some(failure) = &args.on_failure else {
         return quote!();
     };
@@ -490,9 +547,7 @@ fn failure_method(args: &SubscriberArgs) -> TokenStream2 {
         .map(failure_policy_tokens)
         .map(|policy| quote!(.with_decode(#policy)));
     quote! {
-        fn failure_policies(&self) -> ::ruststream::runtime::FailurePolicies {
-            ::ruststream::runtime::FailurePolicies::default() #panic #decode
-        }
+        .on_failure(::ruststream::runtime::FailurePolicies::default() #panic #decode)
     }
 }
 
@@ -505,11 +560,12 @@ fn failure_method(args: &SubscriberArgs) -> TokenStream2 {
 /// handler has no typed input to carry a contract, so without a `FromHeaders` parameter it
 /// emits nothing.
 fn headers_schema_method(
-    args: &SubscriberArgs,
+    shape: Shape,
     extractors: &[(&Pat, &Type)],
     input_ty: &Type,
 ) -> syn::Result<TokenStream2> {
-    if args.batch
+    let batch = matches!(shape, Shape::Batch | Shape::RawBatch);
+    if batch
         && let Some((_, ty)) = extractors
             .iter()
             .find(|(_, ty)| from_headers_ty(ty).is_some())
@@ -526,7 +582,7 @@ fn headers_schema_method(
         .iter()
         .find_map(|(_, ty)| from_headers_ty(ty))
         .map(|contract| {
-            if args.batch {
+            if batch {
                 vec_inner_ty(contract).unwrap_or(contract)
             } else {
                 contract
@@ -534,7 +590,7 @@ fn headers_schema_method(
         })
         .map_or_else(
             || {
-                if args.raw.is_some() {
+                if matches!(shape, Shape::Raw | Shape::RawBatch) {
                     return quote!();
                 }
                 quote! {
@@ -556,21 +612,6 @@ fn headers_schema_method(
             },
         );
     Ok(method)
-}
-
-/// The failure policy applied to `FromHeaders` extraction, as a `FailurePolicy` value: the
-/// `on_failure(decode = ..)` key (one materialization policy covers the payload codec and the
-/// header contract), or the runtime default (drop) when the clause omits it. Interpolated into
-/// the generated extraction call - the handler body has no access to the def's
-/// `failure_policies()`.
-fn headers_policy_tokens(args: &SubscriberArgs) -> TokenStream2 {
-    args.on_failure
-        .as_ref()
-        .and_then(|failure| failure.decode.as_ref())
-        .map_or_else(
-            || quote!(::ruststream::runtime::FailurePolicy::Drop),
-            failure_policy_tokens,
-        )
 }
 
 /// Renders the def's `outgoing()` override: the reply message (typed probes on the reply type,
@@ -722,32 +763,24 @@ fn failure_policy_tokens(policy: &FailurePolicyArg) -> TokenStream2 {
     }
 }
 
-/// Renders the `workers(..)` clause as an override of the def's defaulted `workers` method, or
-/// nothing when the clause is absent.
-fn workers_method(args: &SubscriberArgs, handler: &Ident) -> syn::Result<TokenStream2> {
+/// Renders the `workers(..)` clause as the builder step it expands into, or nothing when the
+/// clause is absent.
+fn workers_step(args: &SubscriberArgs, handler: &Ident, shape: Shape) -> syn::Result<TokenStream2> {
     let Some(WorkersArg { count, by_key }) = &args.workers else {
         return Ok(quote!());
     };
     let count = workers_count(count, handler)?;
     if let Some(marker) = by_key {
-        if args.batch {
+        if matches!(shape, Shape::Batch | Shape::RawBatch) {
             return Err(Error::new(
                 marker.span(),
-                "by_key lanes order single messages per key; they do not apply to batch(..) \
-                 forms",
+                "by_key lanes order single messages per key; they do not apply to a batch \
+                 handler",
             ));
         }
-        return Ok(quote! {
-            fn workers(&self) -> ::ruststream::runtime::Workers {
-                ::ruststream::runtime::Workers::keyed(#count)
-            }
-        });
+        return Ok(quote!(.workers_by_key(#count)));
     }
-    Ok(quote! {
-        fn workers(&self) -> ::ruststream::runtime::Workers {
-            ::ruststream::runtime::Workers::pool(#count)
-        }
-    })
+    Ok(quote!(.workers(#count)))
 }
 
 /// Lowers the `workers(..)` count to a `NonZeroUsize`: an integer literal is checked at
@@ -910,40 +943,69 @@ fn split_seek<'a>(
     Ok(seek)
 }
 
-/// Resolves the message parameter's referent into the def's input type per form: batch unwraps
-/// the `&[T]` slice to its element, raw accepts only `&[u8]` (its type is never emitted), and the
-/// plain form takes `&T`. Each misuse gets an error naming the fix.
-fn input_type<'a>(
+/// What the handler consumes per invocation, read off its message parameter rather than declared
+/// in the attribute: `&T` is one decoded message, `&[u8]` one delivery's payload as delivered,
+/// `&[T]` a whole decoded batch, and `&[&[u8]]` a batch of payloads.
+///
+/// A batch of `u8` values is not a thing anyone means, so `&[u8]` reads as the payload; spelling
+/// `batch(..)` in the attribute still says otherwise, which is what keeps the retiring clause
+/// meaning what it always did.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Single,
+    Raw,
+    Batch,
+    RawBatch,
+}
+
+/// Resolves the message parameter's referent into the handler's shape and the type the
+/// definition carries as its input (the element for a batch; `[u8]` for the byte shapes, which
+/// never emit it). Each misuse gets an error naming the fix.
+fn resolve_shape<'a>(
     args: &SubscriberArgs,
     reference: &'a syn::TypeReference,
-) -> syn::Result<&'a Type> {
+) -> syn::Result<(Shape, &'a Type)> {
+    let elem = &*reference.elem;
+    // A slice of byte slices is a batch of payloads whatever the clauses say: no other reading
+    // of that parameter exists.
+    if let Type::Slice(slice) = elem
+        && let Type::Reference(inner) = &*slice.elem
+        && is_u8_slice(&inner.elem)
+    {
+        return Ok((Shape::RawBatch, &inner.elem));
+    }
+    if args.raw.is_some() {
+        if args.batch {
+            return Err(Error::new_spanned(
+                elem,
+                "a raw batch handler takes the batch's payloads as a slice of byte slices: \
+                 `&[&[u8]]`",
+            ));
+        }
+        return match elem {
+            byte_slice if is_u8_slice(byte_slice) => Ok((Shape::Raw, byte_slice)),
+            other => Err(Error::new_spanned(
+                other,
+                "a raw subscriber receives the payload bytes: make the message parameter \
+                 `&[u8]` (or `&[&[u8]]` for a batch of payloads), or drop `raw` to decode into \
+                 a typed value",
+            )),
+        };
+    }
     if args.batch {
-        return match &*reference.elem {
-            Type::Slice(slice) => Ok(&slice.elem),
+        return match elem {
+            Type::Slice(slice) => Ok((Shape::Batch, &slice.elem)),
             other => Err(Error::new_spanned(
                 other,
                 "a batch handler takes the whole batch as a slice: `&[T]`",
             )),
         };
     }
-    if args.raw.is_some() {
-        return match &*reference.elem {
-            elem if is_u8_slice(elem) => Ok(elem),
-            other => Err(Error::new_spanned(
-                other,
-                "a raw subscriber receives the payload bytes: make the message parameter \
-                 `&[u8]`, or drop `raw` to decode into a typed value",
-            )),
-        };
+    match elem {
+        byte_slice if is_u8_slice(byte_slice) => Ok((Shape::Raw, byte_slice)),
+        Type::Slice(slice) => Ok((Shape::Batch, &slice.elem)),
+        other => Ok((Shape::Single, other)),
     }
-    if matches!(&*reference.elem, Type::Slice(_)) {
-        return Err(Error::new_spanned(
-            &reference.elem,
-            "a slice parameter needs the batch source form: #[subscriber(batch(..))]; for the \
-             undecoded payload bytes use #[subscriber(.., raw)]",
-        ));
-    }
-    Ok(&reference.elem)
 }
 
 /// True when `ty` is syntactically `[u8]`, the only message parameter shape the raw form takes.
@@ -977,21 +1039,27 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
             "the message parameter must be a reference `&T`",
         ));
     };
-    let input_ty = input_type(args, reference)?;
+    let (shape, input_ty) = resolve_shape(args, reference)?;
     let description = doc_description(&func.attrs);
     let (source_ty, source_expr) = source_tokens(&args.source)?;
-    // `start_at(<position>)` wraps the source in the core `StartAt` decorator, so the
-    // subscription is sought to the position before the first delivery. Orthogonal to the
-    // definition form: every form carries a `Source`.
-    let (source_ty, source_expr) = match &args.start_at {
+    // `start_at(<position>)` decorates the source with the core `StartAt` wrapper, so the
+    // subscription is sought to the position before the first delivery. It is a builder step
+    // like the rest, which is why it changes the declared builder's source type rather than the
+    // definition's own.
+    let (settings_source_ty, start_at_step, position_state) = match &args.start_at {
         Some(position) => {
             let position_ty = position_type(position)?;
             (
                 quote!(::ruststream::StartAt<#source_ty, #position_ty>),
-                quote!(::ruststream::StartAt::new(#source_expr, #position)),
+                quote!(.start_at(#position)),
+                quote!(::ruststream::runtime::Fixed),
             )
         }
-        None => (source_ty, source_expr),
+        None => (
+            source_ty.clone(),
+            quote!(),
+            quote!(::ruststream::runtime::Open),
+        ),
     };
 
     // Captures the input type's JSON Schema for AsyncAPI when it implements `JsonSchema` (and the
@@ -1040,11 +1108,17 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
-    let headers_schema = headers_schema_method(args, &extractors, input_ty)?;
-    let headers_policy = headers_policy_tokens(args);
+    let headers_schema = headers_schema_method(shape, &extractors, input_ty)?;
 
-    let workers_method = workers_method(args, &func.sig.ident)?;
-    let failure_method = failure_method(args);
+    // The attribute's settings are the builder calls a user would write at the mount site, and
+    // the settings state records which of them are no longer open there. `start_at` comes last:
+    // it wraps the source the earlier steps left alone.
+    let workers_step = workers_step(args, &func.sig.ident, shape)?;
+    let failure_step = failure_step(args);
+    let workers_state = state_marker(args.workers.is_some());
+    let failure_state = state_marker(args.on_failure.is_some());
+    let settings_chain = quote!(#workers_step #failure_step #start_at_step);
+    let settings_state_ty = quote!((#workers_state, #failure_state, #position_state));
 
     Ok(HandlerParts {
         vis: &func.vis,
@@ -1063,11 +1137,21 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         extractors,
         outs,
         seek,
-        workers_method,
-        failure_method,
-        headers_policy,
+        shape,
+        settings_chain,
+        settings_source_ty,
+        settings_state_ty,
         headers_schema,
     })
+}
+
+/// The settings-state marker of one setting: fixed when the attribute named it, open otherwise.
+fn state_marker(fixed: bool) -> TokenStream2 {
+    if fixed {
+        quote!(::ruststream::runtime::Fixed)
+    } else {
+        quote!(::ruststream::runtime::Open)
+    }
 }
 
 /// Splits a batch publishing handler's declared return type into the reply element type and the
@@ -1133,10 +1217,8 @@ fn expand_batch_publishing(
         extractors,
         outs,
         seek,
-        workers_method,
-        failure_method,
-        headers_policy,
         headers_schema,
+        ..
     } = parts;
 
     let (reply_elem, call_body) = batch_reply_body(func, block)?;
@@ -1172,20 +1254,18 @@ fn expand_batch_publishing(
         ctx_param,
         &unit_ctx,
         &state_in_ctx,
-        headers_policy,
         &quote!(
             return ::core::result::Result::Err(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
             >::into(__rs_err),)
         ),
     );
+    let declaration = declaration(parts, &form);
     Ok(quote! {
         #[allow(non_camel_case_types)]
         #vis struct #name;
 
-        impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = #form;
-        }
+        #declaration
 
         #scaffold_items
 
@@ -1199,10 +1279,6 @@ fn expand_batch_publishing(
 
             fn source(&self) -> Self::Source { #source_expr }
             fn reply_name(&self) -> &str { #reply_name_body }
-
-            #workers_method
-
-            #failure_method
 
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
@@ -1297,10 +1373,8 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         extractors,
         outs: _,
         seek: _,
-        workers_method,
-        failure_method,
-        headers_policy,
         headers_schema,
+        ..
     } = parts;
 
     // Pin the body's type to the declared return type before the `IntoBatchResult` conversion:
@@ -1339,7 +1413,6 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         ctx_param,
         &unit_ctx,
         &state_in_ctx,
-        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoBatchResult::into_batch_result(
                 ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
@@ -1349,6 +1422,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
 
     let (handler_trait, headers_arg, headers_binding, form, headers_def) =
         batch_handler_shape(headers_param, input_ty, &state_in_ctx, name);
+    let declaration = declaration(parts, &form);
 
     quote! {
             #[derive(Clone, Copy)]
@@ -1371,9 +1445,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
                 }
             }
 
-            impl ::ruststream::runtime::IncludeDef for #name {
-                type Form = #form;
-            }
+            #declaration
 
             #headers_def
 
@@ -1383,10 +1455,6 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
                 type Source = #source_ty;
 
                 fn source(&self) -> Self::Source { #source_expr }
-
-                #workers_method
-
-            #failure_method
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description
@@ -1400,6 +1468,91 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
 
                 fn into_handler(self) -> Self { self }
             }
+    }
+}
+
+/// The raw batch form: a handler taking `&[&[u8]]`.
+///
+/// The typed batch without the decode step, so nothing is probed for schemas or `Message`
+/// metadata and no codec takes part; the payload slices are borrowed from the batch's own
+/// messages, which the dispatcher holds for the duration of the call.
+fn expand_raw_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
+    let HandlerParts {
+        vis,
+        name,
+        block,
+        pat,
+        description,
+        source_ty,
+        source_expr,
+        ctx_param,
+        state_ty,
+        extractors,
+        ..
+    } = parts;
+
+    // As for `expand_batch`: pin the body's type before the `IntoBatchResult` conversion.
+    let outcome_ty = match &func.sig.output {
+        ReturnType::Type(_, ty) => quote!(#ty),
+        ReturnType::Default => quote!(()),
+    };
+    let (impl_generics, state_in_ctx) = match &state_ty {
+        Some(state_ty) => (quote!(), quote!(#state_ty)),
+        None => (
+            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
+            quote!(__RsState),
+        ),
+    };
+    let unit_ctx = quote!(());
+    let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
+    let prelude = extractor_prelude(
+        extractors,
+        ctx_param,
+        &unit_ctx,
+        &state_in_ctx,
+        &quote!(
+            return ::ruststream::runtime::IntoBatchResult::into_batch_result(
+                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+            )
+        ),
+    );
+    let form = quote!(::ruststream::runtime::forms::RawBatch);
+    let declaration = declaration(parts, &form);
+
+    quote! {
+        #[derive(Clone, Copy)]
+        #[allow(non_camel_case_types)]
+        #vis struct #name;
+
+        impl #impl_generics ::ruststream::runtime::RawSliceHandler<#state_in_ctx> for #name
+            #where_clause
+        {
+            async fn handle_slice(
+                &self,
+                #pat: &[&[u8]],
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
+            ) -> ::ruststream::runtime::BatchResult {
+                #prelude
+                let outcome: #outcome_ty = (async move #block).await;
+                ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)
+            }
+        }
+
+        #declaration
+
+        impl ::ruststream::runtime::BatchDef for #name {
+            type Input = ::ruststream::runtime::RawBytes;
+            type Handler = Self;
+            type Source = #source_ty;
+
+            fn source(&self) -> Self::Source { #source_expr }
+
+            fn description(&self) -> ::core::option::Option<&str> {
+                #description
+            }
+
+            fn into_handler(self) -> Self { self }
+        }
     }
 }
 
@@ -1423,10 +1576,8 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
         extractors,
         outs,
         seek,
-        workers_method,
-        failure_method,
-        headers_policy,
         headers_schema,
+        ..
     } = parts;
 
     // The injection tuple is shared with the single-message form; only the form token differs
@@ -1463,22 +1614,20 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
         ctx_param,
         &unit_ctx,
         &state_in_ctx,
-        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoBatchResult::into_batch_result(
                 ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
             )
         ),
     );
+    let declaration = declaration(parts, &form);
 
     quote! {
         #[derive(Clone, Copy)]
         #[allow(non_camel_case_types)]
         #vis struct #name;
 
-        impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = #form;
-        }
+        #declaration
 
         #scaffold_items
 
@@ -1490,10 +1639,6 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
             type Injections = (#(#injection_tys,)*);
 
             fn source(&self) -> Self::Source { #source_expr }
-
-            #workers_method
-
-            #failure_method
 
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
@@ -1567,10 +1712,8 @@ fn expand_publishing(
         extractors,
         outs,
         seek,
-        workers_method,
-        failure_method,
-        headers_policy,
         headers_schema,
+        ..
     } = parts;
 
     let (reply_ty, call_body) = publishing_reply(func, block, bare)?;
@@ -1601,20 +1744,18 @@ fn expand_publishing(
         ctx_param,
         ctx_ty,
         &state_in_ctx,
-        headers_policy,
         &quote!(
             return ::core::result::Result::Err(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
             >::into(__rs_err),)
         ),
     );
+    let declaration = declaration(parts, &form);
     Ok(quote! {
         #[allow(non_camel_case_types)]
         #vis struct #name;
 
-        impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = #form;
-        }
+        #declaration
 
         #scaffold_items
 
@@ -1629,10 +1770,6 @@ fn expand_publishing(
 
             fn source(&self) -> Self::Source { #source_expr }
             fn reply_name(&self) -> &str { #reply_name_body }
-
-            #workers_method
-
-            #failure_method
 
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
@@ -1980,10 +2117,8 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         extractors,
         outs,
         seek,
-        workers_method,
-        failure_method,
-        headers_policy,
         headers_schema,
+        ..
     } = parts;
 
     let form = injected_form(!outs.is_empty());
@@ -2009,22 +2144,20 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_param,
         ctx_ty,
         &state_in_ctx,
-        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
             >::into(__rs_err),)
         ),
     );
+    let declaration = declaration(parts, &form);
 
     quote! {
         #[derive(Clone, Copy)]
         #[allow(non_camel_case_types)]
         #vis struct #name;
 
-        impl ::ruststream::runtime::IncludeDef for #name {
-            type Form = #form;
-        }
+        #declaration
 
         #scaffold_items
 
@@ -2037,10 +2170,6 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
             type Injections = (#(#injection_tys,)*);
 
             fn source(&self) -> Self::Source { #source_expr }
-
-            #workers_method
-
-            #failure_method
 
             fn description(&self) -> ::core::option::Option<&str> {
                 #description
@@ -2093,10 +2222,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         extractors,
         outs: _,
         seek: _,
-        workers_method,
-        failure_method,
-        headers_policy,
         headers_schema,
+        ..
     } = parts;
 
     let (input_kind, input_param, input_schema, message_meta) =
@@ -2127,13 +2254,13 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_param,
         ctx_ty,
         &state_in_ctx,
-        headers_policy,
         &quote!(
             return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
                 ::ruststream::runtime::HandlerResult,
             >::into(__rs_err),)
         ),
     );
+    let declaration = declaration(parts, &form);
 
     quote! {
             #[derive(Clone, Copy)]
@@ -2156,9 +2283,7 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
                 }
             }
 
-            impl ::ruststream::runtime::IncludeDef for #name {
-                type Form = #form;
-            }
+            #declaration
 
             impl ::ruststream::runtime::SubscriberDef for #name {
                 type Input = #input_kind;
@@ -2167,10 +2292,6 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
                 type Source = #source_ty;
 
                 fn source(&self) -> Self::Source { #source_expr }
-
-                #workers_method
-
-            #failure_method
 
                 fn description(&self) -> ::core::option::Option<&str> {
                     #description

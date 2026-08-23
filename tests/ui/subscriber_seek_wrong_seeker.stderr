@@ -5,4 +5,4 @@ error[E0271]: type mismatch resolving `<MemorySubscriber as Seekable>::Seeker ==
    |           ^^^^^^^ expected `ForeignSeeker`, found `MemorySeeker`
    |
    = note: required for `(ruststream::prelude::Seek<ForeignSeeker>,)` to implement `FromStartup<MemoryBroker, MemorySubscriber, ((),)>`
-   = note: required for `ruststream::runtime::forms::Seek` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, handle>`
+   = note: required for `ruststream::runtime::forms::Seek` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, MemorySource, (Open, Open, Open)>>`

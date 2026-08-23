@@ -7,7 +7,7 @@ use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
     Attribute, Error, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, Ident, Lit,
-    Meta, Path, Token, Type, TypePath, parenthesized,
+    Meta, Path, Token, Type, TypePath, parenthesized, token,
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
@@ -17,7 +17,7 @@ use syn::{
 /// dispatch concurrency), `start_at(<position>)` (the subscription opens at that position),
 /// and `raw` (the handler takes the payload bytes, undecoded) clauses, in any order.
 pub(crate) struct SubscriberArgs {
-    pub(crate) source: Expr,
+    pub(crate) source: SourceArg,
     pub(crate) batch: bool,
     /// The `publish(..)` destination: a string literal, or a `&'static str` constant.
     pub(crate) publish: Option<Expr>,
@@ -31,6 +31,43 @@ pub(crate) struct SubscriberArgs {
     pub(crate) start_at: Option<Expr>,
     /// The `raw` flag keyword, kept as the parsed [`Ident`] so combination errors can point at it.
     pub(crate) raw: Option<Ident>,
+}
+
+/// The subscription the attribute fixes. The kind is always fixed here (the definition and the
+/// broker extension traits bind on it); what may be deferred is the value that fills it.
+pub(crate) enum SourceArg {
+    /// `#[subscriber]`: the by-name source, its value left to the mount site.
+    OpenName,
+    /// `#[subscriber(RedisStream)]`: a named kind, its value left to the mount site.
+    OpenKind(Type),
+    /// `#[subscriber("orders")]` / `#[subscriber(RedisStream::new("orders").group("w"))]`: the
+    /// value is fixed here too.
+    Fixed(Expr),
+}
+
+/// The clause keywords, so a leading one is not mistaken for a source expression: they parse as
+/// expressions too (`workers(4)` is a call, `raw` a path).
+const CLAUSES: &[&str] = &[
+    "raw",
+    "on_failure",
+    "publish",
+    "publish_raw",
+    "start_at",
+    "workers",
+];
+
+/// True when the next tokens open a clause rather than a source. A clause keyword stands alone,
+/// is followed by a comma, or opens a parenthesized argument list; anything else with the same
+/// name (a `raw::Frames` path) is a source.
+fn peeks_clause(input: ParseStream) -> bool {
+    let fork = input.fork();
+    let Ok(keyword) = fork.parse::<Ident>() else {
+        return false;
+    };
+    if !CLAUSES.contains(&keyword.to_string().as_str()) {
+        return false;
+    }
+    fork.is_empty() || fork.peek(Token![,]) || fork.peek(token::Paren)
 }
 
 pub(crate) struct WorkersArg {
@@ -155,36 +192,22 @@ impl Parse for FailureArg {
 
 impl Parse for SubscriberArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut source: Expr = input.parse()?;
-        // `batch(<source>)` is a marker around the usual source argument, not a constructor:
-        // unwrap it and remember the form. A real constructor is never a bare one-segment call
-        // (free functions are rejected by `source_tokens`), so this cannot misfire.
-        let mut batch = false;
-        if let Expr::Call(call) = &source {
-            if let Expr::Path(ExprPath {
-                path, qself: None, ..
-            }) = &*call.func
-            {
-                if path.is_ident("batch") {
-                    if call.args.len() != 1 {
-                        return Err(Error::new_spanned(
-                            call,
-                            "batch(..) takes exactly one source argument",
-                        ));
-                    }
-                    batch = true;
-                    source = call.args[0].clone();
-                }
-            }
-        }
+        let (source, batch, named_here) = parse_source(input)?;
         let mut publish = None;
         let mut publish_raw = None;
         let mut workers = None;
         let mut on_failure = None;
         let mut start_at = None;
         let mut raw = None;
-        while input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
+        let mut need_comma = named_here;
+        while !input.is_empty() {
+            if need_comma {
+                input.parse::<Token![,]>()?;
+                if input.is_empty() {
+                    break;
+                }
+            }
+            need_comma = true;
             let keyword: Ident = input.parse()?;
             if keyword == "raw" {
                 if raw.is_some() {
@@ -255,6 +278,57 @@ impl Parse for SubscriberArgs {
     }
 }
 
+/// Parses the leading source argument, if the attribute opens on one. Reports the subscription,
+/// whether the retiring `batch(..)` wrapper was there, and whether anything was consumed (which
+/// decides if the first clause needs a separating comma).
+///
+/// An empty attribute, or one opening on a clause, leaves the subscription unnamed: it is the
+/// by-name source with its value left out, the shortest of the source forms.
+fn parse_source(input: ParseStream) -> syn::Result<(SourceArg, bool, bool)> {
+    if input.is_empty() || peeks_clause(input) {
+        return Ok((SourceArg::OpenName, false, false));
+    }
+    let mut batch = false;
+    let mut expr: Expr = input.parse()?;
+    // `batch(<source>)` is a marker around the usual source argument, not a constructor: unwrap
+    // it and remember the form. A real constructor is never a bare one-segment call (free
+    // functions are rejected by `source_tokens`), so this cannot misfire.
+    if let Expr::Call(call) = &expr
+        && let Expr::Path(ExprPath {
+            path, qself: None, ..
+        }) = &*call.func
+        && path.is_ident("batch")
+    {
+        if call.args.len() != 1 {
+            return Err(Error::new_spanned(
+                call,
+                "batch(..) takes exactly one source argument",
+            ));
+        }
+        batch = true;
+        expr = call.args[0].clone();
+    }
+    Ok((source_arg(expr), batch, true))
+}
+
+/// Classifies a parsed source expression: a bare type path names the kind and leaves the value
+/// to the mount site, anything else (a string literal, a constructor, a builder chain) fixes it
+/// here.
+fn source_arg(expr: Expr) -> SourceArg {
+    match expr {
+        Expr::Path(ExprPath {
+            attrs,
+            qself: None,
+            path,
+        }) if attrs.is_empty() => SourceArg::OpenKind(Type::Path(TypePath {
+            attrs: Vec::new(),
+            qself: None,
+            path,
+        })),
+        other => SourceArg::Fixed(other),
+    }
+}
+
 /// Parses the inside of a `workers(..)` clause: the count, optionally followed by `by_key`.
 fn parse_workers(content: ParseStream) -> syn::Result<WorkersArg> {
     let count: Expr = content.parse()?;
@@ -281,20 +355,32 @@ fn parse_workers(content: ParseStream) -> syn::Result<WorkersArg> {
 /// `SubscribeOptions::new(..).jetstream(..)` is followed down its receivers to that base
 /// constructor, so fluent options that return `Self` can be written inline. Free functions
 /// (`redis::stream(..)`) are still rejected - their result type is not visible in the tokens.
-pub(crate) fn source_tokens(expr: &Expr) -> syn::Result<(TokenStream2, TokenStream2)> {
-    if let Expr::Lit(ExprLit {
-        lit: Lit::Str(name),
-        ..
-    }) = expr
-    {
-        return Ok((
-            quote!(::ruststream::Name),
-            quote!(::ruststream::Name::new(#name)),
-        ));
-    }
-
-    let ty = source_type(expr)?;
-    Ok((quote!(#ty), quote!(#expr)))
+///
+/// The two open forms carry the kind alone: they become `Unnamed<Kind>`, which is no
+/// subscription source until the mount site names it.
+pub(crate) fn source_tokens(source: &SourceArg) -> syn::Result<(TokenStream2, TokenStream2)> {
+    let kind = match source {
+        SourceArg::OpenName => quote!(::ruststream::Name),
+        SourceArg::OpenKind(ty) => quote!(#ty),
+        SourceArg::Fixed(expr) => {
+            if let Expr::Lit(ExprLit {
+                lit: Lit::Str(name),
+                ..
+            }) = expr
+            {
+                return Ok((
+                    quote!(::ruststream::Name),
+                    quote!(::ruststream::Name::new(#name)),
+                ));
+            }
+            let ty = source_type(expr)?;
+            return Ok((quote!(#ty), quote!(#expr)));
+        }
+    };
+    Ok((
+        quote!(::ruststream::Unnamed<#kind>),
+        quote!(::ruststream::Unnamed::<#kind>::new()),
+    ))
 }
 
 /// Derives the position type from a `start_at(..)` argument, the same way [`source_tokens`]

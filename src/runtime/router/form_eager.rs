@@ -16,8 +16,8 @@ use crate::runtime::subscriber_def::SubscriberDef;
 use super::builder::Router;
 use super::mount::{MountCodec, RouterMount};
 use super::{
-    BatchInjectedRouter, IncludedBatchRouter, IncludedBatchWithHeadersRouter, IncludedRouter,
-    InjectedRouter, forms,
+    BatchInjectedRouter, IncludedBatchRouter, IncludedBatchWithHeadersRouter,
+    IncludedRawBatchRouter, IncludedRouter, InjectedRouter, forms,
 };
 
 impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
@@ -115,6 +115,24 @@ where
         let codec = router.codec.mount_codec();
         let source = def.source();
         router.mount_batch(source, def, codec)
+    }
+}
+
+// A raw batch decodes nothing, so the chain's codec parameter stays unconstrained here too.
+impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
+    for forms::RawBatch
+where
+    B: Broker + 'static,
+    Def: BatchDef<Input = RawBytes>,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
+    Def::Handler: 'static,
+{
+    type Out = IncludedRawBatchRouter<B, Def::Source, Def, RouteCodec, RouteLayers, Routes>;
+
+    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
+        let source = def.source();
+        router.mount_raw_batch(source, def)
     }
 }
 

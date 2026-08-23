@@ -96,8 +96,9 @@ the per-message context hook cannot offer:
 --8<-- "examples/post_settle.rs:batch"
 ```
 
-Batch *publishing* (`batch(..) + publish(..)`) settles all-or-nothing under one transaction, so
-per-element `and_after` does not compose there; it applies to plain batch and single forms only.
+Batch *publishing* (a batch handler with `publish(..)`) settles all-or-nothing under one
+transaction, so per-element `and_after` does not compose there; it applies to plain batch and
+single forms only.
 
 ### Delayed redelivery
 
@@ -134,10 +135,52 @@ per-element delays, so pending entries back off without holding up the rest of t
 
 ## Choosing the subscription source
 
+The attribute always fixes the *kind* of subscription. A subscriber is not one thing - a subject
+and a JetStream consumer are different types, as are a Redis stream, a pub/sub channel and a list
+- and the macro has to name that type to generate the definition. What can be left out is the
+*value* that fills it, which the mount site then supplies. There are four forms, shortest first:
+
+| Form | The kind | The value |
+|---|---|---|
+| `#[subscriber]` | the by-name source | from the mount site |
+| `#[subscriber(RedisStream)]` | named here | from the mount site |
+| `#[subscriber("orders")]` | the by-name source | fixed here |
+| `#[subscriber(RedisStream::new("orders").group("w"))]` | named here | fixed here |
+
 ### By name
 
 `#[subscriber("orders")]` subscribes by name. It works with any broker that implements the
-`Subscribe` capability, which covers the common case.
+`Subscribe` capability, which every broker crate in the family does: a name is mapped to the
+subscription kind that broker considers its default, and the configuration that kind needs beyond
+the name is set once on the broker.
+
+`#[subscriber]` is the same source with its value left out - a name the service only knows while
+it wires itself up, a subject built from a shard number, a topic read from configuration:
+
+```rust
+--8<-- "examples/subscribers.rs:deferred_name"
+```
+
+```rust
+--8<-- "examples/subscribers.rs:name_mount"
+```
+
+A definition that was never named is not mountable: the compiler says so, and names the fix.
+
+### Naming a kind and nothing else
+
+`#[subscriber(RedisStream)]` names the kind and leaves the value out. It works because a
+subscription kind is identified by a name and nothing else: every source in the family is
+constructed from one string, and a small core trait (`FromName`) says so, so the builder calls the
+kind's own constructor when the name arrives. Nothing is ever built from thin air.
+
+```rust
+--8<-- "examples/subscribers.rs:named_kind"
+```
+
+Where a kind genuinely needs more than a name to exist - a Pulsar source takes a topic *and* a
+subscription name - it does not implement the trait, and this form does not compile for it. Those
+kinds are written out in full.
 
 ### Broker-specific descriptors
 
@@ -172,6 +215,43 @@ The macro follows the chain down to the base `Type::new(..)` to name the source 
 in the chain must return `Self`. Free functions are rejected, since their type is not visible to the
 macro.
 
+A source built this way is rebuilt for each mount, so a broker's descriptor type is `Clone` (it is
+configuration, and cloning it is what lets one definition mount on two brokers).
+
+## Settings at the mount site
+
+Name, worker policy, failure policies and the start position are values, so each can be given in
+the attribute, at the mount site, or partly in each. The attribute expands into exactly the calls
+you would write yourself, so there is one implementation of every setting:
+
+```rust
+--8<-- "examples/subscribers.rs:builder_settings"
+```
+
+A setting the attribute named is fixed in the definition's type and its builder method no longer
+applies, so the two can never disagree and there is no precedence rule to remember:
+
+<!-- inline-rust: two compile-fail one-liners; a compiling example cannot host code that must not compile (the pinned diagnostics live in tests/ui) -->
+```rust
+#[subscriber("orders", workers(4))]
+async fn handle(order: &Order) -> HandlerResult { HandlerResult::Ack }
+
+b.include(handle.name("other"));    // does not compile: the name is already given
+b.include(handle.on_failure(..));   // fine: the attribute said nothing about failures
+```
+
+The methods come from the `SubscriberSettings` trait, which every generated definition implements;
+import it (or the
+[prelude](https://docs.rs/ruststream/latest/ruststream/prelude/index.html)) to reach them.
+
+Broker-specific settings arrive the same way, in the broker's own vocabulary. Core cannot know that
+a subscription has a JetStream stream or a durable consumer name, so it exposes one hook - a
+transform over the source it is building - and a broker crate layers its own trait on top, bound to
+its own source type; see
+[Broker authors](../broker-authors/index.md#subscription-sources). The order in a chain follows from
+what each step does: the name comes first because it constructs the source, the broker settings then
+transform it, and the buffer below wraps it last.
+
 ## Mounting handlers
 
 Inside `with_broker`, mount a definition with `include`:
@@ -192,9 +272,9 @@ To group handlers per module and mount them all at once, collect them into a `Ro
 
 ## Batch subscribers
 
-Wrapping the source in `batch(..)` switches the handler to whole-batch consumption: it takes the
-decoded batch as a slice and runs once per batch the broker delivers - one database round-trip,
-one bulk API call.
+A handler that takes a slice consumes whole batches: it runs once per batch the broker delivers -
+one database round-trip, one bulk API call. The shape is read off the signature, so nothing in the
+attribute says it.
 
 ```rust
 --8<-- "examples/subscribers.rs:batch"
@@ -206,15 +286,23 @@ Mount it with `include`, like any other form - the definition carries the batch 
 --8<-- "examples/subscribers.rs:batch_mount"
 ```
 
-The source's subscriber must implement the `BatchSubscriber` capability. Brokers whose clients
-batch natively (Kafka poll, JetStream pull consumers) expose it directly, and batch sizing lives
-in their subscription options; the in-memory broker batches natively too. For any other source,
-the `Buffered` adapter buffers single deliveries client-side, closing a batch by size or by a
-deadline after its first delivery:
+The signature says the handler wants several messages at once; whether they arrive that way is a
+property of the broker, so it is settled where the definition is mounted. The subscription's
+subscriber must implement the `BatchSubscriber` capability: brokers whose clients batch natively
+(Kafka poll, JetStream pull consumers) expose it directly, and batch sizing lives in their
+subscription options; the in-memory broker batches natively too. Where the subscription does not
+batch, the compiler asks for the framework's buffer and the mount supplies it, closing a batch by
+size or by a deadline after its first delivery:
 
 ```rust
 --8<-- "examples/subscribers.rs:batch_buffered"
 ```
+
+The setting is named after the adapter on purpose. Batches come either from the broker (configured
+by the broker's own settings) or from this wrap, and those are different things; a name like
+`max_size` would read as configuring the broker's batching and would quietly wrap a natively
+batching subscription in a second layer. Because it changes the subscription type, it goes last:
+broker settings bound to the unwrapped type stop applying past it.
 
 The semantics differ from single-message handlers in a few ways:
 
@@ -267,7 +355,7 @@ nothing is attached at the include site:
 A seek from inside the handler settles the current message as usual; deliveries queued before
 the target are dropped, and the stream resumes at the target position. The parameter composes
 with the rest of the subscriber surface: with an injected publisher (`Out`) in the same
-handler, with a `raw` input, with `batch(..)` handlers, and with the `publish(..)` /
+handler, with a byte input, with batch handlers, and with the `publish(..)` /
 `publish_raw(..)` reply forms - a `Seek` parameter itself never needs an attachment at the
 include site, so those mounts read exactly as without it.
 
@@ -303,17 +391,26 @@ crate documents both. Broker authors prove the contract with the
 ## Raw subscribers
 
 When the payload is not a serialized value at all (a binary frame, a foreign wire format you
-parse yourself), the `raw` clause takes the codec out of the path entirely: the handler receives
-each delivery's bytes exactly as the broker handed them over.
+parse yourself), a `&[u8]` message parameter takes the codec out of the path entirely: the handler
+receives each delivery's bytes exactly as the broker handed them over.
 
 ```rust
 --8<-- "tests/raw_subscriber.rs:raw"
 ```
 
-The message parameter must be `&[u8]` - a serde-typed parameter under `raw` is a compile error,
-as is `raw` combined with `batch(..)` or an `on_failure(decode = ..)` policy (there is no
-decode step to fail). Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
-the injected `Out` / `Seek` parameters work unchanged, and a raw subscriber mounts with the
+A batch of payloads is the same thing at the batch shape: `&[&[u8]]` is the typed batch without
+the decode step, with the payloads borrowed from the batch's own messages for the duration of the
+call. Nothing is copied, and the settlement rules are the batch path's.
+
+```rust
+--8<-- "examples/subscribers.rs:raw_batch"
+```
+
+An `on_failure(decode = ..)` policy on either shape is a compile error - there is no decode step
+to fail, unless the handler declares a `FromHeaders` contract, which that policy does cover.
+Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
+the injected `Out` / `Seek` parameters work unchanged on the single-delivery shape (the batch of
+payloads does not take `Out` / `Seek` yet), and a raw subscriber mounts with the
 same `include` as every other definition - a scope codec, when one is set, simply does not apply
 to it. Because no codec is involved, raw subscribers are also the one subscriber form available
 with no codec feature enabled at all. For a custom serialization format you want *typed*
@@ -378,13 +475,13 @@ integration test.
 
 | Combination | Rule |
 |---|---|
-| `workers(n)` × `batch(..)` | The pool holds up to `n` **batches** in flight. `by_key` does not apply to batch forms: lanes order single messages per key, and the macro rejects the combination at compile time. |
+| `workers(n)` × a batch handler | The pool holds up to `n` **batches** in flight. `by_key` does not apply to batch forms: lanes order single messages per key, and the macro rejects the combination at compile time. |
 | `retry()` / `retry_after` × `workers(n)` | Retried deliveries re-enter the pool and complete like any other delivery. |
 | `retry()` / `retry_after` × `workers(n, by_key)` | Retries complete, but per-key ordering across a retry is **not** promised: a requeued message rejoins the stream from the back. If a key's messages must stay ordered even through failures, the handler has to absorb the failure instead of nacking. |
 | `.transactional()` × `workers(n)` | One transaction per batch, exactly as in the sequential loop. Concurrent batches run concurrent, independent transactions; each stays atomic (commit-then-ack per batch). |
 | `Buffered` × `workers(n)` | Batches still close by `max_size` / `max_wait` only; the pool bounds how many closed batches are processed at once and never affects batch boundaries. |
 | `publish(..)` × `workers(n)` | Replies are produced concurrently, so reply order across deliveries is not promised. A failed reply publish retries only its own delivery. |
-| middleware × `batch(..)` | App-global and router layers wrap per-message handlers and do not apply to batch registrations (a per-message layer cannot wrap a whole-batch handler). |
+| middleware × a batch handler | App-global and router layers wrap per-message handlers and do not apply to batch registrations (a per-message layer cannot wrap a whole-batch handler). |
 
 ## Macro or manual
 

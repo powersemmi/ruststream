@@ -1,4 +1,4 @@
-error: a raw subscriber receives the payload bytes: make the message parameter `&[u8]`, or drop `raw` to decode into a typed value
+error: a raw subscriber receives the payload bytes: make the message parameter `&[u8]` (or `&[&[u8]]` for a batch of payloads), or drop `raw` to decode into a typed value
  --> tests/ui/subscriber_raw_typed_param.rs:6:25
   |
 6 | async fn handle(frame: &String) {}

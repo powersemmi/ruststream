@@ -4,7 +4,7 @@ error[E0277]: not every Out slot of this handler is bound
 25 |         b.include(transcode).out(Encoded, MemoryPublish).mount();
    |                                                          ^^^^^ the attachment still contains a `MissingSlot<..>` naming the unbound slot
    |
-   = help: the trait `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, transcode>` is not implemented for `(ruststream::runtime::WithSource<MemoryPublish>, ruststream::runtime::MissingSlot<Audit>)`
+   = help: the trait `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<transcode, Name, (Open, Open, Open)>>` is not implemented for `(ruststream::runtime::WithSource<MemoryPublish>, ruststream::runtime::MissingSlot<Audit>)`
    = note: bind each remaining slot with .out(marker, policy) before .mount()
    = help: the following other types implement trait `ruststream::runtime::SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>`:
              `(runtime::router::mount::DefaultBareReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`

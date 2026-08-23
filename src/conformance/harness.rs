@@ -79,7 +79,8 @@ where
 ///   cannot satisfy it, which is exactly the contract: construct cheaply, connect in
 ///   [`Broker::connect`].
 /// * `make_source` builds the broker's subscription descriptor for a subject (the macro-subscriber
-///   path).
+///   path). The descriptor is `Clone`: it is configuration, and the mount rebuilds it per
+///   registration, so a definition can be mounted on more than one broker.
 /// * `make_publisher` produces a publisher from the connected form.
 ///
 /// Run it from the broker crate, against a real server where one is needed (NATS, Kafka, ...) or
@@ -112,7 +113,7 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: Broker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,

@@ -42,15 +42,18 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// Decoding uses the scope codec when one was set
     /// ([`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)), else the
     /// [`DefaultCodec`](crate::codec::DefaultCodec).
-    pub fn include<'s, Def>(
+    pub fn include<'s, D>(
         &'s mut self,
-        def: Def,
-    ) -> <Def::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, Def>>::Out
+        def: D,
+    ) -> <D::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>>::Out
     where
-        Def: crate::runtime::IncludeDef,
-        Def::Form: IncludeMount<'s, B, Layers, C, State, Pipeline, Def>,
+        D: crate::runtime::Declared,
+        D::Form: IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>,
     {
-        <Def::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, Def>>::begin(def, self)
+        <D::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>>::begin(
+            def.declare(),
+            self,
+        )
     }
 }
 

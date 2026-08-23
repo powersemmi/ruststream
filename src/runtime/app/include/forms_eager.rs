@@ -13,7 +13,7 @@ use crate::runtime::input::{DecodeWith, InputKind, RawBytes};
 use crate::runtime::middleware::Layer;
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
-use crate::runtime::{SliceHandler, SliceHandlerWithHeaders};
+use crate::runtime::{RawSliceHandler, SliceHandler, SliceHandlerWithHeaders};
 
 use super::{IncludeMount, MountCodec, forms};
 use crate::runtime::app::scope::BrokerScope;
@@ -163,6 +163,28 @@ where
         let source = def.source();
         let codec = scope.codec.mount_codec();
         scope.mount_batch(source, def, codec);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Raw batch: eager, and no codec anywhere - the handler borrows the batch's payloads as they
+// arrived, so the scope codec parameter `C` is left unconstrained.
+
+impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+    for forms::RawBatch
+where
+    B: Broker + 'static,
+    Def: BatchDef<Input = RawBytes>,
+    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
+    Def::Handler: RawSliceHandler<State> + 'static,
+    State: Send + Sync + 'static,
+{
+    type Out = ();
+
+    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let source = def.source();
+        scope.mount_raw_batch(source, def);
     }
 }
 

@@ -10,7 +10,7 @@
 
 #[cfg(feature = "otel")]
 use std::sync::LazyLock;
-use std::{future::Future, marker::PhantomData};
+use std::{fmt, future::Future, marker::PhantomData};
 
 #[cfg(feature = "otel")]
 use opentelemetry::metrics::Histogram;
@@ -193,6 +193,22 @@ where
     }
 }
 
+/// A handler invoked with one whole batch of undecoded payloads.
+///
+/// The byte-level counterpart of [`SliceHandler`], selected by a `&[&[u8]]` message parameter:
+/// a raw batch is the typed batch without the decode step, so the handler sees the payloads as
+/// a slice of byte slices borrowed from the batch's own messages, which the dispatcher holds for
+/// the duration of the call. Nothing is copied, and the settlement rules are the batch path's.
+pub trait RawSliceHandler<S = ()>: Send + Sync {
+    /// Handles one batch of payloads, with the per-batch [`Context`] carrying the typed app
+    /// state `S`.
+    fn handle_slice(
+        &self,
+        batch: &[&[u8]],
+        ctx: &mut Context<'_, (), S>,
+    ) -> impl Future<Output = BatchResult> + Send;
+}
+
 /// A batch handler definition produced by `#[subscriber(batch(..))]`.
 ///
 /// The batch counterpart of [`SubscriberDef`](super::SubscriberDef): same metadata surface, but
@@ -354,8 +370,8 @@ impl<M, Input, DecodeCodec, Inner> TypedBatch<M, Input, DecodeCodec, Inner> {
     }
 }
 
-impl<M, Input, DecodeCodec, Inner> std::fmt::Debug for TypedBatch<M, Input, DecodeCodec, Inner> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<M, Input, DecodeCodec, Inner> fmt::Debug for TypedBatch<M, Input, DecodeCodec, Inner> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedBatch")
             .field("decode", &self.decode)
             .finish_non_exhaustive()
@@ -421,10 +437,10 @@ impl<M, Input, DecodeCodec, HeaderContract, Inner>
     }
 }
 
-impl<M, Input, DecodeCodec, HeaderContract, Inner> std::fmt::Debug
+impl<M, Input, DecodeCodec, HeaderContract, Inner> fmt::Debug
     for TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedBatchWithHeaders")
             .field("decode", &self.decode)
             .finish_non_exhaustive()
@@ -457,6 +473,55 @@ where
         let tasks = ctx.tasks().clone();
         let result = self.inner.handle_slice(&values, contracts, ctx).await;
         settle_batch(accepted, result, &subscription, &tasks).await;
+    }
+}
+
+/// The batch adapter of the byte input kind: no codec, no decode, no rejections.
+///
+/// Every delivery reaches the handler, as a borrowed payload view; the [`BatchResult`] settles
+/// the deliveries behind those views exactly as on the typed path.
+pub struct RawBatch<M, Inner> {
+    inner: Inner,
+    _phantom: PhantomData<fn(M)>,
+}
+
+impl<M, Inner> RawBatch<M, Inner> {
+    /// Builds the adapter over the batch handler, like [`TypedBatch::over`].
+    #[must_use]
+    pub(crate) fn over(inner: Inner) -> Self {
+        Self {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<M, Inner> fmt::Debug for RawBatch<M, Inner> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RawBatch").finish_non_exhaustive()
+    }
+}
+
+impl<M, Inner, S> BatchHandler<M, S> for RawBatch<M, Inner>
+where
+    M: IncomingMessage,
+    Inner: RawSliceHandler<S>,
+    S: Send + Sync,
+{
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
+        let subscription = ctx.name().to_owned();
+        if batch.is_empty() {
+            return;
+        }
+        #[cfg(feature = "otel")]
+        record_batch_size(&subscription, batch.len());
+        let tasks = ctx.tasks().clone();
+        // The views borrow the deliveries, so they are gone before the batch is settled.
+        let result = {
+            let payloads: Vec<&[u8]> = batch.iter().map(IncomingMessage::payload).collect();
+            self.inner.handle_slice(&payloads, ctx).await
+        };
+        settle_batch(batch, result, &subscription, &tasks).await;
     }
 }
 
@@ -595,7 +660,7 @@ where
 /// input. Not `async`: the outcome is decided before the delivery is settled, so the borrowed
 /// error never crosses an await.
 fn rejection<S>(
-    err: &impl std::fmt::Display,
+    err: &impl fmt::Display,
     reason: &str,
     decode: FailurePolicy,
     ctx: &Context<'_, (), S>,

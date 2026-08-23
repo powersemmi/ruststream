@@ -39,6 +39,14 @@ async fn confirm(order: &Order, State(seen): State<Arc<AtomicU64>>) -> Confirmat
     Confirmation { id: order.id }
 }
 
+/// A subscription named where the service is wired up, through the settings surface the prelude
+/// has to carry too.
+#[subscriber]
+async fn audit(order: &Order) -> HandlerResult {
+    let _ = order.id;
+    HandlerResult::Ack
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_prelude_carries_a_canonical_service() {
     let seen = Arc::new(AtomicU64::new(0));
@@ -51,6 +59,7 @@ async fn the_prelude_carries_a_canonical_service() {
         .with_broker(MemoryBroker::new(), |b| {
             b.include(confirm)
                 .publisher(TypedPublisher::new(MemoryPublish));
+            b.include(audit.name("orders"));
         });
 
     let test = TestApp::start(app).await.expect("the app should start");

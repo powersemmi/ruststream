@@ -15,7 +15,7 @@ use std::pin::Pin;
 use crate::{Field, FieldMut, Headers};
 
 use super::dispatch::Delivery;
-use super::failure::ErrorShutdown;
+use super::failure::{ErrorShutdown, FailurePolicy};
 use super::handler::HandlerResult;
 
 /// A post-settle continuation: a boxed `Send` future the dispatcher runs after the message (or
@@ -73,6 +73,10 @@ pub struct Context<'a, C = (), S = ()> {
     delivery: &'a Delivery,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
+    /// The subscriber's materialization policy, set by the dispatcher from the definition's
+    /// failure policies. It reaches the handler body because a `FromHeaders` contract is parsed
+    /// there rather than in the decode adapter.
+    decode: FailurePolicy,
     /// Set by the [`Typed`](super::typed::Typed) decode adapter when the payload fails to decode,
     /// so the dispatcher can record the outcome as a decode failure (otherwise indistinguishable
     /// from a handler drop). Present under the `testing` feature (harness classification) and the
@@ -110,6 +114,7 @@ impl<'a, C, S> Context<'a, C, S> {
             delivery,
             after: Vec::new(),
             failfast: None,
+            decode: FailurePolicy::Drop,
             #[cfg(any(feature = "testing", feature = "otel"))]
             decode_failed: false,
         }
@@ -143,6 +148,36 @@ impl<'a, C, S> Context<'a, C, S> {
     pub(crate) fn with_failfast(mut self, failfast: &'a ErrorShutdown) -> Self {
         self.failfast = Some(failfast);
         self
+    }
+
+    /// Attaches the subscriber's effective materialization policy, so a handler-side contract
+    /// (a [`FromHeaders`](super::FromHeaders) parameter) settles by the same policy as the
+    /// payload codec no matter where the policy was named - in the attribute, or on the builder
+    /// at the mount site.
+    pub(crate) fn with_decode_policy(mut self, decode: FailurePolicy) -> Self {
+        self.decode = decode;
+        self
+    }
+
+    /// The materialization policy in force for this delivery: what happens to a payload that
+    /// does not decode, or a header contract that does not parse.
+    ///
+    /// The `#[subscriber]` expansion reads it to settle a failed
+    /// [`FromHeaders`](super::FromHeaders) extraction; a hand-written handler can read it for the
+    /// same reason.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::{Context, FailurePolicy};
+    ///
+    /// fn policy(ctx: &Context<'_>) -> FailurePolicy {
+    ///     ctx.decode_policy()
+    /// }
+    /// ```
+    #[must_use]
+    pub fn decode_policy(&self) -> FailurePolicy {
+        self.decode
     }
 
     /// Triggers a fail-fast shutdown for `reason` if a handle is attached, naming this delivery's

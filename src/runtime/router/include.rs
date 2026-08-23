@@ -20,7 +20,8 @@ use crate::runtime::metadata::HandlerMetadata;
 
 use super::SubscribedBatchRouter;
 use super::builder::Router;
-use super::mount::{IncludeDef, MountCodec, RouterMount};
+use super::mount::{MountCodec, RouterMount};
+use crate::runtime::settings::Declared;
 
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     Router<B, Routes, RouteCodec, RouteLayers>
@@ -61,15 +62,18 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// }
     /// # }
     /// ```
-    pub fn include<Def>(
+    pub fn include<D>(
         self,
-        def: Def,
-    ) -> <Def::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, Def>>::Out
+        def: D,
+    ) -> <D::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, D::Settings>>::Out
     where
-        Def: IncludeDef,
-        Def::Form: RouterMount<B, Routes, RouteCodec, RouteLayers, Def>,
+        D: Declared,
+        D::Form: RouterMount<B, Routes, RouteCodec, RouteLayers, D::Settings>,
     {
-        <Def::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, Def>>::begin(def, self)
+        <D::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, D::Settings>>::begin(
+            def.declare(),
+            self,
+        )
     }
 
     /// Attaches a slice handler to a batch subscription described by `source`, decoding each

@@ -37,9 +37,12 @@ pub struct PublishingOut;
 /// A byte-reply subscriber whose handler also takes an `Out` parameter.
 #[derive(Debug, Clone, Copy)]
 pub struct RawReplyOut;
-/// A batch subscriber (`#[subscriber(batch("in"))]`).
+/// A batch subscriber (a handler taking `&[T]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
+/// A raw batch subscriber (a handler taking `&[&[u8]]`): a batch with no decode step.
+#[derive(Debug, Clone, Copy)]
+pub struct RawBatch;
 /// A batch subscriber reading a typed header contract per element
 /// (`#[subscriber(batch("in"))]` with a `FromHeaders<Vec<H>>` parameter).
 #[derive(Debug, Clone, Copy)]

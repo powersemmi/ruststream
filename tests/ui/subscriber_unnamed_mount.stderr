@@ -1,0 +1,15 @@
+error[E0277]: `Unnamed<Name>` does not open a subscription on `ConnectedMemoryBroker`
+  --> tests/ui/subscriber_unnamed_mount.rs:21:11
+   |
+21 |         b.include(handle);
+   |           ^^^^^^^ not a subscription source for this broker
+   |
+   = help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is not implemented for `Unnamed<Name>`
+   = note: a subscriber left unnamed carries `Unnamed<..>` until the mount site names it: `b.include(handle.name("orders"))`
+   = note: otherwise the source belongs to a different broker than the one being mounted on
+help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is implemented for `MemorySource`
+  --> src/memory/mod.rs
+   |
+   | impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Subscribing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Unnamed<Name>, (Open, Open, Open)>>`

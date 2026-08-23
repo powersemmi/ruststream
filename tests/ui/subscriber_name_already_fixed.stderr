@@ -1,0 +1,13 @@
+error[E0277]: this subscriber's subscription is already named
+  --> tests/ui/subscriber_name_already_fixed.rs:18:27
+   |
+18 |     let _renamed = handle.name("other");
+   |                           ^^^^ the name is fixed in the `#[subscriber(..)]` attribute
+   |
+   = help: the trait `NameStep` is not implemented for `SubscriberBuilder<handle, Name, (Open, Open, Open)>`
+   = note: a setting is named once: keep the name in the attribute, or leave the attribute's source open (`#[subscriber]`, `#[subscriber(Kind)]`) and name it here
+help: the trait `NameStep` is implemented for `SubscriberBuilder<Def, Unnamed<S>, State>`
+  --> src/runtime/settings.rs
+   |
+   | impl<Def, S: FromName, State> NameStep for SubscriberBuilder<Def, Unnamed<S>, State> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -21,6 +21,7 @@ mod publish_source;
 mod publisher_registry;
 mod publishing;
 mod router;
+mod settings;
 mod slot;
 mod subscriber_def;
 mod typed;
@@ -42,8 +43,8 @@ pub use app::{
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 pub use batch::{
-    BatchDef, BatchResult, BatchWithHeadersDef, IntoBatchResult, SliceHandler,
-    SliceHandlerWithHeaders, TypedBatch, TypedBatchWithHeaders,
+    BatchDef, BatchResult, BatchWithHeadersDef, IntoBatchResult, RawBatch, RawSliceHandler,
+    SliceHandler, SliceHandlerWithHeaders, TypedBatch, TypedBatchWithHeaders,
 };
 pub use batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
 pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
@@ -81,6 +82,10 @@ pub use router::{
 };
 #[doc(hidden)]
 pub use router::{RouterCommit, RouterMount, RouterSlotCommit};
+pub use settings::{
+    AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
+    StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
+};
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{

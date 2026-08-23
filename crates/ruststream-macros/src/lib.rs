@@ -20,6 +20,10 @@ use parse::{SubscriberArgs, doc_description};
 
 /// Turns an `async fn` handler into a mountable subscriber definition.
 ///
+/// The attribute carries the declarative settings of the subscription; the *shape* of the
+/// handler - one message, one delivery's payload, a whole batch, a batch of payloads - is read
+/// off the signature, which is the only place it was ever really written.
+///
 /// ```ignore
 /// /// Processes incoming orders.
 /// #[subscriber("orders")]
@@ -37,15 +41,27 @@ use parse::{SubscriberArgs, doc_description};
 /// #[subscriber("requests", publish("responses"))]
 /// async fn confirm(req: &Request) -> Result<Response, HandlerResult> { /* ... */ }
 ///
-/// // batch form: the handler takes the whole decoded batch as a slice; the source's
-/// // subscriber must implement BatchSubscriber.
-/// #[subscriber(batch("orders"))]
+/// // batch form: the slice parameter says the handler takes the whole decoded batch; the
+/// // subscription's subscriber must implement BatchSubscriber (natively, or through the
+/// // buffer the mount site adds).
+/// #[subscriber("orders")]
 /// async fn bill(orders: &[Order]) -> HandlerResult { /* settles the whole batch */ }
 ///
-/// // raw form: no codec, no serde - the handler receives the payload bytes as-is. The
-/// // message parameter must be `&[u8]`; a serde-typed parameter under `raw` is an error.
-/// #[subscriber("frames", raw)]
+/// // raw form: no codec, no serde - the handler receives the payload bytes as-is, said by a
+/// // `&[u8]` message parameter.
+/// #[subscriber("frames")]
 /// async fn on_frame(frame: &[u8]) -> HandlerResult { /* parse it yourself */ }
+///
+/// // raw batch: the batch shape without the decode step; the payloads are borrowed from the
+/// // batch's own messages for the duration of the call.
+/// #[subscriber("frames")]
+/// async fn ingest(frames: &[&[u8]]) -> HandlerResult { /* parse them yourself */ }
+///
+/// // the settings the attribute leaves out are filled in at the mount site, through the same
+/// // builder the attribute expands into:
+/// #[subscriber]
+/// async fn audit(order: &Order) -> HandlerResult { HandlerResult::Ack }
+/// // later: broker_scope.include(audit.name(subject).workers(nonzero!(4)));
 ///
 /// // raw reply form: the returned bytes are published as-is to "frames-out" through the bare
 /// // publisher attached at the include site (b.include(mirror).publisher(policy), or the
@@ -69,19 +85,18 @@ use parse::{SubscriberArgs, doc_description};
 /// reply type). `publish_raw(..)` is the byte reply clause: the handler returns `Vec<u8>` (any
 /// owned `AsRef<[u8]>` type) and the bytes are published unencoded through the bare publisher
 /// paired at the include site; a failed reply publish nacks the delivery with requeue, exactly
-/// like the typed reply form. It composes with both a `raw` and a typed input; `raw` with the
-/// encoded `publish(..)` is rejected (a raw handler's reply is bytes).
+/// like the typed reply form. It composes with both a byte and a typed input; a byte input with
+/// the encoded `publish(..)` is rejected (such a handler's reply is bytes).
 ///
-/// Wrapping the source in `batch(..)` switches the definition to a `BatchDef`: the handler takes
-/// `&[T]` and runs once per batch pulled from the broker's `BatchSubscriber` (use the `Buffered`
-/// adapter for brokers without native batching). It returns any `IntoBatchResult` - one outcome
+/// A `&[T]` message parameter makes the definition a `BatchDef`: the handler runs once per batch
+/// pulled from the subscription's `BatchSubscriber` (added by the mount site's buffer for
+/// subscriptions without native batching). It returns any `IntoBatchResult` - one outcome
 /// for the whole batch (`HandlerResult`, `()`, `Result<_, E>`), or a per-element vector
 /// (`Vec<Settle>`, or `Vec<HandlerResult>`) to settle element `i` of the slice with outcome `i`,
-/// each element carrying its own optional `and_after` continuation. The source type is recovered
-/// from the constructor path, so a generic source spells its parameters:
-/// `batch(Buffered::<Name>::new(Name::new("orders")))`.
+/// each element carrying its own optional `and_after` continuation. A `&[&[u8]]` parameter is
+/// the same shape without the decode step.
 ///
-/// Combining `batch(..)` with `publish(..)` produces a `BatchPublishingDef`: the handler returns
+/// Combining a batch handler with `publish(..)` produces a `BatchPublishingDef`: the handler returns
 /// `Vec<Reply>` (or
 /// `Result<Vec<Reply>, HandlerResult>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
@@ -108,7 +123,7 @@ use parse::{SubscriberArgs, doc_description};
 /// dictionary-driven typed publish path; a `Seek(seeker): Seek<K>` parameter injects the
 /// subscription's own seeker, minted right after the subscription opens (the source's
 /// subscriber must implement the `Seekable` capability). They combine freely in one handler:
-/// with each other, with `raw`, with `batch(..)`, and with every reply form (`publish(..)`,
+/// with each other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
 /// `publish_raw(..)`, and the batch publishing form). An `Out` parameter's attachment is
 /// required at the include site: `.publisher(..)` on the plain and batch forms, `.out(..)` on
 /// the reply forms (where `.publisher(..)` stays the reply's own attachment).
@@ -142,6 +157,11 @@ use parse::{SubscriberArgs, doc_description};
 /// #[subscriber("orders")]
 /// async fn handle(order: &Order, State(db): State<Db>) -> HandlerResult { /* ... */ }
 /// ```
+///
+/// The attribute expands into the definition and then the settings builder over it, so the
+/// clauses above are exactly the calls a user would write at the mount site (see
+/// `SubscriberSettings` in the core crate). A setting the attribute names is fixed in the
+/// definition's type and its builder method no longer applies, so the two can never disagree.
 #[proc_macro_attribute]
 pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as SubscriberArgs);

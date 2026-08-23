@@ -1,5 +1,5 @@
-error: on_failure(decode = ..) does not apply to raw: the payload is not decoded and there is no FromHeaders parameter; keep only on_failure(panic = ..)
- --> tests/ui/subscriber_raw_on_failure_decode.rs:4:24
+error: on_failure(decode = ..) does not apply to an undecoded payload: this handler takes the bytes as delivered and declares no FromHeaders parameter; keep only on_failure(panic = ..)
+ --> tests/ui/subscriber_raw_on_failure_decode.rs:5:17
   |
-4 | #[subscriber("frames", raw, on_failure(decode = drop))]
-  |                        ^^^
+5 | async fn handle(frame: &[u8]) {}
+  |                 ^^^^^^^^^^^^

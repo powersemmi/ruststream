@@ -1,5 +1,6 @@
 //! The [`Router`] builder: chaining registrations, codecs and layers, and mounting the result.
 
+use std::fmt;
 use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
@@ -8,8 +9,8 @@ use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{
-    BatchDef, BatchWithHeadersDef, SliceHandler, TypedBatch, TypedBatchWithHeaders, batch_metadata,
-    typed_batch,
+    BatchDef, BatchWithHeadersDef, RawBatch, SliceHandler, TypedBatch, TypedBatchWithHeaders,
+    batch_metadata, typed_batch,
 };
 use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
@@ -17,7 +18,7 @@ use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, RawBytes};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::PublishPipeline;
@@ -33,8 +34,8 @@ use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute
 use super::sink::RouterSink;
 use super::{
     BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter,
-    IncludedBatchWithHeadersRouter, IncludedRouter, InjectedRouter, MergedRouter, PublishingRouter,
-    RawReplyRouter, SourceMessage, SubscribedBatchRouter,
+    IncludedBatchWithHeadersRouter, IncludedRawBatchRouter, IncludedRouter, InjectedRouter,
+    MergedRouter, PublishingRouter, RawReplyRouter, SourceMessage, SubscribedBatchRouter,
 };
 
 /// A statically-typed, lazily-bound group of handler registrations, not attached to any broker.
@@ -89,8 +90,8 @@ impl<B: Broker + 'static> Default for Router<B, (), (), Identity> {
     }
 }
 
-impl<B, Routes, C, Layers> std::fmt::Debug for Router<B, Routes, C, Layers> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<B, Routes, C, Layers> fmt::Debug for Router<B, Routes, C, Layers> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Router").finish_non_exhaustive()
     }
 }
@@ -315,6 +316,40 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         // kind explicitly.
         let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
             .with_decode(policies.decode);
+        Router {
+            routes: (
+                BatchRoute {
+                    source,
+                    handler,
+                    meta,
+                    policies,
+                    workers,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            _broker: PhantomData,
+        }
+    }
+
+    /// Mounts a raw batch definition on `source`: the handler borrows the batch's payloads as
+    /// they arrived, so no codec takes part.
+    pub(super) fn mount_raw_batch<Source, Def>(
+        self,
+        source: Source,
+        def: Def,
+    ) -> IncludedRawBatchRouter<B, Source, Def, RouteCodec, RouteLayers, Routes>
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchDef<Input = RawBytes>,
+        Def::Handler: 'static,
+    {
+        let meta = batch_metadata(source.name().to_owned(), &def);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let handler = RawBatch::over(def.into_handler());
         Router {
             routes: (
                 BatchRoute {

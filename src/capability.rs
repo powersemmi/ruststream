@@ -15,6 +15,13 @@ use crate::{Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher
 /// Brokers that batch on the wire (`Kafka`, `JetStream` pull consumers) implement this so the
 /// runtime can dispatch a whole batch through middleware in one go. Brokers without native
 /// batching simply do not implement it.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not deliver messages in batches",
+    label = "this subscription has no batching of its own",
+    note = "a handler taking `&[T]` needs batches: add the framework's buffer at the mount site, \
+            `b.include(handle.buffered(nonzero!(64), Duration::from_millis(10)))`, or mount the \
+            definition on a subscription kind that batches on the wire"
+)]
 pub trait BatchSubscriber: Subscriber {
     /// Container yielded by [`batches`]. Implementations choose between [`Vec`], custom
     /// iterators, or anything else that yields the underlying [`Subscriber::Message`].
