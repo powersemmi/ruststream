@@ -62,36 +62,9 @@ cargo run --example http_outbox --features macros,memory,json
 
 ## 事务性 outbox
 
-端点不再在请求路径上发布，而是把事件与业务写入放在一起原子地记录下来。随后由一个中继把记录下来的
-事件搬到 Broker 上：
-
-```rust
---8<-- "examples/http_outbox.rs:event"
-```
-
-```rust
---8<-- "examples/http_outbox.rs:store"
-```
-
-端点只写存储。记录订单和把它的事件入队是同一个原子步骤，没有任何 Broker I/O 能让 HTTP 响应失败或
-卡住：
-
-```rust
---8<-- "examples/http_outbox.rs:endpoint"
-```
-
-一个后台任务把 outbox 排空到 Broker 里。只有在某一行的发布成功之后，中继才会删除这一行，因此 Broker
-故障只是延迟事件，而不会丢失事件；如果在发布与删除之间崩溃，重启后中继会重新发布这一行。因此消费方
-看到的是至少一次投递，这也是 outbox 一贯的契约：它们处理重复消息的方式，与处理来自 Broker 本身的
-重复投递完全相同：
-
-```rust
---8<-- "examples/http_outbox.rs:relay"
-```
-
-换成真正的数据库时，`Store` 就是一张业务表加一张 `outbox` 表，二者在同一个 SQL 事务里写入；中继按
-插入顺序读取 `outbox` 的行，发布，然后删除它们。其余一切都与示例中一样：Broker、发布者和订阅者都
-不知道 outbox 的存在。
+端点把事件与业务写入记录在一起，之后由中继搬到 Broker 上，因此两边不会只发生一半。这个模式并不专属
+于 HTTP，它有自己的页面：[事务性 outbox](transactional-outbox.md)。本页运行的示例
+`examples/http_outbox.rs` 就是同一个。
 
 ## 试一试
 

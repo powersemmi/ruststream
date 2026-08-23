@@ -76,38 +76,10 @@ consistency bug waiting for a deploy window. The fix is the transactional outbox
 
 ## Transactional outbox
 
-Instead of publishing on the request path, the endpoint records the event next to the business
-write, atomically. A relay then moves recorded events to the broker:
-
-```rust
---8<-- "examples/http_outbox.rs:event"
-```
-
-```rust
---8<-- "examples/http_outbox.rs:store"
-```
-
-The endpoint only writes to the store. Recording the order and queueing its event is one atomic
-step, and no broker I/O can fail or stall the HTTP response:
-
-```rust
---8<-- "examples/http_outbox.rs:endpoint"
-```
-
-A background task drains the outbox into the broker. A row is removed only after its publish
-succeeds, so a broker outage delays events instead of losing them; a crash between the publish and
-the removal re-publishes the row on restart. Consumers therefore see at-least-once delivery, the
-usual contract of an outbox, and handle duplicates the same way they handle redeliveries from the
-broker itself:
-
-```rust
---8<-- "examples/http_outbox.rs:relay"
-```
-
-With a real database the `Store` is a table plus an `outbox` table written in one SQL
-transaction, and the relay reads `outbox` rows in insertion order, publishes, and deletes them.
-Everything else stays as shown: the broker, the publisher, and the subscriber do not know the
-outbox exists.
+The endpoint records the event beside the business write and a relay moves it to the broker
+afterwards, so neither side can happen without the other. The pattern is not specific to HTTP and
+has a page of its own: [transactional outbox](transactional-outbox.md). The example this guide
+runs, `examples/http_outbox.rs`, is the same one.
 
 ## Try it
 
