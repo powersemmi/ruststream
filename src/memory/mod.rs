@@ -29,6 +29,7 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     fmt,
+    future::{Future, ready},
     sync::{Arc, Mutex, OnceLock, atomic::AtomicU64},
     task::Poll,
     time::Duration,
@@ -284,8 +285,6 @@ impl fmt::Debug for MemoryBroker {
     }
 }
 
-// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
-#[allow(clippy::unused_async_trait_impl)]
 impl Broker for MemoryBroker {
     type Error = MemoryError;
     type Connected = ConnectedMemoryBroker;
@@ -293,7 +292,7 @@ impl Broker for MemoryBroker {
     /// Connecting is free for an in-process bus. A shut-down bus (a clone lineage may have shut
     /// the shared state down) is revived with a fresh, empty registration map, so the connected
     /// form always starts live; a live bus keeps its registrations.
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         {
             let mut bus = self
                 .state
@@ -304,7 +303,7 @@ impl Broker for MemoryBroker {
                 *bus = Bus::Live(HashMap::new());
             }
         }
-        Ok(ConnectedMemoryBroker { state: self.state })
+        ready(Ok(ConnectedMemoryBroker { state: self.state }))
     }
 }
 
@@ -345,8 +344,6 @@ impl ConnectedMemoryBroker {
     }
 }
 
-// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
-#[allow(clippy::unused_async_trait_impl)]
 impl ConnectedBroker for ConnectedMemoryBroker {
     type Error = MemoryError;
     type Closed = ClosedMemoryBroker;
@@ -356,7 +353,7 @@ impl ConnectedBroker for ConnectedMemoryBroker {
     /// request) errors with [`MemoryError::ShutDown`]. Consuming `self` makes any further use
     /// of this handle a compile error; the returned witness reports how many subscriber
     /// registrations the teardown dropped.
-    async fn shutdown(self) -> Result<Self::Closed, Self::Error> {
+    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> {
         let dropped = {
             let mut bus = self
                 .state
@@ -368,9 +365,9 @@ impl ConnectedBroker for ConnectedMemoryBroker {
                 Bus::ShutDown => 0,
             }
         };
-        Ok(ClosedMemoryBroker {
+        ready(Ok(ClosedMemoryBroker {
             subscribers_dropped: dropped,
-        })
+        }))
     }
 }
 
@@ -397,13 +394,14 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryPublish;
 
-// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
-#[allow(clippy::unused_async_trait_impl)]
 impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
     type Live = MemoryPublisher;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+    fn pair(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
     }
 }
 
@@ -430,13 +428,14 @@ impl DefaultPublish for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryRequest;
 
-// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
-#[allow(clippy::unused_async_trait_impl)]
 impl PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
     type Live = MemoryRequester;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.requester())
+    fn pair(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.requester()))
     }
 }
 
@@ -503,16 +502,16 @@ impl crate::testing::TestableBroker for ConnectedMemoryBroker {
 crate::register_testable_broker!(ConnectedMemoryBroker);
 // --8<-- [end:testable]
 
-// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
-#[allow(clippy::unused_async_trait_impl)]
 impl Subscribe for ConnectedMemoryBroker {
     type Subscriber = MemorySubscriber;
 
-    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
+    fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.to_owned();
-        self.state.register(name.clone(), tx.clone())?;
-        Ok(MemorySubscriber {
+        if let Err(err) = self.state.register(name.clone(), tx.clone()) {
+            return ready(Err(err));
+        }
+        ready(Ok(MemorySubscriber {
             name,
             rx,
             requeue: tx,
@@ -521,7 +520,7 @@ impl Subscribe for ConnectedMemoryBroker {
             seek: Arc::new(SeekControl::default()),
             #[cfg(feature = "testing")]
             coordinator: self.state.coordinator(),
-        })
+        }))
     }
 }
 
@@ -707,12 +706,10 @@ pub enum MemoryError {
     ShutDown,
 }
 
-// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
-#[allow(clippy::unused_async_trait_impl)]
 impl Publisher for MemoryPublisher {
     type Error = MemoryError;
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    fn publish(&self, msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
         let outbound = MemoryOutbound {
             name: msg.name().to_owned(),
             payload: Bytes::copy_from_slice(msg.payload()),
@@ -724,10 +721,10 @@ impl Publisher for MemoryPublisher {
                 // Buffering is local to this handle and never touches the bus; a commit against
                 // a shut-down bus is what reports the error.
                 buffered.push(outbound);
-                return Ok(());
+                return ready(Ok(()));
             }
         }
-        self.state.fanout(outbound)
+        ready(self.state.fanout(outbound))
     }
 }
 
@@ -789,8 +786,6 @@ impl MemoryMessage {
     }
 }
 
-// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
-#[allow(clippy::unused_async_trait_impl)]
 impl IncomingMessage for MemoryMessage {
     fn payload(&self) -> &[u8] {
         self.delivery
@@ -810,12 +805,12 @@ impl IncomingMessage for MemoryMessage {
             .map_or_else(|| EMPTY.get_or_init(Headers::new), |d| &d.headers)
     }
 
-    async fn ack(mut self) -> Result<(), AckError> {
+    fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.delivery.take();
-        Ok(())
+        ready(Ok(()))
     }
 
-    async fn nack(mut self, requeue: bool) -> Result<(), AckError> {
+    fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         if requeue {
             let sent = self.requeue.send(delivery);
@@ -830,7 +825,7 @@ impl IncomingMessage for MemoryMessage {
             #[cfg(not(feature = "testing"))]
             let _ = sent;
         }
-        Ok(())
+        ready(Ok(()))
     }
 
     fn supports_nack_after(&self) -> bool {
@@ -839,7 +834,7 @@ impl IncomingMessage for MemoryMessage {
 
     /// Native delayed redelivery: the message returns to the same subscriber's queue once
     /// `delay` has elapsed, not immediately.
-    async fn nack_after(mut self, delay: Duration) -> Result<(), AckError> {
+    fn nack_after(mut self, delay: Duration) -> impl Future<Output = Result<(), AckError>> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         let requeue = self.requeue.clone();
         // Under the harness, register the redelivery with the coordinator so the in-flight count is
@@ -854,14 +849,14 @@ impl IncomingMessage for MemoryMessage {
                     counter.enqueued();
                 }
             });
-            return Ok(());
+            return ready(Ok(()));
         }
         tokio::spawn(async move {
             sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.
             let _ = requeue.send(delivery);
         });
-        Ok(())
+        ready(Ok(()))
     }
 }
 
