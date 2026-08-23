@@ -251,23 +251,33 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
-tokio-util = { version = "0.7", features = ["rt"] }
+# 0.7.10 is the real floor: `TaskTracker`, which the runtime uses to join spawned handlers,
+# landed there, so nothing below it ever compiled here.
+tokio-util = { version = "0.7.10", features = ["rt"] }
 tracing = "0.1"
 
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
 ruststream-macros = { version = "=0.6.3", path = "crates/ruststream-macros", optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+# 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.33 requires `^0.3.22`, so the
+# `otel` feature never resolved anything lower, and the declared bound claimed years of releases
+# that were never built against.
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"], optional = true }
 serde_json = { version = "1", optional = true }
 rmp-serde = { version = "1", optional = true }
-ciborium = { version = "0.2", optional = true }
+# 0.2.1 is the real floor: the crate-root `into_writer`/`from_reader` re-exports the CBOR codec
+# calls arrived in that release.
+ciborium = { version = "0.2.1", optional = true }
 prometheus = { version = "0.14", default-features = false, optional = true }
 schemars = { version = "1", optional = true }
 serde_norway = { version = "0.9", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
-inventory = { version = "0.3", optional = true }
+# 0.3.5 is the real floor: earlier 0.3 releases lose the broker registrations to a plain GNU ld,
+# so the registry comes back empty and the harness reports no transport for a broker that did
+# register. Development setups on mold or lld happen to hide it.
+inventory = { version = "0.3.5", optional = true }
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"], optional = true }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "rt-tokio"], optional = true }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace", "metrics"], optional = true }
