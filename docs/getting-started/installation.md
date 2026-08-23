@@ -34,6 +34,8 @@ always compiled. Everything else is an additive, opt-in feature.
 | `asyncapi` | schemars, serde_norway | AsyncAPI generation and the HTML viewer |
 | `metrics` | prometheus | Prometheus middleware and exporter |
 | `logging` | tracing-subscriber | `ruststream::logging`, a colored console logger ([Logging](../guides/logging.md)) |
+| `otel` | opentelemetry, opentelemetry-otlp | OTLP export for traces and metrics, and W3C trace-context propagation ([OpenTelemetry](../guides/opentelemetry.md)) |
+| `testing` | inventory | `TestApp` and the assertion builders ([Testing](../guides/testing.md)) |
 | `conformance` | - | the broker-author conformance harness |
 | `cli` | clap, anyhow | the `ruststream` binary |
 

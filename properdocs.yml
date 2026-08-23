@@ -148,6 +148,7 @@ nav:
       - guides/failure-policy.md
   - Integrations:
       - guides/http.md
+      - guides/transactional-outbox.md
   - Observability:
       - guides/logging.md
       - guides/metrics.md

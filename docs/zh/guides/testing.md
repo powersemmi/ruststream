@@ -16,8 +16,7 @@ RustStream 服务在两个层面上测试：
     建模 RabbitMQ 的 exchange 和死信路由。这些都属于真实 Broker 的范畴，放到
     [集成测试](#integration-tests-against-a-real-broker)里去测。
 
-    `MemoryBroker` 是一个真正的 Broker（本地的进程内队列），不是测试替身：测试套件驱动它走的，正是
-    生产运行时所用的那条分发路径。
+    `MemoryBroker` 是什么、不是什么，写在它自己的页面上：[内存 Broker](../brokers/memory.md)。
 
 ## 用 `TestApp` 对服务做单元测试 { #unit-testing-a-service-with-testapp }
 
