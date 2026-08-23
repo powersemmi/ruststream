@@ -574,10 +574,10 @@ async fn seek_wakes_a_parked_stream() {
         let mut parked_tx = Some(parked_tx);
         std::future::poll_fn(move |cx| {
             let polled = stream.as_mut().poll_next(cx);
-            if polled.is_pending() {
-                if let Some(tx) = parked_tx.take() {
-                    let _ = tx.send(());
-                }
+            if polled.is_pending()
+                && let Some(tx) = parked_tx.take()
+            {
+                let _ = tx.send(());
             }
             polled
         })

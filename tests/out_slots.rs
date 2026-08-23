@@ -178,7 +178,7 @@ trait ShardLanes {
 
 impl ShardLanes for LaneRouter {
     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-        let dest = if shard % 2 == 0 {
+        let dest = if shard.is_multiple_of(2) {
             "slots.lane.even"
         } else {
             "slots.lane.odd"

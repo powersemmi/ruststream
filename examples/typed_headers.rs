@@ -119,7 +119,7 @@ struct StatusReply {
 #[subscriber("jobs.status-requests", publish("jobs.status"))]
 async fn status(req: &StatusRequest) -> StatusReply {
     StatusReply {
-        done: req.task_id % 2 == 0,
+        done: req.task_id.is_multiple_of(2),
     }
 }
 // --8<-- [end:reply]
