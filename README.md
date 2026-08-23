@@ -10,7 +10,7 @@
   <a href="https://crates.io/crates/ruststream"><img src="https://img.shields.io/crates/v/ruststream.svg" alt="crates.io"></a>
   <a href="https://crates.io/crates/ruststream"><img src="https://img.shields.io/crates/dr/ruststream" alt="Recent downloads"></a>
   <a href="https://docs.rs/ruststream"><img src="https://img.shields.io/docsrs/ruststream" alt="docs.rs"></a>
-  <img src="https://img.shields.io/badge/MSRV-1.85-blue.svg" alt="MSRV 1.85">
+  <img src="https://img.shields.io/badge/MSRV-1.88-blue.svg" alt="MSRV 1.88">
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/unsafe-none-success.svg" alt="100% safe Rust">
   <a href="https://t.me/ruststream_community"><img src="https://img.shields.io/badge/-Telegram-blue?logo=telegram&label=News" alt="Telegram news channel"></a>
@@ -229,9 +229,9 @@ Concrete brokers live in their own crates and pull `ruststream` from crates.io.
 
 ## Minimum supported Rust version
 
-The MSRV is **1.85** (edition 2024, native `async fn in trait`). CI builds and tests the crate on
-the floor and on current stable, and builds it on beta; Rust's stability guarantee carries the
-releases in between, so any floor at or above 1.85 works.
+The MSRV is **1.88**, edition 2024. CI builds and tests the crate on the floor and on current
+stable, and builds it on beta; Rust's stability guarantee carries the releases in between, so any
+floor at or above 1.88 works.
 
 The policy:
 
