@@ -1,0 +1,150 @@
+# Locked renderings for the documentation's terms of art.
+#
+# A machine translation of technical prose does not fail by producing unreadable text; it
+# fails by rendering a term of art with a dictionary synonym, so that two pages of the same
+# site name the same concept differently and the reader cannot tell whether a distinction is
+# meant. Each term below therefore has exactly one rendering per language, and
+# `scripts/check_doc_i18n.py` enforces it: where the English page uses a listed term, the
+# translated page has to use the locked equivalent.
+#
+# Fields:
+#   en        the English term, matched case-insensitively on word boundaries
+#   en_match  optional regex replacing that default match (for irregular plurals or spellings)
+#   ru, zh    the locked rendering, and what a translator must write
+#   ru_match  optional regex accepting inflected forms of the Russian rendering
+#   zh_match  optional regex, same purpose, rarely needed
+#
+# A term kept in Latin script in a target language is a deliberate choice, not an oversight:
+# `ack`, `trait` and `crate` are what Russian and Chinese Rust texts actually write, and
+# replacing them with a translated coinage would make the page harder to read, not easier.
+#
+# Adding a term here is cheap and retroactive: the check reports every existing translated
+# page that does not yet honour it, so add terms only once their rendering is settled.
+
+[[term]]
+en = "ack"
+ru = "ack"
+zh = "ack"
+
+[[term]]
+en = "nack"
+ru = "nack"
+zh = "nack"
+
+[[term]]
+en = "broker"
+en_match = "brokers?"
+ru = "брокер"
+ru_match = "брокер"
+zh = "Broker"
+zh_match = "(?i)broker"
+
+[[term]]
+en = "subscriber"
+en_match = "subscribers?"
+ru = "подписчик"
+ru_match = "подписчик"
+zh = "订阅者"
+
+[[term]]
+en = "publisher"
+en_match = "publishers?"
+ru = "публикатор"
+ru_match = "публикатор"
+zh = "发布者"
+
+[[term]]
+en = "subscription"
+en_match = "subscriptions?"
+ru = "подписка"
+ru_match = "подписк"
+zh = "订阅"
+
+[[term]]
+en = "handler"
+en_match = "handlers?"
+ru = "обработчик"
+ru_match = "обработчик"
+zh = "处理器"
+
+[[term]]
+en = "message"
+en_match = "messages?"
+ru = "сообщение"
+ru_match = "сообщени"
+zh = "消息"
+
+[[term]]
+en = "middleware"
+ru = "middleware"
+zh = "中间件"
+
+[[term]]
+en = "router"
+en_match = "routers?"
+ru = "роутер"
+ru_match = "роутер"
+zh = "路由器"
+
+[[term]]
+en = "codec"
+en_match = "codecs?"
+ru = "кодек"
+ru_match = "кодек"
+zh = "编解码器"
+
+[[term]]
+en = "back-pressure"
+en_match = "back[- ]?pressure"
+ru = "обратное давление"
+ru_match = "обратн\\w* давлени"
+zh = "背压"
+
+[[term]]
+en = "at-least-once"
+ru = "at-least-once"
+zh = "至少一次"
+
+[[term]]
+en = "at-most-once"
+ru = "at-most-once"
+zh = "至多一次"
+
+[[term]]
+en = "cancel safety"
+en_match = "cancel[- ]safe(ty)?"
+ru = "безопасность при отмене"
+ru_match = "безопасн\\w* при отмене"
+zh = "取消安全"
+
+[[term]]
+en = "compile time"
+en_match = "compile[- ]time"
+ru = "время компиляции"
+ru_match = "компиляци"
+zh = "编译期"
+zh_match = "编译(期|时)"
+
+[[term]]
+en = "zero-cost"
+ru = "zero-cost"
+zh = "零成本"
+
+[[term]]
+en = "trait"
+en_match = "traits?"
+ru = "трейт"
+ru_match = "трейт"
+zh = "trait"
+
+[[term]]
+en = "crate"
+en_match = "crates?"
+ru = "крейт"
+ru_match = "крейт"
+zh = "crate"
+
+[[term]]
+en = "typestate"
+ru = "typestate"
+zh = "typestate"

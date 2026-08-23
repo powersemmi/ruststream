@@ -12,9 +12,16 @@ on:
       - tests/doc_*.rs
       - tests/conformance_self.rs
       - scripts/lint_doc_fences.py
+      - scripts/check_doc_i18n.py
+      - scripts/check_doc_parity.py
+      - scripts/doc_glossary.toml
       - .github/workflows/docs.yml
   pull_request:
     branches: [main]
+    # `labeled` / `unlabeled` are here for the translation-parity job below: applying its
+    # escape-hatch label has to re-run the check, or the label leaves a stale red run
+    # blocking the merge.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths: *docs-paths
   workflow_dispatch:
 
@@ -44,5 +51,29 @@ jobs:
       - name: Lint doc code fences
         run: python3 scripts/lint_doc_fences.py
 
+      - name: Check translated pages against their originals
+        run: python3 scripts/check_doc_i18n.py
+
       - name: Build site (strict)
         run: properdocs build --strict
+
+  translation-parity:
+    name: Translation parity
+    # A change to what a page says belongs in every language that page exists in. The way out
+    # is this label, and it is for an edit confined to one language: spelling, grammar, or a
+    # word choice that was already right elsewhere. It suppresses this job only - the site
+    # still has to build and the translated pages still have to match their originals.
+    if: >-
+      github.event_name == 'pull_request'
+      && !contains(github.event.pull_request.labels.*.name, 'docs-single-language')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # The rule is a diff rule, so the merge base with the target branch has to be
+          # reachable.
+          fetch-depth: 0
+
+      - name: Check that an edit reached every language
+        run: python3 scripts/check_doc_parity.py --base "origin/${{ github.base_ref }}"
