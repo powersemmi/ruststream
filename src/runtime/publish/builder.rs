@@ -401,7 +401,7 @@ where
 impl<Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
 where
     Sink: PublishSink,
-    T: OutgoingDestination + MessageHeaders + Serialize + Sync,
+    T: OutgoingDestination + MessageHeaders + Sync,
     Enc: PublishCodec,
     Hdrs: PublishHeaders,
 {
@@ -416,11 +416,13 @@ where
     ///
     /// As cancel-safe as the sink's own send: dropping the future mid-flight may leave the
     /// message in an indeterminate state.
-    // The two position bounds sit on the method, not on the impl block: a bound the impl block
-    // carries makes an under-specified publish "method not found", which drops the guidance
-    // these traits declare, while a bound the method carries reports it.
+    // The position bounds and the encodability of the value sit on the method, not on the impl
+    // block: a bound the impl block carries makes an under-specified publish "method not found",
+    // which drops the guidance these traits declare - serde's own note about the missing derive
+    // included - while a bound the method carries reports it.
     pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
     where
+        T: Serialize,
         Hdrs: SatisfiesContract<T::Contract>,
         Dest: ResolvedName,
     {
