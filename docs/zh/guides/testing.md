@@ -13,7 +13,7 @@ RustStream 服务在两个层面上测试：
     这套测试套件驱动的是 Broker 的**进程内传输层**：发布一条消息会把它扇出给 subject 匹配的订阅者，
     通过真实的分发路径运行你的处理器，并记录结算结果以及向下游发布的消息。它**不会**建模 JetStream
     的持久化游标、`ack_wait` 重新投递、`max_ack_pending`、保留策略、Kafka 的偏移量或消费者组，也不会
-    建模 RabbitMQ 的 exchange 和死信路由。这些都属于真实 Broker 的范畴，请放到
+    建模 RabbitMQ 的 exchange 和死信路由。这些都属于真实 Broker 的范畴，放到
     [集成测试](#integration-tests-against-a-real-broker)里去测。
 
     `MemoryBroker` 是一个真正的 Broker（本地的进程内队列），不是测试替身：测试套件驱动它走的，正是
@@ -23,7 +23,7 @@ RustStream 服务在两个层面上测试：
 
 `TestApp` 接收一个已经构建好的 `RustStream` 应用，连接它的各个 Broker（进程内总线不做 I/O），挂载
 处理器，并记录每一次投递。你发布输入，而这次发布会把整条反应链（处理器、它向下游的发布、跨 Broker 的
-级联）一直驱动到彻底静止之后才返回，然后你再去断言。
+级联）一直驱动到彻底静止之后才返回。然后你再去断言。
 
 被测的处理器（在真实服务里它位于你的处理器模块中，由测试导入）：
 
@@ -37,10 +37,10 @@ RustStream 服务在两个层面上测试：
 --8<-- "tests/doc_testing_memory.rs:test"
 ```
 
-!!! info "这个测试会在本仓库的 CI 中运行"
+!!! info "该测试会在本仓库的 CI 中运行"
     上面的代码嵌入自
     [`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs)，
-    每次改动 `cargo test --all-features` 都会运行它，因此这个示例不会悄悄腐烂。
+    每次改动 `cargo test --all-features` 都会运行它，因此该示例不会悄悄腐烂。
 
 在 dev-dependencies 中启用 `testing` feature：
 
@@ -58,14 +58,14 @@ ruststream = { version = "0.6", features = ["testing", "memory", "macros", "json
 
 ### 对处理器做断言
 
-`tb.broker::<B>().subscriber(name)` 返回一个流式构建器，用来断言那个处理器收到了什么：
+`tb.broker::<B>().subscriber(name)` 返回一个流式构建器，用来断言该处理器收到了什么：
 
 | 方法 | 断言内容 |
 |---|---|
 | `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | 投递次数 |
 | `with(&value)` | 最近一次投递解码（用默认编解码器）之后等于 `value` |
 | `with_raw(bytes)` | 最近一次的原始载荷 |
-| `settled(HandlerResult::Ack)` | 它是怎么结算的 |
+| `settled(HandlerResult::Ack)` | 结算的方式 |
 | `assert_outcome(Outcome::Drop)` | 归类之后的结算结果（ack / nack / drop / 解码失败 / panic） |
 | `panicked()` | 处理器在最后一次投递上发生了 panic |
 | `assert_last_failed_to_decode()` | 载荷解码失败 |
@@ -86,7 +86,7 @@ ruststream = { version = "0.6", features = ["testing", "memory", "macros", "json
 ### 对 Out 槽位做断言 { #asserting-on-out-slots }
 
 处理器的 [`Out` 槽位](publishing.md#named-slots)同时也是它在测试中的身份：`tb.out::<Marker>()` 恰好
-返回通过那个注入的发布者发出的消息，包含目的地和消息头，并且跨所有 Broker，断言接口与 `published`
+返回经由该注入发布者发出的消息，包含目的地和消息头，并且跨所有 Broker，断言接口与 `published`
 相同（`assert_called_once`、`with_raw`、`messages`；链上 `.decoded_as::<T>()` 即可用类型化的 `with`）。
 槽位视图只是多给出了归属信息：Broker 按通道记录的发布日志看到的是同一批消息。
 
@@ -94,19 +94,20 @@ ruststream = { version = "0.6", features = ["testing", "memory", "macros", "json
 --8<-- "tests/out_slots.rs:slot_capture"
 ```
 
-离开处理器任务之后才发生的发布（比如另一个 spawn 出来的任务、或者一个已结算的、拥有所有权的事务的
-缓冲区）不会归属到这个槽位上；这类发布请对 Broker 的发布日志做断言。
+有些发布会离开处理器任务（比如另一个 spawn 出来的任务、或者一个已结算的、拥有所有权的事务的
+缓冲区），它们不会归属到该槽位上；这类发布改为对 Broker 的发布日志做断言。
 
 ### 失败策略、panic 与关闭
 
-测试套件在应用真实的 `FailurePolicy` 之下运行分发，因此负面测试也是一等路径。在默认的
+测试套件在应用自身真实的 `FailurePolicy` 之下运行分发，因此负面测试也是一等路径。在默认的
 `panic = fail_fast` 之下，处理器 panic 会像在生产中一样把服务拆掉：
 
 ```rust
 --8<-- "tests/testing_harness.rs:panic"
 ```
 
-在 `on_failure(panic = skip)` 之下，panic 会被 ack 掉、消费继续进行，因此 `tb.assert_running()` 成立。
+在 `on_failure(panic = skip)` 之下，运行时会对 panic 执行 ack，消费继续进行，因此
+`tb.assert_running()` 成立。
 `run_result()` 返回真实的 [`run`](lifespan.md) 会返回的东西：健康时是 `Ok`，一旦某次 fail-fast 失败
 关闭了服务，就是一个错误。
 

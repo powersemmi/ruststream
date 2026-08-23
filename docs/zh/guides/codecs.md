@@ -8,7 +8,7 @@
 
 | 编解码器 | feature | 引入依赖 | 线上格式 |
 |---|---|---|---|
-| `JsonCodec` | `json` *(默认)* | serde_json | JSON |
+| `JsonCodec` | `json` *（默认）* | serde_json | JSON |
 | `MsgpackCodec` | `msgpack` | rmp-serde | MessagePack |
 | `CborCodec` | `cbor` | ciborium | CBOR |
 
@@ -62,8 +62,8 @@ use ruststream::codec::CborCodec;
 
 发布者遵循同样的规则：`TypedPublisher::new(policy)` 用默认编解码器编码回复，
 `TypedPublisher::with_codec(policy, codec)` 则显式指定一个。传入请求的解码遵循所在作用域（用
-`with_broker_codec` 设置的作用域编解码器，或路由器链上的 `Router::with_codec`，再否则是默认值），
-而回复用的编解码器随着 `.publisher(..)` 附上的那一层传递，因此请求和回复的格式可以自由地不同。
+`with_broker_codec` 设置的作用域编解码器，或路由器链上的 `Router::with_codec`，再否则是默认值）。
+回复用的编解码器则随着 `.publisher(..)` 附上的那一层传递，因此请求和回复的格式可以自由地不同。
 
 不存在按消息类型指定的编解码器（消息 trait 上没有关联的编解码器）：编解码器是挂载的属性，而不是类型
 的属性。

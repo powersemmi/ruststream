@@ -1,7 +1,7 @@
 # CLI
 
-`ruststream` 这个命令行工具用框架的子命令来驱动 `cargo`。生成新项目骨架是 `cargo generate` 的事
-（见下面的[生成骨架](#scaffolding)），因此这个工具本身不提供 `new` 命令。
+`ruststream` 命令行工具用框架的子命令来驱动 `cargo`。生成新项目骨架是 `cargo generate` 的事
+（见下面的[生成骨架](#scaffolding)），因此该工具本身不提供 `new` 命令。
 
 ```bash
 cargo install ruststream --features cli
@@ -37,12 +37,12 @@ use ruststream::runtime::{AppInfo, RustStream};
 ```
 
 由于分发逻辑就在生成出来的二进制程序里，`ruststream run` 和直接 `cargo run -- run` 启动服务的方式完全
-一样。`ruststream run` 只是一个便捷写法：找到那个 crate，再把命令转发给 `cargo`。
+一样。`ruststream run` 只是一个便捷写法：找到目标 crate，再把命令转发给 `cargo`。
 
 ## 生成骨架 { #scaffolding }
 
-新项目由 [`cargo generate`](https://github.com/cargo-generate/cargo-generate) 从模板生成，而不是由这个
-工具生成；具体命令以及它写出的项目见[快速上手](../getting-started/quickstart.md)。模板归它所接线的那个
-Broker 所属的 crate 所有：内存版的起步模板在本仓库里，每个 Broker 仓库则各自提供自己的模板，通常是每种
-传输方式或拓扑一个（例如 `nats` 与 `nats-js`）。为一个新的 Broker 编写模板，请遵循
+新项目由 [`cargo generate`](https://github.com/cargo-generate/cargo-generate) 从模板生成，而不是由该
+工具生成；具体命令以及它写出的项目见[快速上手](../getting-started/quickstart.md)。模板归接线对应
+Broker 的 crate 所有：内存版的起步模板在本仓库里，每个 Broker 仓库则各自提供自己的模板，通常是
+每种传输方式或拓扑一个（例如 `nats` 与 `nats-js`）。为新的 Broker 编写模板时，遵循
 [模板契约](../broker-authors/templates.md)。

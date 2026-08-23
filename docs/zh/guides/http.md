@@ -1,8 +1,8 @@
 # HTTP 框架
 
-RustStream 不是 HTTP 框架。当一个服务既要对外暴露同步的 HTTP API、又要消费消息时，HTTP 框架
+RustStream 不是 HTTP 框架。当一个服务既要对外暴露同步的 HTTP API，又要消费消息时，HTTP 框架
 （axum、actix-web，或者任何其他基于 tokio 的技术栈）就与 RustStream 应用并行跑在同一个进程、同一个
-运行时里。本页展示在 axum 上的接线方式，以及让这种组合变得可靠的那个模式：事务性 outbox。
+运行时里。本页展示在 axum 上的接线方式，以及让这种组合变得可靠的模式：事务性 outbox。
 
 完整的、可编译的示例位于
 [`examples/http_outbox.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/http_outbox.rs)：
@@ -19,10 +19,10 @@ cargo run --example http_outbox --features macros,memory,json
 拆除（即 fail-fast 失败）它就会 resolve，可以直接接进 axum 的 `with_graceful_shutdown`，让进程不会
 在消费方已经死掉的情况下继续提供 HTTP 服务；而 `shutdown()` 则是显式的优雅拆除，在 HTTP 服务器停下
 之后执行 `on_shutdown` 钩子、把仍在处理中的处理器排空（时长受[关闭超时](lifespan.md#shutdown-timeout)
-约束）、并关闭 Broker。发布者是通过一个绑定 token 拿到的：`.bindable()` 把 Broker 包起来，`bind(..)`
-在应用消费掉它之前铸出这个 token，随后 `running.publisher(token)` 会在 `start()` 已经连上 Broker
-之后把这个 token 配对成发布者，于是兄弟任务拿到的是一个活的发布者，绝不会碰上「尚未连接」的状态；
-而这个活形态就是一个普通的值，可以放心地克隆进 HTTP 框架所携带的任何状态里：
+约束）、并关闭 Broker。发布者通过一个绑定 token 拿到：`.bindable()` 把 Broker 包起来，`bind(..)`
+在应用消费掉它之前铸出该 token。随后 `running.publisher(token)` 会在 `start()` 连上 Broker 之后把
+该 token 配对成发布者，于是兄弟任务拿到的是一个活的发布者，绝不会碰上“尚未连接”的状态。活形态
+本身就是一个普通的值，可以放心地克隆进 HTTP 框架所携带的任何状态里：
 
 ```rust
 --8<-- "examples/http_outbox.rs:wiring"
@@ -32,7 +32,7 @@ cargo run --example http_outbox --features macros,memory,json
 
 `start()` 是就绪的关卡，它之后的一切由健康探针负责。`RunningApp::health()` 交出一个廉价、可克隆的
 `HealthProbe`，其背后是一个 watch channel：`state()` 是一份无锁的快照（`Running`、`ShuttingDown`、
-`Stopped`，或者携带 fail-fast 诊断信息的 `Failed { reason }`），而且这个探针比 `shutdown()` 活得
+`Stopped`，或者携带 fail-fast 诊断信息的 `Failed { reason }`），而且该探针比 `shutdown()` 活得
 更久，因此这条路由会一直用终态作答。这补上了单靠 `stopping()` 会留下的缺口：当消息侧 fail-fast、而
 某个兄弟任务仍让进程活着时，`/healthz` 会翻成 503，而不是为一个已死的消费方永远返回 200：
 
@@ -54,11 +54,11 @@ cargo run --example http_outbox --features macros,memory,json
 
 最简单的集成方式，是把发布者放进 HTTP 框架的状态里，直接在请求路径上发布，做法与
 [在处理器内部发布](publishing.md)完全一样：用编解码器编码，构建一个 `OutgoingMessage`，再 await
-这次发布。[指标指南里那个完整的服务器](metrics.md)就是这么驱动它的计数器的。
+这次发布。[指标指南里的完整服务器](metrics.md)就是这么驱动它的计数器的。
 
 代价是耦合：Broker 一旦故障，HTTP 请求就会失败或卡住；而在写完数据库、还没发布之前崩溃，就会丢掉
-这个事件（若顺序反过来，则会为一次已回滚的写入发布出事件）。如果这个端点还要写数据库，那这道缝隙
-就是一个只等某个发布窗口发作的一致性 bug。解决办法就是事务性 outbox。
+该事件（若顺序反过来，则会为一次已回滚的写入发布出事件）。如果该端点还要写数据库，那这道缝隙就是
+一个只等某个部署窗口发作的一致性 bug。解决办法就是事务性 outbox。
 
 ## 事务性 outbox
 
@@ -80,9 +80,9 @@ cargo run --example http_outbox --features macros,memory,json
 --8<-- "examples/http_outbox.rs:endpoint"
 ```
 
-一个后台任务把 outbox 排空到 Broker 里。只有在某一行的发布成功之后，这一行才会被删除，因此 Broker
-故障只是延迟事件，而不会丢失事件；如果在发布与删除之间崩溃，重启后这一行会被重新发布。所以消费方
-看到的是至少一次投递，这也是 outbox 一贯的契约，它们处理重复消息的方式，与处理来自 Broker 本身的
+一个后台任务把 outbox 排空到 Broker 里。只有在某一行的发布成功之后，中继才会删除这一行，因此 Broker
+故障只是延迟事件，而不会丢失事件；如果在发布与删除之间崩溃，重启后中继会重新发布这一行。因此消费方
+看到的是至少一次投递，这也是 outbox 一贯的契约：它们处理重复消息的方式，与处理来自 Broker 本身的
 重复投递完全相同：
 
 ```rust

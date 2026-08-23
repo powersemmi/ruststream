@@ -1,17 +1,17 @@
 # OpenTelemetry
 
 `otel` feature 为服务带来分布式链路追踪：一条链路从进来的消息一路流向它所产生的回复，因此单条链路
-就覆盖了完整的「消费-转换-生产」链条。它建立在类型化的发布路径上下文之上，也正是这条接缝让发布变换
+就覆盖了完整的“消费-转换-生产”链条。它建立在类型化的发布路径上下文之上，也正是这条接缝让发布变换
 能够读到产生某条回复的那次投递。
 
 ```toml
 ruststream = { version = "0.6", features = ["macros", "memory", "json", "otel"] }
 ```
 
-这个 feature 分成两半。传播那一半负责携带 [W3C Trace Context](https://www.w3.org/TR/trace-context/)
+该 feature 分成两半。传播那一半负责携带 [W3C Trace Context](https://www.w3.org/TR/trace-context/)
 并发出 `tracing` span；它与具体 Broker 无关，即使完全不配 exporter 也能工作。导出那一半随 feature
 一起提供：[OpenTelemetry SDK 与 OTLP exporter](#the-otel-feature-sdk-otlp-and-the-metrics-inventory)
-藏在 `Otel::builder().init()` 背后，它会装上全局的 provider，并把 span 桥接进去；你也可以自己
+藏在 `Otel::builder().init()` 背后，它会装上全局的 provider，并把 span 桥接进去；也可以自己
 组装一个订阅者（例如用
 [`tracing-opentelemetry`](https://docs.rs/tracing-opentelemetry)），就像[日志](logging.md)指南同样
 把订阅者留给你自己决定那样。
@@ -34,8 +34,8 @@ ruststream = { version = "0.6", features = ["macros", "memory", "json", "otel"] 
 ## 会传播什么
 
 带着 `00-<trace-id>-<span-id>-01` 的一次投递会延续那条链路：回复保持同一个 `trace-id`，并带上一个
-新的 `span-id`（消费方的那个 span），链路因此首尾相连。没有 `traceparent` 的投递则开启一条全新的、
-已采样的根链路。这些 span 在 `ruststream.consume` 这个 target 下发出，带有 `trace_id` / `span_id` /
+新的 `span-id`（消费方的 span），链路因此首尾相连。没有 `traceparent` 的投递则开启一条全新的、
+已采样的根链路。这些 span 在 `ruststream.consume` target 下发出，带有 `trace_id` / `span_id` /
 `subscription` 字段。
 
 ## 在处理器中读取链路追踪上下文
@@ -60,8 +60,8 @@ let traceparent = ctx.headers().get_str("traceparent");
 ## otel feature：SDK、OTLP 与指标清单 { #the-otel-feature-sdk-otlp-and-the-metrics-inventory }
 
 `Otel::builder().init()` 会构建 OTLP exporter，把 OpenTelemetry 的 tracer provider 和 meter
-provider 装成进程**全局**的，并把 `tracing` span 桥接进去，于是传播层已经开出来的那些 span 不必再
-接任何线就会被导出：
+provider 装成进程**全局**的，并把 `tracing` span 桥接进去，于是不必再接任何线，传播层已经开出来的
+那些 span 就会随之导出：
 
 ```rust
 --8<-- "examples/otel_export.rs:init"
@@ -77,7 +77,7 @@ provider 装成进程**全局**的，并把 `tracing` span 桥接进去，于是
 | `ruststream.messages.processed` | 计数器，带 `outcome` 属性 | 结算结果：`ack`、`nack_requeue`、`nack_drop`、`retry_after` |
 | `ruststream.messages.in_flight` | 上下计数器 | 正处于处理器内部的投递数（相对 `workers(n)` 的池饱和度） |
 | `ruststream.message.queue_time` | 直方图 | 从发布到处理器开始处理之间的滞后，取自打上的发布时间消息头 |
-| `ruststream.messages.decode_failures` | 计数器 | 载荷被编解码器拒绝的投递数 |
+| `ruststream.messages.decode_failures` | 计数器 | 编解码器拒绝载荷的投递数 |
 | `ruststream.messages.panics` | 计数器 | 发生 panic 的处理器调用次数 |
 | `messaging.client.sent.messages` | 计数器，失败时带 `error.type` | 发布次数 |
 | `messaging.client.operation.duration` | 直方图 | 发布操作本身 |
@@ -104,4 +104,4 @@ Prometheus 的后端，各个面板就会按处理器逐一亮起来；它的 RE
 在 `main` 的末尾、应用优雅关闭之后调用 `otel.shutdown()`，把最后的 span 和数据点刷出去。若要把
 span 桥接层组合进你自己的订阅者栈（例如配合 `logging` feature 的 fmt 层），就用
 `.tracing_bridge(false)` 构建，并自行装上桥接层；`.messaging_system("kafka")` 会打上 semconv 的
-system 属性，这个属性核心无法在与 Broker 无关的前提下推导出来。
+system 属性，而该属性核心无法在与 Broker 无关的前提下推导出来。

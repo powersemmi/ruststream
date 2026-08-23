@@ -1,6 +1,6 @@
 # 指标
 
-`metrics` feature 会为消费和发布的消息收集 Prometheus 指标。它直接构建在 `prometheus` 这个 crate 之上，
+`metrics` feature 会为消费和发布的消息收集 Prometheus 指标。它直接构建在 `prometheus` crate 之上，
 并以 Prometheus 的 exposition 格式暴露数据。
 
 ```toml
@@ -15,7 +15,7 @@ ruststream = { version = "0.6", features = ["macros", "memory", "metrics"] }
 --8<-- "examples/metrics_http.rs:wiring"
 ```
 
-`consume_layer` 记录每一条被处理的消息，`publish_layer` 记录每一条被发布的消息。如果想收集到已有的
+`consume_layer` 记录每一条处理过的消息，`publish_layer` 记录每一条发布出去的消息。如果想收集到已有的
 registry 而不是新建一个，用 `Metrics::with_registry(registry)`。
 
 ## 产生的指标
@@ -43,7 +43,7 @@ let body = metrics.export()?;
 
 ## 一个完整的服务器
 
-[`metrics_http`](https://github.com/powersemmi/ruststream/blob/main/examples/metrics_http.rs) 这个示例用
+[`metrics_http`](https://github.com/powersemmi/ruststream/blob/main/examples/metrics_http.rs) 示例用
 [axum](https://github.com/tokio-rs/axum) 提供 `/metrics`，并通过一个 `/orders` 路由发布订单，于是一个
 HTTP 客户端就能驱动这些计数器。用
 `cargo run --example metrics_http --features macros,memory,metrics` 运行它，然后：
