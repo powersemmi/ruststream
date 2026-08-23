@@ -10,8 +10,8 @@ The application state is a single typed value produced by the `on_startup` hook:
 returns becomes the state and fixes the app's state type. Any handler or middleware borrows it
 through `ctx.state()`. The full state story - the compile-time mount rules, `State<T>` injection,
 and the per-delivery context for message-scoped data - lives in
-[Context and state](context.md#application-level-typed-state); this page covers the hooks that
-produce and tear the state down.
+[Context and state](context.md#application-level-typed-state). The hooks that produce the state and
+tear it down are below.
 
 ## Lifecycle hooks
 

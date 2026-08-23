@@ -1,8 +1,8 @@
 # RustStream
 
-**RustStream** 是一个面向 Rust 的异步消息框架：核心是一组与具体 Broker 无关的 trait 和一个路由器
-运行时，此外还提供编解码器、AsyncAPI 生成、Prometheus 指标，以及面向 Broker 作者的 conformance
-校验套件。
+**RustStream** 让 Rust 服务订阅事件流并向其发布消息，而不必把服务绑定在某一个消息 Broker 上。核心
+是一组 trait 和一个路由器运行时；随之一起提供的还有编解码器、AsyncAPI 生成、Prometheus 指标，以及
+面向 Broker 作者的 conformance 校验套件。
 
 框架的形态由两条架构承诺决定：
 

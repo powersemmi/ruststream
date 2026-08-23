@@ -32,10 +32,9 @@ Handlers that need an attachment - a reply publisher, an
 as on the scope, except that the registration commits
 through an explicit terminal: `.publisher(policy)` names the wiring, `.mount()` takes the broker's
 own default publish policy, and `.out(marker, policy)` binds one named slot before `.mount()`. A
-consuming builder cannot commit when it goes out of scope the way the scope's does, since dropping
-it cannot hand back the router the registration grew into - so a forgotten terminal never becomes a
-router, and the chain fails to compile. The policies stay pure declaration, so the router still
-needs no broker:
+consuming builder cannot commit on drop the way the scope's does, since dropping it cannot hand
+back the router the registration grew into. So a forgotten terminal never becomes a router, and the
+chain fails to compile. The policies stay pure declaration, so the router still needs no broker:
 
 ```rust title="routes.rs"
 --8<-- "examples/tutorial/routes.rs:routes"

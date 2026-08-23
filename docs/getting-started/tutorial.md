@@ -1,8 +1,8 @@
 # Tutorial: build your first service
 
-This tutorial builds an orders service from scratch, explaining each piece. It uses the in-memory
-broker so there is nothing external to run; swapping in a real broker is a one-line change covered at
-the end.
+By the end of this page you have a running orders service: a message type, a handler, a reply, and a
+router that collects them. It runs on the in-memory broker, so there is nothing external to start.
+Swapping in a real broker is a one-line change, covered at the end.
 
 ## 1. Create the crate
 

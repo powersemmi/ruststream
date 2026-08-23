@@ -1,6 +1,7 @@
 # Testing
 
-RustStream services are tested at two levels:
+Your real handlers, middleware and codecs are testable without a broker server. A service is tested
+at two levels:
 
 1. **In-process unit tests** drive your real handlers, middleware, and codecs with the
    [`TestApp`](#unit-testing-a-service-with-testapp) harness - no server, no docker, no network
@@ -23,10 +24,10 @@ RustStream services are tested at two levels:
 
 ## Unit-testing a service with `TestApp`
 
-`TestApp` takes a built `RustStream` application, connects its brokers (I/O-free for the
-in-process bus), mounts the handlers, and records every delivery. You publish input, and the publish drives the whole
-reaction (the handler, its downstream publishes, any cross-broker cascade) to a standstill before it
-returns - then you assert.
+`TestApp` takes a built `RustStream` application, connects its brokers (I/O-free for the in-process
+bus), mounts the handlers, and records every delivery. You publish input, and the publish drives the
+whole reaction to a standstill before it returns - the handler, its downstream publishes, any
+cross-broker cascade. Then you assert.
 
 The handler under test (in a real service it lives in your handler module and the test imports it):
 
@@ -159,9 +160,8 @@ docker run -d -p 4222:4222 nats:latest -js
 NATS_TEST_URL=nats://127.0.0.1:4222 cargo test --test integration_nats
 ```
 
-This mirrors faststream's `with_real=True` split: handler logic on the in-memory path, broker
-semantics on the real one. Keep both suites over the same handler modules so the production code has
-a single source of truth.
+The split is deliberate: handler logic on the in-process path, broker semantics on the real one.
+Keep both suites over the same handler modules so the production code has a single source of truth.
 
 !!! note "Writing a broker crate?"
     The machinery that makes `TestApp` work against a broker - the in-process transport and the

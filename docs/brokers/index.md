@@ -1,10 +1,8 @@
 # Brokers
 
-A broker connects RustStream to a message transport. The framework ships an in-memory broker for
-development and tests; production brokers are separate crates you add as a dependency.
-
-Handlers, routers, codecs, and middleware are broker-agnostic, so moving between brokers is a
-one-line change at `with_broker`.
+Handlers, routers, codecs, and middleware are broker-agnostic, so moving a service between brokers
+is a one-line change at `with_broker`. The framework ships an in-memory broker for development and
+tests; production brokers are separate crates you add as a dependency.
 
 Each broker crate has its own documentation site, linked in the Docs column and from the
 **Brokers** menu.
