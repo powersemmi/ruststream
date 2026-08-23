@@ -8,6 +8,7 @@
 #![cfg(feature = "macros")]
 
 use std::convert::Infallible;
+use std::future::ready;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -285,8 +286,8 @@ impl Broker for FailingBroker {
     type Error = io::Error;
     type Connected = NeverConnected;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Err(io::Error::other("dial refused"))
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Err(io::Error::other("dial refused")))
     }
 }
 
@@ -294,6 +295,9 @@ impl ConnectedBroker for NeverConnected {
     type Error = io::Error;
     type Closed = ();
 
+    // The connected form is uninhabited, so the body diverges: there is no value a `ready(..)`
+    // rewrite could carry, only the divergence wrapped in one more layer.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn shutdown(self) -> Result<(), Self::Error> {
         match self {}
     }

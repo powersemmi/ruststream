@@ -1,3 +1,4 @@
+use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -369,14 +370,14 @@ impl IncomingMessage for UnsettleableMessage {
         EMPTY.get_or_init(Headers::new)
     }
 
-    async fn ack(self) -> Result<(), AckError> {
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Err(AckError::Timeout)
+        ready(Err(AckError::Timeout))
     }
 
-    async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Err(AckError::Timeout)
+        ready(Err(AckError::Timeout))
     }
 }
 
@@ -550,12 +551,16 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
 struct Frames(Arc<Mutex<Vec<Vec<u8>>>>);
 
 impl RawSliceHandler for Frames {
-    async fn handle_slice(&self, batch: &[&[u8]], _ctx: &mut Context<'_>) -> BatchResult {
+    fn handle_slice(
+        &self,
+        batch: &[&[u8]],
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = BatchResult> {
         self.0
             .lock()
             .unwrap()
             .extend(batch.iter().map(|frame| frame.to_vec()));
-        BatchResult::Uniform(HandlerResult::Ack)
+        ready(BatchResult::Uniform(HandlerResult::Ack))
     }
 }
 

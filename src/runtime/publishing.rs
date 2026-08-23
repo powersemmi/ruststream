@@ -310,6 +310,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::future::ready;
+
     use super::{PublishingCall, PublishingDef, publishing_metadata};
     use crate::Headers;
     use crate::Name;
@@ -342,13 +344,13 @@ mod tests {
 
     // Ignores the app state, so it is generic over it (mounts on any app).
     impl<S: Send + Sync> PublishingCall<S> for ManualPub {
-        async fn call(
+        fn call(
             &self,
             input: &u32,
             (): &(),
             _ctx: &mut Context<'_, (), S>,
-        ) -> Result<u32, HandlerResult> {
-            Ok(*input)
+        ) -> impl Future<Output = Result<u32, HandlerResult>> {
+            ready(Ok(*input))
         }
     }
 
@@ -379,6 +381,7 @@ mod tests {
     #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
     mod diagnostics {
         use std::collections::HashMap;
+        use std::future::ready;
         use std::sync::{Arc, Mutex};
 
         use futures::StreamExt;
@@ -465,8 +468,11 @@ mod tests {
         impl Publisher for Rejecting {
             type Error = MemoryError;
 
-            async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-                Err(MemoryError::ShutDown)
+            fn publish(
+                &self,
+                _msg: OutgoingMessage<'_>,
+            ) -> impl Future<Output = Result<(), Self::Error>> {
+                ready(Err(MemoryError::ShutDown))
             }
         }
 

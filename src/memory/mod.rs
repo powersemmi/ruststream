@@ -284,6 +284,8 @@ impl fmt::Debug for MemoryBroker {
     }
 }
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl Broker for MemoryBroker {
     type Error = MemoryError;
     type Connected = ConnectedMemoryBroker;
@@ -343,6 +345,8 @@ impl ConnectedMemoryBroker {
     }
 }
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl ConnectedBroker for ConnectedMemoryBroker {
     type Error = MemoryError;
     type Closed = ClosedMemoryBroker;
@@ -393,6 +397,8 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryPublish;
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
     type Live = MemoryPublisher;
 
@@ -424,6 +430,8 @@ impl DefaultPublish for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryRequest;
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
     type Live = MemoryRequester;
 
@@ -495,6 +503,8 @@ impl crate::testing::TestableBroker for ConnectedMemoryBroker {
 crate::register_testable_broker!(ConnectedMemoryBroker);
 // --8<-- [end:testable]
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl Subscribe for ConnectedMemoryBroker {
     type Subscriber = MemorySubscriber;
 
@@ -697,6 +707,8 @@ pub enum MemoryError {
     ShutDown,
 }
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl Publisher for MemoryPublisher {
     type Error = MemoryError;
 
@@ -777,6 +789,8 @@ impl MemoryMessage {
     }
 }
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl IncomingMessage for MemoryMessage {
     fn payload(&self) -> &[u8] {
         self.delivery

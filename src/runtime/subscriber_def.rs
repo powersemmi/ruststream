@@ -106,6 +106,8 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
 
 #[cfg(test)]
 mod tests {
+    use std::future::ready;
+
     use super::{SubscriberDef, subscriber_metadata};
     use crate::Headers;
     use crate::Name;
@@ -117,8 +119,8 @@ mod tests {
     struct Noop;
 
     impl Handler<u32> for Noop {
-        async fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> Settle {
-            HandlerResult::Ack.into()
+        fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> {
+            ready(HandlerResult::Ack.into())
         }
     }
 

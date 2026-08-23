@@ -1,6 +1,8 @@
 //! Integration test for `AsyncAPI` document generation.
 #![cfg(all(feature = "asyncapi", feature = "memory"))]
 
+use std::future::ready;
+
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
@@ -141,8 +143,8 @@ impl ruststream::Broker for DescribingBroker {
     type Error = std::convert::Infallible;
     type Connected = ConnectedDescribingBroker;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Ok(ConnectedDescribingBroker)
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Ok(ConnectedDescribingBroker))
     }
 }
 
@@ -152,8 +154,8 @@ impl ruststream::ConnectedBroker for ConnectedDescribingBroker {
     type Error = std::convert::Infallible;
     type Closed = ();
 
-    async fn shutdown(self) -> Result<(), Self::Error> {
-        Ok(())
+    fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
+        ready(Ok(()))
     }
 }
 

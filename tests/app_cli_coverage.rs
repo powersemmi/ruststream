@@ -13,7 +13,7 @@
     feature = "logging"
 ))]
 
-use std::future::pending;
+use std::future::{pending, ready};
 use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -283,11 +283,11 @@ impl SubscriptionSource<ConnectedMemoryBroker> for RefusedSubscription {
         "cov.refused"
     }
 
-    async fn subscribe(
+    fn subscribe(
         self,
         _connected: &ConnectedMemoryBroker,
-    ) -> Result<Self::Subscriber, MemoryError> {
-        Err(MemoryError::ShutDown)
+    ) -> impl Future<Output = Result<Self::Subscriber, MemoryError>> {
+        ready(Err(MemoryError::ShutDown))
     }
 }
 
@@ -341,8 +341,8 @@ impl Broker for StubbornBroker {
     type Error = io::Error;
     type Connected = ConnectedStubborn;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Ok(ConnectedStubborn)
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Ok(ConnectedStubborn))
     }
 }
 
@@ -350,8 +350,8 @@ impl ConnectedBroker for ConnectedStubborn {
     type Error = io::Error;
     type Closed = ();
 
-    async fn shutdown(self) -> Result<(), Self::Error> {
-        Err(io::Error::other("teardown refused"))
+    fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
+        ready(Err(io::Error::other("teardown refused")))
     }
 }
 
@@ -373,8 +373,8 @@ impl Broker for UnreachableBroker {
     type Error = io::Error;
     type Connected = NeverConnected;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Err(io::Error::other("dial refused"))
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Err(io::Error::other("dial refused")))
     }
 }
 
@@ -382,6 +382,9 @@ impl ConnectedBroker for NeverConnected {
     type Error = io::Error;
     type Closed = ();
 
+    // The connected form is uninhabited, so the body diverges: there is no value a `ready(..)`
+    // rewrite could carry, only the divergence wrapped in one more layer.
+    #[allow(clippy::unused_async_trait_impl)]
     async fn shutdown(self) -> Result<(), Self::Error> {
         match self {}
     }

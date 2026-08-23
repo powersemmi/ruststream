@@ -11,7 +11,7 @@
 //! new injected parameter kind is one `FromStartup` impl, not a new definition form.
 
 use std::fmt;
-use std::future::Future;
+use std::future::{Future, ready};
 
 use tracing::warn;
 
@@ -177,23 +177,23 @@ where
     Sub: Seekable + Sync,
     Extra: Send,
 {
-    async fn resolve(
+    fn resolve(
         _extra: Extra,
         _connected: &Connected<B>,
         subscriber: &Sub,
-    ) -> Result<Self, PairError> {
-        Ok(Self(subscriber.seeker()))
+    ) -> impl Future<Output = Result<Self, PairError>> {
+        ready(Ok(Self(subscriber.seeker())))
     }
 }
 
 /// A definition with no injected parameters still resolves: to nothing.
 impl<B: Broker, Sub: Sync, Extra: Send> FromStartup<B, Sub, Extra> for () {
-    async fn resolve(
+    fn resolve(
         _extra: Extra,
         _connected: &Connected<B>,
         _subscriber: &Sub,
-    ) -> Result<Self, PairError> {
-        Ok(())
+    ) -> impl Future<Output = Result<Self, PairError>> {
+        ready(Ok(()))
     }
 }
 

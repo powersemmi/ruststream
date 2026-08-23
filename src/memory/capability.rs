@@ -113,6 +113,8 @@ impl fmt::Debug for MemoryRequester {
     }
 }
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl Publisher for MemoryRequester {
     type Error = RequestError;
 
@@ -249,6 +251,8 @@ impl BatchSubscriber for MemorySubscriber {
 /// [`MemoryError::TransactionBusy`] (leaving the open transaction untouched), and `commit` /
 /// `abort` without an open transaction return [`MemoryError::NoTransaction`]. Clones of the
 /// handle do not share the transaction (see [`MemoryPublisher`]).
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl TransactionalPublisher for MemoryPublisher {
     async fn begin_transaction(&self) -> Result<(), MemoryError> {
         let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
@@ -338,6 +342,8 @@ impl Drop for MemoryTransaction {
     }
 }
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl Transaction for MemoryTransaction {
     type Error = MemoryError;
 
@@ -371,6 +377,8 @@ impl Transaction for MemoryTransaction {
 /// Owned transactions: every [`transaction`](OwnedTransactions::transaction) call opens an
 /// independent buffer-owning `MemoryTransaction`, so any number can be open concurrently on one
 /// handle, next to (and unaffected by) the handle-level [`TransactionalPublisher`] transaction.
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl OwnedTransactions for MemoryPublisher {
     type Transaction = MemoryTransaction;
 
@@ -521,6 +529,8 @@ impl Seekable for MemorySubscriber {
     }
 }
 
+// Reference implementation: keeps the contract's `async fn` shape, the one a real broker needs.
+#[allow(clippy::unused_async_trait_impl)]
 impl Seeker for MemorySeeker {
     type Position = MemoryPosition;
     type Error = MemoryError;

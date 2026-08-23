@@ -323,6 +323,8 @@ mod tests {
 
     #[tokio::test]
     async fn incoming_message_defaults_apply_without_override() {
+        use std::future::ready;
+
         use crate::AckError;
 
         // A minimal IncomingMessage that overrides nothing optional, pinning the trait defaults
@@ -341,12 +343,12 @@ mod tests {
                 &self.headers
             }
 
-            async fn ack(self) -> Result<(), AckError> {
-                Ok(())
+            fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+                ready(Ok(()))
             }
 
-            async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-                Ok(())
+            fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+                ready(Ok(()))
             }
         }
 

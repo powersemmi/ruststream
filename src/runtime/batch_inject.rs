@@ -154,6 +154,7 @@ where
 
 #[cfg(all(test, feature = "memory", feature = "json"))]
 mod tests {
+    use std::future::ready;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -197,18 +198,18 @@ mod tests {
 
     // Ignores the app state, so it is generic over it (mounts on any app).
     impl<S: Send + Sync> BatchInjectCall<S> for Scale {
-        async fn call(
+        fn call(
             &self,
             batch: &[u32],
             factor: &u32,
             _ctx: &mut Context<'_, (), S>,
-        ) -> BatchResult {
+        ) -> impl Future<Output = BatchResult> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.seen
                 .lock()
                 .unwrap()
                 .extend(batch.iter().map(|n| n * factor));
-            BatchResult::Uniform(HandlerResult::Ack)
+            ready(BatchResult::Uniform(HandlerResult::Ack))
         }
     }
 

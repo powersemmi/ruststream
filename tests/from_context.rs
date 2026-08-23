@@ -3,6 +3,7 @@
 //! short-circuits the delivery before the body runs.
 
 use std::convert::Infallible;
+use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -28,8 +29,10 @@ struct Hits(Arc<AtomicU32>);
 
 impl<C: Send> FromContext<C, AppState> for Hits {
     type Rejection = HandlerResult;
-    async fn from_context(ctx: &mut Context<'_, C, AppState>) -> Result<Self, HandlerResult> {
-        Ok(Self(ctx.state().hits.clone()))
+    fn from_context(
+        ctx: &mut Context<'_, C, AppState>,
+    ) -> impl Future<Output = Result<Self, HandlerResult>> {
+        ready(Ok(Self(ctx.state().hits.clone())))
     }
 }
 
@@ -76,8 +79,10 @@ struct Deny;
 
 impl<C: Send> FromContext<C, GuardState> for Deny {
     type Rejection = HandlerResult;
-    async fn from_context(_ctx: &mut Context<'_, C, GuardState>) -> Result<Self, HandlerResult> {
-        Err(HandlerResult::drop())
+    fn from_context(
+        _ctx: &mut Context<'_, C, GuardState>,
+    ) -> impl Future<Output = Result<Self, HandlerResult>> {
+        ready(Err(HandlerResult::drop()))
     }
 }
 
