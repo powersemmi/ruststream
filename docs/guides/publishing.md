@@ -142,8 +142,9 @@ The declaration decides which destination position the call site has:
 - **A fixed name** resolves the destination, so there is no `to(..)` to write - and no way to
   send that type somewhere the document does not mention.
 - **A name template** (`"orders.{tenant}.placed"`) opens `to()`, which returns a builder with one
-  setter per placeholder. `publish()` appears only once every placeholder is bound, and an
-  unbound one rides in the builder's type, so the compile error names the segment. The address is
+  setter per placeholder. `publish()` compiles only once every placeholder is bound, and an
+  unbound one rides in the builder's type, so the compile error states that the address is
+  unfinished and names the segment that was forgotten. The address is
   rendered per publish, which is what computing a destination at run time costs; a fixed name
   keeps publishing from a `&'static str`.
 - **No `name` at all** means the call site names it: `.to("orders.archived")`, taking a `&str` or

@@ -1,25 +1,61 @@
-error[E0599]: no method named `publish` found for struct `To<ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>, String, MissingSegment<Region>>` in the current scope
+error[E0277]: this address still has an unbound placeholder
   --> tests/ui/publish_unbound_segment.rs:29:10
    |
-11 |   #[derive(Outgoing, Serialize)]
-   |            -------- method `publish` not found for this struct
-...
+29 |         .publish()
+   |          ^^^^^^^ the trait `BoundSegment` is not implemented for `MissingSegment<Region>`
+   |
+   = note: a name template opens one setter per placeholder, and the publish appears once every one of them is bound
+help: the trait `BoundSegment` is implemented for `String`
+  --> src/runtime/publish/builder.rs
+   |
+   | impl BoundSegment for String {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `To::<Cont, S0, S1>::publish`
+  --> tests/ui/publish_unbound_segment.rs:11:10
+   |
+11 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ required by this bound in `To::<Cont, S0, S1>::publish`
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this address still has an unbound placeholder
+  --> tests/ui/publish_unbound_segment.rs:25:13
+   |
 25 |       let _ = out
-   |  _____________-
+   |  _____________^
 26 | |         .message(&Placed { id: order.id })
 27 | |         .to()
 28 | |         .tenant("acme")
 29 | |         .publish()
-   | |         -^^^^^^^ method not found in `To<ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>, String, MissingSegment<Region>>`
-   | |_________|
+   | |__________________^ the trait `BoundSegment` is not implemented for `MissingSegment<Region>`
    |
+   = note: a name template opens one setter per placeholder, and the publish appears once every one of them is bound
+help: the trait `BoundSegment` is implemented for `String`
+  --> src/runtime/publish/builder.rs
    |
-   = note: the method was found for `To<Cont, String, String>`
-   = help: items from traits can only be used if the trait is implemented and in scope
-   = note: the following traits define an item `publish`, perhaps you need to implement one of them:
-           candidate #1: `Publisher`
-           candidate #2: `Transaction`
-help: one of the expressions' fields has a method of the same name
+   | impl BoundSegment for String {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `To::<Cont, S0, S1>::publish`
+  --> tests/ui/publish_unbound_segment.rs:11:10
    |
-29 |         .cont.publish()
-   |          +++++
+11 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ required by this bound in `To::<Cont, S0, S1>::publish`
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: this address still has an unbound placeholder
+  --> tests/ui/publish_unbound_segment.rs:30:10
+   |
+30 |         .await;
+   |          ^^^^^ the trait `BoundSegment` is not implemented for `MissingSegment<Region>`
+   |
+   = note: a name template opens one setter per placeholder, and the publish appears once every one of them is bound
+help: the trait `BoundSegment` is implemented for `String`
+  --> src/runtime/publish/builder.rs
+   |
+   | impl BoundSegment for String {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `To::<Cont, S0, S1>::publish`
+  --> tests/ui/publish_unbound_segment.rs:11:10
+   |
+11 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ required by this bound in `To::<Cont, S0, S1>::publish`
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)

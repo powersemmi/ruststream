@@ -106,9 +106,9 @@ mod transaction;
 mod transform;
 
 pub use builder::{
-    HeadersUnset, MapHeaders, MessageBody, MissingSegment, Publish, PublishAt, PublishError,
-    PublishHeaders, RawBody, ResolvedName, SatisfiesContract, SuppliedName, TemplateAddress,
-    TypedHeaders,
+    BoundSegment, HeadersUnset, MapHeaders, MessageBody, MissingSegment, Publish, PublishAt,
+    PublishError, PublishHeaders, RawBody, ResolvedName, SatisfiesContract, SuppliedName,
+    TemplateAddress, TypedHeaders,
 };
 pub(crate) use builder::{message_of, raw_of};
 pub use ext::PublishExt;
