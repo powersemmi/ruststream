@@ -1,0 +1,92 @@
+# 编解码器与序列化
+
+编解码器负责把线上的字节变成带类型的载荷，再变回去。它与 Broker 是彼此独立的接缝：消费一侧的管线是
+`bytes -> Codec -> typed payload -> handler`，发布一侧则反向走一遍。编解码器是编译期的类型，所以解码
+不涉及任何动态分发。
+
+## 内置的编解码器
+
+| 编解码器 | feature | 引入依赖 | 线上格式 |
+|---|---|---|---|
+| `JsonCodec` | `json` *（默认）* | serde_json | JSON |
+| `MsgpackCodec` | `msgpack` | rmp-serde | MessagePack |
+| `CborCodec` | `cbor` | ciborium | CBOR |
+
+各个编解码器 feature 严格可加，需要几个就开几个。消息类型只需要 derive `serde::Deserialize`
+（回复还需要 `Serialize`）。
+
+## 默认编解码器 { #the-default-codec }
+
+`DefaultCodec` 是一个由 feature 选出的别名：启用了 `json` 就是它，否则是 `cbor`，再否则是
+`msgpack`。当没有任何地方指定编解码器时，`include(def)` 和 `TypedPublisher::new(publisher)` 用的
+就是它，这也是这两者都不需要编解码器参数的原因。它只在至少启用一个编解码器 feature 时才存在；一个
+编解码器 feature 都不开时，就只剩下需要显式指定编解码器的那些方法。
+
+## 解码用的编解码器从哪里来 { #where-the-decode-codec-comes-from }
+
+解码用的编解码器在编译期就已固定。`include` 不接收编解码器参数；它会从你设置过的最具体的层级解析出
+一个，由窄到宽依次是：
+
+### 按处理器 { #per-handler }
+
+覆盖单次挂载：
+
+=== "Router"
+
+    <!-- inline-rust: standalone Router-builder fragment; the compiled form is the with_broker tab below (codecs.rs:per_handler), which mounts the same chain via include_router -->
+    ```rust
+    router.with_codec(CborCodec).include(handle);
+    ```
+
+=== "with_broker"
+
+    ```rust
+    --8<-- "examples/codecs.rs:per_handler"
+    ```
+
+### 按作用域
+
+为一个 `with_broker` 作用域内的所有处理器设置同一个编解码器：
+
+```rust
+use ruststream::codec::CborCodec;
+
+--8<-- "examples/codecs.rs:scope"
+```
+
+### 默认
+
+以上都没有指定编解码器时，`include` 使用 [`DefaultCodec`](#the-default-codec)。
+
+## 发布一侧 { #the-publish-side }
+
+发布者遵循同样的规则：`TypedPublisher::new(policy)` 用默认编解码器编码回复，
+`TypedPublisher::with_codec(policy, codec)` 则显式指定一个。传入请求的解码遵循所在作用域（用
+`with_broker_codec` 设置的作用域编解码器，或路由器链上的 `Router::with_codec`，再否则是默认值）。
+回复用的编解码器则随着 `.publisher(..)` 附上的那一层传递，因此请求和回复的格式可以自由地不同。
+
+不存在按消息类型指定的编解码器（消息 trait 上没有关联的编解码器）：编解码器是挂载的属性，而不是类型
+的属性。
+
+## 解码失败 { #decode-failures }
+
+解码失败时，由失败策略决定这条消息的去向；默认是丢弃（不重新入队的 nack）。该策略按订阅者设置，用
+`on_failure(decode = ..)` 子句：
+
+```rust
+use ruststream::subscriber;
+
+--8<-- "examples/codecs.rs:decode_failure"
+```
+
+手写处理器时，`typed(codec, handler)` 返回的 `Typed` 包装器通过 `on_decode_failure` 接收同样的策略。
+
+各个策略取值（`Drop`、`Retry`、`RetryAfter(..)`、`Skip`、`FailFast`）、默认值以及重试方面的注意事项，
+参见[失败策略](failure-policy.md)。上面这些编解码器示例出自
+[`examples/codecs.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/codecs.rs)。
+
+## 自定义编解码器
+
+编解码器就是任何实现了 `Codec` trait 的类型，因此你可以提供自己的实现（比如带 schema 注册中心的信封、
+一层加密包装），并把它传到任何接受内置编解码器的地方：`with_broker_codec`、`Router::with_codec` 或者
+`TypedPublisher::with_codec`。
