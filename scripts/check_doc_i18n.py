@@ -42,16 +42,16 @@ LINK_TARGET = re.compile(r"\]\([^)]*\)")
 
 
 def english_pages() -> list[Path]:
-    """Every original page: a markdown file whose name carries no locale suffix."""
+    """Every original page: a markdown file outside the locale trees."""
     return sorted(
         path
         for path in DOCS.rglob("*.md")
-        if path.name.split(".")[-2] not in LOCALES or path.name.count(".") < 2
+        if path.relative_to(DOCS).parts[0] not in LOCALES
     )
 
 
 def translation_of(page: Path, locale: str) -> Path:
-    return page.with_name(f"{page.name[: -len('.md')]}.{locale}.md")
+    return DOCS / locale / page.relative_to(DOCS)
 
 
 def includes(text: str) -> list[str]:

@@ -2,8 +2,8 @@
 
 English is the source of truth, and that has to be written on the page rather than assumed:
 a reader who lands on a translated page has no way to tell whether it is current. Every page
-whose source file carries a locale suffix therefore opens with a banner naming English as
-normative and linking to the original; the Chinese pages add that the translation was
+whose source file lives under a locale directory therefore opens with a banner naming English
+as normative and linking to the original; the Chinese pages add that the translation was
 produced by a model, which is a statement about where the text came from, not a disclaimer
 about its quality.
 

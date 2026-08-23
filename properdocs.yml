@@ -72,12 +72,18 @@ plugins:
   - redirects:
       redirect_maps:
         guides/templates.md: broker-authors/templates.md
-  # Translations live next to their original as `<page>.<locale>.md`, so a page and its
-  # translations show up in one directory listing and one diff. English is normative; a page
-  # with no translation yet falls back to the English text inside the localized site rather
-  # than disappearing from it, which is what lets translations land page by page.
+  # Each translation is a tree of its own under `docs/<locale>/`, mirroring the English paths.
+  # English stays at the docs root: a file outside a locale folder is the default language.
+  # The alternative, a `<page>.<locale>.md` suffix beside each original, put a page and its
+  # translations in one listing, but that was only worth having while nothing else watched for
+  # drift; the parity gate does that now, and the suffix form multiplies every directory by the
+  # number of languages.
+  #
+  # English is normative; a page with no translation yet falls back to the English text inside
+  # the localized site rather than disappearing from it, which is what lets translations land
+  # page by page.
   - i18n:
-      docs_structure: suffix
+      docs_structure: folder
       fallback_to_default: true
       reconfigure_material: true
       reconfigure_search: true

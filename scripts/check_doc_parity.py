@@ -34,7 +34,10 @@ from pathlib import Path
 LOCALES = ("ru", "zh")
 
 DOCS_PREFIX = "docs/"
-# Statuses that put the rule in force: the page existed and its content moved.
+# Statuses that put the rule in force: the page existed and its content moved. A rename that
+# changed nothing (`R100`) is excluded, because relocating a file says nothing about what it
+# says: moving the whole tree from one layout to another would otherwise demand an edit to
+# every page in every language to prove that none of them changed.
 TRIGGERING = ("M", "D", "R")
 
 REPO = Path(__file__).resolve().parent.parent
@@ -48,14 +51,13 @@ def git(*args: str) -> str:
 
 def family(path: str) -> tuple[str, dict[str, str]]:
     """The English original of a page and every locale counterpart it could have."""
-    parts = path.split("/")
-    name = parts[-1]
-    fields = name.split(".")
-    locale = fields[-2] if len(fields) > 2 and fields[-2] in LOCALES else None
-    stem = name[: -len(f".{locale}.md")] if locale else name[: -len(".md")]
-    directory = "/".join(parts[:-1])
-    english = f"{directory}/{stem}.md"
-    return english, {loc: f"{directory}/{stem}.{loc}.md" for loc in LOCALES}
+    relative = path[len(DOCS_PREFIX) :]
+    head, _, rest = relative.partition("/")
+    # A path that starts with a locale directory is a translation; anything else is the original.
+    if head in LOCALES:
+        relative = rest
+    english = f"{DOCS_PREFIX}{relative}"
+    return english, {loc: f"{DOCS_PREFIX}{loc}/{relative}" for loc in LOCALES}
 
 
 def changed_pages(base: str) -> dict[str, str]:
@@ -65,7 +67,10 @@ def changed_pages(base: str) -> dict[str, str]:
     pages: dict[str, str] = {}
     for line in raw.splitlines():
         fields = line.split("\t")
-        status = fields[0][0]
+        code = fields[0]
+        status = code[0]
+        if status == "R" and code[1:] == "100":
+            continue
         # A rename reports the old path and the new one; both sides are part of the diff.
         for path in fields[1:]:
             if path.startswith(DOCS_PREFIX) and path.endswith(".md"):
