@@ -12,6 +12,7 @@ use super::*;
 #[cfg(feature = "json")]
 mod fixtures {
     use std::collections::HashMap;
+    use std::future::ready;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use thiserror::Error;
@@ -54,24 +55,27 @@ mod fixtures {
     impl Publisher for Rigged {
         type Error = RiggedError;
 
-        async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        fn publish(
+            &self,
+            _msg: OutgoingMessage<'_>,
+        ) -> impl Future<Output = Result<(), Self::Error>> {
             self.published.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            ready(Ok(()))
         }
     }
 
     impl TransactionalPublisher for Rigged {
-        async fn begin_transaction(&self) -> Result<(), Self::Error> {
-            Self::step(self.fail_begin)
+        fn begin_transaction(&self) -> impl Future<Output = Result<(), Self::Error>> {
+            ready(Self::step(self.fail_begin))
         }
 
-        async fn commit(&self) -> Result<(), Self::Error> {
-            Self::step(self.fail_commit)
+        fn commit(&self) -> impl Future<Output = Result<(), Self::Error>> {
+            ready(Self::step(self.fail_commit))
         }
 
-        async fn abort(&self) -> Result<(), Self::Error> {
+        fn abort(&self) -> impl Future<Output = Result<(), Self::Error>> {
             self.aborted.fetch_add(1, Ordering::SeqCst);
-            Self::step(self.fail_abort)
+            ready(Self::step(self.fail_abort))
         }
     }
 
@@ -81,8 +85,8 @@ mod fixtures {
     impl OwnedTransactions for Rigged {
         type Transaction = MemoryTransaction;
 
-        async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
-            Err(RiggedError)
+        fn transaction(&self) -> impl Future<Output = Result<Self::Transaction, Self::Error>> {
+            ready(Err(RiggedError))
         }
     }
 
@@ -95,10 +99,13 @@ mod fixtures {
     impl PublishPolicy<ConnectedMemoryBroker> for RefusePairing {
         type Live = Rigged;
 
-        async fn pair(self, _connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
-            Err(PairError::from_boxed(Box::from(
+        fn pair(
+            self,
+            _connected: &ConnectedMemoryBroker,
+        ) -> impl Future<Output = Result<Self::Live, PairError>> {
+            ready(Err(PairError::from_boxed(Box::from(
                 "the policy refused to pair",
-            )))
+            ))))
         }
     }
 }
@@ -144,6 +151,8 @@ fn capture_events() -> (
 #[cfg(all(feature = "json", feature = "logging"))]
 #[tokio::test]
 async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
+    use std::future::{pending, ready};
+
     use crate::{OutgoingMessage, Publisher, TransactionalPublisher};
 
     struct PendingCommit;
@@ -151,22 +160,25 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
     impl Publisher for PendingCommit {
         type Error = std::convert::Infallible;
 
-        async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-            Ok(())
+        fn publish(
+            &self,
+            _msg: OutgoingMessage<'_>,
+        ) -> impl Future<Output = Result<(), Self::Error>> {
+            ready(Ok(()))
         }
     }
 
     impl TransactionalPublisher for PendingCommit {
-        async fn begin_transaction(&self) -> Result<(), Self::Error> {
-            Ok(())
+        fn begin_transaction(&self) -> impl Future<Output = Result<(), Self::Error>> {
+            ready(Ok(()))
         }
 
         async fn commit(&self) -> Result<(), Self::Error> {
-            std::future::pending().await
+            pending().await
         }
 
-        async fn abort(&self) -> Result<(), Self::Error> {
-            Ok(())
+        fn abort(&self) -> impl Future<Output = Result<(), Self::Error>> {
+            ready(Ok(()))
         }
     }
 

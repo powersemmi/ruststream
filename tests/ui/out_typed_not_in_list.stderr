@@ -1,3 +1,11 @@
+warning: use of deprecated method `ruststream::runtime::TypedSlot::<P, Body, M, EncodeCodec>::publish_typed`: use the publish builder: out.message(&value).publish()
+  --> tests/ui/out_typed_not_in_list.rs:32:10
+   |
+32 |         .publish_typed(&Done {
+   |          ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
 error[E0308]: mismatched types
   --> tests/ui/out_typed_not_in_list.rs:32:24
    |

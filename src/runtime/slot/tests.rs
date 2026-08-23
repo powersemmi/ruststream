@@ -1,6 +1,11 @@
+// The dictionary and the typed publish methods are deprecated in place: they keep working, so
+// they keep their regression coverage here alongside the builder's.
+#![allow(deprecated)]
+
 use std::collections::HashMap;
 
 use super::*;
+use crate::{FixedName, OutgoingDestination};
 
 #[derive(Debug)]
 struct A;
@@ -61,6 +66,15 @@ impl MessageHeaders for Progress {
     type Contract = NoHeaders;
 }
 
+// What `#[derive(Outgoing)]` with `#[outgoing(name = "events.progress")]` declares, so the same
+// fixture drives the builder's error arms.
+impl OutgoingDestination for Progress {
+    type Form = FixedName;
+    const ADDRESS: &'static str = "events.progress";
+}
+
+impl PublishedThrough<Events> for Progress {}
+
 /// Headers a header map can carry: one scalar field.
 #[derive(Serialize)]
 struct Meta {
@@ -100,6 +114,13 @@ impl OutMessage<Events> for Done {
 impl MessageHeaders for Done {
     type Contract = WithHeaders<NestedMeta>;
 }
+
+impl OutgoingDestination for Done {
+    type Form = FixedName;
+    const ADDRESS: &'static str = "events.done";
+}
+
+impl PublishedThrough<Events> for Done {}
 
 /// The unrestricted declaration documents whatever the marker declares, so a handler that
 /// pins no message set still contributes the slot's dictionary to the document.
@@ -295,5 +316,61 @@ async fn unrepresentable_headers_fail_the_typed_publish() {
     assert!(
         futures::poll!(stream.next()).is_pending(),
         "nothing may be published once the headers are rejected",
+    );
+}
+
+/// The builder reports the same two failures on its own error, each in its own arm, and stops
+/// before the broker sees anything.
+#[cfg(all(feature = "memory", feature = "json"))]
+#[tokio::test]
+async fn the_builder_separates_the_encode_and_the_headers_failure() {
+    use futures::StreamExt;
+
+    use crate::Subscriber;
+    use crate::codec::JsonCodec;
+    use crate::memory::MemoryBroker;
+    use crate::runtime::PublishError;
+
+    let broker = MemoryBroker::new();
+    let mut subscriber = broker.subscribe("events.done");
+    let slot = TypedSlot::<_, (), Events, _>::new(
+        SlotPublisher::<_, Events>::new(broker.publisher()),
+        JsonCodec,
+    );
+
+    let encode = slot
+        .message(&Progress::new())
+        .publish()
+        .await
+        .expect_err("the codec cannot encode this payload");
+    assert!(
+        matches!(encode, PublishError::Encode(_)),
+        "the encode arm must be distinguishable from a broker rejection: {encode:?}",
+    );
+
+    let headers = NestedMeta {
+        inner: Meta { task_id: 7 },
+    };
+    let rejected = slot
+        .message(&Done { key: "out/1" })
+        .with_headers(&headers)
+        .publish()
+        .await
+        .expect_err("a nested struct is not a header value");
+    assert!(
+        matches!(rejected, PublishError::Headers(_)),
+        "the headers arm names what failed: {rejected:?}",
+    );
+    assert!(
+        rejected
+            .to_string()
+            .contains("serializing the typed headers"),
+        "the message must point at the headers: {rejected}",
+    );
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    assert!(
+        futures::poll!(stream.next()).is_pending(),
+        "nothing may be published once a position fails",
     );
 }

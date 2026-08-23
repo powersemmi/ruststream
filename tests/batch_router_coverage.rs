@@ -6,6 +6,7 @@
 
 mod common;
 
+use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -134,10 +135,13 @@ struct RefusedPublish;
 impl PublishPolicy<ConnectedMemoryBroker> for RefusedPublish {
     type Live = MemoryPublisher;
 
-    async fn pair(self, _connected: &ConnectedMemoryBroker) -> Result<MemoryPublisher, PairError> {
-        Err(PairError::from_boxed(Box::from(
+    fn pair(
+        self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<MemoryPublisher, PairError>> {
+        ready(Err(PairError::from_boxed(Box::from(
             "the reply publisher was refused",
-        )))
+        ))))
     }
 }
 
@@ -152,11 +156,11 @@ impl SubscriptionSource<ConnectedMemoryBroker> for ClosedSource {
         "brc-closed"
     }
 
-    async fn subscribe(
+    fn subscribe(
         self,
         _connected: &ConnectedMemoryBroker,
-    ) -> Result<MemorySubscriber, MemoryError> {
-        Err(MemoryError::ShutDown)
+    ) -> impl Future<Output = Result<MemorySubscriber, MemoryError>> {
+        ready(Err(MemoryError::ShutDown))
     }
 }
 

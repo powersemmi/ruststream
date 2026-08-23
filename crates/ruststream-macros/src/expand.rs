@@ -649,12 +649,15 @@ fn outgoing_method(
             None => quote! {
                 __rs_outgoing.extend(<#marker as ::ruststream::runtime::OutSlot>::outgoing());
             },
+            // Each listed type declares itself: a one-element set whose channel comes from the
+            // type's own #[outgoing(name = ..)], or from the marker's deprecated dictionary.
             Some(BodyDecl::List(bodies)) => {
                 let entries = bodies.iter().map(|body| {
-                    let channel = quote! {
-                        <#body as ::ruststream::runtime::OutMessage<#marker>>::CHANNEL
-                    };
-                    outgoing_entry(&channel, &quote!(#body))
+                    quote! {
+                        __rs_outgoing.extend(
+                            <#body as ::ruststream::runtime::OutMessages<#marker>>::outgoing(),
+                        );
+                    }
                 });
                 quote!(#(#entries)*)
             }
@@ -1911,7 +1914,7 @@ fn slot_bounds(outs: &[OutParam<'_>], generics: &[SlotGenerics]) -> Vec<TokenStr
         match &out.bodies {
             Some(BodyDecl::List(bodies)) => {
                 for body in bodies {
-                    out_bounds.push(quote!(#body: ::ruststream::runtime::OutMessage<#marker>));
+                    out_bounds.push(quote!(#body: ::ruststream::runtime::OutMessages<#marker>));
                 }
             }
             Some(BodyDecl::Set(set)) => {

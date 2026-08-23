@@ -45,9 +45,15 @@ raw-bytes messages are not reported), and `Spec::messages_without_schema()` list
 message components - assert it empty in a test to gate schema coverage in CI.
 
 Beyond payloads, the document also carries **headers schemas** (from a handler's
-`FromHeaders<T>` parameter or a type's `#[message(headers(..))]` contract) and **`send`
+`FromHeaders<T>` parameter or a type's declared `headers = ..` contract) and **`send`
 operations** for every declared outgoing message - the reply of a `publish(..)` form and every
-entry of an `Out` slot's `#[publishes(..)]` dictionary. See [typed headers](headers.md).
+message type an `Out` slot declares. See [typed headers](headers.md).
+
+A message type whose declared name is a template (`#[outgoing(name = "orders.{tenant}.v1")]`)
+is declared on that templated address, with the channel's **parameters** block filled from its
+placeholders, so the declaration and the call site cannot drift apart. A type that declares no
+destination contributes no channel, which is what it says about itself. See
+[publishing](publishing.md#declaring-where-a-message-goes).
 
 ## Message names and descriptions
 

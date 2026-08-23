@@ -121,6 +121,7 @@ where
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
+    use std::future::ready;
     use std::sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
@@ -145,12 +146,12 @@ mod tests {
             &self.1
         }
 
-        async fn ack(self) -> Result<(), AckError> {
-            Ok(())
+        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
         }
 
-        async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-            Ok(())
+        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
         }
     }
 

@@ -96,18 +96,29 @@ mod sealed {
     impl<P, C, PL, BL> Sealed for super::Transactional<P, C, PL, BL> {}
 }
 
+mod builder;
+mod ext;
 mod pipeline;
 mod publisher;
 mod reply;
+mod sink;
 mod transaction;
 mod transform;
 
+pub use builder::{
+    HeadersUnset, MapHeaders, MessageBody, MissingSegment, Publish, PublishAt, PublishError,
+    PublishHeaders, RawBody, ResolvedName, SatisfiesContract, SuppliedName, TemplateAddress,
+    TypedHeaders,
+};
+pub(crate) use builder::{message_of, raw_of};
+pub use ext::PublishExt;
 pub use pipeline::{
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,
     PublishPipeline, PublishStack,
 };
 pub use publisher::{Transactional, TypedPublisher};
 pub use reply::{ReplyPublisher, ReplyWiring};
+pub use sink::{CallCodec, PublishCodec, PublishSink};
 pub use transaction::{TransactionPublishError, TransactionScope, TypedTransaction};
 pub use transform::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch,

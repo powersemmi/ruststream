@@ -8,6 +8,7 @@
 
 use std::{
     fmt,
+    future::{Future, ready},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -116,15 +117,17 @@ impl fmt::Debug for MemoryRequester {
 impl Publisher for MemoryRequester {
     type Error = RequestError;
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    fn publish(&self, msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
         let outbound = MemoryOutbound {
             name: msg.name().to_owned(),
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         };
-        self.state
-            .fanout(outbound)
-            .map_err(|_| RequestError::ShutDown)
+        ready(
+            self.state
+                .fanout(outbound)
+                .map_err(|_| RequestError::ShutDown),
+        )
     }
 }
 
@@ -250,36 +253,42 @@ impl BatchSubscriber for MemorySubscriber {
 /// `abort` without an open transaction return [`MemoryError::NoTransaction`]. Clones of the
 /// handle do not share the transaction (see [`MemoryPublisher`]).
 impl TransactionalPublisher for MemoryPublisher {
-    async fn begin_transaction(&self) -> Result<(), MemoryError> {
+    fn begin_transaction(&self) -> impl Future<Output = Result<(), MemoryError>> {
         let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
         if txn.is_some() {
-            return Err(MemoryError::TransactionBusy);
+            return ready(Err(MemoryError::TransactionBusy));
         }
         *txn = Some(Vec::new());
         drop(txn);
-        Ok(())
+        ready(Ok(()))
     }
 
-    async fn commit(&self) -> Result<(), MemoryError> {
+    fn commit(&self) -> impl Future<Output = Result<(), MemoryError>> {
         let buffered = self
             .txn
             .lock()
             .expect("memory broker mutex poisoned")
-            .take()
-            .ok_or(MemoryError::NoTransaction)?;
+            .take();
+        let Some(buffered) = buffered else {
+            return ready(Err(MemoryError::NoTransaction));
+        };
         for outbound in buffered {
-            self.state.fanout(outbound)?;
+            if let Err(err) = self.state.fanout(outbound) {
+                return ready(Err(err));
+            }
         }
-        Ok(())
+        ready(Ok(()))
     }
 
-    async fn abort(&self) -> Result<(), MemoryError> {
-        self.txn
-            .lock()
-            .expect("memory broker mutex poisoned")
-            .take()
-            .map(|_| ())
-            .ok_or(MemoryError::NoTransaction)
+    fn abort(&self) -> impl Future<Output = Result<(), MemoryError>> {
+        ready(
+            self.txn
+                .lock()
+                .expect("memory broker mutex poisoned")
+                .take()
+                .map(|_| ())
+                .ok_or(MemoryError::NoTransaction),
+        )
     }
 }
 
@@ -341,7 +350,10 @@ impl Drop for MemoryTransaction {
 impl Transaction for MemoryTransaction {
     type Error = MemoryError;
 
-    async fn publish(&mut self, msg: OutgoingMessage<'_>) -> Result<(), MemoryError> {
+    fn publish(
+        &mut self,
+        msg: OutgoingMessage<'_>,
+    ) -> impl Future<Output = Result<(), MemoryError>> {
         // Buffering is local to this value and never touches the bus; a commit against a
         // shut-down bus is what reports the error.
         self.buffered.push(MemoryOutbound {
@@ -349,22 +361,24 @@ impl Transaction for MemoryTransaction {
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         });
-        Ok(())
+        ready(Ok(()))
     }
 
-    async fn commit(mut self) -> Result<(), MemoryError> {
+    fn commit(mut self) -> impl Future<Output = Result<(), MemoryError>> {
         // Settled before the flush: a failed commit has still consumed the transaction (the
         // buffer is lost per the Transaction contract), so the drop warning must not fire.
         self.settled = true;
         for outbound in std::mem::take(&mut self.buffered) {
-            self.state.fanout(outbound)?;
+            if let Err(err) = self.state.fanout(outbound) {
+                return ready(Err(err));
+            }
         }
-        Ok(())
+        ready(Ok(()))
     }
 
-    async fn abort(mut self) -> Result<(), MemoryError> {
+    fn abort(mut self) -> impl Future<Output = Result<(), MemoryError>> {
         self.settled = true;
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -374,14 +388,14 @@ impl Transaction for MemoryTransaction {
 impl OwnedTransactions for MemoryPublisher {
     type Transaction = MemoryTransaction;
 
-    async fn transaction(&self) -> Result<MemoryTransaction, MemoryError> {
+    fn transaction(&self) -> impl Future<Output = Result<MemoryTransaction, MemoryError>> {
         // Opening allocates a buffer and never touches the bus; a shut-down bus surfaces at
         // commit, the visibility point, like the handle-level begin.
-        Ok(MemoryTransaction {
+        ready(Ok(MemoryTransaction {
             state: Arc::clone(&self.state),
             buffered: Vec::new(),
             settled: false,
-        })
+        }))
     }
 }
 
@@ -531,7 +545,7 @@ impl Seeker for MemorySeeker {
     /// # Errors
     ///
     /// Returns [`MemoryError::ShutDown`] through a handle aliasing a shut-down bus.
-    async fn seek(&self, to: MemoryPosition) -> Result<(), MemoryError> {
+    fn seek(&self, to: MemoryPosition) -> impl Future<Output = Result<(), MemoryError>> {
         // The liveness check and the handoff happen under the bus lock (then the log lock,
         // fanout's order): a seek that returns Ok happened strictly before any shutdown, and
         // the end-clamp is consistent with the log length at that instant.
@@ -541,7 +555,7 @@ impl Seeker for MemorySeeker {
             .lock()
             .expect("memory broker mutex poisoned");
         if !matches!(&*bus, Bus::Live(_)) {
-            return Err(MemoryError::ShutDown);
+            return ready(Err(MemoryError::ShutDown));
         }
         let end = self
             .state
@@ -561,7 +575,7 @@ impl Seeker for MemorySeeker {
             .expect("memory broker mutex poisoned") = Some(clamped);
         drop(bus);
         self.control.waker.wake();
-        Ok(())
+        ready(Ok(()))
     }
 }
 

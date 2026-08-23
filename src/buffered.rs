@@ -182,6 +182,8 @@ impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
 
 #[cfg(all(test, feature = "memory"))]
 mod tests {
+    use std::future::ready;
+
     use futures::StreamExt;
 
     use super::*;
@@ -223,12 +225,12 @@ mod tests {
             &EMPTY
         }
 
-        async fn ack(self) -> Result<(), crate::AckError> {
-            Ok(())
+        fn ack(self) -> impl Future<Output = Result<(), crate::AckError>> {
+            ready(Ok(()))
         }
 
-        async fn nack(self, _requeue: bool) -> Result<(), crate::AckError> {
-            Ok(())
+        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), crate::AckError>> {
+            ready(Ok(()))
         }
     }
 

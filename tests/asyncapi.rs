@@ -1,6 +1,8 @@
 //! Integration test for `AsyncAPI` document generation.
 #![cfg(all(feature = "asyncapi", feature = "memory"))]
 
+use std::future::ready;
+
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
@@ -141,8 +143,8 @@ impl ruststream::Broker for DescribingBroker {
     type Error = std::convert::Infallible;
     type Connected = ConnectedDescribingBroker;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Ok(ConnectedDescribingBroker)
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Ok(ConnectedDescribingBroker))
     }
 }
 
@@ -152,8 +154,8 @@ impl ruststream::ConnectedBroker for ConnectedDescribingBroker {
     type Error = std::convert::Infallible;
     type Closed = ();
 
-    async fn shutdown(self) -> Result<(), Self::Error> {
-        Ok(())
+    fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
+        ready(Ok(()))
     }
 }
 
@@ -538,6 +540,116 @@ mod typed_headers_spec {
 
         // Every model here derives JsonSchema: the coverage gate reports no gaps.
         assert!(spec.messages_without_schema().is_empty());
+    }
+}
+
+/// Destinations declared on the message type: a fixed name becomes its channel, a templated one
+/// keeps its placeholders and declares them as the channel's parameters, and a type declaring
+/// nothing contributes no channel at all.
+#[cfg(all(feature = "macros", feature = "json"))]
+mod declared_destinations {
+    use ruststream::memory::{MemoryBroker, MemoryPublish};
+    use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
+    use ruststream::schemars::JsonSchema;
+    use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
+    use serde::{Deserialize, Serialize};
+
+    use super::build_spec;
+
+    #[derive(Deserialize, JsonSchema)]
+    struct Order {
+        #[allow(dead_code)]
+        id: u64,
+    }
+
+    /// A confirmed order.
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    #[outgoing(name = "orders.confirmed")]
+    struct OrderConfirmed {
+        id: u64,
+    }
+
+    /// An order placed into a per-tenant, per-region stream.
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    #[outgoing(name = "orders.{tenant}.{region}.v1")]
+    struct OrderPlaced {
+        id: u64,
+    }
+
+    /// An order archived wherever the caller says.
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    struct OrderArchived {
+        id: u64,
+    }
+
+    #[derive(OutSlot)]
+    #[publishes(OrderConfirmed, OrderPlaced, OrderArchived)]
+    struct Events;
+
+    #[subscriber("orders.in")]
+    async fn route(
+        order: &Order,
+        Out(_events): Out<impl Publisher, Events, (OrderConfirmed, OrderPlaced, OrderArchived)>,
+    ) -> HandlerResult {
+        let _ = order;
+        HandlerResult::Ack
+    }
+
+    #[test]
+    fn a_templated_destination_declares_its_parameters() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(route).out(Events, MemoryPublish).mount();
+            },
+        );
+        let spec = build_spec(&app);
+
+        // The fixed destination is a channel with no parameters.
+        let confirmed = &spec.channels["orders.confirmed"];
+        assert_eq!(confirmed.address, "orders.confirmed");
+        assert!(confirmed.parameters.is_empty());
+
+        // The templated one keeps its placeholders, and every one of them is declared.
+        let placed = &spec.channels["orders.{tenant}.{region}.v1"];
+        assert_eq!(placed.address, "orders.{tenant}.{region}.v1");
+        assert_eq!(
+            placed.parameters.keys().collect::<Vec<_>>(),
+            vec!["region", "tenant"],
+        );
+        assert_eq!(
+            spec.operations["send_orders_in_orders__tenant___region__v1"].action,
+            "send",
+        );
+
+        // A type that declares no destination says nothing about where it goes.
+        assert!(
+            !spec
+                .channels
+                .keys()
+                .any(|channel| channel.contains("archived")),
+            "an undeclared destination must not invent a channel: {:?}",
+            spec.channels.keys().collect::<Vec<_>>(),
+        );
+        assert!(!spec.components.messages.contains_key("OrderArchived"));
+    }
+
+    #[test]
+    fn a_templated_channel_serializes_its_parameters_block() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(route).out(Events, MemoryPublish).mount();
+            },
+        );
+        let json = serde_json::to_value(build_spec(&app)).expect("the spec serializes");
+        let channel = &json["channels"]["orders.{tenant}.{region}.v1"];
+        assert!(
+            channel["parameters"]["tenant"].is_object(),
+            "got: {channel}"
+        );
+        // A fixed channel omits the block rather than carrying an empty one.
+        assert!(json["channels"]["orders.confirmed"]["parameters"].is_null());
     }
 }
 

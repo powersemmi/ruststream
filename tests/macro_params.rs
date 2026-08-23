@@ -1,6 +1,9 @@
 //! Subscriber clause values sourced from constants and statics rather than literals: the
 //! workers count (a `static usize`), the reply destination and a dictionary channel
 //! (`const &str`), and a failure policy (`const FailurePolicy`).
+//!
+//! The dictionary channel belongs to the deprecated name-carrying `#[publishes(..)]` form,
+//! which this file keeps under test: a destination declared on the message type is a literal.
 
 #![cfg(all(
     feature = "memory",
@@ -8,6 +11,7 @@
     feature = "json",
     feature = "testing"
 ))]
+#![allow(deprecated)]
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FailurePolicy, HandlerResult, Out, RustStream};

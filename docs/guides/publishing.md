@@ -5,6 +5,13 @@ publisher injected into the handler with the `Out` parameter. Either way the han
 sees an unconnected publisher: registrations carry publish *policies* (pure declarations), and
 the runtime pairs them with the connected broker at startup.
 
+An explicit publish is always the same builder, entered with `message(..)` for a value and
+`raw(..)` for bytes and finished with `publish()`. Which positions the call site has to fill -
+the destination, the typed headers, the codec - is decided by what the message type declares, so
+an under-specified publish is a compile error rather than a run-time surprise. `Publisher::publish`
+still exists underneath, but as the interface a broker crate implements (see
+[broker authors](../broker-authors/index.md)); a service writes the builder.
+
 ## Replying from a handler
 
 Name a reply destination with `publish(..)` and return the reply value. The runtime encodes it and
@@ -66,6 +73,11 @@ use ruststream::runtime::Out;
 --8<-- "examples/publishing.rs:forward"
 ```
 
+`message(&value)` encodes with the scope's codec (name another one for a single call with
+`.with_codec(..)`), `raw(&bytes)` sends a payload the service already holds encoded and has no
+codec position at all. Both take the typed headers with `.with_headers(&meta)` and an
+already-built map with `.with_header_map(headers)`, and both end in `publish()`.
+
 The include site names the source; for the scope's own broker it is the publish policy:
 
 ```rust
@@ -102,12 +114,57 @@ against a policy whose live publisher supports owned transactions, checked at th
 with a diagnostic naming the missing capability. The slot marker is also the identity the
 [test harness](testing.md#asserting-on-out-slots) records publishes against.
 
-A named marker can go further and declare a **publish dictionary** - which message types it
-publishes and to which channels. The `Out` parameter's optional third position then declares
-what this handler sends (`Out<impl Publisher, Marker, (A, B)>`, a single type, or a
-`#[derive(OutMessages)]` set enum), and the handler publishes by value with compile-checked
-destinations and header contracts, feeding the `send` operations of the generated AsyncAPI
-document. See [typed headers](headers.md).
+The `Out` parameter's optional third position declares what this handler sends
+(`Out<impl Publisher, Marker, (A, B)>`, a single type, or a `#[derive(OutMessages)]` set enum);
+a marker's own `#[publishes(A, B)]` list says what the slot may publish, which is what the
+generated document reports for a handler that leaves the position unrestricted. The list is
+enforced rather than only documented: a typed publish of a type the marker does not name is a
+compile error naming the missing membership, so the document cannot fall behind what handlers
+send. A marker listing nothing therefore publishes nothing typed, and byte publishes through
+`raw(..)` are unaffected - they carry no message type to list. The implicit `DefaultSlot` of a
+single unnamed `Out<impl Publisher>` has no declaration site to list types on, so it admits
+every declared message. See [typed headers](headers.md).
+
+### Declaring where a message goes
+
+A message type declares everything about being sent through one derive, with every parameter in
+the same `key = value` form. `name` is the destination and `headers` names the contract type
+(which stays an ordinary serde struct the derive does not touch):
+
+```rust
+use ruststream::Outgoing;
+
+--8<-- "examples/publishing.rs:declared"
+```
+
+The declaration decides which destination position the call site has:
+
+- **A fixed name** resolves the destination, so there is no `to(..)` to write - and no way to
+  send that type somewhere the document does not mention.
+- **A name template** (`"orders.{tenant}.placed"`) opens `to()`, which returns a builder with one
+  setter per placeholder. `publish()` appears only once every placeholder is bound, and an
+  unbound one rides in the builder's type, so the compile error names the segment. The address is
+  rendered per publish, which is what computing a destination at run time costs; a fixed name
+  keeps publishing from a `&'static str`.
+- **No `name` at all** means the call site names it: `.to("orders.archived")`, taking a `&str` or
+  a computed `String`.
+
+A message declaring `headers = Meta` publishes only with `.with_headers(&meta)` - forgetting it,
+or passing another type, does not compile. In the generated document a fixed name becomes its
+channel, a template becomes a templated address whose parameters block is filled from its
+placeholders, and a type declaring no destination contributes nothing, which is what it says
+about itself.
+
+The derive is what makes a value publishable this way, the third case included, so a `Serialize`
+type owned by another crate stays outside the builder: the orphan rule forbids deriving on it,
+and there is no way to default the destination for types that declare nothing (a blanket
+implementation would collide with every derived one, and preferring the derived one is
+specialization, which stable Rust does not have). Wrap such a value in a newtype that derives
+`Outgoing`, or, inside a transaction, keep the scope's `publish(name, &value)`.
+
+```rust
+--8<-- "examples/publishing.rs:declared_mount"
+```
 
 The parameter composes with every subscriber form: next to a `Seek` parameter, on a byte-input
 handler, and on batch handlers (`b.include(f).publisher(..)` - the whole page in,
@@ -236,7 +293,9 @@ after settling are compile errors, not runtime surprises:
 --8<-- "examples/publishing.rs:manual_transaction"
 ```
 
-The scope encodes values with the publisher's codec and sends them directly: per-publisher
+The scope carries the same builder as every other surface (`scope.message(&value).publish()`,
+`scope.raw(&bytes).to("audit").publish()`), sending into the open transaction instead of straight
+to the broker. It encodes values with the publisher's codec and sends them directly: per-publisher
 transforms and the app-wide `publish_layer` middleware belong to the dispatch path (they read the
 originating delivery) and do not run here. Dropping an unsettled scope logs a warning and leaves
 the broker transaction open on that handle - always settle explicitly.
@@ -254,7 +313,7 @@ holds exactly one transaction per producer, implement only the borrowed kind.
 The owned kind has typed sugar too: on a `TypedPublisher` whose publisher implements
 `OwnedTransactions`, `transaction()` opens a `TypedTransaction` that owns the broker transaction
 and encodes with the publisher's codec - `let mut txn = typed.transaction().await?;`, then
-`txn.publish("orders", &value).await?;` and `txn.commit().await?;`. Where `.transactional()` +
+`txn.message(&value).publish().await?;` and `txn.commit().await?;`. Where `.transactional()` +
 `begin()` gives the borrowed scope (one per handle), any number of `TypedTransaction`s can be
 open on one `TypedPublisher` at a time.
 

@@ -11,7 +11,7 @@
 //! new injected parameter kind is one `FromStartup` impl, not a new definition form.
 
 use std::fmt;
-use std::future::Future;
+use std::future::{Future, ready};
 
 use tracing::warn;
 
@@ -37,13 +37,13 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// (`Out<impl Publisher, MySlot>`, see [`OutSlot`](super::OutSlot)) and the include site binds
 /// each with `.out(marker, policy)`, in any order.
 ///
-/// An optional third position declares the message set the handler publishes, enabling the
-/// typed publish path ([`publish_typed`](super::TypedSlot::publish_typed), destinations from
-/// the marker's `#[publishes(..)]` dictionary):
+/// An optional third position declares the message set the handler publishes, which the publish
+/// builder ([`message`](super::TypedSlot::message), destinations from each type's
+/// `#[derive(Outgoing)]` declaration) is checked against:
 ///
 /// - `Out<impl Publisher>` / `Out<impl Publisher, Events>` / `Out<impl Publisher, Events, ()>`
-///   - unrestricted: `publish_typed` accepts any type in the marker's dictionary;
-/// - `Out<impl Publisher, Events, ChunkDone>` - one declared type (a `#[derive(Message)]` type
+///   - unrestricted: any declared message the handler names;
+/// - `Out<impl Publisher, Events, ChunkDone>` - one declared type (a `#[derive(Outgoing)]` type
 ///   declares itself);
 /// - `Out<impl Publisher, Events, (ChunkDone, Progress)>` - a list of declared types;
 /// - `Out<impl Publisher, Events, SendSet>` - a `#[derive(OutMessages)]` enum whose variants'
@@ -143,7 +143,7 @@ pub trait FromStartup<B: Broker, Sub, Extra>: Sized {
 
 /// The injected publisher: pairs the slot's attached policy against the connected broker and
 /// wraps it with the slot identity, the include site's scope codec (what
-/// [`publish_typed`](super::TypedSlot::publish_typed) encodes with), and the declared message
+/// [`message`](super::TypedSlot::message) encodes with), and the declared message
 /// set. A failing pair surfaces at startup with the slot's name (an unbound slot never gets
 /// this far: the include site does not compile without a policy per slot).
 impl<B, Sub, Policy, EncodeCodec, Body, M> FromStartup<B, Sub, (Policy, EncodeCodec)>
@@ -177,23 +177,23 @@ where
     Sub: Seekable + Sync,
     Extra: Send,
 {
-    async fn resolve(
+    fn resolve(
         _extra: Extra,
         _connected: &Connected<B>,
         subscriber: &Sub,
-    ) -> Result<Self, PairError> {
-        Ok(Self(subscriber.seeker()))
+    ) -> impl Future<Output = Result<Self, PairError>> {
+        ready(Ok(Self(subscriber.seeker())))
     }
 }
 
 /// A definition with no injected parameters still resolves: to nothing.
 impl<B: Broker, Sub: Sync, Extra: Send> FromStartup<B, Sub, Extra> for () {
-    async fn resolve(
+    fn resolve(
         _extra: Extra,
         _connected: &Connected<B>,
         _subscriber: &Sub,
-    ) -> Result<Self, PairError> {
-        Ok(())
+    ) -> impl Future<Output = Result<Self, PairError>> {
+        ready(Ok(()))
     }
 }
 

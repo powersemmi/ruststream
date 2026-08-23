@@ -642,6 +642,8 @@ mod tests {
     #[cfg(feature = "json")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_layer_splits_failures_by_error_type() {
+        use std::future::ready;
+
         use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 
         use crate::codec::JsonCodec;
@@ -651,8 +653,11 @@ mod tests {
         struct Failing;
         impl crate::Publisher for Failing {
             type Error = std::io::Error;
-            async fn publish(&self, _msg: crate::OutgoingMessage<'_>) -> Result<(), Self::Error> {
-                Err(std::io::Error::other("no broker"))
+            fn publish(
+                &self,
+                _msg: crate::OutgoingMessage<'_>,
+            ) -> impl Future<Output = Result<(), Self::Error>> {
+                ready(Err(std::io::Error::other("no broker")))
             }
         }
 

@@ -1,0 +1,70 @@
+error[E0277]: the headers of this publish do not match the message's `WithHeaders<PlacedMeta>` contract
+  --> tests/ui/publish_template_missing_headers.rs:34:10
+   |
+34 |         .publish()
+   |          ^^^^^^^ the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented for `HeadersUnset`
+   |
+   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no typed headers (an arbitrary map still travels through `.with_header_map(..)`)
+help: the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented for `HeadersUnset`
+      but trait `SatisfiesContract<NoHeaders>` is implemented for it
+  --> src/runtime/publish/builder.rs
+   |
+   | impl SatisfiesContract<NoHeaders> for HeadersUnset {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `NoHeaders`, found `WithHeaders<PlacedMeta>`
+   = note: required for `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>` to implement `PublishAt`
+note: required by a bound in `To::<Cont, String>::publish`
+  --> tests/ui/publish_template_missing_headers.rs:15:10
+   |
+15 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ required by this bound in `To::<Cont, String>::publish`
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the headers of this publish do not match the message's `WithHeaders<PlacedMeta>` contract
+  --> tests/ui/publish_template_missing_headers.rs:30:13
+   |
+30 |       let _ = out
+   |  _____________^
+31 | |         .message(&Placed { id: order.id })
+32 | |         .to()
+33 | |         .tenant("acme")
+34 | |         .publish()
+   | |__________________^ the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented for `HeadersUnset`
+   |
+   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no typed headers (an arbitrary map still travels through `.with_header_map(..)`)
+help: the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented for `HeadersUnset`
+      but trait `SatisfiesContract<NoHeaders>` is implemented for it
+  --> src/runtime/publish/builder.rs
+   |
+   | impl SatisfiesContract<NoHeaders> for HeadersUnset {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `NoHeaders`, found `WithHeaders<PlacedMeta>`
+   = note: required for `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>` to implement `PublishAt`
+note: required by a bound in `To::<Cont, String>::publish`
+  --> tests/ui/publish_template_missing_headers.rs:15:10
+   |
+15 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ required by this bound in `To::<Cont, String>::publish`
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the headers of this publish do not match the message's `WithHeaders<PlacedMeta>` contract
+  --> tests/ui/publish_template_missing_headers.rs:35:10
+   |
+35 |         .await;
+   |          ^^^^^ the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented for `HeadersUnset`
+   |
+   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no typed headers (an arbitrary map still travels through `.with_header_map(..)`)
+help: the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented for `HeadersUnset`
+      but trait `SatisfiesContract<NoHeaders>` is implemented for it
+  --> src/runtime/publish/builder.rs
+   |
+   | impl SatisfiesContract<NoHeaders> for HeadersUnset {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `NoHeaders`, found `WithHeaders<PlacedMeta>`
+   = note: required for `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>` to implement `PublishAt`
+note: required by a bound in `To::<Cont, String>::publish`
+  --> tests/ui/publish_template_missing_headers.rs:15:10
+   |
+15 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ required by this bound in `To::<Cont, String>::publish`
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)

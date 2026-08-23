@@ -2,8 +2,8 @@
 
 Message headers travel as an untyped `name -> bytes` map. When an application carries a real
 contract in them (ids, sequence numbers, totals), one struct can declare that contract and
-drive all three surfaces at once: runtime extraction on the consume side, the typed publish
-path on the produce side, and the headers schema in the generated AsyncAPI document.
+drive all three surfaces at once: runtime extraction on the consume side, the publish builder
+on the produce side, and the headers schema in the generated AsyncAPI document.
 
 ## The contract
 
@@ -54,54 +54,47 @@ the document still shows the full contract.
 
 ## Declaring a contract on a message type
 
-`#[derive(Message)]` accepts `#[message(headers(Meta))]`: the contract becomes part of the
-type. The typed publish path then demands exactly those headers, and the AsyncAPI document
-renders the schema next to the payload wherever the type appears.
+`#[derive(Outgoing)]` accepts `headers = Meta` next to the destination: the contract becomes
+part of the type. The publish builder then demands exactly those headers, and the AsyncAPI
+document renders the schema next to the payload wherever the type appears. See
+[publishing](publishing.md#declaring-where-a-message-goes) for the destination half.
 
 --8<-- "examples/typed_headers.rs:messages"
 
-## Publishing: the slot dictionary
+## Publishing: the contract at the call site
 
-An `Out` slot's marker can declare what it publishes and where, with
-`#[publishes(Type = "channel", ..)]`:
+An `Out` slot's marker lists the message types the slot may publish:
 
 --8<-- "examples/typed_headers.rs:dictionary"
 
-The `Out` parameter's optional third position declares the message set the handler publishes:
+The `Out` parameter's optional third position declares the message set this handler publishes:
 
-- `Out<impl Publisher, Events>` (or an explicit `()`) - unrestricted: `publish_typed` accepts
-  any type in the marker's dictionary;
+- `Out<impl Publisher, Events>` (or an explicit `()`) - unrestricted: any declared message;
 - `Out<impl Publisher, Events, (ChunkDone, Progress)>` - an inline list;
-- `Out<impl Publisher, Events, ChunkDone>` - one declared type (a `#[derive(Message)]` type
+- `Out<impl Publisher, Events, ChunkDone>` - one declared type (a `#[derive(Outgoing)]` type
   declares itself);
 - `Out<impl Publisher, Events, ConvertSends>` - a `#[derive(OutMessages)]` enum whose variants
   each wrap one model: a reusable, named set (the enum is a type-level declaration and is
   never constructed).
 
-The body then publishes by value alone: the destination comes from the dictionary, the payload
-encodes with the include site's scope codec, and the compiler enforces the whole declaration.
+The body then publishes through the builder (the handler above), and the compiler enforces the
+whole declaration:
 
-- a declared message type outside the marker's dictionary does not compile (the error names
-  the type and the slot);
-- a `publish_typed` of a type outside the declared set does not compile - the handler
-  publishes what it declared, nothing else;
-- a type declaring `#[message(headers(..))]` publishes only through
-  `.with_headers(&meta).publish_typed(&value)` - forgetting the headers, or passing the wrong
-  headers type, does not compile;
+- a `message(..)` of a type outside the declared set does not compile - the handler publishes
+  what it declared, nothing else;
+- a type declaring `headers = Meta` publishes only through
+  `.message(&value).with_headers(&meta)` - forgetting the headers, or passing the wrong headers
+  type, does not compile;
+- the destination comes from the type's own declaration, so a fixed name needs nothing at the
+  call site and a templated one demands its placeholders;
 - the capability position is checked against the include-site policy statically, as always:
   `Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>` demands a policy whose
-  live publisher is transactional, and the declared publishes ride inside its transactions;
-- several types may share one channel; one type maps to one channel per slot.
+  live publisher is transactional, and the declared publishes ride inside its transactions.
 
-A bare collection works as a model - `#[publishes(Vec<Frame> = "chunks.frames")]`, declared in
-a list or a set enum, published with `publish_typed(&frames)`; its header contract is none by
-definition (wrap it in a `#[derive(Message)]` newtype to declare one).
-
-The typed path needs a named marker (the dictionary lives on it), and destinations are fixed
-by the declaration. The value derefs to the slot's publisher, so the declared capability's
-whole surface stays reachable - including the byte-level
-`out.publish(OutgoingMessage::new(dest, ..))` for a destination computed per message, which is
-inherently undocumentable in a static AsyncAPI document.
+A payload the service already holds encoded, or a foreign type that cannot carry a declaration
+(a bare `Vec<Frame>`), goes out through the byte entry point:
+`out.raw(&bytes).to(dest).publish()`. It takes the same headers positions and no codec; wrap
+the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own.
 
 ## The reply form
 
@@ -124,7 +117,7 @@ With the `asyncapi` feature, `build_spec` renders:
   or from the input type's `#[message(headers(..))]` contract when the handler extracts by
   hand;
 - a `send` operation per declared outgoing message - the reply of every `publish(..)` form and
-  every entry of every slot dictionary - each with its payload and headers schemas.
+  every message type a slot declares - each with its payload and headers schemas.
 
 Schemas describe the logical field types (`task_id: integer`), while wire values are
 string-encoded headers; that convention matches how header contracts are documented across the

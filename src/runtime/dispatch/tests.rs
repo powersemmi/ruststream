@@ -1,3 +1,4 @@
+use std::future::ready;
 use std::sync::{
     Arc,
     atomic::{AtomicU8, Ordering},
@@ -30,14 +31,14 @@ impl IncomingMessage for PlainMessage {
         &self.headers
     }
 
-    async fn ack(self) -> Result<(), AckError> {
-        Ok(())
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Ok(()))
     }
 
-    async fn nack(self, requeue: bool) -> Result<(), AckError> {
+    fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         self.settled
             .store(if requeue { 2 } else { 1 }, Ordering::SeqCst);
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -54,12 +55,12 @@ impl IncomingMessage for UnsettleableMessage {
         &EMPTY
     }
 
-    async fn ack(self) -> Result<(), AckError> {
-        Err(AckError::Timeout)
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Timeout))
     }
 
-    async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-        Err(AckError::Unsupported)
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Unsupported))
     }
 }
 
@@ -70,8 +71,8 @@ struct RejectingPublisher;
 impl Publisher for RejectingPublisher {
     type Error = std::io::Error;
 
-    async fn publish(&self, _msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        Err(std::io::Error::other("connection closed"))
+    fn publish(&self, _msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+        ready(Err(std::io::Error::other("connection closed")))
     }
 }
 

@@ -7,6 +7,7 @@
 #![cfg(all(feature = "macros", feature = "memory", feature = "testing"))]
 
 use std::convert::Infallible;
+use std::future::ready;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -211,11 +212,14 @@ impl Publisher for FlakyPublisher {
 impl PublishPolicy<ConnectedMemoryBroker> for FlakyPublish {
     type Live = FlakyPublisher;
 
-    async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<FlakyPublisher, PairError> {
-        Ok(FlakyPublisher {
+    fn pair(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<FlakyPublisher, PairError>> {
+        ready(Ok(FlakyPublisher {
             inner: connected.publisher(),
             fail_next: self.0,
-        })
+        }))
     }
 }
 

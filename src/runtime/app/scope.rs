@@ -570,7 +570,7 @@ mod tests {
     use crate::memory::MemoryBroker;
     use crate::runtime::publisher_registry::ErasedPublisher;
     use crate::runtime::{AppInfo, RustStream};
-    use crate::{IncomingMessage, Subscriber};
+    use crate::{IncomingMessage, OutgoingMessage, Subscriber};
 
     use super::Arc;
 
@@ -595,7 +595,7 @@ mod tests {
 
         let fallback = fallback.expect("retry_via must wire the deferred-retry publisher");
         fallback
-            .publish_bytes("retry.fallback", b"deferred")
+            .publish_erased(OutgoingMessage::new("retry.fallback", b"deferred"))
             .await
             .expect("the erased fallback publish failed");
 

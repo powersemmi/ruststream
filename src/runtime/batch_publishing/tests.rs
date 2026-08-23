@@ -1,3 +1,4 @@
+use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -60,17 +61,17 @@ impl BatchPublishingDef for Confirm {
 
 // Ignores the app state, so it is generic over it (mounts on any app).
 impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
-    async fn call(
+    fn call(
         &self,
         batch: &[u32],
         (): &(),
         _ctx: &mut Context<'_, (), S>,
-    ) -> Result<Vec<u32>, HandlerResult> {
+    ) -> impl Future<Output = Result<Vec<u32>, HandlerResult>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        if let Some(result) = self.fail_with {
-            return Err(result);
-        }
-        Ok(batch.iter().map(|n| n * 10).collect())
+        let result = self
+            .fail_with
+            .map_or_else(|| Ok(batch.iter().map(|n| n * 10).collect()), Err);
+        ready(result)
     }
 }
 

@@ -9,13 +9,16 @@
 
 use std::error::Error;
 
-use ruststream::codec::{Codec, JsonCodec};
+use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
     App, AppInfo, DefaultSlot, HandlerResult, Out, Outgoing, PublishContext, PublishLayer,
     PublishNext, PublishPipeline, PublishTransform, RustStream, Transactional, TypedPublisher,
 };
-use ruststream::{OutSlot, OutgoingMessage, Publisher, TransactionalPublisher, subscriber};
+// The derive and the pipeline's message type share the name in different namespaces: the derive
+// is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
+// `ruststream::runtime::Outgoing`.
+use ruststream::{OutSlot, Outgoing, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -28,7 +31,8 @@ struct Response {
     ok: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+// The derive with no `name`: an event this service sends wherever the call site says.
+#[derive(Debug, Deserialize, Serialize, Outgoing)]
 struct Event {
     id: u64,
 }
@@ -58,12 +62,11 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // --8<-- [start:forward]
 // The publisher arrives as a parameter (the Out marker): the source is attached at the include
 // site, the runtime pairs it with the connected broker at startup, and the handler always holds
-// a live publisher - no registry, no erased lookup, no state plumbing.
+// a live publisher - no registry, no erased lookup, no state plumbing. `Event` declares no
+// destination of its own, so the call site names one.
 #[subscriber("ingress")]
 async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
-    let payload = JsonCodec.encode(event).expect("serializable");
-    let msg = OutgoingMessage::new("egress", payload.as_ref());
-    if out.publish(msg).await.is_err() {
+    if out.message(event).to("egress").publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -74,11 +77,14 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
 // A handler with several injected publishers names a slot marker per parameter; the include
 // site binds each marker to its own policy, in any order. No broker publisher type appears in
 // the signature, so the same handler mounts on a production broker and on its in-process test
-// transport unchanged.
+// transport unchanged. Each marker lists what may leave through it, which is both what the
+// generated document reports and what the publish builder admits.
 #[derive(OutSlot)]
+#[publishes(Event)]
 struct Primary;
 
 #[derive(OutSlot)]
+#[publishes(Event)]
 struct Shadow;
 
 #[subscriber("mirror")]
@@ -87,13 +93,16 @@ async fn mirror(
     Out(primary): Out<impl Publisher, Primary>,
     Out(shadow): Out<impl Publisher, Shadow>,
 ) -> HandlerResult {
-    let payload = JsonCodec.encode(event).expect("serializable");
     if primary
-        .publish(OutgoingMessage::new("mirror-primary", payload.as_ref()))
+        .message(event)
+        .to("mirror-primary")
+        .publish()
         .await
         .is_err()
         || shadow
-            .publish(OutgoingMessage::new("mirror-shadow", payload.as_ref()))
+            .message(event)
+            .to("mirror-shadow")
+            .publish()
             .await
             .is_err()
     {
@@ -108,11 +117,10 @@ async fn mirror(
 // destination while an audit copy fans out through the Out parameter.
 #[subscriber("gateway-requests", publish("gateway-responses"))]
 async fn gateway(req: &Request, Out(out): Out<impl Publisher>) -> Result<Response, HandlerResult> {
-    let audit = JsonCodec
-        .encode(&Event { id: req.id })
-        .expect("serializable");
     if out
-        .publish(OutgoingMessage::new("gateway-audit", audit.as_ref()))
+        .message(&Event { id: req.id })
+        .to("gateway-audit")
+        .publish()
         .await
         .is_err()
     {
@@ -121,6 +129,57 @@ async fn gateway(req: &Request, Out(out): Out<impl Publisher>) -> Result<Respons
     Ok(Response { ok: true })
 }
 // --8<-- [end:publish_out]
+
+// --8<-- [start:declared]
+// What a message says about being sent lives on the type. A fixed name resolves the destination
+// for every call site; a name template turns each `{placeholder}` into a setter, so a service
+// routing per tenant still declares where the type goes; and the derive alone (like `Event`
+// above) leaves the name to the call.
+#[derive(Debug, Serialize, Outgoing)]
+#[outgoing(name = "orders.confirmed")]
+struct OrderConfirmed {
+    id: u64,
+}
+
+#[derive(Debug, Serialize, Outgoing)]
+#[outgoing(name = "orders.{tenant}.placed")]
+struct OrderPlaced {
+    id: u64,
+}
+
+#[derive(OutSlot)]
+#[publishes(OrderConfirmed, OrderPlaced)]
+struct Orders;
+
+#[subscriber("orders.incoming")]
+async fn route(
+    event: &Event,
+    Out(orders): Out<impl Publisher, Orders, (OrderConfirmed, OrderPlaced)>,
+) -> HandlerResult {
+    // Bound to one name: the destination is already resolved.
+    if orders
+        .message(&OrderConfirmed { id: event.id })
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    // Bound to a space of names: one setter per placeholder, and no publish until the last one
+    // is bound.
+    if orders
+        .message(&OrderPlaced { id: event.id })
+        .to()
+        .tenant("acme")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerResult::retry();
+    }
+    HandlerResult::Ack
+}
+// --8<-- [end:declared]
 
 // --8<-- [start:static_transform]
 /// A static, per-publisher transform: stamps an envelope header on every outgoing message.
@@ -220,6 +279,10 @@ fn app() -> impl App {
             // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
             b.include(gateway).out(DefaultSlot, MemoryPublish).mount();
             // --8<-- [end:publish_out_mount]
+            // --8<-- [start:declared_mount]
+            // the slot lists what it may publish; where each message goes is its own declaration
+            b.include(route).out(Orders, MemoryPublish).mount();
+            // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes
