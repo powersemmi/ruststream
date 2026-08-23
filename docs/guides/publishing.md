@@ -1,9 +1,10 @@
 # Publishing and replies
 
-There are two ways to publish: return a reply from a handler, or publish explicitly through a
-publisher injected into the handler with the `Out` parameter. Either way the handler never
-sees an unconnected publisher: registrations carry publish *policies* (pure declarations), and
-the runtime pairs them with the connected broker at startup.
+A handler publishes in one of two ways. Returning a reply is the shorter one, and the right default
+when the handler answers on a single destination. Take a publisher as an `Out` parameter instead
+when it sends somewhere else, or to more than one place. Either way the handler never sees an
+unconnected publisher: registrations carry publish *policies* (pure declarations), and the runtime
+pairs them with the connected broker at startup.
 
 An explicit publish is always the same builder, entered with `message(..)` for a value and
 `raw(..)` for bytes and finished with `publish()`. Which positions the call site has to fill -
@@ -186,20 +187,22 @@ out through the injection:
 ### Publishing to a different broker
 
 When the handler consumes one broker and publishes to another (consume Kafka, forward to Redis),
-wrap the target broker with `.bindable()` and mint a **bound token** before registration: the
-token carries the instance identity a foreign scope cannot provide, and because tokens exist
-before any `with_broker` runs, registration order does not matter - a bidirectional bridge binds
-both directions up front. The token is then the source at the include site (shown here with two
-in-memory brokers, the shape is the same for any pair):
+wrap the target broker with `.bindable()` and mint a **bound token** before registration. The token
+is then the source at the include site, shown here with two in-memory brokers; the shape is the
+same for any pair:
 
 ```rust
 --8<-- "tests/out_injection.rs:cross_broker"
 ```
 
+The token carries the instance identity a foreign scope cannot provide. Tokens exist before any
+`with_broker` runs, so registration order does not matter: a bidirectional bridge binds both
+directions up front.
+
 A token shares a slot with the `Bindable` wrapper it was minted from, and registering that same
 wrapper (`with_broker(bindable, ..)`) is what lets startup fill the slot with the connected
-broker - so pairing needs no lookup and cannot pick a wrong instance, and a token whose broker
-never registers fails fast at pairing with a clear error. The same shape works for reply
+broker. Pairing therefore needs no lookup and cannot pick a wrong instance, and a token whose
+broker never registers fails fast at pairing with a clear error. The same shape works for reply
 publishing (`.publisher(token)` on a `publish("dest")` handler) and for the batch forms. Outside
 a registration, a token pairs itself once startup
 connected its broker: `running.publisher(token)` hands a sibling task its live publisher - see

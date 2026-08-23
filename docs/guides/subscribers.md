@@ -1,8 +1,8 @@
 # Subscribers
 
-A subscriber binds a handler to one subscription. The `#[subscriber]` macro is the ergonomic way to
-declare one; this guide covers the handler contract, the macro forms, and how handlers are mounted.
-Grouping handlers into modules is covered in [Routing](routing.md), and how payloads are decoded in
+A subscriber runs one of your `async fn`s on every message a subscription delivers. Declare one with
+the `#[subscriber]` macro: it reads the handler's signature and generates the definition you mount.
+Grouping handlers into modules is [Routing](routing.md); decoding their payloads is
 [Codecs](codecs.md).
 
 ## The handler contract
@@ -333,12 +333,11 @@ retried (an extra redelivery beats a silently lost message) and the mismatch is 
 
 ## Seeking
 
-Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory broker's
-publish log) implement the `Seekable` capability: a live subscription can be moved to another
-position - replaying a stream after fixing a handler bug, reprocessing from a known point, or
-skipping forward past a poison region - without dropping the subscription. Brokers without a
-replayable log do not implement it, and the mount below fails to compile against them instead of
-failing at runtime.
+Replaying a stream after fixing a handler bug, reprocessing from a known point, skipping forward
+past a poison region: each moves a live subscription to another position without dropping it.
+Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory broker's publish
+log) implement the `Seekable` capability. Brokers without a replayable log do not, and the mount
+below fails to compile against them instead of failing at runtime.
 
 A handler repositions its own subscription through a `Seek` parameter. The runtime mints the
 seeker off the subscription right after it opens, so the handler always holds a live handle;
@@ -411,7 +410,7 @@ to fail, unless the handler declares a `FromHeaders` contract, which that policy
 Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
 the injected `Out` / `Seek` parameters work unchanged on the single-delivery shape (the batch of
 payloads does not take `Out` / `Seek` yet), and a raw subscriber mounts with the
-same `include` as every other definition - a scope codec, when one is set, simply does not apply
+same `include` as every other definition - a scope codec, when one is set, does not apply
 to it. Because no codec is involved, raw subscribers are also the one subscriber form available
 with no codec feature enabled at all. For a custom serialization format you want *typed*
 handlers for, implement [`Codec`](codecs.md) instead and keep the typed path.

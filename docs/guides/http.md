@@ -1,9 +1,9 @@
 # HTTP frameworks
 
-RustStream is not an HTTP framework. When a service exposes a synchronous HTTP API and consumes
-messages, the HTTP framework (axum, actix-web, or any other tokio-based stack) runs beside the
-RustStream app in the same process and runtime. This page shows the wiring on axum and the pattern
-that makes the combination reliable: a transactional outbox.
+A service that serves an HTTP API and consumes messages runs both sides in one process, on one
+tokio runtime: your HTTP framework (axum, actix-web, or any other tokio-based stack) beside the
+RustStream app. RustStream is not an HTTP framework and does not try to become one. The wiring
+below is axum, and the pattern that keeps the two sides consistent is a transactional outbox.
 
 The full compiled example lives at
 [`examples/http_outbox.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/http_outbox.rs):
@@ -14,37 +14,42 @@ cargo run --example http_outbox --features macros,memory,json
 
 ## Running beside an HTTP server
 
-Both sides come up in `main`. `start()` brings the messaging side up in the background - the
-state producer, broker connects, subscription opens - and resolves once the service is running,
-so a startup failure surfaces before the HTTP side accepts traffic. The returned `RunningApp`
-handle coordinates the two lifetimes: `stopping()` is an owned future that resolves if the
-messaging side tears itself down (a fail-fast failure), which plugs straight into axum's
-`with_graceful_shutdown` so the process does not keep serving HTTP with a dead consumer; and
-`shutdown()` is the explicit graceful teardown - the `on_shutdown` hooks, a drain of in-flight
-handlers bounded by the [shutdown timeout](lifespan.md#shutdown-timeout), broker shutdown - once
-the HTTP server has stopped. The publisher arrives through a bound token: `.bindable()` wraps the
-broker and `bind(..)` mints the token before the app consumes it, then `running.publisher(token)`
-pairs the token once `start()` has connected the broker - so the sibling task gets a live
-publisher, never a "not connected" state, and the live form is a plain value, safe to clone into
-whatever state the HTTP framework carries:
+Both sides come up in `main`. `start()` brings the messaging side up in the background and returns
+a `RunningApp` handle that coordinates the two lifetimes:
 
 ```rust
 --8<-- "examples/http_outbox.rs:wiring"
 ```
 
+`start()` runs the state producer, connects the brokers and opens the subscriptions. It resolves
+once the service is running, so a startup failure surfaces before the HTTP side accepts traffic.
+
+`stopping()` is an owned future that resolves if the messaging side tears itself down on a
+fail-fast failure. Plug it into axum's `with_graceful_shutdown` and the process stops serving HTTP
+instead of answering requests behind a dead consumer. `shutdown()` is the explicit graceful
+teardown, run once the HTTP server has stopped: the `on_shutdown` hooks, a drain of in-flight
+handlers bounded by the [shutdown timeout](lifespan.md#shutdown-timeout), then broker shutdown.
+
+The publisher arrives through a bound token. `.bindable()` wraps the broker and `bind(..)` mints
+the token before the app consumes it; `running.publisher(token)` pairs it once `start()` has
+connected the broker. The sibling task therefore gets a live publisher, never a "not connected"
+state, and the live form is a plain value - safe to clone into whatever state the HTTP framework
+carries.
+
 ## A healthz endpoint
 
 `start()` is the readiness gate; the health probe covers everything after it.
-`RunningApp::health()` hands out a cheap, cloneable `HealthProbe` backed by a watch channel:
-`state()` is a lock-free snapshot (`Running`, `ShuttingDown`, `Stopped`, or `Failed { reason }`
-carrying the fail-fast diagnostic), and the probe outlives `shutdown()`, so the route keeps
-answering with the terminal state. This closes the gap `stopping()` alone leaves: when the
-messaging side fail-fasts but a sibling task keeps the process alive, `/healthz` flips to 503
-instead of serving a permanent 200 for a dead consumer:
+`RunningApp::health()` hands out a cheap, cloneable `HealthProbe` that a route can own:
 
 ```rust
 --8<-- "examples/http_outbox.rs:healthz"
 ```
+
+`state()` is a lock-free snapshot backed by a watch channel: `Running`, `ShuttingDown`, `Stopped`,
+or `Failed { reason }` carrying the fail-fast diagnostic. The probe outlives `shutdown()`, so the
+route keeps answering with the terminal state. That closes the gap `stopping()` alone leaves: when
+the messaging side fail-fasts and a sibling task keeps the process alive, `/healthz` flips to 503
+instead of serving a permanent 200 for a dead consumer.
 
 The route carries its own state (`get(healthz).with_state(running.health())`), so it composes
 with whatever state the rest of the router holds - the full wiring above registers it beside

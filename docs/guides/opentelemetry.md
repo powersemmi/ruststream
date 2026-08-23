@@ -11,12 +11,11 @@ ruststream = { version = "0.6", features = ["macros", "memory", "json", "otel"] 
 
 The feature has two halves. Propagation carries the
 [W3C Trace Context](https://www.w3.org/TR/trace-context/) and emits `tracing` spans; it is
-broker-agnostic and works with no exporter at all. Export ships with the feature: the
-[OpenTelemetry SDK and OTLP exporters](#the-otel-feature-sdk-otlp-and-the-metrics-inventory)
-behind `Otel::builder().init()`, which installs the global providers and bridges the spans into
-them - or
-assemble your own subscriber (for example
-[`tracing-opentelemetry`](https://docs.rs/tracing-opentelemetry)), exactly as the
+broker-agnostic and works with no exporter at all. Export ships with the feature too:
+`Otel::builder().init()` installs the
+[OpenTelemetry SDK and OTLP exporters](#the-otel-feature-sdk-otlp-and-the-metrics-inventory) as the
+process globals and bridges the spans into them. Start there. Assembling your own subscriber (for
+example [`tracing-opentelemetry`](https://docs.rs/tracing-opentelemetry)) stays open, exactly as the
 [logging](logging.md) guide leaves the subscriber to you.
 
 ## Wiring it up
@@ -58,9 +57,10 @@ check `is_sampled()`.
 
 ## Exporting to a collector
 
-The propagation module stops at the W3C context and `tracing` spans; there are two ways to ship
-them to a collector. Assemble `tracing-opentelemetry` and an exporter yourself in the binary (the
-same split as [logging](logging.md)) - or let `Otel::builder().init()` below do it for you.
+The propagation module stops at the W3C context and `tracing` spans; two ways ship them to a
+collector. `Otel::builder().init()` below does it for you, and is the one to reach for first.
+Assembling `tracing-opentelemetry` and an exporter yourself in the binary (the same split as
+[logging](logging.md)) is there for a service that already owns that stack.
 
 ## The otel feature: SDK, OTLP, and the metrics inventory
 
