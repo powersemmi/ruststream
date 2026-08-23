@@ -317,7 +317,7 @@ The semantics differ from single-message handlers in a few ways:
 
 ### Selective acknowledgement
 
-A common case is partial readiness: some messages of the page are processed, others are not
+A common case is partial readiness: some messages of the batch are processed, others are not
 ready yet and should be redelivered without retrying the ones that succeeded. Return
 `Vec<HandlerResult>` to settle element `i` of the slice with outcome `i`:
 
