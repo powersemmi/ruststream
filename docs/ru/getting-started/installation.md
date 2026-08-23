@@ -35,6 +35,8 @@ serde = { version = "1", features = ["derive"] }
 | `asyncapi` | schemars, serde_norway | генерация AsyncAPI и HTML-просмотрщик |
 | `metrics` | prometheus | middleware и экспортёр Prometheus |
 | `logging` | tracing-subscriber | `ruststream::logging`, цветной консольный логгер ([Логирование](../guides/logging.md)) |
+| `otel` | opentelemetry, opentelemetry-otlp | экспорт трасс и метрик по OTLP и перенос trace-context по W3C ([OpenTelemetry](../guides/opentelemetry.md)) |
+| `testing` | inventory | `TestApp` и построители утверждений ([Тестирование](../guides/testing.md)) |
 | `conformance` | - | обвязка conformance для авторов брокеров |
 | `cli` | clap, anyhow | бинарник `ruststream` |
 

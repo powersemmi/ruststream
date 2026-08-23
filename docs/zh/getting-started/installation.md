@@ -33,6 +33,8 @@ serde = { version = "1", features = ["derive"] }
 | `asyncapi` | schemars, serde_norway | AsyncAPI 生成与 HTML 查看器 |
 | `metrics` | prometheus | Prometheus 中间件与导出器 |
 | `logging` | tracing-subscriber | `ruststream::logging`，带颜色的控制台日志订阅者（[日志](../guides/logging.md)） |
+| `otel` | opentelemetry, opentelemetry-otlp | 通过 OTLP 导出链路与指标，并按 W3C 规范传递 trace-context（[OpenTelemetry](../guides/opentelemetry.md)） |
+| `testing` | inventory | `TestApp` 与断言构建器（[测试](../guides/testing.md)） |
 | `conformance` | - | 面向 Broker 作者的 conformance 校验套件 |
 | `cli` | clap, anyhow | `ruststream` 二进制程序 |
 
