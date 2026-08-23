@@ -127,7 +127,7 @@ Under the hood, the runtime honours the delay:
 
 The `batch_retry_after` form composes with
 [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` carries
-per-element delays, so pending entries back off without holding up the rest of the page:
+per-element delays, so pending entries back off without holding up the rest of the batch:
 
 ```rust
 --8<-- "examples/retry.rs:batch_retry_after"
