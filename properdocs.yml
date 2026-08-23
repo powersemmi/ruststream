@@ -63,6 +63,7 @@ markdown_extensions:
 
 hooks:
   - docs/hooks/snippet_titles.py
+  - docs/hooks/i18n_banner.py
 
 plugins:
   - search
@@ -71,6 +72,42 @@ plugins:
   - redirects:
       redirect_maps:
         guides/templates.md: broker-authors/templates.md
+  # Translations live next to their original as `<page>.<locale>.md`, so a page and its
+  # translations show up in one directory listing and one diff. English is normative; a page
+  # with no translation yet falls back to the English text inside the localized site rather
+  # than disappearing from it, which is what lets translations land page by page.
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: ru
+          name: Russian
+          build: true
+          nav_translations:
+            Home: Главная
+            Getting started: Начало работы
+            Writing services: Разработка сервисов
+            Integrations: Интеграции
+            Observability: Наблюдаемость
+            Testing: Тестирование
+            Brokers: Брокеры
+        - locale: zh
+          name: Chinese
+          build: true
+          nav_translations:
+            Home: 首页
+            Getting started: 快速开始
+            Writing services: 编写服务
+            Integrations: 集成
+            Observability: 可观测性
+            Testing: 测试
+            Brokers: Broker
 
 extra:
   version:
