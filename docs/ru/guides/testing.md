@@ -164,7 +164,7 @@ docker run -d -p 4222:4222 nats:latest -js
 NATS_TEST_URL=nats://127.0.0.1:4222 cargo test --test integration_nats
 ```
 
-Это зеркалит разделение `with_real=True` из faststream: логика обработчика - на in-memory пути,
+Это повторяет разделение `with_real=True` из faststream: логика обработчика - на in-memory пути,
 семантика брокера - на настоящем. Держите оба набора над одними и теми же модулями обработчиков,
 чтобы у боевого кода был один источник истины.
 
