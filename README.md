@@ -229,8 +229,9 @@ Concrete brokers live in their own crates and pull `ruststream` from crates.io.
 
 ## Minimum supported Rust version
 
-The MSRV is **1.85** (edition 2024, native `async fn in trait`). CI builds the crate on every
-stable toolchain from 1.85 up to current stable, so any floor in that range works.
+The MSRV is **1.85** (edition 2024, native `async fn in trait`). CI builds and tests the crate on
+the floor and on current stable, and builds it on beta; Rust's stability guarantee carries the
+releases in between, so any floor at or above 1.85 works.
 
 The policy:
 

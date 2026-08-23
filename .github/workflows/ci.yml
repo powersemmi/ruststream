@@ -53,36 +53,21 @@ jobs:
               - 'Cargo.toml'
               - '.github/workflows/ci.yml'
 
-  toolchains:
-    name: Resolve toolchain range
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    outputs:
-      list: ${{ steps.range.outputs.list }}
-    steps:
-      # Multi-MSRV: the crate keeps rust-version = 1.85 and CI proves the build on
-      # every stable toolchain from that floor up to current stable, so broker
-      # crates can adopt any MSRV in the range without waiting for a core release.
-      # The list is resolved from the release manifest, so a new stable joins the
-      # matrix on its release day with no workflow edit.
-      - name: Build the 1.85..stable toolchain list
-        id: range
-        run: |
-          stable_minor=$(curl -sSf https://static.rust-lang.org/dist/channel-rust-stable.toml \
-            | grep -A1 '^\[pkg\.rust\]' | grep -m1 'version' | sed -E 's/.*"1\.([0-9]+)\..*/\1/')
-          versions=$(seq 85 "$((stable_minor - 1))" | sed 's/^/"1./; s/$/"/' | paste -sd, -)
-          echo "list=[\"stable\",${versions}]" >> "$GITHUB_OUTPUT"
-
   rust:
-    name: Rust ${{ matrix.toolchain }}
-    needs: [changes, toolchains]
+    name: Build and test (${{ matrix.toolchain }})
+    needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        toolchain: ${{ fromJSON(needs.toolchains.outputs.list) }}
+        # Three toolchains, each answering a different question, which is the shape axum
+        # and tokio both settled on: the floor is what the MSRV promise rests on, stable is
+        # what users build with, and beta is the early warning for a compiler or lint change
+        # before it reaches stable. The minor versions in between were dropped: they only ran
+        # `cargo check`, and code that fails to build on 1.90 fails on 1.85 as well, so they
+        # cost a dozen runners to restate what the floor already proves.
+        toolchain: [stable, beta, "1.85"]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -105,6 +90,16 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # The same lint set six weeks early, and deliberately not a gate. A clippy release
+      # adds lints, and the workspace warns on whole groups, so a new lint turns into a red
+      # build the day it reaches stable, with no warning. Running it here surfaces the lint
+      # while it is still in beta, in a step that reports without blocking, so the fix lands
+      # on its own schedule instead of on the release's.
+      - name: cargo clippy (beta, advisory)
+        if: matrix.toolchain == 'beta'
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
       - name: cargo check (no default features)
         run: cargo check --workspace --no-default-features
 
@@ -120,17 +115,16 @@ jobs:
           cargo check --no-default-features --features cbor,memory,macros
           cargo check --no-default-features --features msgpack,memory,macros
 
-      # The intermediate toolchains exist to prove the build (the two checks
-      # above); the full suite runs at the edges of the range only.
-      #
       # The trybuild UI snapshots in tests/ui are rustc-version-sensitive, so they
       # run on stable only: RUN_UI_TESTS=1 opts the `ui` test in here, every other
-      # run (the 1.85 job, the coverage job, a local `cargo test`) leaves it unset
-      # and the test skips itself. RUN_SCAFFOLD_BUILD=1 opts in the heavy `ruststream
-      # new` compile-check the same way (a nested `cargo build` of the rendered
-      # memory template), so template rot fails CI instead of a user's first build.
+      # run (the beta and 1.85 jobs, the coverage job, a local `cargo test`) leaves it
+      # unset and the test skips itself. Beta is excluded for exactly that reason: its
+      # rustc renders diagnostics that stable has not shipped yet, so the snapshots
+      # would fail there on wording months before the wording is real. RUN_SCAFFOLD_BUILD=1
+      # opts in the heavy `ruststream new` compile-check the same way (a nested `cargo build`
+      # of the rendered memory template), so template rot fails CI instead of a user's
+      # first build.
       - name: cargo test
-        if: matrix.toolchain == 'stable' || matrix.toolchain == '1.85'
         env:
           RUN_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
           RUN_SCAFFOLD_BUILD: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
