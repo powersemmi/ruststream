@@ -295,7 +295,7 @@ impl ContextField for Partition {
 
 没有任何单条投递字段的 Broker 用 `()`，整节都可以跳过。
 
-## 异步边界上的中间件
+## 异步边界上的中间件 { #middleware-on-the-async-edges }
 
 那些需要围绕编码和解码做异步 I/O 的集成（一个 schema 注册表、一层线上格式的信封）不属于 `Codec`：核心
 的编解码器是同步的，处理器也应当继续用默认的那一个。把它们放到异步边界上：在订阅的投递路径上转码入站

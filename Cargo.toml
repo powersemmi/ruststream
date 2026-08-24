@@ -72,6 +72,10 @@ name = "codecs"
 required-features = ["macros", "memory", "json", "cbor"]
 
 [[example]]
+name = "custom_codec"
+required-features = ["macros", "memory", "json", "cbor"]
+
+[[example]]
 name = "middleware"
 required-features = ["macros", "memory", "json"]
 

@@ -90,6 +90,40 @@ retry caveats live in [Failure policy](failure-policy.md). The codec examples ab
 
 ## Custom codecs
 
-A codec is any type implementing the `Codec` trait, so you can supply your own (a schema-registry
-envelope, an encrypting wrapper) and pass it anywhere a built-in codec goes:
-`with_broker_codec`, `Router::with_codec`, or `TypedPublisher::with_codec`.
+A codec is any type implementing the `Codec` trait, so you can supply your own and pass it
+anywhere a built-in codec goes. Making it generic over another codec makes it composable: the
+inner codec decides the payload format, the wrapper only transforms the bytes around it. The
+codec below frames the inner one's output with a two-byte versioned header, the shape a
+schema-registry envelope or an encrypting wrapper takes as well.
+
+```rust
+--8<-- "examples/custom_codec.rs:codec"
+```
+
+Both sides of the wrapper report through `CodecError`. A failure of the inner codec already is
+one and travels up with `?`, unchanged. A failure of the wrapper itself becomes
+`CodecError::Decode` (or `CodecError::Encode`) carrying your own error type as its source, so the
+message names which layer rejected the payload and why: `decode failed: not an envelope: leading
+byte 0x7b`.
+
+A custom codec mounts at the same three levels as a built-in one - here all three at once, so
+that the scope, the chain and the reply each read their own line:
+
+```rust
+--8<-- "examples/custom_codec.rs:mount"
+```
+
+## The synchronous boundary
+
+`Codec::encode` and `Codec::decode` are synchronous, which fixes what can live in a codec: what a
+constant and the bytes at hand already decide, like the version tag above. An integration that
+needs I/O to serialize - resolving a schema id against a registry, fetching a key from a KMS -
+does not fit, and wrapping a blocking call in it stalls the delivery task.
+
+Put those on the async edges instead: transcode incoming payloads on the subscription's delivery
+path, before the codec sees them, and frame outgoing ones with a
+[`PublishLayer`](middleware.md#publish-side-middleware). Both are async and fallible.
+[Broker authors](../broker-authors/index.md#middleware-on-the-async-edges) covers the same
+boundary from the broker side.
+
+This codec is [`examples/custom_codec.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/custom_codec.rs).

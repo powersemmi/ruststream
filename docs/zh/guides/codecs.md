@@ -87,6 +87,35 @@ use ruststream::subscriber;
 
 ## 自定义编解码器
 
-编解码器就是任何实现了 `Codec` trait 的类型，因此你可以提供自己的实现（比如带 schema 注册中心的信封、
-一层加密包装），并把它传到任何接受内置编解码器的地方：`with_broker_codec`、`Router::with_codec` 或者
-`TypedPublisher::with_codec`。
+编解码器就是任何实现了 `Codec` trait 的类型，因此你可以提供自己的实现，并把它传到任何接受内置编解码器
+的地方。让它对另一个编解码器泛型，它就能组合起来：内层编解码器决定载荷的格式，外层包装只变换它周围的
+字节。下面这个编解码器给内层的输出加上两个字节的版本头，schema 注册中心的信封和加密包装也是同样的形状。
+
+```rust
+--8<-- "examples/custom_codec.rs:codec"
+```
+
+包装的两侧都通过 `CodecError` 上报错误。内层编解码器的失败本身就是一个 `CodecError`，用 `?` 原样向上
+传递。包装自身的失败则变成 `CodecError::Decode`（或 `CodecError::Encode`），并把你自己的错误类型作为
+来源带上，因此错误消息会指出是哪一层拒绝了载荷、以及为什么：`decode failed: not an envelope: leading
+byte 0x7b`。
+
+自定义编解码器可以挂载的层级和内置编解码器完全一样，共三个。这里三个一次写全，作用域、路由器链和回复
+各占一行：
+
+```rust
+--8<-- "examples/custom_codec.rs:mount"
+```
+
+## 同步边界 { #the-synchronous-boundary }
+
+`Codec::encode` 和 `Codec::decode` 是同步的，这就定死了编解码器里能放什么：常量和手头的字节已经能决定
+的东西，比如上面那个版本标记。序列化时需要 I/O 的集成放不进来，例如到注册中心解析 schema id、从 KMS
+取密钥；在里面包一个阻塞调用会拖住投递任务。
+
+把这类集成放到异步的边缘：传入的载荷在订阅的投递路径上转码，赶在编解码器看到它之前；出站的则用
+[`PublishLayer`](middleware.md#publish-side-middleware) 加封。两者都是异步的，也都可以返回错误。同一条
+边界在 Broker 一侧的说法，参见 [Broker 作者](../broker-authors/index.md#middleware-on-the-async-edges)。
+
+这个编解码器出自
+[`examples/custom_codec.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/custom_codec.rs)。

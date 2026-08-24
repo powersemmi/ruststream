@@ -119,7 +119,7 @@ Broker 的原始消息类型之上（上面的 `DynStack<MemoryMessage>`），�
 执行，最外层的先跑。每个动态层每次调用都要付出一个装箱 future 的代价，而静态层的代价是零，所以把
 静态链条当作默认选择，只在运行时组合确实值回票价的地方才动用 `DynStack`。
 
-## 发布侧的中间件
+## 发布侧的中间件 { #publish-side-middleware }
 
 上面讲的中间件跑在消费路径上（进来的消息）。发布路径有它自己的管线，参见
 [发布与回复](publishing.md#the-publish-pipeline)。

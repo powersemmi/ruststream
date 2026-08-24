@@ -130,7 +130,7 @@ in list order, outermost first. Each dynamic layer costs one boxed future per ca
 for the static layers, so keep the static chain as the default and reach for `DynStack` only where
 runtime composition earns it.
 
-## Publish-side middleware
+## Publish-side middleware { #publish-side-middleware }
 
 The middleware above runs on the consume path (incoming messages). The publish path has its own
 pipeline; see [Publishing and replies](publishing.md#the-publish-pipeline).

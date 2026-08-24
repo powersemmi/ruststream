@@ -319,7 +319,7 @@ impl ContextField for Partition {
 
 A broker with no per-delivery fields uses `()` and skips all of this.
 
-## Middleware on the async edges
+## Middleware on the async edges { #middleware-on-the-async-edges }
 
 Integrations that need async I/O around encode and decode (a schema registry, a wire-format
 envelope) do not belong in a `Codec`: the core codec is synchronous and handlers should stay on the
