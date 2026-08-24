@@ -28,10 +28,6 @@ A handler is an `async fn` whose first parameter is the decoded payload. The `#[
 turns it into a mountable definition named after the function.
 
 ```rust title="src/orders.rs"
-use ruststream::runtime::HandlerResult;
-use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
-
 --8<-- "examples/tutorial/orders.rs:order"
 ```
 
@@ -39,17 +35,14 @@ A handler returns a [`HandlerResult`](../guides/subscribers.md#acking): `Ack`, o
 or requeues the message. Returning `()` or `Result<(), E>` also works - they convert into a result
 (`Ok` acks, `Err` drops).
 
+The `JsonSchema` derive is what puts the payload's schema in the AsyncAPI document of step 6, and
+the type's doc comment becomes the message description. It needs no dependency of its own: the
+`asyncapi` feature re-exports `schemars`.
+
 ## 3. Wire it into an app
 
 ```rust title="src/main.rs"
-mod orders;
-
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream};
-
-use crate::orders::handle;
-
---8<-- "examples/quickstart.rs:app"
+--8<-- "examples/tutorial/first_app.rs:app"
 ```
 
 The macro turns `handle` into a value named after the function, so you import and pass it directly.
@@ -74,14 +67,11 @@ To publish a reply, return the reply value and name the destination with `publis
 --8<-- "examples/tutorial/orders.rs:confirm"
 ```
 
-Mount it with plain `include`; the reply goes out through the broker's default publish policy
-under the default codec (chain `.publisher(..)` with a `TypedPublisher` stack to name a reply
-codec or add transforms):
+Mount it next to `handle`, with the same plain `include`; the reply goes out through the broker's
+default publish policy under the default codec:
 
-<!-- inline-rust: minimal mount fragment isolating the reply wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
-```rust
-// inside with_broker(...), with `confirm` imported from the orders module
-b.include(confirm);
+```rust title="src/main.rs"
+--8<-- "examples/tutorial/reply_app.rs:reply"
 ```
 
 See [Publishing & replies](../guides/publishing.md) for the full picture, including publishing from
@@ -96,6 +86,12 @@ As handlers grow, keep them in their own module and collect them into a
 --8<-- "examples/tutorial/routes.rs:routes"
 ```
 
+A router holds no broker, so a registration cannot commit itself on drop the way the scope's
+builder does: it ends in an explicit terminal. `.publisher(..)` names the reply wiring - a publish
+policy is pure declaration, which is why the router still needs no broker - and `.mount()` takes
+the broker's own default publish policy, the explicit spelling of what step 4 got by default.
+[Routing](../guides/routing.md) covers the rest of the router surface.
+
 ```rust title="src/main.rs"
 --8<-- "examples/tutorial/main.rs:main"
 ```
@@ -106,9 +102,12 @@ As handlers grow, keep them in their own module and collect them into a
 cargo run -- asyncapi gen
 ```
 
-Every subscriber becomes a channel and a `receive` operation; payload types that derive
-`schemars::JsonSchema` also contribute schemas. The output flags (`-o`, `--yaml`) and the document
-itself are covered in [AsyncAPI](../guides/asyncapi.md).
+Every subscriber becomes a channel and a `receive` operation. `handle` and `confirm` share the
+`orders` channel and still get one operation each, because they open separate subscriptions; the
+reply adds a `send` operation on `confirmations`. Both payload types derive `schemars::JsonSchema`,
+so the document carries their schemas under `components.messages`, each with the type's doc comment
+as its description. The output flags (`-o`, `--yaml`) and the document itself are covered in
+[AsyncAPI](../guides/asyncapi.md).
 
 ## 7. Swap in a real broker
 
@@ -121,8 +120,9 @@ and codecs are unchanged. The available brokers and the side-by-side swap for ea
 !!! info "The complete service is a compiled example"
     Every snippet on this page is embedded from
     [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
-    in the repository, which CI builds on every change. Run it yourself with
-    `cargo run --example tutorial --features macros,memory,json -- run`.
+    in the repository, which CI builds on every change: `first_app.rs` and `reply_app.rs` are the
+    service as steps 3 and 4 leave it, `main.rs` the finished one. Run it yourself with
+    `cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
 
 ## Next steps
 

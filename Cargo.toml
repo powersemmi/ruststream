@@ -38,7 +38,17 @@ required-features = ["macros", "memory", "json"]
 [[example]]
 name = "tutorial"
 path = "examples/tutorial/main.rs"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "asyncapi"]
+
+[[example]]
+name = "tutorial_first_app"
+path = "examples/tutorial/first_app.rs"
+required-features = ["macros", "memory", "json", "asyncapi"]
+
+[[example]]
+name = "tutorial_reply_app"
+path = "examples/tutorial/reply_app.rs"
+required-features = ["macros", "memory", "json", "asyncapi"]
 
 [[example]]
 name = "subscribers"

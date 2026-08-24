@@ -27,10 +27,6 @@ serde = { version = "1", features = ["derive"] }
 定义，名字与函数同名。
 
 ```rust title="src/orders.rs"
-use ruststream::runtime::HandlerResult;
-use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
-
 --8<-- "examples/tutorial/orders.rs:order"
 ```
 
@@ -38,17 +34,13 @@ use serde::{Deserialize, Serialize};
 重新入队该消息的 `nack`。返回 `()` 或 `Result<(), E>` 同样可行，它们会转换成一个结果（`Ok` 表示
 ack，`Err` 表示丢弃）。
 
+把载荷的 schema 放进第 6 步那份 AsyncAPI 文档的，正是 `JsonSchema` derive；类型的文档注释则成为该
+消息的描述。这不需要额外的依赖，因为 `asyncapi` 特性已经重导出了 `schemars`。
+
 ## 3. 接入应用
 
 ```rust title="src/main.rs"
-mod orders;
-
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream};
-
-use crate::orders::handle;
-
---8<-- "examples/quickstart.rs:app"
+--8<-- "examples/tutorial/first_app.rs:app"
 ```
 
 宏把 `handle` 变成一个与函数同名的值，所以你直接导入它并原样传入即可。
@@ -73,13 +65,11 @@ cargo run -- run
 --8<-- "examples/tutorial/orders.rs:confirm"
 ```
 
-用普通的 `include` 挂载它即可；回复会经由 Broker 的默认发布策略发出，编码用的是默认编解码器（想为
-回复指定另一个编解码器或加上变换，就再链式调用 `.publisher(..)` 并传入一个 `TypedPublisher` 栈）：
+把它挂在 `handle` 旁边，用同一个普通的 `include` 即可：回复会经由 Broker 的默认发布策略发出，编码
+用的是默认编解码器。
 
-<!-- inline-rust: minimal mount fragment isolating the reply wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
-```rust
-// inside with_broker(...), with `confirm` imported from the orders module
-b.include(confirm);
+```rust title="src/main.rs"
+--8<-- "examples/tutorial/reply_app.rs:reply"
 ```
 
 完整的图景（包括在处理器内部发布）参见[发布与回复](../guides/publishing.md)。
@@ -92,6 +82,11 @@ b.include(confirm);
 --8<-- "examples/tutorial/routes.rs:routes"
 ```
 
+路由器本身不持有 Broker，因此注册无法像作用域的构建器那样在丢弃时自动提交，它要以一个显式的终结调用
+收尾。`.publisher(..)` 指定回复的接线方式，发布策略仍然是纯粹的声明，所以路由器依旧不需要 Broker；
+`.mount()` 则采用 Broker 自带的默认发布策略，也就是把第 4 步自动拿到的那一份显式写出来。路由器的
+其余接口参见[路由](../guides/routing.md)。
+
 ```rust title="src/main.rs"
 --8<-- "examples/tutorial/main.rs:main"
 ```
@@ -102,8 +97,10 @@ b.include(confirm);
 cargo run -- asyncapi gen
 ```
 
-每个订阅者都会变成一个 channel 和一个 `receive` 操作；派生了 `schemars::JsonSchema` 的载荷类型还会
-贡献出 schema。输出相关的参数（`-o`、`--yaml`）以及文档本身，参见
+每个订阅者都会变成一个 channel 和一个 `receive` 操作。`handle` 和 `confirm` 共用 `orders` 这个
+channel，却各自拿到一个操作，因为它们开的是两条独立的订阅；回复则在 `confirmations` 上添加一个
+`send` 操作。两个载荷类型都 derive 了 `schemars::JsonSchema`，所以文档在 `components.messages` 下
+带上了它们的 schema，每一个的描述就是类型的文档注释。输出相关的参数（`-o`、`--yaml`）以及文档本身，参见
 [AsyncAPI](../guides/asyncapi.md)。
 
 ## 7. 换成真正的 Broker
@@ -116,8 +113,9 @@ cargo run -- asyncapi gen
 !!! info "完整的服务是一个会参与编译的示例"
     本页的每一段代码都嵌自仓库中的
     [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)，
-    CI 在每次改动时都会构建它。也可以用
-    `cargo run --example tutorial --features macros,memory,json -- run` 自己跑一遍。
+    CI 在每次改动时都会构建它：`first_app.rs` 和 `reply_app.rs` 分别是第 3 步和第 4 步结束时的服务，
+    `main.rs` 则是最终版本。也可以用
+    `cargo run --example tutorial --features macros,memory,json,asyncapi -- run` 自己跑一遍。
 
 ## 下一步
 
