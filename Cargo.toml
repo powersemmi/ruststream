@@ -299,14 +299,19 @@ otel = [
 [dependencies]
 bytes = "1"
 futures = "0.3"
-serde = { version = "1", features = ["derive"] }
+# 1.0.69 is the real floor: the typed-headers deserializer names `BorrowedStrDeserializer` and
+# forwards the 128-bit methods, both of which arrived there.
+serde = { version = "1.0.69", features = ["derive"] }
 thiserror = "2"
 
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+# 1.37 is the real floor: the app clones the health `watch::Sender`, and `Clone` on it landed there.
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 # 0.7.10 is the real floor: `TaskTracker`, which the runtime uses to join spawned handlers,
 # landed there, so nothing below it ever compiled here.
 tokio-util = { version = "0.7.10", features = ["rt"] }
-tracing = "0.1"
+# 0.1.29 is the real floor: it is the first release whose own `tracing-core` bound reaches 0.1.21,
+# where `Value` for `Option<T>` landed - the dispatch spans record optional fields.
+tracing = "0.1.29"
 
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
@@ -325,7 +330,8 @@ prometheus = { version = "0.14", default-features = false, optional = true }
 schemars = { version = "1", optional = true }
 serde_norway = { version = "0.9", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
-anyhow = { version = "1", optional = true }
+# 1.0.1 is the real floor: `bail!` with a formatted message does not compile against 1.0.0.
+anyhow = { version = "1.0.1", optional = true }
 # 0.3.5 is the real floor: earlier 0.3 releases lose the broker registrations to a plain GNU ld,
 # so the registry comes back empty and the harness reports no transport for a broker that did
 # register. Development setups on mold or lld happen to hide it.
