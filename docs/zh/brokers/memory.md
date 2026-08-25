@@ -26,8 +26,8 @@ let broker = MemoryBroker::new();
 
 它是一个真正的 Broker，而不是测试替身：运行时驱动它走的分发路径，和驱动生产 Broker 的那条完全相同，
 因此 handler、它的中间件以及解码在这里的行为，与它们在生产中的行为一致。它不做的是模拟某个具体
-Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信路由。两半都重要：前一半说明测试通过为什么有
-意义，后一半说明它为什么不意味着同一份代码能在 Kafka 上通过。
+Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信路由 - 所以在这里通过的测试，并不说明同一份
+代码能在 Kafka 上通过。
 
 ## 能力 { #capabilities }
 
@@ -53,9 +53,9 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
   通过它定位会以 `MemoryError::ShutDown` 报错。在应用内部，处理器通过 `Seek` 参数拿到 seeker（参见
   [定位](../guides/subscribers.md#seeking)）。
 - **关闭。** 这条阶梯是完全带类型的：`MemoryBroker::connect(self)` 产出 `ConnectedMemoryBroker`，而它
-  消费自身的 `shutdown` 又产出 `ClosedMemoryBroker`，一个见证值，报告本次拆除丢弃了多少订阅者注册。总线
-  本身是单个枚举（因此生命周期和注册信息不可能彼此矛盾）：关闭之后再使用别名句柄，无论是发布、提交事务
-  还是发起请求，都会以 `MemoryError::ShutDown` / `RequestError::ShutDown` 报错，而不是悄悄成功。
+  消费自身的 `shutdown` 又产出 `ClosedMemoryBroker`，一个见证值，报告本次拆除丢弃了多少订阅者注册。
+  关闭之后再使用别名句柄，无论是发布、提交事务还是发起请求，都会以 `MemoryError::ShutDown` /
+  `RequestError::ShutDown` 报错，而不是悄悄成功。
 
 `DescribeServer` 没有实现：内存 Broker 没有网络坐标可供上报。
 

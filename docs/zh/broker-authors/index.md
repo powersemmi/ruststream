@@ -43,14 +43,12 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 在启动时调用一次），而已连接形态直接持有活的客户端，它自身的操作永远不必检查“也许已连接”的状态。
 Broker 还可以额外保留一个由 `connect` 填充的共享单元（或者像内存 Broker 那样，保留一份可共享的进程内
 状态），这样在应用还在组装、`connect` 尚未运行时就能先把发布者发出去；该单元服务的是那些提前拿到的
-句柄，而不是已连接形态。[NATS 示例](example-nats.md)展示的就是基于单元的变体。正是这份契约让服务
-可以用同步的 `#[ruststream::app]` 构建器组装起来；[conformance 校验套件](conformance.md)会端到端地
-证明这一点。
+句柄，而不是已连接形态。[NATS 示例](example-nats.md)展示的就是基于单元的变体。
+[conformance 校验套件](conformance.md)会端到端地证明这道阶梯。
 
-消费 `self` 的状态转移让持有者一侧的误用无法表达：在一个已经关闭的 Broker 上，根本没有发布或订阅方法
-可调用。剩下那条仍属运行时的规则来自传输层的现实，而不是契约的记账：与连接互为别名的句柄（从已连接
-形态发出去的发布者、可共享 Broker 的克隆）在关闭之后使用时必须报错，绝不能在一条已死的连接上悄悄地
-返回成功。生命周期检查同样会走到这条路径。
+在一个已经关闭的 Broker 上，根本没有发布或订阅方法可调用，所以持有者一侧的误用通不过编译。别名仍是
+一条运行时规则：与连接互为别名的句柄（从已连接形态发出去的发布者、可共享 Broker 的克隆）在关闭之后
+使用时必须报错，绝不能在一条已死的连接上悄悄地返回成功。生命周期检查同样会走到这条路径。
 
 ### `Subscribe`
 
@@ -104,8 +102,8 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-这两个带默认实现的方法，正是可选的 Broker 行为得以优雅降级的方式：一个两者都不覆盖的 Broker 仍然能
-配合运行时的每一项功能，此时 `retry_after` 退回为立即重新入队，按键分道则会轮转那些没有键的消息。
+这两个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能：`retry_after` 退回为立即
+重新入队，按键分道则会轮转那些没有键的消息。
 
 ### `Publisher`
 
@@ -124,15 +122,14 @@ pub trait Publisher: Send + Sync {
 
 这是发布接口，而不是服务代码要写的那一个：应用通过构建器发布
 （`publisher.message(&value).publish()`、`publisher.raw(&bytes).to(dest).publish()`），由构建器解析
-目的地、编解码器和消息头，然后恰好调用一次该方法。Broker 只要实现 `publish`，就免费得到整个构建器，
-没有别的东西要提供，构建器上也没有任何东西需要 Broker crate 跟着同步。
+目的地、编解码器和消息头，然后恰好调用一次该方法。实现 `publish`，整个构建器就随之而来；没有别的
+东西要提供。
 
 一个为一整串消息携带同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），
 应当把该参数从 `base_headers` 返回，而不是在 `publish` 内部写进消息里。构建器会以这层底作为出站
-映射的起点，再把调用点的消息头逐个键覆盖上去：优先级因此对所有 Broker 一次定死（调用点取胜，参见
-[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)），映射也只组装一次，不必每次
-发布都克隆一遍。`Transaction` 上有同样带默认实现的方法，因此从这样的发布者开启的事务行为完全一致。
-没有东西要补的发布者两个都不必实现，也不付出任何代价。
+映射的起点，再把调用点的消息头逐个键覆盖上去，因此调用点取胜（参见
+[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。`Transaction` 上有同样带
+默认实现的方法，因此从这样的发布者开启的事务行为完全一致。没有东西要补的发布者两个都不必实现。
 
 ### `PublishPolicy`
 
@@ -149,20 +146,19 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 }
 ```
 
-这里的错误类型是做了类型擦除的 `PairError`（用 `PairError::new` 包住你的 Broker 的失败），而不是
-`C::Error`：配对在启动时对每个发布者只做一次，绝不出现在热路径上；而且跨 Broker 的令牌配对的是包含它
-的作用域之外的另一个 Broker，所以一个按 Broker 定型的错误类型本来也说不清究竟是哪一个 Broker。
+这里的错误类型是做了类型擦除的 `PairError`：用 `PairError::new` 包住你的 Broker 的失败。配对在启动时
+对每个发布者只做一次，绝不出现在热路径上。
 
 为每一种真正意义上的发布**模式**提供一对策略与活形态，并且让模式的选择成为策略类型之间的转移，而不是
 一个运行时标志：普通策略配对出普通的发布者，而 `transactional_id(..)` 这一步构建器调用会转移到另一个
 独立的事务性策略类型，其活形态实现 `TransactionalPublisher`，于是普通发布者上压根没有事务接口。内存
 Broker 的 `MemoryPublish` / `MemoryRequest` 是最小的参考实现（没有选项，所以它们是单元标记类型）；
-核心提供的类型化组合子以函子的方式实现 `PublishPolicy`，正因如此，用户才能在你的策略配对之前，在它
-之上组合编解码器和变换。
+核心提供的类型化组合子以函子的方式实现 `PublishPolicy`，于是用户可以在你的策略配对之前，在它之上
+组合编解码器和变换。
 
-如果普通策略用默认值就能用（多数如此），那就在已连接形态上再实现 `DefaultPublish` 来指明它。正是它
-让运行时能在挂载一个不带显式 `.publisher(..)` 的 `publish("dest")` 处理器时构造出默认的回复发布者，
-此时只写 `b.include(def)` 也能编译通过。发布者总是需要显式选项的 Broker 不实现它，它们的用户要在每次
+如果普通策略用默认值就能用（多数如此），那就在已连接形态上再实现 `DefaultPublish` 来指明它。随后，
+挂载一个不带显式 `.publisher(..)` 的 `publish("dest")` 处理器时，运行时就会构造出默认的回复发布者：
+只写 `b.include(def)` 也能编译通过。发布者总是需要显式选项的 Broker 不实现它，它们的用户要在每次
 注册时附上一个策略。
 
 <!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
@@ -209,10 +205,9 @@ impl FromName for OrdersStream {
 }
 ```
 
-正是它让 `#[subscriber(OrdersStream)]` 合法：属性固定了订阅方式，值则由挂载点提供。如果一种方式确实
+于是 `#[subscriber(OrdersStream)]` 就合法了：属性固定了订阅方式，值则由挂载点提供。如果一种方式确实
 需要不止一个名字才能成立（既要一个主题，*又*要一个订阅名），它就不实现 `FromName`，于是这种写法对它
-无法通过编译，这才是诚实的边界；同时也免去了给描述符加一个 `Default`，那样的 `Default` 会让一个不可用
-的值变得可以表达。
+无法通过编译。
 
 ### 用你自己的词汇表达配置
 
@@ -234,9 +229,8 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 }
 ```
 
-该 trait 属于你自己的 crate，因此孤儿规则得到满足；而对源类型的 trait 约束意味着，这些方法在别的
-Broker 的构建器上根本不存在。用户像用任何扩展 trait 那样导入它，就能用到这些方法。下文中 `Out` 槽位的
-词汇采用的也是同一种扩展形态。
+对源类型的 trait 约束意味着，这些方法在别的 Broker 的构建器上根本不存在。用户像用任何扩展 trait
+那样导入它，就能用到这些方法。下文中 `Out` 槽位的词汇采用的也是同一种扩展形态。
 
 ## 能力 trait
 
@@ -315,9 +309,8 @@ impl ContextField for Partition {
 
 ## 配置与默认值
 
-`Config` 归你的 crate 所有。核心不携带任何 Broker 专有的配置，正是这一点让上游的一次变更只波及一个
-Broker crate。如果某个配置字段没有合理的默认值，就不要为它实现 `Default`；强迫用户显式设置，好过发出
-一个日后可能出问题的默认值。
+`Config` 归你的 crate 所有；核心不携带任何 Broker 专有的配置。如果某个配置字段没有合理的默认值，就
+不要为它实现 `Default`；强迫用户显式设置，好过发出一个日后可能出问题的默认值。
 
 ## 错误
 

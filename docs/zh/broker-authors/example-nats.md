@@ -61,8 +61,8 @@ pub enum NatsError {
 
 ## Broker 阶梯
 
-`new` 是同步的，只记录地址：正因如此，NATS 服务才能与同步的 `#[ruststream::app]` 构建器组合起来。
-消费 `self` 的 `connect` 负责拨号，并返回已连接形态，它直接持有活跃的客户端。只剩下一个共享 cell：
+`new` 是同步的，只记录地址。消费 `self` 的 `connect` 负责拨号，并返回已连接形态，它直接持有活跃的
+客户端。只剩下一个共享 cell：
 在应用还在组装、`connect` 尚未运行的时候就可以构建发布者，而它通过 `connect` 填充的 cell 读取
 客户端。该 cell 是为发布者而存在的（同一种发布者类型同时服务于早期路径和已连接路径）；已连接形态
 自身的操作从不检查它。
@@ -157,15 +157,14 @@ impl ConnectedBroker for ConnectedNatsBroker {
 }
 ```
 
-消费 `self` 意味着在所有者这条路径上不存在第二次 `connect`，也不存在需要收拾的“关闭之后再发布”；
-先前创建的发布者仍然握着它的 cell，而在 drain 之后再发布，浮现出来的是客户端自己的错误（这正是
-生命周期检查所验证的别名句柄契约）。`shutdown` 完成全部可失败的拆除工作，并且绝不 panic，契约要求
-的正是这样。
+消费 `self` 在所有者这条路径上排除了第二次 `connect`，也排除了关闭之后再发布。先前创建的发布者
+仍然握着它的 cell，而在 drain 之后再发布，浮现出来的是客户端自己的错误 - 这正是生命周期检查所
+验证的别名句柄契约。`shutdown` 完成全部可失败的拆除工作，并且绝不 panic。
 
 ## Core 与 JetStream 共用一种订阅
 
-Core NATS 是发完即忘的；JetStream 则会持久化并需要确认。与其做成两种订阅者类型，不如把两者都收在
-一个 `SubscribeOptions` 描述符和一个 `NatsSubscriber` 背后。`SubscribeOptions` 就是
+Core NATS 是发完即忘的；JetStream 则会持久化并需要确认。两者都收在一个 `SubscribeOptions` 描述符和
+一个 `NatsSubscriber` 背后。`SubscribeOptions` 就是
 `SubscriptionSource`；Broker 依据是否调用过 `jetstream(..)` 来分发。每个构建器方法都对应
 `#[subscriber(..)]` 属性宏的一个关键字。
 
@@ -419,9 +418,8 @@ impl IncomingMessage for NatsMessage {
 }
 ```
 
-对 core 投递返回 `AckError::Unsupported`（而不是一个真正的错误），正是 Core NATS 能通过 conformance
-生命周期检查的原因。每条消息在构造时一次性转换自己的消息头；这两个转换函数是唯一需要跟随
-`async-nats` 版本变化的地方：
+conformance 生命周期检查接受 `AckError::Unsupported`，所以 Core NATS 能通过它。每条消息在构造时
+一次性转换自己的消息头；这两个转换函数是唯一需要跟随 `async-nats` 版本变化的地方：
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
