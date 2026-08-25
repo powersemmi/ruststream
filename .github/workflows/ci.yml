@@ -211,6 +211,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2.86.5
+        with:
+          tool: cargo-hack
+
       # The full flag rather than -Z direct-minimal-versions: the narrow one leaves the assembled
       # graph unverified, and that is what a user builds. It costs the pinning list below.
       - name: Resolve minimal versions
@@ -229,6 +234,27 @@ jobs:
         run: |
           cargo check --locked --workspace --all-targets --all-features
           cargo test --locked --workspace --all-features --no-fail-fast
+
+      # Everything above still sees dev-dependencies, which raise shared floors before the library
+      # is built: the run proves the workspace resolves, not that the manifest is honest for a
+      # consumer. Drop them and resolve again, so the graph is the one a dependent gets. Runs last
+      # because it rewrites the manifests in place.
+      - name: Resolve minimal versions without dev-dependencies
+        run: |
+          cargo hack --remove-dev-deps
+          cargo +nightly update -Z minimal-versions
+
+      # tonic 0.14 declares `tower = "0.5"`, but `ServiceBuilder::new` only became const-callable
+      # in 0.5.1. Another too-loose third-party bound, masked above by a higher tower.
+      - name: Pin dependencies whose declared bounds are too loose (no dev-dependencies)
+        run: cargo update -p tower@0.5.0 --precise 0.5.1
+
+      # The library as a dependency, on the floor toolchain. No --locked: cargo-hack edits the
+      # manifests it checks.
+      - name: Check the library against its own declared floors
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: cargo hack check --workspace --no-dev-deps --all-features
 
   external-types:
     name: Public API surface
