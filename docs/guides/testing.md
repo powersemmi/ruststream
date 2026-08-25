@@ -165,8 +165,8 @@ docker run -d -p 4222:4222 nats:latest -js
 NATS_TEST_URL=nats://127.0.0.1:4222 cargo test --test integration_nats
 ```
 
-The split is deliberate: handler logic on the in-process path, broker semantics on the real one.
-Keep both suites over the same handler modules so the production code has a single source of truth.
+Handler logic belongs on the in-process path, broker semantics on the real one. Keep both suites
+over the same handler modules so the production code has a single source of truth.
 
 !!! note "Writing a broker crate?"
     The machinery that makes `TestApp` work against a broker - the in-process transport and the

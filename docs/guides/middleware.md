@@ -72,20 +72,18 @@ let handler = base_handler.with(LogLayer);
 
 This is the right tool when only some handlers need a layer. It composes with the global stack.
 
-## Why middleware is static by default
+## What a layer costs
 
 The layers above are resolved at compile time: `with`/`layer` build a concrete, nested handler type
 (`Logged<Typed<..>>`), and `Handler::handle` returns an `impl Future` whose type is known. The
 compiler monomorphizes the whole chain into one state machine and inlines across the layer
-boundaries, so a static layer adds no dispatch cost and no allocation - it is a zero-cost
-abstraction.
+boundaries, so a static layer adds no dispatch cost and no allocation.
 
 A dynamic (`dyn`) chain gives that up. `Handler::handle` is an `async fn in trait`, so its future is
-an anonymous `impl Future` - and a trait with an `impl Trait` return is not object-safe. To store
-middleware behind `dyn`, the future has to be boxed (`Pin<Box<dyn Future>>`): one heap allocation per
-layer per message, and the call can no longer be inlined or specialized across the `dyn` boundary.
-`dyn` + `async` does not optimize, so that cost would land on every handler while the chain is
-almost always known at compile time - hence the static default.
+an anonymous `impl Future`, and a trait with an `impl Trait` return is not object-safe: to store
+middleware behind `dyn` the future has to be boxed (`Pin<Box<dyn Future>>`). That is one heap
+allocation per layer per message, and the call is no longer inlined or specialized across the
+`dyn` boundary.
 
 ## Dynamic middleware
 

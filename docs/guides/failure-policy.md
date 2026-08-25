@@ -11,9 +11,8 @@ With no clause, a subscriber uses the built-in defaults:
 
 - **panic = `fail_fast`**: a panic is an internal bug. The runtime logs a loud error naming the
   subscription, then starts a graceful shutdown (it cancels the shutdown token and runs the
-  shutdown hooks) and makes [`run`](../index.md) return `Err` with a non-zero exit. An orchestrator
-  restarts the service and the operator lands in the logs, instead of a subscriber that silently
-  stopped consuming or an invisible redelivery loop.
+  shutdown hooks) and makes [`run`](../index.md) return `Err` with a non-zero exit, so an
+  orchestrator restarts the service and the operator lands in the logs.
 - **decode = `drop`**: a decode failure is usually bad external input. Dropping the one bad message
   (a nack without requeue) keeps a single malformed payload from taking the consumer down, which on
   an untrusted topic would be a poison-message or denial-of-service footgun. The same policy covers

@@ -47,15 +47,14 @@ the live client directly - its own operations never check a "maybe connected" st
 additionally keep a shared cell that `connect` fills (or a shareable in-process state, as the
 in-memory broker does) so publishers can be handed out while the app is still being assembled,
 before `connect` runs; the cell serves those early handles, not the connected form. The
-[NATS example](example-nats.md) shows the cell-backed variant. This contract is what lets a
-service compose with the synchronous `#[ruststream::app]` builder; the
-[conformance harness](conformance.md) proves it end to end.
+[NATS example](example-nats.md) shows the cell-backed variant. The
+[conformance harness](conformance.md) proves the ladder end to end.
 
-Consuming transitions make owner-side misuse unrepresentable: there is no publish or subscribe to
-call on a broker you already shut down. What remains a runtime rule is transport reality, not
-contract bookkeeping: handles that alias the connection (publishers handed out from the connected
-form, clones of a shareable broker) must surface an error when used after shutdown - never a
-silent success against a dead connection. The lifecycle check drives that path too.
+There is no publish or subscribe to call on a broker you already shut down, so owner-side misuse
+does not compile. Aliasing stays a runtime rule: handles that alias the connection (publishers
+handed out from the connected form, clones of a shareable broker) must surface an error when
+used after shutdown - never a silent success against a dead connection. The lifecycle check
+drives that path too.
 
 ### `Subscribe`
 
@@ -110,9 +109,8 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-The two defaulted methods are how optional broker behaviour degrades gracefully: a broker that
-overrides neither still works with every runtime feature, with `retry_after` falling back to an
-immediate requeue and keyed lanes rotating keyless messages.
+A broker that overrides neither defaulted method still works with every runtime feature:
+`retry_after` falls back to an immediate requeue, and keyed lanes rotate keyless messages.
 
 ### `Publisher`
 
@@ -132,17 +130,16 @@ pub trait Publisher: Send + Sync {
 This is the publish interface, not the one a service writes: applications publish through the
 builder (`publisher.message(&value).publish()`, `publisher.raw(&bytes).to(dest).publish()`),
 which resolves the destination, the codec and the headers and then makes exactly one call to
-this method. A broker implements `publish` and gets the whole builder for free - there is
-nothing else to provide, and nothing on the builder a broker crate has to keep in step.
+this method. Implement `publish` and the whole builder follows; there is nothing else to
+provide.
 
 A handle that carries an argument for a run of messages - a tenant, a partition hint, a delivery
 option your broker expresses as a header - returns it from `base_headers` rather than writing it
 into the message inside `publish`. The builder starts the outgoing map from that base and writes
-the call site's headers over it key by key, which settles the precedence for every broker at once
-(the call site wins; see [where the headers come from](../guides/publishing.md#where-the-headers-come-from))
-and builds the map once instead of cloning it per publish. `Transaction` carries the same
-defaulted method, so a transaction opened from such a handle behaves identically. A publisher
-with nothing to add implements neither and pays nothing.
+the call site's headers over it key by key, so the call site wins (see
+[where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
+`Transaction` carries the same defaulted method, so a transaction opened from such a handle
+behaves identically. A publisher with nothing to add implements neither.
 
 ### `PublishPolicy`
 
@@ -161,10 +158,8 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 }
 ```
 
-The error is the type-erased `PairError` (wrap your broker's failure with `PairError::new`)
-rather than `C::Error`: pairing runs once per publisher at startup, never on the hot path, and a
-cross-broker token pairs against a broker other than the including scope's, so a broker-typed
-error could not name one broker anyway.
+The error is the type-erased `PairError`: wrap your broker's failure with `PairError::new`.
+Pairing runs once per publisher at startup, never on the hot path.
 
 Ship one policy/live pair per genuine publishing **mode**, and make mode selection a policy type
 transition rather than a runtime flag: a plain policy pairs into the plain publisher, and a
@@ -229,9 +224,7 @@ impl FromName for OrdersStream {
 
 That is what makes `#[subscriber(OrdersStream)]` legal: the attribute fixes the kind, and the
 mount site supplies the value. A kind that genuinely needs more than a name to exist (a topic
-*and* a subscription name) does not implement it, and that form does not compile for it - which is
-the honest boundary, and spares the descriptor a `Default` that would make an unusable value
-representable.
+*and* a subscription name) does not implement it, and that form does not compile for it.
 
 ### Settings in your own vocabulary
 
@@ -254,10 +247,9 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 }
 ```
 
-The trait is local to your crate, so the orphan rule is satisfied, and the bound on the source type
-means the methods do not exist on a builder for another broker. Users import the trait to
-reach them, as with any extension trait. This is the same extension shape the `Out` slot vocabulary
-uses below.
+The bound on the source type means the methods do not exist on a builder for another broker.
+Users import the trait to reach them, as with any extension trait. This is the same extension
+shape the `Out` slot vocabulary uses below.
 
 ## Capability traits
 
@@ -342,10 +334,9 @@ fallible, and `Outgoing::payload_mut` exists exactly for envelope wrapping.
 
 ## Config and defaults
 
-Your crate owns its `Config`. The core carries no broker-specific config, which is what keeps an
-upstream change scoped to one broker crate. If a config field has no sane default, do not implement
-`Default` for it; force the user to set it explicitly rather than shipping a default that might break
-later.
+Your crate owns its `Config`; the core carries no broker-specific config. If a config field has no
+sane default, do not implement `Default` for it; force the user to set it explicitly rather than
+shipping a default that might break later.
 
 ## Errors
 

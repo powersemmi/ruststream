@@ -1,17 +1,9 @@
 """Normative-source banner on every translated page.
 
-English is the source of truth, and that has to be written on the page rather than assumed:
-a reader who lands on a translated page has no way to tell whether it is current. Every page
-whose source file lives under a locale directory therefore opens with a banner naming English
-as normative and linking to the original; the Chinese pages add that the translation was
-produced by a model, which is a statement about where the text came from, not a disclaimer
-about its quality.
-
-Injecting the banner from a hook rather than writing it into each file keeps it off the list
-of things a translator can forget, and keeps the wording in one place. It also keeps the
-banner off pages that only *appear* in a localized site: with `fallback_to_default` an
-untranslated page is served in the localized tree with its English text, and telling the
-reader that page is a translation would be false.
+Every page whose source file lives under a locale directory opens with a banner naming
+English as normative and linking to the original; the Chinese banner adds that the
+translation was produced by a model. A page served in a localized tree by
+`fallback_to_default` still carries its English text, so it gets no banner.
 
 The link is built as a relative URL and injected after markdown rendering, for two reasons:
 the site is deployed under a version prefix by `mike`, so a root-relative path would point

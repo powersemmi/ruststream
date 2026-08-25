@@ -135,10 +135,9 @@ per-element delays, so pending entries back off without holding up the rest of t
 
 ## Choosing the subscription source
 
-The attribute always fixes the *kind* of subscription. A subscriber is not one thing - a subject
-and a JetStream consumer are different types, as are a Redis stream, a pub/sub channel and a list
-- and the macro has to name that type to generate the definition. What can be left out is the
-*value* that fills it, which the mount site then supplies. There are four forms, shortest first:
+The attribute always fixes the *kind* of subscription - a subject, a JetStream consumer, a Redis
+stream, a pub/sub channel and a list are different types. What can be left out is the *value*
+that fills it, which the mount site then supplies. There are four forms, shortest first:
 
 | Form | The kind | The value |
 |---|---|---|
@@ -169,18 +168,17 @@ A definition that was never named is not mountable: the compiler says so, and na
 
 ### Naming a kind and nothing else
 
-`#[subscriber(RedisStream)]` names the kind and leaves the value out. It works because a
-subscription kind is identified by a name and nothing else: every source in the family is
-constructed from one string, and a small core trait (`FromName`) says so, so the builder calls the
-kind's own constructor when the name arrives. Nothing is ever built from thin air.
+`#[subscriber(RedisStream)]` names the kind and leaves the value out. It works for any kind
+identified by a name and nothing else: such a kind implements the core `FromName` trait, and the
+builder calls the kind's own constructor when the name arrives.
 
 ```rust
 --8<-- "examples/subscribers.rs:named_kind"
 ```
 
 Where a kind genuinely needs more than a name to exist - a Pulsar source takes a topic *and* a
-subscription name - it does not implement the trait, and this form does not compile for it. Those
-kinds are written out in full.
+subscription name - it does not implement `FromName`, and this form does not compile for it. Write
+those kinds out in full.
 
 ### Broker-specific descriptors
 
@@ -215,21 +213,21 @@ The macro follows the chain down to the base `Type::new(..)` to name the source 
 in the chain must return `Self`. Free functions are rejected, since their type is not visible to the
 macro.
 
-A source built this way is rebuilt for each mount, so a broker's descriptor type is `Clone` (it is
-configuration, and cloning it is what lets one definition mount on two brokers).
+A source built this way is rebuilt for each mount, so a broker's descriptor type is `Clone`; that
+is what lets one definition mount on two brokers.
 
 ## Settings at the mount site
 
 Name, worker policy, failure policies and the start position are values, so each can be given in
 the attribute, at the mount site, or partly in each. The attribute expands into exactly the calls
-you would write yourself, so there is one implementation of every setting:
+you would write yourself:
 
 ```rust
 --8<-- "examples/subscribers.rs:builder_settings"
 ```
 
 A setting the attribute named is fixed in the definition's type and its builder method no longer
-applies, so the two can never disagree and there is no precedence rule to remember:
+applies, so there is no precedence rule to remember:
 
 <!-- inline-rust: two compile-fail one-liners; a compiling example cannot host code that must not compile (the pinned diagnostics live in tests/ui) -->
 ```rust
@@ -298,11 +296,10 @@ size or by a deadline after its first delivery:
 --8<-- "examples/subscribers.rs:batch_buffered"
 ```
 
-The setting is named after the adapter on purpose. Batches come either from the broker (configured
-by the broker's own settings) or from this wrap, and those are different things; a name like
-`max_size` would read as configuring the broker's batching and would quietly wrap a natively
-batching subscription in a second layer. Because it changes the subscription type, it goes last:
-broker settings bound to the unwrapped type stop applying past it.
+The setting is named after the adapter, not after the broker's own batching: batches come either
+from the broker (configured by the broker's own settings) or from this wrap. Because the wrap
+changes the subscription type, it goes last - broker settings bound to the unwrapped type stop
+applying past it.
 
 The semantics differ from single-message handlers in a few ways:
 
@@ -329,7 +326,7 @@ Broker semantics are exactly those of per-message `nack(requeue = true)`: broker
 per-message redelivery honour selective retry natively; a positional broker degrades the same
 way it does for a single-message nack (the crate of that broker documents it). Returning a
 vector whose length does not match the batch is a bug in the handler: the unmatched remainder is
-retried (an extra redelivery beats a silently lost message) and the mismatch is logged.
+retried and the mismatch is logged.
 
 ## Seeking
 

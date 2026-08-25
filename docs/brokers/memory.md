@@ -30,9 +30,8 @@ let broker = MemoryBroker::new();
 It is a real broker rather than a test double: the runtime drives it through the same dispatch path
 it drives a production broker through, so a handler, its middleware and its decoding behave here
 exactly as they will in production. What it does not do is emulate any particular broker's delivery
-semantics - durable cursors, redelivery timers, partitions, dead-letter routing. Both halves matter:
-the first is why a passing test means something, the second is why it does not mean the same code
-passes against Kafka.
+semantics - durable cursors, redelivery timers, partitions, dead-letter routing - so a test passing
+here does not say the same code passes against Kafka.
 
 ## Capabilities
 

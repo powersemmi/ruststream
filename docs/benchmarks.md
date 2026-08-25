@@ -82,8 +82,7 @@ RustStream or through the broker client directly.
 - **Both sides report a median and a spread**, over the pairs that were kept. A single number from
   a single run is not a result.
 - **A difference smaller than the spread is published as `indistinguishable`,** never as a
-  percentage. This is the rule that keeps the page honest: a figure below the run-to-run noise
-  reads as precision that was never measured.
+  percentage: a figure below the run-to-run noise reads as precision that was never measured.
 - **A saturated consumer is flagged.** When the raw side spends the run waiting on the broker, the
   row carries `broker-bound` and its number is understood as a lower bound.
 - **The environment is published with the numbers**: CPU and core count, kernel, how the broker was
@@ -146,5 +145,4 @@ the rule above; `overhead_percent` is recorded either way, and displayed only wh
 `measured`. `broker_bound` marks a run the broker paced rather than the consumer.
 
 A document that fails to load, or that carries an unknown `schema`, leaves its broker in the "no
-results published yet" line. That is deliberate: a broken publish should be visible rather than
-quietly absent.
+results published yet" line, so a broken publish is visible rather than quietly absent.

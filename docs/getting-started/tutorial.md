@@ -86,9 +86,8 @@ As handlers grow, keep them in their own module and collect them into a
 --8<-- "examples/tutorial/routes.rs:routes"
 ```
 
-A router holds no broker, so a registration cannot commit itself on drop the way the scope's
-builder does: it ends in an explicit terminal. `.publisher(..)` names the reply wiring - a publish
-policy is pure declaration, which is why the router still needs no broker - and `.mount()` takes
+A registration on a router ends in an explicit terminal. `.publisher(..)` names the reply wiring -
+a publish policy is pure declaration, so the router still needs no broker - and `.mount()` takes
 the broker's own default publish policy, the explicit spelling of what step 4 got by default.
 [Routing](../guides/routing.md) covers the rest of the router surface.
 

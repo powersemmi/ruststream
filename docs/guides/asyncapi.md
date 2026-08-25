@@ -110,9 +110,8 @@ Declare how clients authenticate with `ServerSpec::with_security`; each scheme l
 `SecurityScheme::custom(json)` as the escape hatch for anything they do not model. Without
 `with_security` the document carries no security sections at all.
 
-Security is the service author's statement, not the broker's: the same broker is
-deployed publicly and internally with different authentication, so `DescribeServer` never reports
-it. To secure a server a broker registered automatically (`with_broker_labeled`), declare it
+`DescribeServer` never reports security; it is the service author's statement, not the broker's.
+To secure a server a broker registered automatically (`with_broker_labeled`), declare it
 explicitly instead: `.server(label, broker.describe_server().with_security(..))` with the same
 label.
 
