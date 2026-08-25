@@ -37,6 +37,14 @@ pub trait Publisher: Send + Sync {
 
     /// Publishes a message to the broker.
     ///
+    /// This is the contract a broker implements, and the direct call a broker crate used on its
+    /// own - without this one - is written against. Inside a service built on `ruststream` it is
+    /// the layer underneath: what a handler sends goes through the publish builder
+    /// ([`message`](crate::runtime::PublishExt::message) / [`raw`](crate::runtime::PublishExt::raw)),
+    /// which resolves the destination, the codec and the headers and assembles the
+    /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
+    /// publish transform, a middleware, a post-settle hook.
+    ///
     /// # Cancel safety
     ///
     /// Cancel safety is implementation-defined: most brokers will leave a message in an

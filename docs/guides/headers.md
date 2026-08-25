@@ -105,7 +105,8 @@ the document, and the destination is already in the attribute.
 
 At runtime, reply headers stay where they were: a `PublishTransform` on the reply publisher
 sets them, and [`Headers::insert_typed`] serializes a contract value into the map from inside
-a transform (or anywhere an `OutgoingMessage` is built).
+a transform - which is where a service sees an outgoing message as a whole, the publish builder
+having assembled it.
 
 [`Headers::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.insert_typed
 

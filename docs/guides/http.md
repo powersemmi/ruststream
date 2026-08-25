@@ -65,8 +65,8 @@ produce, and any other service subscribed to the broker sees the events too:
 ## Publishing straight from a request
 
 The simplest integration puts the publisher into the HTTP framework's state and publishes on the
-request path, exactly like [publishing from inside a handler](publishing.md): encode with the
-codec, build an `OutgoingMessage`, and await the publish. The
+request path, exactly like [publishing from inside a handler](publishing.md):
+`publisher.message(&event).publish().await`. The
 [metrics guide's complete server](metrics.md) does this to drive its counters.
 
 The trade-off is coupling: a broker outage now fails or stalls HTTP requests, and a crash after

@@ -106,8 +106,8 @@ AsyncAPI.
 --8<-- "examples/typed_headers.rs:reply"
 
 В рантайме заголовки ответа остаются там же, где были: их выставляет `PublishTransform` на публикаторе
-ответа, а [`Headers::insert_typed`] сериализует значение контракта в карту изнутри трансформа (или в
-любом другом месте, где строится `OutgoingMessage`).
+ответа, а [`Headers::insert_typed`] сериализует значение контракта в карту изнутри трансформа - там
+сервис и видит исходящее сообщение целиком, уже собранное билдером публикации.
 
 [`Headers::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.insert_typed
 
