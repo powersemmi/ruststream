@@ -66,14 +66,23 @@ pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
-    CallCodec, ForBatch, HeadersUnset, MapHeaders, MessageBody, MissingSegment, Outgoing, Publish,
-    PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
-    PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer, PublishNext,
-    PublishPipeline, PublishSink, PublishStack, PublishTransform, PublishTransformIdentity,
-    PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring, ResolvedName, SatisfiesContract,
-    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, Transactional,
-    TypedHeaders, TypedPublisher, TypedTransaction, for_batch,
+    CallCodec, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MissingSegment,
+    Outgoing, Publish, PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext,
+    PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer,
+    PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
+    PublishTransformIdentity, PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring,
+    ResolvedName, SatisfiesContract, SuppliedName, TemplateAddress, TransactionPublishError,
+    TransactionScope, Transactional, TypedHeaders, TypedPublisher, TypedTransaction, for_batch,
 };
+// The builder's entry points, for the surfaces outside `runtime` that offer one: the test
+// harness injects through the same positions as a live publish.
+#[cfg(all(
+    feature = "testing",
+    any(feature = "json", feature = "cbor", feature = "msgpack")
+))]
+pub(crate) use publish::message_of;
+#[cfg(feature = "testing")]
+pub(crate) use publish::raw_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
@@ -88,13 +97,11 @@ pub use settings::{
     AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
-#[allow(deprecated)]
-pub use slot::OutMessage;
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{
-    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishTypedError,
-    PublishedThrough, SlotPublisher, TypedSlot, TypedSlotWithHeaders, Unrestricted,
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
+    SlotPublisher, TypedSlot, Unrestricted,
 };
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

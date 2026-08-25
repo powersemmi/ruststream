@@ -7,29 +7,21 @@
     feature = "json"
 ))]
 
+mod common;
+
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
+use common::{Req, Resp};
 use opentelemetry::Context as OtelContext;
 use opentelemetry::propagation::{Extractor, TextMapPropagator};
 use opentelemetry::trace::{SpanContext, TraceContextExt};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::otel::OpenTelemetry;
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
-use ruststream::{Headers, OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
+use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
+use ruststream::{Headers, subscriber};
 use tokio::sync::Notify;
-
-#[derive(Serialize, Deserialize)]
-struct Req {
-    n: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Resp {
-    n: u32,
-}
 
 #[subscriber("in", publish("out"))]
 async fn echo(req: &Req) -> Resp {
@@ -97,7 +89,10 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
         headers.insert("traceparent", tp);
     }
     ingress
-        .publish(OutgoingMessage::new("in", &payload).with_headers(headers))
+        .raw(&payload)
+        .with_headers(headers)
+        .to("in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), GOT.notified())

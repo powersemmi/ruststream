@@ -13,13 +13,18 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 // The default-codec publish helpers are gated on a codec feature, like the codec itself.
-use crate::OutgoingMessage;
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::OutgoingDestination;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::runtime::{CallCodec, MessageBody, message_of};
 use crate::runtime::{
-    ConnectedLifecycle, ErrorShutdown, LifecycleHook, OutSlot, PublishIdentity, RegisteredBroker,
-    RustStream, RustStreamError, Starter, TestParts,
+    ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, Publish,
+    PublishIdentity, PublishSink, RawBody, RegisteredBroker, RustStream, RustStreamError, Starter,
+    TestParts, raw_of,
 };
+use crate::{CallerName, OutgoingMessage};
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
 use super::broker::{TestableBroker, TestableRegistration};
@@ -422,18 +427,18 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// ```
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-    /// # async fn demo() -> Result<(), ruststream::testing::TestError> {
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
     /// use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
     /// use ruststream::testing::TestApp;
-    /// use ruststream::{OutSlot, OutgoingMessage, Publisher, subscriber};
+    /// use ruststream::{OutSlot, Publisher, subscriber};
     ///
     /// #[derive(OutSlot)]
     /// struct Encoded;
     ///
     /// #[subscriber("chunks", raw)]
     /// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerResult {
-    ///     if out.publish(OutgoingMessage::new("encoded", chunk)).await.is_err() {
+    ///     if out.raw(chunk).to("encoded").publish().await.is_err() {
     ///         return HandlerResult::retry();
     ///     }
     ///     HandlerResult::Ack
@@ -444,7 +449,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///         b.include(transcode).out(Encoded, MemoryPublish).mount();
     ///     });
     /// let tb = TestApp::start(app).await?;
-    /// tb.broker::<MemoryBroker>().publish_raw("chunks", b"frame").await?;
+    /// tb.broker::<MemoryBroker>().raw(b"frame").to("chunks").publish().await?;
     /// tb.out::<Encoded>().assert_called_once().with_raw(b"frame");
     /// # Ok(())
     /// # }
@@ -489,6 +494,79 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             return Err(TestError::Ambiguous);
         }
         self.handle(&self.entries[0]).publish(name, value).await
+    }
+
+    /// Starts a typed injection on the only registered broker, a convenience for single-broker
+    /// apps: `tb.message(&order).to("orders").publish().await?`.
+    ///
+    /// The scoped [`BrokerHandle::message`] with the broker chosen for you. An app registering
+    /// more than one broker has no single target, so the publish reports
+    /// [`TestError::Ambiguous`] and the test addresses a broker with [`broker`](Self::broker) /
+    /// [`broker_named`](Self::broker_named) instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+    /// use ruststream::testing::TestApp;
+    /// use ruststream::{Outgoing, subscriber};
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Outgoing, Serialize, Deserialize)]
+    /// #[outgoing(name = "orders")]
+    /// struct Order {
+    ///     id: u32,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn handle(order: &Order) -> HandlerResult {
+    ///     let _ = order.id;
+    ///     HandlerResult::Ack
+    /// }
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    /// let tb = TestApp::start(app).await?;
+    ///
+    /// tb.message(&Order { id: 7 }).publish().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn message<'a, T>(
+        &'a self,
+        value: &'a T,
+    ) -> Publish<InjectSink<'a>, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    where
+        T: OutgoingDestination,
+    {
+        message_of(self.sole_sink(), value, CallCodec(DefaultCodec::default()))
+    }
+
+    /// Starts a byte injection on the only registered broker, a convenience for single-broker
+    /// apps: `tb.raw(b"frame").to("frames").publish().await?`.
+    ///
+    /// The scoped [`BrokerHandle::raw`] with the broker chosen for you; ambiguity is reported
+    /// the same way [`message`](Self::message) reports it.
+    pub fn raw<'a, B>(
+        &'a self,
+        payload: &'a B,
+    ) -> Publish<InjectSink<'a>, RawBody<'a>, (), HeadersUnset, CallerName>
+    where
+        B: AsRef<[u8]> + ?Sized,
+    {
+        raw_of(self.sole_sink(), payload)
+    }
+
+    /// The sole broker's sink, or the ambiguous one when the app registered more than one.
+    fn sole_sink(&self) -> InjectSink<'_> {
+        match self.entries.as_slice() {
+            [only] => self.handle(only).sink(),
+            _ => InjectSink(Target::Ambiguous),
+        }
     }
 
     /// Drives any in-flight reaction to a standstill (handlers run, their publishes cascade) without
@@ -624,9 +702,185 @@ impl fmt::Debug for BrokerHandle<'_> {
     }
 }
 
+/// The publish builder's sink for the harness.
+///
+/// It injects the message onto a broker's in-process transport the way an external producer
+/// would, then drives the resulting reaction to a standstill before the publish returns.
+///
+/// Produced by the `message(..)` and `raw(..)` entry points of [`TestApp`] and [`BrokerHandle`],
+/// so a test injects through the same positions - destination, typed headers, codec - that the
+/// service itself publishes through. You never name this type.
+pub struct InjectSink<'a>(Target<'a>);
+
+/// What an [`InjectSink`] sends into: a resolved broker, or none because the unscoped entry
+/// point had more than one to choose from.
+///
+/// The unscoped `message(..)` / `raw(..)` exist whatever the app registered, so the ambiguity
+/// rides here and surfaces from the publish, keeping the error the caller already handles.
+enum Target<'a> {
+    Broker {
+        coordinator: &'a Coordinator,
+        testable: Option<&'a dyn TestableBroker>,
+        token: &'a CancellationToken,
+        label: String,
+    },
+    Ambiguous,
+}
+
+impl fmt::Debug for InjectSink<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InjectSink").finish_non_exhaustive()
+    }
+}
+
+impl PublishSink for InjectSink<'_> {
+    type Error = TestError;
+
+    async fn send(&mut self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        let Target::Broker {
+            coordinator,
+            testable,
+            token,
+            label,
+        } = &self.0
+        else {
+            return Err(TestError::Ambiguous);
+        };
+        if token.is_cancelled() {
+            return Err(TestError::ShutDown);
+        }
+        let transport = testable.ok_or_else(|| TestError::NoTransport(label.clone()))?;
+        transport.inject(msg);
+        coordinator.drive().await
+    }
+}
+
+impl<'a> BrokerHandle<'a> {
+    /// Starts a typed injection of a `#[derive(Outgoing)]` value onto this broker, encoded with
+    /// [`DefaultCodec`](crate::codec::DefaultCodec) unless the call names one with
+    /// `with_codec(..)`: `handle.message(&order).to("orders").publish().await?`.
+    ///
+    /// The same builder the service publishes through, sending onto the in-process transport as
+    /// an external producer would; awaiting the publish drives the resulting reaction to a
+    /// standstill, so the assertions that follow see a settled service.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+    /// use ruststream::testing::TestApp;
+    /// use ruststream::{Outgoing, subscriber};
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Outgoing, Serialize, Deserialize)]
+    /// #[outgoing(name = "orders")]
+    /// struct Order {
+    ///     id: u32,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn handle(order: &Order) -> HandlerResult {
+    ///     let _ = order.id;
+    ///     HandlerResult::Ack
+    /// }
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    /// let tb = TestApp::start(app).await?;
+    ///
+    /// tb.broker::<MemoryBroker>()
+    ///     .message(&Order { id: 7 })
+    ///     .publish()
+    ///     .await?;
+    /// tb.broker::<MemoryBroker>()
+    ///     .subscriber("orders")
+    ///     .assert_called_once();
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    pub fn message<'v, T>(
+        &self,
+        value: &'v T,
+    ) -> Publish<InjectSink<'a>, MessageBody<'v, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    where
+        T: OutgoingDestination,
+    {
+        // The harness carries no codec of its own, so the crate default rides in the call
+        // position - the same bottom of the ladder a bare publisher uses.
+        message_of(self.sink(), value, CallCodec(DefaultCodec::default()))
+    }
+
+    /// Starts a byte injection onto this broker: the payload travels as it is, to the
+    /// destination named with `to(..)`.
+    ///
+    /// The undecodable-payload path of a test, and the only one for a raw subscriber. Awaiting
+    /// the publish drives the resulting reaction to a standstill.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+    /// use ruststream::subscriber;
+    /// use ruststream::testing::TestApp;
+    ///
+    /// #[subscriber("frames", raw)]
+    /// async fn handle(frame: &[u8]) -> HandlerResult {
+    ///     let _ = frame.len();
+    ///     HandlerResult::Ack
+    /// }
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    /// let tb = TestApp::start(app).await?;
+    ///
+    /// tb.broker::<MemoryBroker>()
+    ///     .raw(b"frame")
+    ///     .to("frames")
+    ///     .publish()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn raw<'p, B>(
+        &self,
+        payload: &'p B,
+    ) -> Publish<InjectSink<'a>, RawBody<'p>, (), HeadersUnset, CallerName>
+    where
+        B: AsRef<[u8]> + ?Sized,
+    {
+        raw_of(self.sink(), payload)
+    }
+
+    /// This handle's transport as a publish sink. It borrows the app, not the handle, so a
+    /// builder started on a temporary handle outlives it.
+    fn sink(&self) -> InjectSink<'a> {
+        InjectSink(Target::Broker {
+            coordinator: self.coordinator,
+            testable: self.testable,
+            token: self.token,
+            label: self.label.clone(),
+        })
+    }
+}
+
 impl BrokerHandle<'_> {
     /// Publishes `value` (encoded with [`DefaultCodec`](crate::codec::DefaultCodec)) to `name`, then
     /// drives the resulting reaction to a standstill before returning.
+    ///
+    /// The builder did not replace this one, which is why it outlived the byte-publishing method
+    /// beside it. [`message`](Self::message) reads the destination form off the value's type
+    /// through [`OutgoingDestination`], which `#[derive(Outgoing)]` implements - so a `Serialize`
+    /// type the test does not own is out of reach: the orphan rule forbids both the derive and a
+    /// hand-written impl on a foreign type. Derive `Outgoing` on the injected type and inject it
+    /// through the builder wherever that is possible; this method stays for the case where it is
+    /// not.
     ///
     /// # Errors
     ///
@@ -643,7 +897,7 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.publish_raw(name, &bytes).await
+        self.inject(OutgoingMessage::new(name, &bytes)).await
     }
 
     /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
@@ -651,12 +905,13 @@ impl BrokerHandle<'_> {
     /// [`Headers::insert_typed`](crate::Headers::insert_typed)) - the input a
     /// [`FromHeaders`](crate::runtime::FromHeaders) handler parses.
     ///
+    /// Kept for the reason spelled out on [`publish`](Self::publish): the builder's
+    /// `message(&value).with_headers(&meta)` needs the value's type to declare a destination.
+    ///
     /// # Errors
     ///
-    /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::Encode`]
-    /// if the value or the headers do not encode, [`TestError::NoTransport`] if this broker has
-    /// no in-process test transport, or [`TestError::NotQuiescent`] if the reaction does not
-    /// settle.
+    /// Returns [`TestError::Encode`] if the value or the headers do not encode, plus the errors
+    /// [`publish`](Self::publish) reports.
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub async fn publish_with_headers<T, H>(
         &self,
@@ -671,34 +926,23 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        if self.token.is_cancelled() {
-            return Err(TestError::ShutDown);
-        }
-        let transport = self
-            .testable
-            .ok_or_else(|| TestError::NoTransport(self.label.clone()))?;
         let msg = OutgoingMessage::new(name, &bytes)
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        transport.inject(msg);
-        self.coordinator.drive().await
+        self.inject(msg).await
     }
 
-    /// Publishes raw `payload` bytes to `name`, then drives the reaction to a standstill.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::NoTransport`]
-    /// if this broker has no in-process transport, or [`TestError::NotQuiescent`] if the reaction
-    /// does not settle.
-    pub async fn publish_raw(&self, name: &str, payload: &[u8]) -> Result<(), TestError> {
+    /// Injects one already-built message onto this broker's transport and drives the resulting
+    /// reaction to a standstill. What every entry point of this handle ends in, the builder's
+    /// sink included.
+    async fn inject(&self, msg: OutgoingMessage<'_>) -> Result<(), TestError> {
         if self.token.is_cancelled() {
             return Err(TestError::ShutDown);
         }
         let transport = self
             .testable
             .ok_or_else(|| TestError::NoTransport(self.label.clone()))?;
-        transport.inject(OutgoingMessage::new(name, payload));
+        transport.inject(msg);
         self.coordinator.drive().await
     }
 

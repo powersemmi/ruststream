@@ -8,19 +8,19 @@
     feature = "testing"
 ))]
 
+mod common;
+
+use common::Event;
+
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, DefaultSlot, HandlerResult, Out, RustStream, SlotPublisher};
+use ruststream::runtime::{
+    AppInfo, DefaultSlot, HandlerResult, Out, PublishExt, RustStream, SlotPublisher,
+};
 use ruststream::testing::TestApp;
 use ruststream::{
     Broker, Headers, OutSlot, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
     Publisher, Transaction, subscriber,
 };
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
 
 #[derive(OutSlot)]
 struct Encoded;
@@ -37,13 +37,21 @@ async fn transcode(
 ) -> HandlerResult {
     let mut headers = Headers::new();
     headers.insert("source", "slots.in");
-    let framed = OutgoingMessage::new("slots.encoded", chunk).with_headers(headers);
-    if encoded.publish(framed).await.is_err() {
+    if encoded
+        .raw(chunk)
+        .with_headers(headers)
+        .to("slots.encoded")
+        .publish()
+        .await
+        .is_err()
+    {
         return HandlerResult::retry();
     }
     let receipt = chunk.len().to_be_bytes();
     if audit
-        .publish(OutgoingMessage::new("slots.audit", receipt.as_slice()))
+        .raw(&receipt)
+        .to("slots.audit")
+        .publish()
         .await
         .is_err()
     {
@@ -67,7 +75,9 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
 
     // --8<-- [start:slot_capture]
     tb.broker::<MemoryBroker>()
-        .publish_raw("slots.in", b"frame")
+        .raw(b"frame")
+        .to("slots.in")
+        .publish()
         .await
         .expect("raw publish");
 
@@ -108,7 +118,9 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker_named("ingress")
-        .publish_raw("slots.in", b"xy")
+        .raw(b"xy")
+        .to("slots.in")
+        .publish()
         .await
         .expect("raw publish");
 
@@ -146,7 +158,9 @@ async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.publish("slots.ledger", &Event { id: 4 })
+    tb.message(&Event { id: 4 })
+        .to("slots.ledger")
+        .publish()
         .await
         .expect("publish");
 
@@ -214,11 +228,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerResult {
     let (publisher, dest) = lanes.lane(event.id);
     let payload = serde_json::to_vec(event).expect("serializable");
-    if publisher
-        .publish(OutgoingMessage::new(dest, payload.as_slice()))
-        .await
-        .is_err()
-    {
+    if publisher.raw(&payload).to(dest).publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -239,7 +249,9 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     for id in [2u64, 3u64] {
-        tb.publish("slots.sharded", &Event { id })
+        tb.message(&Event { id })
+            .to("slots.sharded")
+            .publish()
             .await
             .expect("publish");
     }

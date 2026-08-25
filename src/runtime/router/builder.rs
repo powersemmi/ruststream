@@ -570,7 +570,9 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
-        DecodeCodec: Codec + 'static,
+        // Not `Codec`: `DecodeWith` already carries what the input asks of it, and a byte
+        // input asks for nothing - the route is built with `()` there.
+        DecodeCodec: 'static,
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);
@@ -622,7 +624,9 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
-        DecodeCodec: Codec + 'static,
+        // Not `Codec`: `DecodeWith` already carries what the input asks of it, and a byte
+        // input asks for nothing - the route is built with `()` there.
+        DecodeCodec: 'static,
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def);

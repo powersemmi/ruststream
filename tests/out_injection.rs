@@ -7,18 +7,16 @@
     feature = "testing"
 ))]
 
+mod common;
+
 use std::time::Duration;
 
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, DefaultSlot, HandlerResult, Out, RustStream};
-use ruststream::testing::{Outcome, TestApp, expect_published};
-use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
+use common::{Event, connected, expect_id, observed_memory};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::runtime::{AppInfo, DefaultSlot, HandlerResult, Out, PublishExt, RustStream};
+use ruststream::testing::{Outcome, TestApp, expect_published};
+use ruststream::{Broker, Publisher, subscriber};
 
 /// The destination is computed per message: exactly the case reply publishing cannot cover and
 /// the injected publisher exists for.
@@ -30,31 +28,15 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
         "out.odd"
     };
     let payload = serde_json::to_vec(event).expect("serializable");
-    if out
-        .publish(OutgoingMessage::new(dest, payload.as_slice()))
-        .await
-        .is_err()
-    {
+    if out.raw(&payload).to(dest).publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
 }
 
-async fn expect_id(observer: &ConnectedMemoryBroker, name: &str, id: u64) {
-    let seen = expect_published(observer, name, 1, Duration::from_secs(2)).await;
-    assert_eq!(seen.len(), 1, "expected one publish on {name}");
-    let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
-    assert_eq!(event.id, id);
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_injected_publisher_reaches_the_handler_live() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    // The observing side needs the TestableBroker surface, which lives on the connected form.
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(broker, |b| {
         b.include(forward).publisher(MemoryPublish);
@@ -63,10 +45,9 @@ async fn an_injected_publisher_reaches_the_handler_live() {
 
     for id in [2u64, 3u64] {
         ingress
-            .publish(OutgoingMessage::new(
-                "out.in",
-                serde_json::to_vec(&Event { id }).unwrap().as_slice(),
-            ))
+            .raw(&serde_json::to_vec(&Event { id }).unwrap())
+            .to("out.in")
+            .publish()
             .await
             .expect("publish");
     }
@@ -79,11 +60,7 @@ async fn an_injected_publisher_reaches_the_handler_live() {
 #[subscriber("out.crossing")]
 async fn crossing(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
     let payload = serde_json::to_vec(event).expect("serializable");
-    if out
-        .publish(OutgoingMessage::new("out.other", payload.as_slice()))
-        .await
-        .is_err()
-    {
+    if out.raw(&payload).to("out.other").publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -100,7 +77,9 @@ async fn decode_failures_are_recorded_for_out_handlers() {
     // Not valid JSON for `Event`: the Out wrapper fails to decode, the handler never runs, and
     // the harness must classify the delivery as a decode failure, exactly like the typed path.
     tb.broker::<MemoryBroker>()
-        .publish_raw("out.in", b"not json")
+        .raw(b"not json")
+        .to("out.in")
+        .publish()
         .await
         .expect("raw publish");
 
@@ -118,9 +97,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let ingress_broker = MemoryBroker::new();
     let ingress = ingress_broker.publisher();
     let other = MemoryBroker::new().bindable();
-    let observer = Broker::connect(other.broker().clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(other.broker()).await;
 
     // --8<-- [start:cross_broker]
     let to_other = other.bind(MemoryPublish);
@@ -135,10 +112,9 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new(
-            "out.crossing",
-            serde_json::to_vec(&Event { id: 9 }).unwrap().as_slice(),
-        ))
+        .raw(&serde_json::to_vec(&Event { id: 9 }).unwrap())
+        .to("out.crossing")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "out.other", 9).await;
@@ -152,11 +128,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
 async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerResult {
     for event in events {
         let payload = serde_json::to_vec(event).expect("serializable");
-        if out
-            .publish(OutgoingMessage::new("out.paged", payload.as_slice()))
-            .await
-            .is_err()
-        {
+        if out.raw(&payload).to("out.paged").publish().await.is_err() {
             return HandlerResult::retry();
         }
     }
@@ -165,11 +137,7 @@ async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> Handle
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_handler_composes_with_an_out_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
         b.include(forward_page).publisher(MemoryPublish);
@@ -178,10 +146,9 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
 
     for id in [4u64, 5u64] {
         ingress
-            .publish(OutgoingMessage::new(
-                "out.page",
-                serde_json::to_vec(&Event { id }).unwrap().as_slice(),
-            ))
+            .raw(&serde_json::to_vec(&Event { id }).unwrap())
+            .to("out.page")
+            .publish()
             .await
             .expect("publish");
     }
@@ -205,7 +172,9 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
 async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, HandlerResult> {
     let payload = serde_json::to_vec(event).expect("serializable");
     if out
-        .publish(OutgoingMessage::new("out.gate.audit", payload.as_slice()))
+        .raw(&payload)
+        .to("out.gate.audit")
+        .publish()
         .await
         .is_err()
     {
@@ -216,11 +185,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publishing_handler_composes_with_an_out_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(broker, |b| {
         b.include(gate).out(DefaultSlot, MemoryPublish).mount();
@@ -228,10 +193,9 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new(
-            "out.gate",
-            serde_json::to_vec(&Event { id: 7 }).unwrap().as_slice(),
-        ))
+        .raw(&serde_json::to_vec(&Event { id: 7 }).unwrap())
+        .to("out.gate")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "out.gate.audit", 7).await;
@@ -252,7 +216,9 @@ async fn settle_page(
     };
     let payload = serde_json::to_vec(&page).expect("serializable");
     if out
-        .publish(OutgoingMessage::new("out.ledger.pages", payload.as_slice()))
+        .raw(&payload)
+        .to("out.ledger.pages")
+        .publish()
         .await
         .is_err()
     {
@@ -266,11 +232,7 @@ async fn settle_page(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
         b.include(settle_page)
@@ -281,10 +243,9 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
 
     // One publish, one page: the audit copy and the receipt are both deterministic.
     ingress
-        .publish(OutgoingMessage::new(
-            "out.ledger",
-            serde_json::to_vec(&Event { id: 7 }).unwrap().as_slice(),
-        ))
+        .raw(&serde_json::to_vec(&Event { id: 7 }).unwrap())
+        .to("out.ledger")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "out.ledger.receipts", 107).await;

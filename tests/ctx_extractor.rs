@@ -10,10 +10,12 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{AppInfo, Ctx, HandlerResult, RustStream, State};
 use ruststream::testing::TestApp;
-use ruststream::{BuildContext, ContextField, Field, FromRef, IncomingMessage, subscriber};
+use ruststream::{
+    BuildContext, ContextField, Field, FromRef, IncomingMessage, Outgoing, subscriber,
+};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
 struct Order {
     id: u64,
 }
@@ -69,7 +71,9 @@ async fn ctx_extractor_projects_the_context_from_its_key() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 7 })
+        .message(&Order { id: 7 })
+        .to("orders")
+        .publish()
         .await
         .expect("publish");
 
@@ -108,7 +112,9 @@ async fn ctx_extractor_composes_with_an_explicit_ctx_parameter() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish("mixed", &Order { id: 1 })
+        .message(&Order { id: 1 })
+        .to("mixed")
+        .publish()
         .await
         .expect("publish");
 
@@ -150,7 +156,9 @@ async fn ctx_extractor_composes_with_state() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish("counted", &Order { id: 2 })
+        .message(&Order { id: 2 })
+        .to("counted")
+        .publish()
         .await
         .expect("publish");
 

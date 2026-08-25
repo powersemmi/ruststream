@@ -1,12 +1,9 @@
 //! Typed message headers end to end: the `FromHeaders` extractor parses the delivery headers
-//! before the body runs (failing by the subscriber's decode policy), and the `Out` slot
-//! dictionary publishes typed messages - destination from the marker's `#[publishes(..)]`
-//! declaration, headers from the message's `#[message(headers(..))]` contract.
+//! before the body runs (failing by the subscriber's decode policy), and a handler publishing
+//! through an `Out` slot fills the headers position from the message's declared contract.
 //!
-//! The publish half is the deprecated dictionary path, kept under test until it is removed (the
-//! `Vec<Frame>` entry is the case only it can express: a foreign type cannot declare a
-//! destination of its own, so the replacement is a `#[derive(Outgoing)]` newtype). The publish
-//! builder that replaces it is covered by `tests/publish_builder.rs`.
+//! The publish builder's own surface (every destination form, every publisher kind) is covered
+//! by `tests/publish_builder.rs`; what these cases add is the header half next to it.
 
 #![cfg(all(
     feature = "memory",
@@ -14,19 +11,18 @@
     feature = "json",
     feature = "testing"
 ))]
-#![allow(deprecated)]
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Buffered, Message, Name, OutMessages, OutSlot, OutgoingMessage, Publisher,
-    TransactionalPublisher, nonzero, subscriber,
+    Buffered, Name, OutMessages, OutSlot, Outgoing, Publisher, TransactionalPublisher, nonzero,
+    subscriber,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
 struct Chunk {
     seq: u64,
 }
@@ -43,23 +39,20 @@ struct DoneMeta {
     task_id: u64,
 }
 
-#[derive(Message, Serialize, Deserialize, Debug, PartialEq)]
-#[message(headers(DoneMeta))]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
+#[outgoing(name = "chunks.done", headers = DoneMeta)]
 struct ChunkDone {
     output_key: String,
 }
 
-#[derive(Message, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
+#[outgoing(name = "chunks.progress")]
 struct Progress {
     percent: u8,
 }
 
 #[derive(OutSlot)]
-#[publishes(
-    ChunkDone = "chunks.done",
-    Progress = "chunks.progress",
-    Vec<Frame> = "chunks.frames"
-)]
+#[publishes(ChunkDone, Progress, Frames)]
 struct Events;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -67,9 +60,14 @@ struct Frame {
     offset: u64,
 }
 
+// A foreign collection carries no declaration of its own, so a newtype makes it a message: the
+// derive declares the destination once, and the payload stays the bare sequence.
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
+#[outgoing(name = "chunks.frames")]
+struct Frames(Vec<Frame>);
+
 // A declared message set as an enum: the variants' models are the set; the enum itself is a
-// type-level declaration and is never constructed. A bare collection works as a model (its
-// header contract is none by definition; a newtype declares one).
+// type-level declaration and is never constructed.
 #[derive(OutMessages)]
 enum ConvertSends {
     #[allow(dead_code)]
@@ -77,11 +75,11 @@ enum ConvertSends {
     #[allow(dead_code)]
     Done(ChunkDone),
     #[allow(dead_code)]
-    Frames(Vec<Frame>),
+    Frames(Frames),
 }
 
-// --- the full path: extract typed headers, publish through the slot dictionary; the third
-// Out position declares the set as a #[derive(OutMessages)] enum ---
+// --- the full path: extract typed headers, publish through the slot; the third Out position
+// declares the set as a #[derive(OutMessages)] enum ---
 
 #[subscriber("chunks.raw")]
 async fn convert(
@@ -91,7 +89,8 @@ async fn convert(
 ) -> HandlerResult {
     // No headers contract on Progress: publish directly.
     if events
-        .publish_typed(&Progress { percent: 100 })
+        .message(&Progress { percent: 100 })
+        .publish()
         .await
         .is_err()
     {
@@ -105,23 +104,24 @@ async fn convert(
         task_id: meta.task_id,
     };
     if events
+        .message(&done)
         .with_headers(&done_meta)
-        .publish_typed(&done)
+        .publish()
         .await
         .is_err()
     {
         return HandlerResult::retry();
     }
-    // A Vec payload publishes like any declared model.
-    let frames = vec![Frame { offset: chunk.seq }];
-    if events.publish_typed(&frames).await.is_err() {
+    // A sequence payload publishes like any declared model.
+    let frames = Frames(vec![Frame { offset: chunk.seq }]);
+    if events.message(&frames).publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn from_headers_extracts_and_dictionary_publishes() {
+async fn from_headers_extracts_and_declared_messages_publish() {
     let app =
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(convert).out(Events, MemoryPublish).mount();
@@ -144,7 +144,7 @@ async fn from_headers_extracts_and_dictionary_publishes() {
         .assert_called_once()
         .settled(HandlerResult::Ack);
 
-    // The destinations come from the dictionary, not from handler code.
+    // The destinations come from each message's own declaration, not from handler code.
     broker
         .published::<Progress>("chunks.progress")
         .assert_called_once()
@@ -162,11 +162,11 @@ async fn from_headers_extracts_and_dictionary_publishes() {
     let messages = done.messages().to_vec();
     assert_eq!(messages[0].headers().get_str("task_id"), Some("7"));
 
-    // The Vec payload went to its own declared channel.
+    // The sequence payload went to its own declared channel.
     broker
-        .published::<Vec<Frame>>("chunks.frames")
+        .published::<Frames>("chunks.frames")
         .assert_called_once()
-        .with(&vec![Frame { offset: 1 }]);
+        .with(&Frames(vec![Frame { offset: 1 }]));
 
     // Slot attribution sees all three declared publishes.
     assert_eq!(tb.out::<Events>().messages().len(), 3);
@@ -191,12 +191,14 @@ async fn transactional_convert(
     };
     let done_meta = DoneMeta { task_id: chunk.seq };
     if events
-        .publish_typed(&Progress { percent: 50 })
+        .message(&Progress { percent: 50 })
+        .publish()
         .await
         .is_err()
         || events
+            .message(&done)
             .with_headers(&done_meta)
-            .publish_typed(&done)
+            .publish()
             .await
             .is_err()
         || events.commit().await.is_err()
@@ -205,11 +207,7 @@ async fn transactional_convert(
     }
     // The Publisher supertrait: a per-message computed destination stays available.
     let audit = format!("audit.{}", chunk.seq);
-    if events
-        .publish(OutgoingMessage::new(&audit, b"seen"))
-        .await
-        .is_err()
-    {
+    if events.raw(b"seen").to(audit).publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -227,7 +225,9 @@ async fn typed_out_composes_with_transactional_capability() {
     let broker = tb.broker::<MemoryBroker>();
 
     broker
-        .publish("txn.raw", &Chunk { seq: 9 })
+        .message(&Chunk { seq: 9 })
+        .to("txn.raw")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -271,7 +271,9 @@ async fn header_contract_violation_follows_decode_policy() {
 
     // Missing headers: the default policy drops, and the body never runs.
     broker
-        .publish("audit", &Chunk { seq: 1 })
+        .message(&Chunk { seq: 1 })
+        .to("audit")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -283,7 +285,9 @@ async fn header_contract_violation_follows_decode_policy() {
     // on_failure(decode = skip) covers the header contract too: the delivery is acked past,
     // and the body (which would retry) never runs.
     broker
-        .publish("lenient", &Chunk { seq: 2 })
+        .message(&Chunk { seq: 2 })
+        .to("lenient")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -326,7 +330,9 @@ async fn raw_input_composes_with_from_headers() {
 
     // And the raw handler still applies the decode policy to a broken contract.
     broker
-        .publish_raw("frames", b"\x00")
+        .raw(b"\x00")
+        .to("frames")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -335,13 +341,14 @@ async fn raw_input_composes_with_from_headers() {
         .settled(HandlerResult::Ack);
 }
 
-// --- no declared set: publish_typed stays available, gated by the dictionary alone ---
+// --- no declared set: the publish stays available, gated by the marker's list alone ---
 
 #[subscriber("unrestricted.raw")]
 async fn unrestricted(chunk: &Chunk, Out(events): Out<impl Publisher, Events>) -> HandlerResult {
     let _ = chunk;
     if events
-        .publish_typed(&Progress { percent: 1 })
+        .message(&Progress { percent: 1 })
+        .publish()
         .await
         .is_err()
     {
@@ -351,7 +358,7 @@ async fn unrestricted(chunk: &Chunk, Out(events): Out<impl Publisher, Events>) -
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unrestricted_slot_publishes_any_dictionary_type() {
+async fn unrestricted_slot_publishes_any_listed_type() {
     let app =
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(unrestricted).out(Events, MemoryPublish).mount();
@@ -360,7 +367,9 @@ async fn unrestricted_slot_publishes_any_dictionary_type() {
     let broker = tb.broker::<MemoryBroker>();
 
     broker
-        .publish("unrestricted.raw", &Chunk { seq: 3 })
+        .message(&Chunk { seq: 3 })
+        .to("unrestricted.raw")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -373,13 +382,14 @@ async fn unrestricted_slot_publishes_any_dictionary_type() {
         .with(&Progress { percent: 1 });
 }
 
-// --- regression: derive(Message) compiles on lifetime-, type-, and const-generic types (the
-// emitted OutMessages impl adds its own type parameter after the user's generics) ---
+// --- regression: the message derives compile on lifetime-, type-, and const-generic types
+// (the OutMessages impl `#[derive(Outgoing)]` emits adds its own type parameter after the
+// user's generics) ---
 
 mod generic_message_derives {
     #![allow(dead_code)]
 
-    use ruststream::Message;
+    use ruststream::{Message, Outgoing};
 
     #[derive(Message)]
     struct Borrowed<'a> {
@@ -389,12 +399,20 @@ mod generic_message_derives {
     #[derive(Message)]
     struct Wrapper<T: Clone>(T);
 
-    #[derive(Message)]
+    #[derive(Outgoing)]
+    struct SentBorrowed<'a> {
+        s: &'a str,
+    }
+
+    #[derive(Outgoing)]
+    struct SentWrapper<T: Clone>(T);
+
+    #[derive(Outgoing)]
     struct WithWhere<T>(T)
     where
         T: Send;
 
-    #[derive(Message)]
+    #[derive(Outgoing)]
     struct Fixed<const N: usize>([u8; N]);
 }
 
@@ -434,7 +452,9 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
     for seq in [1u64, 2, 3, 4] {
         if seq == 2 {
             broker
-                .publish("chunks.bulk", &Chunk { seq })
+                .message(&Chunk { seq })
+                .to("chunks.bulk")
+                .publish()
                 .await
                 .expect("publish");
             continue;

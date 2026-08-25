@@ -13,32 +13,15 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, Receipt, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishContext, PublishTransform, Router, RustStream,
-    TypedPublisher,
+    AppInfo, HandlerResult, Outgoing, PublishContext, PublishExt, PublishTransform, Router,
+    RustStream, TypedPublisher,
 };
-use ruststream::{
-    BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
-};
-use serde::{Deserialize, Serialize};
+use ruststream::{BuildContext, Field, Headers, IncomingMessage, Publisher, subscriber};
 use tokio::sync::Notify;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 /// Publishes an order once to each ingress topic (the app is already started, so the
 /// subscriptions are open and every publish lands), then waits until every reply counter is
@@ -51,7 +34,9 @@ async fn publish_and_await_replies(
     let payload = order_bytes(1);
     for topic in topics {
         publisher
-            .publish(OutgoingMessage::new(topic, &payload))
+            .raw(&payload)
+            .to(*topic)
+            .publish()
             .await
             .expect("publish");
     }
@@ -331,7 +316,9 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
 
     let payload = order_bytes(1);
     publisher
-        .publish(OutgoingMessage::new("rl-in", &payload))
+        .raw(&payload)
+        .to("rl-in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), RL_NOTIFY.notified())
@@ -385,7 +372,9 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
 
     let payload = order_bytes(1);
     publisher
-        .publish(OutgoingMessage::new("bl-in", &payload))
+        .raw(&payload)
+        .to("bl-in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), BL_NOTIFY.notified())
@@ -474,7 +463,10 @@ async fn router_publishing_threads_typed_delivery_context() {
     let mut headers = Headers::new();
     headers.insert("correlation-id", "trace-xyz");
     publisher
-        .publish(OutgoingMessage::new("tc-in", &payload).with_headers(headers))
+        .raw(&payload)
+        .with_headers(headers)
+        .to("tc-in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), TC_NOTIFY.notified())

@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::wait_for;
+use common::{BackgroundRun, wait_for};
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,13 +14,10 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerResult, Layer, RustStream,
-    Settle,
+    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerResult, Layer, PublishExt,
+    RustStream, Settle,
 };
-use ruststream::{
-    AckError, BuildContext, Field, FieldMut, Headers, IncomingMessage, OutgoingMessage, Publisher,
-};
-use tokio::sync::Notify;
+use ruststream::{AckError, BuildContext, Field, FieldMut, Headers, IncomingMessage};
 
 /// A broker that attaches native per-delivery metadata: `TaggedMessage` carries a tag, and the
 /// `TagContext` reads it off the message via `BuildContext`, standing in for an offset / commit
@@ -120,18 +117,10 @@ async fn broker_contributed_field_reaches_handler_by_key() {
         );
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
-    publisher
-        .publish(OutgoingMessage::new("orders", b"a"))
-        .await
-        .unwrap();
-    publisher
-        .publish(OutgoingMessage::new("orders", b"b"))
-        .await
-        .unwrap();
+    publisher.raw(b"a").to("orders").publish().await.unwrap();
+    publisher.raw(b"b").to("orders").publish().await.unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").len() >= 2,
@@ -142,8 +131,7 @@ async fn broker_contributed_field_reaches_handler_by_key() {
     // Each delivery is built a fresh context from its own message, so each sees its own tag.
     assert_eq!(*seen.lock().expect("poisoned"), vec![1, 2]);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 /// A per-delivery scratch context a middleware writes and a downstream handler reads.
@@ -253,18 +241,10 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
         b.handle(subscriber, handler, HandlerMetadata::raw("orders"));
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
-    publisher
-        .publish(OutgoingMessage::new("orders", b"a"))
-        .await
-        .unwrap();
-    publisher
-        .publish(OutgoingMessage::new("orders", b"b"))
-        .await
-        .unwrap();
+    publisher.raw(b"a").to("orders").publish().await.unwrap();
+    publisher.raw(b"b").to("orders").publish().await.unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").len() >= 2,
@@ -273,8 +253,7 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
     .await;
     assert_eq!(*seen.lock().expect("poisoned"), vec![0, 1]);
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 struct AppPrefix(String);
@@ -306,14 +285,9 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
             );
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
-    publisher
-        .publish(OutgoingMessage::new("orders", b"x"))
-        .await
-        .unwrap();
+    publisher.raw(b"x").to("orders").publish().await.unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").is_some(),
@@ -322,6 +296,5 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
     .await;
     assert_eq!(*seen.lock().expect("poisoned"), Some("svc".to_owned()));
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }

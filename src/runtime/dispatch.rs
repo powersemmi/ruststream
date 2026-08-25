@@ -798,7 +798,7 @@ where
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;
         let deferred = raw_of(ErasedSink(publisher.as_ref()), &payload)
-            .with_header_map(headers)
+            .with_headers(headers)
             .to(subject.as_str());
         if let Err(err) = deferred.publish().await {
             warn!(

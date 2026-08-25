@@ -69,7 +69,8 @@ pub enum RequestError {
 ///
 /// use futures::StreamExt;
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::{IncomingMessage, OutgoingMessage, Publisher, RequestReply, Subscriber};
+/// use ruststream::runtime::PublishExt;
+/// use ruststream::{IncomingMessage, OutgoingMessage, RequestReply, Subscriber};
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let broker = MemoryBroker::new();
@@ -81,7 +82,7 @@ pub enum RequestError {
 ///     let mut stream = std::pin::pin!(service.stream());
 ///     if let Some(Ok(msg)) = stream.next().await {
 ///         let reply_to = msg.headers().reply_to().ok_or("request must carry reply-to")?.to_owned();
-///         publisher.publish(OutgoingMessage::new(&reply_to, msg.payload())).await?;
+///         publisher.raw(msg.payload()).to(reply_to).publish().await?;
 ///         msg.ack().await?;
 ///     }
 ///     Ok::<_, Box<dyn std::error::Error>>(())
@@ -483,7 +484,8 @@ impl MemoryPosition {
 /// ```
 /// use futures::StreamExt;
 /// use ruststream::memory::{MemoryBroker, MemoryPosition};
-/// use ruststream::{IncomingMessage, OutgoingMessage, Publisher, Seekable, Seeker, Subscriber};
+/// use ruststream::runtime::PublishExt;
+/// use ruststream::{IncomingMessage, Seekable, Seeker, Subscriber};
 ///
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// let broker = MemoryBroker::new();
@@ -491,7 +493,7 @@ impl MemoryPosition {
 /// let seeker = subscriber.seeker();
 /// let publisher = broker.publisher();
 ///
-/// publisher.publish(OutgoingMessage::new("audit", b"one".as_slice())).await?;
+/// publisher.raw(b"one").to("audit").publish().await?;
 /// {
 ///     let mut stream = std::pin::pin!(subscriber.stream());
 ///     stream.next().await.expect("delivered")?.ack().await?;

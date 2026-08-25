@@ -164,7 +164,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chunks_total: 12,
     };
     tb.broker::<MemoryBroker>()
-        .publish_with_headers("chunks.raw", &[0_u8; 16], &meta)
+        .raw(&[0_u8; 16])
+        .with_headers(&meta)
+        .to("chunks.raw")
+        .publish()
         .await?;
 
     let done = tb

@@ -4,7 +4,7 @@
 прямо на крейте `prometheus` и отдаёт данные в формате экспозиции Prometheus.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "metrics"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 ```
 
 ## Связывание

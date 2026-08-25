@@ -149,8 +149,8 @@ impl PublishHeaders for MapHeaders {
 #[diagnostic::on_unimplemented(
     message = "the headers of this publish do not match the message's `{C}` contract",
     note = "a message declaring `#[outgoing(headers = Meta)]` is published as \
-            `.message(&value).with_headers(&meta)`; one declaring no contract takes no typed \
-            headers (an arbitrary map still travels through `.with_header_map(..)`)"
+            `.message(&value).with_headers(&meta)`; one declaring no contract takes no contract \
+            value (an arbitrary map still travels through `.with_headers(headers)`)"
 )]
 pub trait SatisfiesContract<C: HeadersContract> {}
 
@@ -246,38 +246,69 @@ impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, 
     }
 }
 
-impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
-    /// Supplies the typed headers of this publish.
-    ///
-    /// On the typed entry point the value is checked against the message's declared contract, so
-    /// a missing, extra or mismatched headers value is a compile error. On the byte entry point
-    /// any serializable value is accepted: bytes declare no contract.
-    ///
-    /// The borrow is cheap; nothing is serialized until the publish runs.
-    pub fn with_headers<H: ?Sized>(
-        self,
-        headers: &H,
-    ) -> Publish<Sink, Body, Enc, TypedHeaders<'_, H>, Dest> {
-        Publish::new(
-            self.sink,
-            self.body,
-            self.codec,
-            TypedHeaders(headers),
-            self.dest,
-        )
-    }
+/// What may fill the headers position of a publish: a borrowed contract value, or an
+/// already-built [`Headers`] map.
+///
+/// The two differ in what they say about the message, not in how they are written: a borrowed
+/// value is the message's declared contract, serialized one entry per field, while a map is the
+/// transport level and stands for no contract at all (a message type declaring one still demands
+/// its value). Which of the two a call site passed rides in the type, so
+/// [`with_headers`](Publish::with_headers) is one method and the contract check stays a compile
+/// error either way.
+///
+/// You never implement it: [`Headers`] and `&H` of every serializable `H` already do.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot fill the headers of a publish",
+    note = "pass the message's declared contract by reference (`.with_headers(&meta)`), or an \
+            already-built header map by value (`.with_headers(headers)`)"
+)]
+pub trait HeaderSource {
+    /// The headers position this source resolves to: [`TypedHeaders`] or [`MapHeaders`].
+    type Position;
 
-    /// Attaches an already-built header map, sent as it is.
+    /// Moves the source into its position.
+    fn into_position(self) -> Self::Position;
+}
+
+// A borrowed value is the contract form: it is serialized into the map when the publish runs, so
+// the `Serialize` bound stays on `PublishHeaders` rather than here - a value that cannot be
+// serialized has to fail at the publish, with serde's own guidance, not at "no such method".
+impl<'a, H: ?Sized> HeaderSource for &'a H {
+    type Position = TypedHeaders<'a, H>;
+
+    fn into_position(self) -> Self::Position {
+        TypedHeaders(self)
+    }
+}
+
+impl HeaderSource for Headers {
+    type Position = MapHeaders;
+
+    fn into_position(self) -> Self::Position {
+        MapHeaders(self)
+    }
+}
+
+impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
+    /// Supplies the headers of this publish: the message's declared contract by reference, or an
+    /// already-built [`Headers`] map by value.
     ///
-    /// This is the transport-level position: a map carries whatever the caller put in it and
-    /// stands for no declared contract, so a message type that declares one still demands
-    /// [`with_headers`](Self::with_headers).
-    pub fn with_header_map(self, headers: Headers) -> Publish<Sink, Body, Enc, MapHeaders, Dest> {
+    /// A contract value is checked against the message's declaration, so a missing, extra or
+    /// mismatched one is a compile error; a map carries whatever the caller put in it and stands
+    /// for no contract, so a message type declaring one is not satisfied by a map. On the byte
+    /// entry point either form is accepted: bytes declare no contract.
+    ///
+    /// The position is filled once. A borrow is cheap - nothing is serialized until the publish
+    /// runs.
+    pub fn with_headers<S: HeaderSource>(
+        self,
+        headers: S,
+    ) -> Publish<Sink, Body, Enc, S::Position, Dest> {
         Publish::new(
             self.sink,
             self.body,
             self.codec,
-            MapHeaders(headers),
+            headers.into_position(),
             self.dest,
         )
     }

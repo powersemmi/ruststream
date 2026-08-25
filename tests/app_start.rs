@@ -7,6 +7,8 @@
 //! no republish loops.
 #![cfg(feature = "macros")]
 
+mod common;
+
 use std::convert::Infallible;
 use std::future::ready;
 use std::io;
@@ -16,21 +18,14 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryError};
 use ruststream::runtime::{
-    App, AppInfo, Context, HandlerMetadata, HandlerResult, RustStream, RustStreamError,
+    App, AppInfo, Context, HandlerMetadata, HandlerResult, PublishError, PublishExt, RustStream,
+    RustStreamError,
 };
-use ruststream::{Broker, ConnectedBroker, OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
+use ruststream::{Broker, ConnectedBroker, subscriber};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
+use common::{Order, order_bytes};
 
 // Notifies keyed per handler so the parallel tests do not interfere; each handler is used by one
 // test only. `notify_one` stores a permit, so the handler may fire before the test awaits.
@@ -70,7 +65,9 @@ async fn start_resolves_running_and_shutdown_completes() {
     // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("started.orders", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("started.orders")
+        .publish()
         .await
         .expect("publish failed");
     timeout(Duration::from_secs(5), SEEN.notified())
@@ -94,7 +91,9 @@ async fn stopping_resolves_on_fail_fast_and_shutdown_surfaces_it() {
     // `stopping()` stays pending while the service is healthy and resolves when the panicking
     // handler triggers the fail-fast teardown.
     publisher
-        .publish(OutgoingMessage::new("started.boom", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("started.boom")
+        .publish()
         .await
         .expect("publish failed");
     timeout(Duration::from_secs(5), running.stopping())
@@ -169,7 +168,9 @@ async fn start_is_reachable_through_the_app_trait() {
 
     let running = service(broker).start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("started.trait", &order_bytes(7)))
+        .raw(&order_bytes(7))
+        .to("started.trait")
+        .publish()
         .await
         .expect("publish failed");
     timeout(Duration::from_secs(5), TRAIT_SEEN.notified())
@@ -253,7 +254,9 @@ async fn failed_after_startup_waits_for_post_settle_continuations() {
     let mut start_task = tokio::spawn(app.start());
     HOOK_READY.notified().await;
     publisher
-        .publish(OutgoingMessage::new("unwind.work", b"go"))
+        .raw(b"go")
+        .to("unwind.work")
+        .publish()
         .await
         .expect("publish failed");
     CONT_IN_FLIGHT_TEST.notified().await;
@@ -317,12 +320,13 @@ async fn failed_connect_unwinds_already_connected_brokers() {
         .expect_err("the second broker cannot connect");
     assert!(matches!(err, RustStreamError::Connect(_)), "got: {err:?}");
     // The first broker had connected; the unwind must shut it down, not leave it live.
-    assert_eq!(
-        publisher
-            .publish(OutgoingMessage::new("started.unwind", b"x".as_slice()))
-            .await,
-        Err(MemoryError::ShutDown),
-    );
+    let err = publisher
+        .raw(b"x")
+        .to("started.unwind")
+        .publish()
+        .await
+        .expect_err("the unwound broker must reject the publish");
+    assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -339,10 +343,11 @@ async fn failed_after_startup_unwinds_connected_brokers() {
         .expect_err("the failing hook must abort startup");
     assert!(matches!(err, RustStreamError::Startup(_)), "got: {err:?}");
     // The hook failed after the broker connected and dispatch spawned; both are unwound.
-    assert_eq!(
-        publisher
-            .publish(OutgoingMessage::new("started.quiet", b"x".as_slice()))
-            .await,
-        Err(MemoryError::ShutDown),
-    );
+    let err = publisher
+        .raw(b"x")
+        .to("started.quiet")
+        .publish()
+        .await
+        .expect_err("the unwound broker must reject the publish");
+    assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
 }

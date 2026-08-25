@@ -7,6 +7,8 @@
     feature = "testing"
 ))]
 
+mod common;
+
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -14,19 +16,11 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream, Seek};
+use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, Seek};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, OutgoingMessage, Publisher, Seeker, subscriber};
-use serde::{Deserialize, Serialize};
+use ruststream::{Publisher, Seeker, subscriber};
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
-
-fn payload(id: u64) -> Vec<u8> {
-    serde_json::to_vec(&Event { id }).expect("serializable")
-}
+use common::{Event, observed_memory, payload};
 
 /// Jumps forward when the producer marks a poison region: everything queued before the
 /// resume point is skipped without dropping the subscription.
@@ -62,7 +56,9 @@ async fn a_seek_parameter_repositions_from_inside_the_handler() {
     // message and resume at the third.
     for id in [0, 1, 2] {
         ingress
-            .publish(OutgoingMessage::new("seek.jobs", payload(id).as_slice()))
+            .raw(&payload(id))
+            .to("seek.jobs")
+            .publish()
             .await
             .expect("publish");
     }
@@ -96,7 +92,9 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
     // Published before the app exists: only the chosen start position makes them visible.
     for id in [1, 2] {
         ingress
-            .publish(OutgoingMessage::new("seek.history", payload(id).as_slice()))
+            .raw(&payload(id))
+            .to("seek.history")
+            .publish()
             .await
             .expect("publish");
     }
@@ -109,7 +107,9 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
     // The publish keeps the reaction in flight until the startup replay is applied, so
     // `settle` waits for the history too.
     ingress
-        .publish(OutgoingMessage::new("seek.history", payload(3).as_slice()))
+        .raw(&payload(3))
+        .to("seek.history")
+        .publish()
         .await
         .expect("publish");
     tb.settle().await.expect("settle");
@@ -148,7 +148,9 @@ async fn forward_skipping(
     }
     let payload = serde_json::to_vec(event).expect("serializable");
     if out
-        .publish(OutgoingMessage::new("seek.combo.out", payload.as_slice()))
+        .raw(&payload)
+        .to("seek.combo.out")
+        .publish()
         .await
         .is_err()
     {
@@ -171,7 +173,9 @@ async fn an_out_and_a_seek_parameter_combine_in_one_handler() {
     // the third reaches the forwarding branch.
     for id in [0, 1, 2] {
         ingress
-            .publish(OutgoingMessage::new("seek.combo", payload(id).as_slice()))
+            .raw(&payload(id))
+            .to("seek.combo")
+            .publish()
             .await
             .expect("publish");
     }
@@ -221,7 +225,9 @@ async fn a_raw_handler_composes_with_a_seek_parameter() {
 
     for payload in [b"poison".as_slice(), b"skipped", b"kept"] {
         ingress
-            .publish(OutgoingMessage::new("seek.frames", payload))
+            .raw(payload)
+            .to("seek.frames")
+            .publish()
             .await
             .expect("publish");
     }
@@ -283,7 +289,9 @@ async fn a_batch_handler_composes_with_a_seek_parameter() {
 
     for id in [0u64, 1, 2] {
         ingress
-            .publish(OutgoingMessage::new("seek.pages", payload(id).as_slice()))
+            .raw(&payload(id))
+            .to("seek.pages")
+            .publish()
             .await
             .expect("publish");
     }
@@ -333,7 +341,9 @@ async fn a_publishing_handler_composes_with_a_seek_parameter() {
     // only the third reaches the replying branch.
     for id in [0, 1, 2] {
         ingress
-            .publish(OutgoingMessage::new("seek.gate", payload(id).as_slice()))
+            .raw(&payload(id))
+            .to("seek.gate")
+            .publish()
             .await
             .expect("publish");
     }
@@ -378,11 +388,7 @@ async fn ledger(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_publishing_handler_composes_with_a_seek_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
         b.include(ledger);
@@ -391,7 +397,9 @@ async fn a_batch_publishing_handler_composes_with_a_seek_parameter() {
 
     for id in [0u64, 1, 2] {
         ingress
-            .publish(OutgoingMessage::new("seek.ledger", payload(id).as_slice()))
+            .raw(&payload(id))
+            .to("seek.ledger")
+            .publish()
             .await
             .expect("publish");
     }

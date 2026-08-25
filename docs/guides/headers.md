@@ -105,7 +105,8 @@ the document, and the destination is already in the attribute.
 
 At runtime, reply headers stay where they were: a `PublishTransform` on the reply publisher
 sets them, and [`Headers::insert_typed`] serializes a contract value into the map from inside
-a transform (or anywhere an `OutgoingMessage` is built).
+a transform - which is where a service sees an outgoing message as a whole, the publish builder
+having assembled it.
 
 [`Headers::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.insert_typed
 
@@ -125,7 +126,8 @@ AsyncAPI ecosystem, which deliberately leaves value encoding to the protocol.
 
 ## Testing
 
-The in-process harness drives the whole path: `publish_with_headers` injects a delivery with a
-typed contract, and the publish log shows the headers a typed publish produced.
+The in-process harness drives the whole path: `with_headers(&meta)` on the injection builder sends
+a delivery carrying a typed contract, and the publish log shows the headers a typed publish
+produced.
 
 --8<-- "examples/typed_headers.rs:drive"

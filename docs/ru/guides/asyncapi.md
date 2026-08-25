@@ -6,7 +6,7 @@
 открывают отдельные подписки, поэтому документ показывает по операции на обработчик.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "asyncapi"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "asyncapi"] }
 ```
 
 ## Генерация документа

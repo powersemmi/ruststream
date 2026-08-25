@@ -50,15 +50,20 @@ Enable the `testing` feature in your dev-dependencies:
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.6", features = ["testing", "memory", "macros", "json"] }
+ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json"] }
 ```
 
 ### Addressing brokers
 
 `tb.broker::<MemoryBroker>()` addresses the broker by type; `tb.broker_named("ingress")` addresses
 it by the label from [`with_broker_labeled`](asyncapi.md) when a service mounts several brokers and
-their subjects collide. The unscoped `tb.publish(name, &value)` is a convenience for single-broker
-apps and returns `TestError::Ambiguous` when more than one broker is registered.
+their subjects collide. The unscoped `tb.message(&value).to(name)` is a convenience for
+single-broker apps and reports `TestError::Ambiguous` when more than one broker is registered.
+
+Input goes in through the same publish builder the service publishes through: `message(&value)`
+encodes a `#[derive(Outgoing)]` value, `raw(bytes)` sends bytes as they are (the undecodable-payload
+case, and the only form a raw subscriber takes), `with_headers(&meta)` attaches a typed header
+contract, and `to(name)` names the subject when the value's type does not.
 
 ### Asserting on a handler
 

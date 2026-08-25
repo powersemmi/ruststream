@@ -4,26 +4,16 @@
 
 mod common;
 
-use common::wait_for;
+use common::{Order, order_bytes, wait_for};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Router, RustStream, RustStreamError, TypedPublisher,
+    AppInfo, HandlerResult, PublishExt, Router, RustStream, RustStreamError, TypedPublisher,
 };
-use ruststream::{OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
+use ruststream::{Publisher, subscriber};
 
 // Counters keyed per handler so the parallel tests do not interfere; each handler is used by one
 // test only.
@@ -102,9 +92,7 @@ async fn run_until_torn_down(
 ) -> Result<(), RustStreamError> {
     let running = app.start().await.expect("startup failed");
     // `start` resolves with the subscription open, so one poison message is enough.
-    let _ = publisher
-        .publish(OutgoingMessage::new(topic, &payload))
-        .await;
+    let _ = publisher.raw(&payload).to(topic).publish().await;
     tokio::time::timeout(Duration::from_secs(5), running.stopping())
         .await
         .expect("service did not tear down within the deadline");
@@ -120,9 +108,7 @@ async fn drive_until_seen(
     counter: &AtomicUsize,
 ) {
     let start = counter.load(Ordering::SeqCst);
-    let _ = publisher
-        .publish(OutgoingMessage::new(topic, payload))
-        .await;
+    let _ = publisher.raw(payload).to(topic).publish().await;
     wait_for(
         || counter.load(Ordering::SeqCst) > start,
         Duration::from_secs(5),
@@ -160,11 +146,15 @@ async fn panic_drop_keeps_the_subscriber_consuming() {
 
     // A poison order panics (dropped), then a good order must still be processed.
     publisher
-        .publish(OutgoingMessage::new("dropping", &order_bytes(0)))
+        .raw(&order_bytes(0))
+        .to("dropping")
+        .publish()
         .await
         .unwrap();
     publisher
-        .publish(OutgoingMessage::new("dropping", &order_bytes(9)))
+        .raw(&order_bytes(9))
+        .to("dropping")
+        .publish()
         .await
         .unwrap();
 
@@ -213,11 +203,15 @@ async fn decode_skip_acks_past_bad_input_and_continues() {
 
     // A malformed payload is skipped (acked past), then a good order is still processed.
     publisher
-        .publish(OutgoingMessage::new("skipping", b"not json"))
+        .raw(b"not json")
+        .to("skipping")
+        .publish()
         .await
         .unwrap();
     publisher
-        .publish(OutgoingMessage::new("skipping", &order_bytes(2)))
+        .raw(&order_bytes(2))
+        .to("skipping")
+        .publish()
         .await
         .unwrap();
 
@@ -251,11 +245,15 @@ async fn publishing_decode_failure_is_dropped_and_continues() {
     drive_until_seen(&publisher, "rpcd", &order_bytes(1), &RPC_DONE).await;
     let before = RPC_DONE.load(Ordering::SeqCst);
     publisher
-        .publish(OutgoingMessage::new("rpcd", b"not json"))
+        .raw(b"not json")
+        .to("rpcd")
+        .publish()
         .await
         .unwrap();
     publisher
-        .publish(OutgoingMessage::new("rpcd", &order_bytes(2)))
+        .raw(&order_bytes(2))
+        .to("rpcd")
+        .publish()
         .await
         .unwrap();
     wait_for(
@@ -285,12 +283,11 @@ async fn batch_decode_failure_drops_the_bad_element() {
 
     drive_until_seen(&publisher, "bd", &order_bytes(1), &BATCH_DONE).await;
     let before = BATCH_DONE.load(Ordering::SeqCst);
+    publisher.raw(b"not json").to("bd").publish().await.unwrap();
     publisher
-        .publish(OutgoingMessage::new("bd", b"not json"))
-        .await
-        .unwrap();
-    publisher
-        .publish(OutgoingMessage::new("bd", &order_bytes(2)))
+        .raw(&order_bytes(2))
+        .to("bd")
+        .publish()
         .await
         .unwrap();
     wait_for(
@@ -323,11 +320,15 @@ async fn batch_publishing_decode_failure_is_dropped() {
     drive_until_seen(&publisher, "bpd", &order_bytes(1), &BATCH_REPLY_DONE).await;
     let before = BATCH_REPLY_DONE.load(Ordering::SeqCst);
     publisher
-        .publish(OutgoingMessage::new("bpd", b"not json"))
+        .raw(b"not json")
+        .to("bpd")
+        .publish()
         .await
         .unwrap();
     publisher
-        .publish(OutgoingMessage::new("bpd", &order_bytes(2)))
+        .raw(&order_bytes(2))
+        .to("bpd")
+        .publish()
         .await
         .unwrap();
     wait_for(

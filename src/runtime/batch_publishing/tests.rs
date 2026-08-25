@@ -8,14 +8,12 @@ use super::super::dispatch::Delivery;
 use super::super::publish::TypedPublisher;
 use super::*;
 use crate::codec::JsonCodec;
-use crate::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublisher,
-    MemorySubscriber,
-};
+use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
 use crate::runtime::Decoded;
-use crate::{
-    BatchSubscriber, Headers, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
-};
+use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
+#[cfg(feature = "logging")]
+use crate::testkit::log_capture;
+use crate::{Headers, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource};
 
 struct Confirm {
     reply_to: &'static str,
@@ -73,31 +71,6 @@ impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
             .map_or_else(|| Ok(batch.iter().map(|n| n * 10).collect()), Err);
         ready(result)
     }
-}
-
-async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
-    let publisher = broker.publisher();
-    for n in numbers {
-        publisher
-            .publish(OutgoingMessage::new(name, &serde_json::to_vec(n).unwrap()))
-            .await
-            .unwrap();
-    }
-}
-
-async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
-    let publisher = broker.publisher();
-    for payload in payloads {
-        publisher
-            .publish(OutgoingMessage::new(name, payload))
-            .await
-            .unwrap();
-    }
-}
-
-async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
-    let mut stream = std::pin::pin!(sub.batches());
-    stream.next().await.unwrap().unwrap()
 }
 
 #[tokio::test]
@@ -309,65 +282,6 @@ async fn a_failed_reply_publish_retries_the_whole_batch() {
     assert_eq!(redelivered.len(), 2);
     for msg in redelivered {
         msg.ack().await.unwrap();
-    }
-}
-
-/// Captures the fields of the events emitted while the guard is alive (needs a tracing
-/// subscriber, hence the `logging` feature gate).
-#[cfg(feature = "logging")]
-mod log_capture {
-    use std::collections::HashMap;
-    use std::fmt::Debug;
-    use std::sync::{Arc, Mutex};
-
-    use tracing::Subscriber;
-    use tracing::field::{Field, Visit};
-    use tracing::subscriber::DefaultGuard;
-    use tracing_subscriber::Layer;
-    use tracing_subscriber::layer::{Context, SubscriberExt as _};
-
-    pub(super) type Events = Arc<Mutex<Vec<HashMap<String, String>>>>;
-
-    #[derive(Default)]
-    struct FieldGrab(HashMap<String, String>);
-
-    impl Visit for FieldGrab {
-        fn record_str(&mut self, field: &Field, value: &str) {
-            self.0.insert(field.name().to_owned(), value.to_owned());
-        }
-
-        fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
-            self.0
-                .entry(field.name().to_owned())
-                .or_insert_with(|| format!("{value:?}"));
-        }
-    }
-
-    struct Capture(Events);
-
-    impl<S: Subscriber> Layer<S> for Capture {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
-            let mut grab = FieldGrab::default();
-            event.record(&mut grab);
-            self.0.lock().unwrap().push(grab.0);
-        }
-    }
-
-    pub(super) fn start() -> (Events, DefaultGuard) {
-        let events: Events = Arc::new(Mutex::new(Vec::new()));
-        let guard = tracing::subscriber::set_default(
-            tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
-        );
-        (events, guard)
-    }
-
-    pub(super) fn find(events: &Events, message: &str) -> HashMap<String, String> {
-        let captured = events.lock().unwrap();
-        captured
-            .iter()
-            .find(|fields| fields.get("message").is_some_and(|m| m == message))
-            .cloned()
-            .unwrap_or_else(|| panic!("no `{message}` event was emitted"))
     }
 }
 

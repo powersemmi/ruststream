@@ -16,12 +16,10 @@ use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
 };
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishLayer, PublishNext, PublishTransform, RustStream,
-    TypedPublisher,
+    AppInfo, HandlerResult, Outgoing, PublishExt, PublishLayer, PublishNext, PublishTransform,
+    RustStream, TypedPublisher,
 };
-use ruststream::{
-    Broker, Message, OutgoingMessage, Publisher, Subscribe, SubscriptionSource, subscriber,
-};
+use ruststream::{Broker, Message, Publisher, Subscribe, SubscriptionSource, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -105,7 +103,9 @@ async fn macro_descriptor_in_decorator() {
 
     let payload = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
     publisher
-        .publish(OutgoingMessage::new("ctor.stream", &payload))
+        .raw(&payload)
+        .to("ctor.stream")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), HANDLED_CTOR_NOTIFY.notified())
@@ -141,7 +141,9 @@ async fn macro_builder_chain_in_decorator() {
     // The `at(..)` option won: the subscription binds to "chain.stream".
     let payload = serde_json::to_vec(&Order { id: 7, total: 1.0 }).unwrap();
     publisher
-        .publish(OutgoingMessage::new("chain.stream", &payload))
+        .raw(&payload)
+        .to("chain.stream")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), HANDLED_CHAIN_NOTIFY.notified())
@@ -180,7 +182,9 @@ async fn macro_subscriber_dispatches() {
 
     let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
     publisher
-        .publish(OutgoingMessage::new("orders", &payload))
+        .raw(&payload)
+        .to("orders")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), HANDLED_NOTIFY.notified())
@@ -215,7 +219,9 @@ async fn scope_default_codec_drops_per_call_codec() {
 
     let payload = serde_json::to_vec(&Order { id: 9, total: 1.0 }).unwrap();
     publisher
-        .publish(OutgoingMessage::new("orders-default", &payload))
+        .raw(&payload)
+        .to("orders-default")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), HANDLED_DEFAULT_NOTIFY.notified())
@@ -278,7 +284,9 @@ async fn static_publish_layer_transforms_reply() {
 
     let payload = serde_json::to_vec(&Ping { n: 7 }).unwrap();
     ingress_pub
-        .publish(OutgoingMessage::new("ping-in", &payload))
+        .raw(&payload)
+        .to("ping-in")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), STATIC_SEEN_NOTIFY.notified())
@@ -359,7 +367,9 @@ async fn macro_publisher_replies_cross_broker() {
 
     let payload = serde_json::to_vec(&Request { n: 21 }).unwrap();
     ingress_pub
-        .publish(OutgoingMessage::new("requests", &payload))
+        .raw(&payload)
+        .to("requests")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), REPLY_DOUBLED_NOTIFY.notified())
@@ -422,7 +432,9 @@ async fn publishing_result_form_controls_ack_and_publish() {
     // Err(HandlerResult) skips the publish entirely.
     let rejected = serde_json::to_vec(&Order { id: 0, total: 0.0 }).unwrap();
     ingress
-        .publish(OutgoingMessage::new("confirm-in", &rejected))
+        .raw(&rejected)
+        .to("confirm-in")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), CONFIRM_REJECTED_NOTIFY.notified())
@@ -438,7 +450,9 @@ async fn publishing_result_form_controls_ack_and_publish() {
     // Ok(reply) publishes and acks.
     let accepted = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
     ingress
-        .publish(OutgoingMessage::new("confirm-in", &accepted))
+        .raw(&accepted)
+        .to("confirm-in")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), CONFIRM_ACCEPTED_NOTIFY.notified())
@@ -486,7 +500,9 @@ async fn publishing_handler_reads_context_state() {
 
     let payload = serde_json::to_vec(&Request { n: 1 }).unwrap();
     ingress
-        .publish(OutgoingMessage::new("ctx-in", &payload))
+        .raw(&payload)
+        .to("ctx-in")
+        .publish()
         .await
         .expect("publish failed");
     tokio::time::timeout(Duration::from_secs(5), CTX_REPLY_NOTIFY.notified())
@@ -527,7 +543,9 @@ async fn retry_after_redelivers_through_the_dispatcher() {
     // One publish is enough: the second attempt must come from the delayed redelivery.
     let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
     publisher
-        .publish(OutgoingMessage::new("deferred", &payload))
+        .raw(&payload)
+        .to("deferred")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(

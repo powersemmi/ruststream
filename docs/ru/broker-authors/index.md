@@ -6,7 +6,7 @@ JSON-кодека и без чужих брокеров:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", default-features = false }
+ruststream = { version = "0.7", default-features = false }
 ```
 
 Эта страница и есть контракт. Реализуйте обязательные трейты, заведите собственный `Config`,

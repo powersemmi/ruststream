@@ -20,16 +20,19 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use ruststream::codec::{Codec, JsonCodec};
+use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, HandlerResult, HealthProbe, HealthState, RustStream};
-use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{
+    AppInfo, HandlerResult, HealthProbe, HealthState, PublishExt, RustStream,
+};
+use ruststream::{Broker, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 // --8<-- [start:event]
 /// The integration event the HTTP side hands to the messaging side.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "orders.placed")]
 struct OrderPlaced {
     id: u64,
     item: String,
@@ -83,9 +86,13 @@ async fn relay_outbox(store: Arc<Mutex<Store>>, egress: MemoryPublisher) {
             let Some(event) = store.lock().await.outbox.front().cloned() else {
                 break;
             };
-            let payload = JsonCodec.encode(&event).expect("serializable");
-            let out = OutgoingMessage::new("orders.placed", payload.as_ref());
-            if egress.publish(out).await.is_err() {
+            if egress
+                .message(&event)
+                .with_codec(JsonCodec)
+                .publish()
+                .await
+                .is_err()
+            {
                 // Keep the row and retry on the next tick.
                 break;
             }

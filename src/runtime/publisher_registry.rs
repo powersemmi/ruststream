@@ -11,7 +11,7 @@ use std::future::Future;
 
 use thiserror::Error;
 
-use crate::{Headers, OutgoingMessage, Publisher};
+use crate::{OutgoingMessage, Publisher};
 
 use super::lifecycle::{BoxError, BoxFuture};
 use super::publish::PublishSink;
@@ -35,39 +35,6 @@ pub trait ErasedPublisher: sealed::Sealed + Send + Sync {
         &'a self,
         msg: OutgoingMessage<'a>,
     ) -> BoxFuture<'a, Result<(), BoxError>>;
-
-    /// Publishes `payload` to `name`, with no headers.
-    ///
-    /// # Errors
-    ///
-    /// Returns the underlying publisher's error, boxed, if the broker rejects the publish.
-    #[deprecated(
-        since = "0.6.4",
-        note = "headers are a position on the publish builder, not a second method: use \
-                publisher.raw(payload).to(name).publish()"
-    )]
-    fn publish_bytes<'a>(
-        &'a self,
-        name: &'a str,
-        payload: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
-
-    /// Publishes `payload` to `name` with `headers`.
-    ///
-    /// # Errors
-    ///
-    /// Returns the underlying publisher's error, boxed, if the broker rejects the publish.
-    #[deprecated(
-        since = "0.6.4",
-        note = "headers are a position on the publish builder, not a second method: use \
-                publisher.raw(payload).with_header_map(headers).to(name).publish()"
-    )]
-    fn publish_message<'a>(
-        &'a self,
-        name: &'a str,
-        payload: &'a [u8],
-        headers: &'a Headers,
-    ) -> BoxFuture<'a, Result<(), BoxError>>;
 }
 
 mod sealed {
@@ -79,30 +46,12 @@ mod sealed {
     impl<P: Publisher> Sealed for P {}
 }
 
-#[allow(deprecated)]
 impl<P: Publisher> ErasedPublisher for P {
     fn publish_erased<'a>(
         &'a self,
         msg: OutgoingMessage<'a>,
     ) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { self.publish(msg).await.map_err(|e| Box::new(e) as BoxError) })
-    }
-
-    fn publish_bytes<'a>(
-        &'a self,
-        name: &'a str,
-        payload: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
-        self.publish_erased(OutgoingMessage::new(name, payload))
-    }
-
-    fn publish_message<'a>(
-        &'a self,
-        name: &'a str,
-        payload: &'a [u8],
-        headers: &'a Headers,
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
-        self.publish_erased(OutgoingMessage::new(name, payload).with_headers(headers.clone()))
     }
 }
 
@@ -148,7 +97,7 @@ mod tests {
     use super::*;
     use crate::memory::MemoryBroker;
     use crate::runtime::publish::raw_of;
-    use crate::{IncomingMessage, Subscriber};
+    use crate::{Headers, IncomingMessage, Subscriber};
 
     /// The erased sink reaches the publish builder, which is how the deferred-retry fallback
     /// republishes: one message, headers included, through the same positions as everywhere.
@@ -162,7 +111,7 @@ mod tests {
         let mut headers = Headers::new();
         headers.insert("k", "v");
         raw_of(ErasedSink(erased), b"deferred")
-            .with_header_map(headers)
+            .with_headers(headers)
             .to("erased.builder")
             .publish()
             .await
@@ -184,36 +133,5 @@ mod tests {
         assert!(
             format!("{:?}", ErasedSink(&MemoryBroker::new().publisher())).starts_with("ErasedSink")
         );
-    }
-
-    // The deprecated pair keeps working until it is removed, so it keeps its coverage.
-    #[allow(deprecated)]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn blanket_erasure_publishes_bytes_and_messages() {
-        let broker = MemoryBroker::new();
-        let mut subscriber = broker.subscribe("erased");
-        let publisher = broker.publisher();
-        let erased: &dyn ErasedPublisher = &publisher;
-
-        erased
-            .publish_bytes("erased", b"raw")
-            .await
-            .expect("erased byte publish failed");
-        let mut headers = Headers::new();
-        headers.insert("k", "v");
-        erased
-            .publish_message("erased", b"tagged", &headers)
-            .await
-            .expect("erased message publish failed");
-
-        let mut stream = std::pin::pin!(subscriber.stream());
-        let first = stream.next().await.unwrap().expect("first delivery");
-        assert_eq!(first.payload(), b"raw");
-        assert!(first.headers().get_str("k").is_none());
-        first.ack().await.expect("ack failed");
-        let second = stream.next().await.unwrap().expect("second delivery");
-        assert_eq!(second.payload(), b"tagged");
-        assert_eq!(second.headers().get_str("k"), Some("v"));
-        second.ack().await.expect("ack failed");
     }
 }

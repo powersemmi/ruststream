@@ -64,7 +64,7 @@ block, so the guarantee cannot regress.
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 schemars = "1"
 ```
@@ -153,7 +153,9 @@ let tb = TestApp::start(service()).await?;
 
 // Inject an order; the harness drives the handler to completion before returning.
 tb.broker::<MemoryBroker>()
-    .publish("orders", &Order { id: 42 })
+    .message(&Order { id: 42 })
+    .to("orders")
+    .publish()
     .await?;
 
 // The handler ran once, decoded the order, and acked.

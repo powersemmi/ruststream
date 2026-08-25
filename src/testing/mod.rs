@@ -27,4 +27,4 @@ pub use broker::{TestableBroker, TestableRegistration, expect_published};
 #[cfg(feature = "testing")]
 pub use coordinator::{Coordinator, Outcome};
 #[cfg(feature = "testing")]
-pub use harness::{BrokerHandle, TestApp, TestBrokers, TestError};
+pub use harness::{BrokerHandle, InjectSink, TestApp, TestBrokers, TestError};

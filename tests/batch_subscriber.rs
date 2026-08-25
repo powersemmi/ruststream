@@ -15,21 +15,12 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, connected, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, Router, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
+use ruststream::{Buffered, Name, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 static BATCHES: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
 
@@ -56,7 +47,9 @@ async fn batch_macro_def_receives_batches() {
     // The three publishes may buffer into one batch or arrive split across several.
     for id in 0..3u32 {
         publisher
-            .publish(OutgoingMessage::new("orders", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("orders")
+            .publish()
             .await
             .expect("publish failed");
     }
@@ -102,15 +95,21 @@ async fn undecodable_elements_never_reach_the_handler() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("mixed", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("mixed")
+        .publish()
         .await
         .expect("publish failed");
     publisher
-        .publish(OutgoingMessage::new("mixed", b"not json"))
+        .raw(b"not json")
+        .to("mixed")
+        .publish()
         .await
         .expect("publish failed");
     publisher
-        .publish(OutgoingMessage::new("mixed", &order_bytes(2)))
+        .raw(&order_bytes(2))
+        .to("mixed")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(
@@ -154,7 +153,9 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("events", &order_bytes(7)))
+        .raw(&order_bytes(7))
+        .to("events")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(
@@ -198,7 +199,9 @@ async fn per_element_outcomes_retry_individually() {
     // The page is published exactly once, so the retry accounting below is deterministic.
     for id in [10u32, 11, 12] {
         publisher
-            .publish(OutgoingMessage::new("pages", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("pages")
+            .publish()
             .await
             .expect("publish failed");
     }
@@ -260,11 +263,7 @@ async fn audit(orders: &[Order]) -> Vec<Confirmation> {
 async fn batch_replies_publish_transactionally() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let replies = TypedPublisher::new(MemoryPublish).transactional();
     let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(broker, |b| {
@@ -274,7 +273,9 @@ async fn batch_replies_publish_transactionally() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("requests", &order_bytes(7)))
+        .raw(&order_bytes(7))
+        .to("requests")
+        .publish()
         .await
         .expect("publish failed");
     // expect_published polls under its own deadline and returns whatever arrived by then.
@@ -352,7 +353,9 @@ async fn batch_handler_reads_typed_state() {
 
     for id in 1..4u32 {
         publisher
-            .publish(OutgoingMessage::new("scale", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("scale")
+            .publish()
             .await
             .expect("publish failed");
     }

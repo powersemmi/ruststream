@@ -5,7 +5,7 @@
 能够读到产生某条回复的那次投递。
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "json", "otel"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] }
 ```
 
 该 feature 分成两半。传播那一半负责携带 [W3C Trace Context](https://www.w3.org/TR/trace-context/)

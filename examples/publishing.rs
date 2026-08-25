@@ -232,9 +232,17 @@ async fn seed_events<P>(
 where
     P: TransactionalPublisher,
 {
-    let mut scope = seeder.begin().await?;
-    scope.publish("events", &Event { id: 1 }).await?;
-    scope.publish("events", &Event { id: 2 }).await?;
+    let scope = seeder.begin().await?;
+    scope
+        .message(&Event { id: 1 })
+        .to("events")
+        .publish()
+        .await?;
+    scope
+        .message(&Event { id: 2 })
+        .to("events")
+        .publish()
+        .await?;
     scope.commit().await?;
     Ok(())
 }

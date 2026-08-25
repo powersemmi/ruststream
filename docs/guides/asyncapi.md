@@ -6,7 +6,7 @@ operation, and payload types contribute schemas. Handlers that share a channel e
 operation - they open separate subscriptions, so the document shows one per handler.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "asyncapi"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "asyncapi"] }
 ```
 
 ## Generating the document

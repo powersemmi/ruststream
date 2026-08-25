@@ -53,6 +53,8 @@ mod schema;
 mod subscriber;
 mod subscription;
 pub mod testing;
+#[cfg(test)]
+mod testkit;
 mod typed_headers;
 
 /// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.

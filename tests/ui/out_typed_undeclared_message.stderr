@@ -1,26 +1,23 @@
 error[E0277]: `Rogue` does not define a message set for the `Events` slot
-  --> tests/ui/out_typed_undeclared_message.rs:26:1
+  --> tests/ui/out_typed_undeclared_message.rs:27:1
    |
-26 | #[subscriber("orders")]
+27 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `OutMessage<Events>` is not implemented for `Rogue`
-  --> tests/ui/out_typed_undeclared_message.rs:16:1
+help: the trait `OutMessages<Events>` is not implemented for `Rogue`
+  --> tests/ui/out_typed_undeclared_message.rs:17:1
    |
-16 | struct Rogue {
+17 | struct Rogue {
    | ^^^^^^^^^^^^
-   = note: the third Out argument is a tuple of types, `()` (unrestricted), a #[derive(Outgoing)] type (declares itself and where it goes), or a #[derive(OutMessages)] enum (declares its variants' models); a #[derive(Message)] type declares itself only while the marker still names its channel in the deprecated #[publishes(Rogue = "<channel>")] form
-help: the trait `OutMessage<Events>` is implemented for `Progress`
-  --> tests/ui/out_typed_undeclared_message.rs:20:10
+   = note: the third Out argument is a tuple of types, `()` (unrestricted), a #[derive(Outgoing)] type (declares itself and where it goes), or a #[derive(OutMessages)] enum (declares its variants' models)
+help: the following other types implement trait `OutMessages<M>`
+  --> tests/ui/out_typed_undeclared_message.rs:10:10
    |
-20 | #[derive(OutSlot)]
-   |          ^^^^^^^
-note: required for `Rogue` to implement `OutMessages<Events>`
-  --> tests/ui/out_typed_undeclared_message.rs:16:8
+10 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ `Progress` implements `OutMessages<__RsM>`
    |
-15 | #[derive(Message, Serialize)]
-   |          ------- type parameter would need to implement `OutMessages<Events>`
-16 | struct Rogue {
-   |        ^^^^^
-   = help: consider manually implementing `OutMessages<Events>` to avoid undesired bounds
-   = note: this error originates in the attribute macro `subscriber` which comes from the expansion of the derive macro `OutSlot` (in Nightly builds, run with -Z macro-backtrace for more info)
+  ::: src/runtime/slot.rs
+   |
+   | impl<M: OutSlot> OutMessages<M> for () {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `()` implements `OutMessages<M>`
+   = note: this error originates in the attribute macro `subscriber` which comes from the expansion of the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)

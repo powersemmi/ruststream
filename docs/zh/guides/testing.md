@@ -45,15 +45,19 @@ RustStream 服务在两个层面上测试：
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.6", features = ["testing", "memory", "macros", "json"] }
+ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json"] }
 ```
 
 ### 指定 Broker
 
 `tb.broker::<MemoryBroker>()` 按类型指定 Broker；当一个服务挂载了多个 Broker 而它们的 subject 又
 互相冲突时，`tb.broker_named("ingress")` 按 [`with_broker_labeled`](asyncapi.md) 给出的标签来指定。
-不带作用域的 `tb.publish(name, &value)` 是给单 Broker 应用准备的便捷写法，一旦注册了不止一个 Broker，
-它就返回 `TestError::Ambiguous`。
+不带作用域的 `tb.message(&value).to(name)` 是给单 Broker 应用准备的便捷写法，一旦注册了不止一个
+Broker，它就报告 `TestError::Ambiguous`。
+
+输入走的是服务自己发布时用的同一个发布构建器：`message(&value)` 编码带 `#[derive(Outgoing)]` 的值，
+`raw(bytes)` 原样发送字节（负载无法解码的场景，也是裸订阅者唯一可用的写法），`with_headers(&meta)`
+附上类型化的消息头契约，而当值的类型没有声明目的地时，由 `to(name)` 指定 subject。
 
 ### 对处理器做断言
 

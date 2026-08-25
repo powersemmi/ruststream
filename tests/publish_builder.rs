@@ -14,7 +14,7 @@ use ruststream::testing::{TestApp, TestableBroker};
 use ruststream::{Broker, Headers, OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Outgoing, PartialEq, Serialize, Deserialize)]
 struct Job {
     id: u64,
 }
@@ -111,7 +111,7 @@ async fn convert(
     headers.insert("source", "jobs.in");
     if out
         .raw(b"frame")
-        .with_header_map(headers)
+        .with_headers(headers)
         .to("chunks.raw")
         .publish()
         .await
@@ -130,7 +130,9 @@ async fn every_destination_form_resolves_through_one_builder() {
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.publish("jobs.in", &Job { id: 3 })
+    tb.message(&Job { id: 3 })
+        .to("jobs.in")
+        .publish()
         .await
         .expect("publish");
 
@@ -293,7 +295,9 @@ async fn a_batch_publishing_handler_carries_the_builder() {
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.publish("jobs.bulk", &Job { id: 4 })
+    tb.message(&Job { id: 4 })
+        .to("jobs.bulk")
+        .publish()
         .await
         .expect("publish");
 
@@ -325,7 +329,7 @@ async fn a_contract_less_message_still_carries_a_header_map() {
     connected
         .publisher()
         .message(&Progress { percent: 5 })
-        .with_header_map(headers)
+        .with_headers(headers)
         .publish()
         .await
         .expect("map headers on a contract-less message");

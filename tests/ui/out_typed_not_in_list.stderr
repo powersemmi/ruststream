@@ -1,20 +1,12 @@
-warning: use of deprecated method `ruststream::runtime::TypedSlot::<P, Body, M, EncodeCodec>::publish_typed`: use the publish builder: out.message(&value).publish()
-  --> tests/ui/out_typed_not_in_list.rs:32:10
-   |
-32 |         .publish_typed(&Done {
-   |          ^^^^^^^^^^^^^
-   |
-   = note: `#[warn(deprecated)]` on by default
-
 error[E0308]: mismatched types
-  --> tests/ui/out_typed_not_in_list.rs:32:24
+  --> tests/ui/out_typed_not_in_list.rs:34:18
    |
-32 |           .publish_typed(&Done {
-   |  __________-------------_^
+34 |           .message(&Done {
+   |  __________-------_^
    | |          |
    | |          arguments to this method are incorrect
-33 | |             key: order.id.to_string(),
-34 | |         })
+35 | |             key: order.id.to_string(),
+36 | |         })
    | |_________^ expected `&Progress`, found `&Done`
    |
    = note: expected reference `&Progress`
@@ -22,5 +14,5 @@ error[E0308]: mismatched types
 note: method defined here
   --> src/runtime/slot.rs
    |
-   |     pub async fn publish_typed<T, Index>(
-   |                  ^^^^^^^^^^^^^
+   |     pub fn message<'a, T, Index>(
+   |            ^^^^^^^

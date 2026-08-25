@@ -1,6 +1,6 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
-use ruststream::{Message, OutSlot, RequestReply, subscriber};
+use ruststream::{OutSlot, Outgoing, RequestReply, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -8,13 +8,14 @@ struct Order {
     id: u32,
 }
 
-#[derive(Message, Serialize)]
+#[derive(Outgoing, Serialize)]
+#[outgoing(name = "orders.progress")]
 struct Progress {
     percent: u8,
 }
 
 #[derive(OutSlot)]
-#[publishes(Progress = "orders.progress")]
+#[publishes(Progress)]
 struct Events;
 
 // The first Out position stays the capability vocabulary, checked at the include site: the

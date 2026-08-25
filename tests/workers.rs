@@ -15,24 +15,15 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, Router, RustStream, Workers, typed,
+    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RustStream, Workers,
+    typed,
 };
-use ruststream::{Headers, Name, OutgoingMessage, Publisher, nonzero, subscriber};
-use serde::{Deserialize, Serialize};
+use ruststream::{Headers, Name, nonzero, subscriber};
 use tokio::sync::Barrier;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 static CRUNCHED: AtomicU32 = AtomicU32::new(0);
 static GATE: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(4));
@@ -60,7 +51,9 @@ async fn pool_processes_deliveries_concurrently() {
     // would deadlock on the barrier and the wait below would time out.
     for id in 1..=4u32 {
         publisher
-            .publish(OutgoingMessage::new("jobs", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("jobs")
+            .publish()
             .await
             .expect("publish");
     }
@@ -108,7 +101,10 @@ async fn by_key_lanes_preserve_per_key_order() {
             let mut headers = Headers::new();
             headers.insert("partition-key", key);
             publisher
-                .publish(OutgoingMessage::new("keyed", &order_bytes(id)).with_headers(headers))
+                .raw(&order_bytes(id))
+                .with_headers(headers)
+                .to("keyed")
+                .publish()
                 .await
         }
     };
@@ -160,7 +156,9 @@ async fn batch_pool_dispatches_batches() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("pages", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("pages")
+        .publish()
         .await
         .expect("publish");
 
@@ -212,7 +210,9 @@ async fn closure_subscription_pool_runs_concurrently() {
     // and the wait below would time out.
     for id in 1..=3u32 {
         publisher
-            .publish(OutgoingMessage::new("fn-jobs", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("fn-jobs")
+            .publish()
             .await
             .expect("publish");
     }
@@ -261,7 +261,9 @@ async fn closure_batch_subscription_receives_batches() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("fn-pages", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("fn-pages")
+        .publish()
         .await
         .expect("publish");
 

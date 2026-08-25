@@ -122,7 +122,9 @@ where
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    DecodeCodec: Codec + Send + 'static,
+    // `DecodeWith` above carries whatever the input asks of the codec, and a byte input asks
+    // for nothing - so this route mounts with `()` in a build with no codec feature.
+    DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
     // The reply side: a policy paired at startup into an encoded typed stack. Naming the live
     // form structurally is what lets the route stay independent of the app's publish pipeline,
@@ -212,7 +214,9 @@ where
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Reply: AsRef<[u8]> + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    DecodeCodec: Codec + Send + 'static,
+    // `DecodeWith` above carries whatever the input asks of the codec, and a byte input asks
+    // for nothing - so this route mounts with `()` in a build with no codec feature.
+    DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
     // The reply side: the policy pairs into a bare publisher, and the reply bytes go out as-is.
     ReplySource: PublishPolicy<Connected<B>, Live = Live> + Send + 'static,

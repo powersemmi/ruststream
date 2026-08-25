@@ -8,6 +8,7 @@
 
 use crate::Broker;
 use crate::codec::Codec;
+use crate::runtime::input::{Decoded, RawBytes};
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
@@ -48,6 +49,38 @@ impl<C: Codec + Clone + Send + Sync + 'static> MountCodec for C {
     fn mount_codec(&self) -> Self::Codec {
         self.clone()
     }
+}
+
+/// The codec a mount resolves for one input kind: the surface's own for a decoded input, none
+/// at all for a byte one.
+///
+/// [`MountCodec`] answers "which codec did this surface name", which every decoding mount
+/// needs. A byte input decodes with `()` and asks nothing of the codec, so a mount that
+/// resolved [`MountCodec`] regardless would demand a default codec the build may not have -
+/// shutting the byte path out of a service compiled with no codec feature at all. Resolving
+/// against the input kind keeps that demand where it is real.
+///
+/// Machinery behind `include`; you never implement or name it.
+#[doc(hidden)]
+pub trait InputCodec<Input> {
+    /// The resolved codec: the surface's own, or `()` where the input needs none.
+    type Codec: Clone + Send + Sync + 'static;
+    /// Produces it, fresh per registration.
+    fn input_codec(&self) -> Self::Codec;
+}
+
+impl<C: MountCodec, T> InputCodec<Decoded<T>> for C {
+    type Codec = <C as MountCodec>::Codec;
+
+    fn input_codec(&self) -> Self::Codec {
+        self.mount_codec()
+    }
+}
+
+impl<C> InputCodec<RawBytes> for C {
+    type Codec = ();
+
+    fn input_codec(&self) {}
 }
 
 /// The default reply commit: the broker's default publish policy under the default codec.

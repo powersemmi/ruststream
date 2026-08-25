@@ -9,6 +9,8 @@
     feature = "logging"
 ))]
 
+mod common;
+
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,15 +19,16 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, RustStream, RustStreamError, TypedPublisher};
+use ruststream::runtime::{AppInfo, PublishExt, RustStream, RustStreamError, TypedPublisher};
 use ruststream::{
     IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, Subscriber, subscriber,
 };
-use serde::{Deserialize, Serialize};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber as TracingSubscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
+
+use common::{Order, order_bytes};
 
 /// Every warning this binary emitted, one string of `field=value` pairs per event.
 static EVENTS: LazyLock<Arc<Mutex<Vec<String>>>> =
@@ -72,15 +75,6 @@ fn logged(needle: &str) -> bool {
         .unwrap()
         .iter()
         .any(|event| event.contains(needle))
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).expect("an order serializes")
 }
 
 /// The reply publisher's refusal.
@@ -153,7 +147,9 @@ async fn a_fail_fast_decode_failure_tears_the_service_down_and_says_why() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("pubff", b"not json".as_slice()))
+        .raw(b"not json")
+        .to("pubff")
+        .publish()
         .await
         .expect("publish failed");
 
@@ -194,7 +190,9 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("flaky", &order_bytes(7)))
+        .raw(&order_bytes(7))
+        .to("flaky")
+        .publish()
         .await
         .expect("publish failed");
 

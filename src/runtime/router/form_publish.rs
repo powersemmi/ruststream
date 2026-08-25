@@ -22,7 +22,7 @@ use crate::runtime::slot::{IntoSlotSource, WithSource};
 use super::builder::Router;
 use super::builders::{RouterBatchPublishing, RouterCommit, RouterPublishing, RouterRawReply};
 use super::mount::{
-    BatchPublishMount, DefaultBareReply, DefaultReply, MountCodec, PublishMount, RawReplyMount,
+    BatchPublishMount, DefaultBareReply, DefaultReply, InputCodec, PublishMount, RawReplyMount,
     RouterMount,
 };
 use super::{BatchPublishingRouter, PublishingRouter, RawReplyRouter, RouterWith, forms};
@@ -75,18 +75,20 @@ impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
     RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Def> for WithSource<Policy>
 where
     B: Broker + 'static,
-    RouteCodec: MountCodec,
+    // Resolved against the input kind: a byte input decodes with `()`, so a byte-in route
+    // carries no demand for a default codec the build may not have.
+    RouteCodec: InputCodec<Def::Input>,
     Def: PublishingDef + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
-    Def::Input: DecodeWith<RouteCodec::Codec>,
+    Def::Input: DecodeWith<<RouteCodec as InputCodec<Def::Input>>::Codec>,
     Policy: 'static,
 {
     type Out = PublishingRouter<
         B,
         Def::Source,
         Def,
-        RouteCodec::Codec,
+        <RouteCodec as InputCodec<Def::Input>>::Codec,
         Policy,
         ((),),
         RouteCodec,
@@ -95,7 +97,7 @@ where
     >;
 
     fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-        let codec = router.codec.mount_codec();
+        let codec = InputCodec::<Def::Input>::input_codec(&router.codec);
         let source = def.source();
         // No slot attachment on this form, so the injections resolve against the unit padding.
         router.mount_publishing_source(source, def, codec, self.into_source(), ((),))
@@ -134,18 +136,20 @@ impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
     RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def> for WithSource<Policy>
 where
     B: Broker + 'static,
-    RouteCodec: MountCodec,
+    // Resolved against the input kind: a byte input decodes with `()`, so a byte-in route
+    // carries no demand for a default codec the build may not have.
+    RouteCodec: InputCodec<Def::Input>,
     Def: PublishingDef + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
-    Def::Input: DecodeWith<RouteCodec::Codec>,
+    Def::Input: DecodeWith<<RouteCodec as InputCodec<Def::Input>>::Codec>,
     Policy: 'static,
 {
     type Out = RawReplyRouter<
         B,
         Def::Source,
         Def,
-        RouteCodec::Codec,
+        <RouteCodec as InputCodec<Def::Input>>::Codec,
         Policy,
         ((),),
         RouteCodec,
@@ -154,7 +158,7 @@ where
     >;
 
     fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-        let codec = router.codec.mount_codec();
+        let codec = InputCodec::<Def::Input>::input_codec(&router.codec);
         let source = def.source();
         router.mount_raw_reply_source(source, def, codec, self.into_source(), ((),))
     }
@@ -186,18 +190,19 @@ impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
     RouterCommit<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Def> for WithSource<Policy>
 where
     B: Broker + 'static,
-    RouteCodec: MountCodec,
+    // As on the single-message routes: the input kind decides whether a codec is wanted here.
+    RouteCodec: InputCodec<Def::Input>,
     Def: BatchPublishingDef + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
-    Def::Input: DecodeWith<RouteCodec::Codec>,
+    Def::Input: DecodeWith<<RouteCodec as InputCodec<Def::Input>>::Codec>,
     Policy: 'static,
 {
     type Out = BatchPublishingRouter<
         B,
         Def::Source,
         Def,
-        RouteCodec::Codec,
+        <RouteCodec as InputCodec<Def::Input>>::Codec,
         Policy,
         ((),),
         RouteCodec,
@@ -206,7 +211,7 @@ where
     >;
 
     fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-        let codec = router.codec.mount_codec();
+        let codec = InputCodec::<Def::Input>::input_codec(&router.codec);
         let source = def.source();
         router.mount_batch_publishing_source(source, def, codec, self.into_source(), ((),))
     }

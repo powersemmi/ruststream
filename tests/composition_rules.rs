@@ -14,26 +14,11 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, Receipt, connected, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
+use ruststream::{Buffered, Name, nonzero, subscriber};
 
 static TX_HANDLED: AtomicUsize = AtomicUsize::new(0);
 
@@ -52,11 +37,7 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     let publisher = broker.publisher();
     // The observing side needs the TestableBroker surface, which lives on the connected form;
     // the shared in-process bus makes this clone observe the app's broker.
-    let observer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let replies = TypedPublisher::new(MemoryPublish).transactional();
     let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {
@@ -68,7 +49,9 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     // Four orders, each published once; expect one committed receipt per handled order.
     for id in 1..=4u32 {
         publisher
-            .publish(OutgoingMessage::new("tx-in", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("tx-in")
+            .publish()
             .await
             .expect("publish");
     }
@@ -118,7 +101,9 @@ async fn buffered_sources_compose_with_a_batch_pool() {
     // Six deliveries against a size cap of two: they cannot all fit in one batch.
     for id in 1..=6u32 {
         publisher
-            .publish(OutgoingMessage::new("buf-in", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("buf-in")
+            .publish()
             .await
             .expect("publish");
     }
@@ -165,7 +150,9 @@ async fn publishing_replies_compose_with_a_worker_pool() {
 
     for id in 1..=4u32 {
         publisher
-            .publish(OutgoingMessage::new("pub-in", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("pub-in")
+            .publish()
             .await
             .expect("publish");
     }

@@ -10,36 +10,11 @@ use super::super::failure::ErrorShutdown;
 use super::super::input::Decoded;
 use super::*;
 use crate::codec::JsonCodec;
-use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
-use crate::{
-    AckError, BatchSubscriber, Headers, Name, OutgoingMessage, Publisher, Subscriber,
-    SubscriptionSource,
-};
-
-async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
-    let publisher = broker.publisher();
-    for n in numbers {
-        publisher
-            .publish(OutgoingMessage::new(name, &serde_json::to_vec(n).unwrap()))
-            .await
-            .unwrap();
-    }
-}
-
-async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
-    let publisher = broker.publisher();
-    for payload in payloads {
-        publisher
-            .publish(OutgoingMessage::new(name, payload))
-            .await
-            .unwrap();
-    }
-}
-
-async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
-    let mut stream = std::pin::pin!(sub.batches());
-    stream.next().await.unwrap().unwrap()
-}
+use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage};
+use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
+#[cfg(feature = "logging")]
+use crate::testkit::log_capture;
+use crate::{AckError, Headers, Name, Subscriber, SubscriptionSource};
 
 #[tokio::test]
 async fn per_element_outcomes_settle_individually() {
@@ -400,69 +375,6 @@ async fn a_refused_ack_does_not_abort_the_batch() {
     .await;
 
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
-}
-
-/// Captures the fields of the events emitted while the guard is alive, so a test can assert on
-/// the diagnostics (needs a tracing subscriber, hence the `logging` feature gate).
-#[cfg(feature = "logging")]
-mod log_capture {
-    use std::collections::HashMap;
-    use std::fmt::Debug;
-    use std::sync::{Arc, Mutex};
-
-    use tracing::Subscriber;
-    use tracing::field::{Field, Visit};
-    use tracing::subscriber::DefaultGuard;
-    use tracing_subscriber::Layer;
-    use tracing_subscriber::layer::{Context, SubscriberExt as _};
-
-    pub(super) type Events = Arc<Mutex<Vec<HashMap<String, String>>>>;
-
-    #[derive(Default)]
-    struct FieldGrab(HashMap<String, String>);
-
-    impl Visit for FieldGrab {
-        fn record_str(&mut self, field: &Field, value: &str) {
-            self.0.insert(field.name().to_owned(), value.to_owned());
-        }
-
-        fn record_u64(&mut self, field: &Field, value: u64) {
-            self.0.insert(field.name().to_owned(), value.to_string());
-        }
-
-        fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
-            self.0
-                .entry(field.name().to_owned())
-                .or_insert_with(|| format!("{value:?}"));
-        }
-    }
-
-    struct Capture(Events);
-
-    impl<S: Subscriber> Layer<S> for Capture {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
-            let mut grab = FieldGrab::default();
-            event.record(&mut grab);
-            self.0.lock().unwrap().push(grab.0);
-        }
-    }
-
-    pub(super) fn start() -> (Events, DefaultGuard) {
-        let events: Events = Arc::new(Mutex::new(Vec::new()));
-        let guard = tracing::subscriber::set_default(
-            tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
-        );
-        (events, guard)
-    }
-
-    pub(super) fn find(events: &Events, message: &str) -> HashMap<String, String> {
-        let captured = events.lock().unwrap();
-        captured
-            .iter()
-            .find(|fields| fields.get("message").is_some_and(|m| m == message))
-            .cloned()
-            .unwrap_or_else(|| panic!("no `{message}` event was emitted"))
-    }
 }
 
 /// The mismatch diagnostic names the subscription and both counts, so the handler bug behind a

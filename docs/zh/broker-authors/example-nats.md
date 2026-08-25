@@ -20,7 +20,7 @@ default = []
 testing = ["ruststream/conformance"]
 
 [dependencies]
-ruststream = { version = "0.6", default-features = false }
+ruststream = { version = "0.7", default-features = false }
 async-nats = "0.46"
 bytes = "1"
 futures = "0.3"

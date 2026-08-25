@@ -1,6 +1,7 @@
 use futures::StreamExt;
 
 use super::*;
+use crate::runtime::PublishExt;
 
 #[tokio::test]
 async fn debug_formats_and_message_accessors() {
@@ -16,10 +17,7 @@ async fn debug_formats_and_message_accessors() {
     let mut sub = broker.subscribe("dbg");
     assert!(format!("{sub:?}").contains("MemorySubscriber"));
 
-    publisher
-        .publish(OutgoingMessage::new("dbg", b"payload".as_slice()))
-        .await
-        .unwrap();
+    publisher.raw(b"payload").to("dbg").publish().await.unwrap();
 
     let mut stream = std::pin::pin!(sub.stream());
     let msg = stream.next().await.unwrap().unwrap();
@@ -44,7 +42,9 @@ async fn a_reconnect_revives_a_bus_that_was_shut_down() {
     let mut subscriber = reconnected.subscribe("orders").await.unwrap();
     reconnected
         .publisher()
-        .publish(OutgoingMessage::new("orders", b"after".as_slice()))
+        .raw(b"after")
+        .to("orders")
+        .publish()
         .await
         .unwrap();
 
@@ -89,7 +89,9 @@ async fn nack_after_redelivers_after_the_delay() {
     let publisher = broker.publisher();
 
     publisher
-        .publish(OutgoingMessage::new("delayed", b"later".as_slice()))
+        .raw(b"later")
+        .to("delayed")
+        .publish()
         .await
         .unwrap();
 
@@ -114,10 +116,7 @@ async fn stream_can_be_reentered() {
     let mut sub = MemoryBroker::subscribe(&broker, "test");
     let publisher = broker.publisher();
 
-    publisher
-        .publish(OutgoingMessage::new("test", b"one".as_slice()))
-        .await
-        .unwrap();
+    publisher.raw(b"one").to("test").publish().await.unwrap();
     {
         let mut stream = std::pin::pin!(sub.stream());
         let msg = stream.next().await.unwrap().unwrap();
@@ -127,10 +126,7 @@ async fn stream_can_be_reentered() {
 
     // Helpers like `conformance::helpers::next_message` re-enter `stream` per call; the
     // subscriber must keep yielding after the first stream is dropped.
-    publisher
-        .publish(OutgoingMessage::new("test", b"two".as_slice()))
-        .await
-        .unwrap();
+    publisher.raw(b"two").to("test").publish().await.unwrap();
     let mut stream = std::pin::pin!(sub.stream());
     let msg = stream.next().await.unwrap().unwrap();
     assert_eq!(msg.payload(), b"two");

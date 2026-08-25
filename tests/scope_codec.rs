@@ -12,22 +12,11 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, Receipt, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
+use ruststream::subscriber;
 
 static PLAIN_ON: AtomicUsize = AtomicUsize::new(0);
 static BATCH: AtomicUsize = AtomicUsize::new(0);
@@ -144,7 +133,9 @@ async fn scope_codec_include_family_dispatches() {
 
     for topic in topics {
         driver
-            .publish(OutgoingMessage::new(topic, &payload))
+            .raw(&payload)
+            .to(topic)
+            .publish()
             .await
             .expect("publish");
     }
@@ -223,7 +214,9 @@ async fn default_codec_include_family_dispatches() {
 
     for topic in topics {
         driver
-            .publish(OutgoingMessage::new(topic, &payload))
+            .raw(&payload)
+            .to(topic)
+            .publish()
             .await
             .expect("publish");
     }

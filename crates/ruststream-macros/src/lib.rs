@@ -13,9 +13,8 @@ mod parse;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
-use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Attribute, DeriveInput, Expr, Ident, ItemFn, Meta, Token, Type, parse_macro_input};
+use syn::{Attribute, DeriveInput, Ident, ItemFn, Meta, Token, Type, parse_macro_input};
 
 use parse::{SubscriberArgs, doc_description};
 
@@ -113,15 +112,14 @@ use parse::{SubscriberArgs, doc_description};
 /// Clause values need not be literals: `workers(..)` takes any `usize` expression (a constant,
 /// a static, a function call - an integer literal keeps the compile-time zero rejection, a
 /// runtime value of zero panics at registration), `publish(..)` / `publish_raw(..)` take a
-/// `&'static str` expression, `on_failure(..)` keys accept a `FailurePolicy` expression next
-/// to the keyword vocabulary, and a `#[publishes(..)]` channel takes a const-evaluable
-/// `&'static str` (it initializes an associated const, so a `static` cannot feed it).
+/// `&'static str` expression, and `on_failure(..)` keys accept a `FailurePolicy` expression next
+/// to the keyword vocabulary.
 ///
 /// An `Out(out): Out<P>` parameter injects a live publisher, paired at startup from the
 /// source attached at the include site (`b.include(f).publisher(..)`); its optional third
 /// position declares the message set the handler publishes (`Out<impl Publisher, Marker,
-/// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), enabling the
-/// dictionary-driven typed publish path; a `Seek(seeker): Seek<K>` parameter injects the
+/// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), narrowing what
+/// the publish builder accepts on it; a `Seek(seeker): Seek<K>` parameter injects the
 /// subscription's own seeker, minted right after the subscription opens (the source's
 /// subscriber must implement the `Seekable` capability). They combine freely in one handler:
 /// with each other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
@@ -228,10 +226,10 @@ fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
 /// on the typed publish path and lifted into the message's `AsyncAPI` headers schema. Without
 /// the attribute the type declares no typed headers.
 ///
-/// The derive also makes the type a one-element declared message set (see `OutMessages` in the
-/// core crate), so `Out<impl Publisher, Marker, TheType>` declares it directly. A type meant
-/// as a set of several messages derives `OutMessages` instead - the two derives conflict on
-/// purpose (one type is a message or a set, not both).
+/// The derive describes a message the service receives, or replies with. A message the handler
+/// sends through an `Out` slot declares where it goes as well, so it derives
+/// [`Outgoing`](derive.Outgoing.html) instead - only that derive makes the type a declared
+/// message set (see `OutMessages` in the core crate) the third `Out` argument can name.
 ///
 /// ```ignore
 /// /// An order placed by a customer.
@@ -255,18 +253,6 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
         Err(err) => return err.into_compile_error().into(),
     };
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    // The OutMessages impl adds its own `__RsM` TYPE parameter; pushing it onto a clone of the
-    // generics (after any lifetimes) and re-splitting keeps the emitted parameter order legal
-    // for lifetime-generic message types.
-    let mut set_generics = input.generics.clone();
-    set_generics
-        .params
-        .push(syn::parse_quote!(__RsM: ::ruststream::runtime::OutSlot));
-    set_generics
-        .make_where_clause()
-        .predicates
-        .push(syn::parse_quote!(#name #ty_generics: ::ruststream::runtime::OutMessage<__RsM>));
-    let (set_impl_generics, _, set_where_clause) = set_generics.split_for_impl();
 
     quote! {
         impl #impl_generics ::ruststream::Message for #name #ty_generics #where_clause {
@@ -276,53 +262,6 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
 
         impl #impl_generics ::ruststream::MessageHeaders for #name #ty_generics #where_clause {
             type Contract = #contract;
-        }
-
-        // The type as a one-element declared message set: `Out<.., Marker, TheType>`.
-        impl #impl_generics
-            ::ruststream::runtime::ContainsMessage<#name #ty_generics, ::ruststream::runtime::SlotPos<0>>
-            for #name #ty_generics #where_clause
-        {
-        }
-
-        // The set's channels come from the slot dictionary, whose name-carrying form is
-        // deprecated; the type deriving Message is not, so the warning stays at the dictionary.
-        #[allow(deprecated)]
-        impl #set_impl_generics ::ruststream::runtime::OutMessages<__RsM> for #name #ty_generics
-        #set_where_clause
-        {
-            fn outgoing()
-                -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata>
-            {
-                ::std::vec![
-                    ::ruststream::runtime::OutgoingMessageMetadata::new(
-                        <#name #ty_generics as ::ruststream::runtime::OutMessage<__RsM>>::CHANNEL,
-                        ::core::any::type_name::<#name #ty_generics>(),
-                    )
-                    .with_message_name({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoMessageProbe as _;
-                        ::ruststream::__private::Probe::<#name #ty_generics>::new().message_name()
-                    })
-                    .with_message_description({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoMessageProbe as _;
-                        ::ruststream::__private::Probe::<#name #ty_generics>::new()
-                            .message_description()
-                    })
-                    .with_payload_schema({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoSchemaProbe as _;
-                        ::ruststream::__private::Probe::<#name #ty_generics>::new().schema_json()
-                    })
-                    .with_headers_schema({
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoHeadersSchemaProbe as _;
-                        ::ruststream::__private::Probe::<#name #ty_generics>::new()
-                            .headers_schema_json()
-                    }),
-                ]
-            }
         }
     }
     .into()
@@ -437,11 +376,6 @@ pub fn derive_from_ref(item: TokenStream) -> TokenStream {
 /// fall behind what handlers send. Each listed type declares its own destination with
 /// `#[derive(Outgoing)]`; listing one type twice is an error.
 ///
-/// The name-carrying form `#[publishes(Type = "channel", ..)]` is deprecated: it maps the type
-/// to a channel per slot, which is what moved onto the message type. It keeps working (and keeps
-/// feeding the deprecated `out.publish_typed(&value)` path) until the deprecated surface is
-/// removed.
-///
 /// ```ignore
 /// #[derive(OutSlot)]
 /// struct Encoded;
@@ -488,19 +422,9 @@ pub fn derive_out_slot(item: TokenStream) -> TokenStream {
     let name_str = name.to_string();
 
     let outgoing = slot_outgoing_metadata(name, &dictionary);
-    let channels = dictionary.iter().filter_map(|entry| {
-        let ty = &entry.ty;
-        let channel = entry.channel.as_ref()?;
-        Some(quote! {
-            impl ::ruststream::runtime::OutMessage<#name> for #ty {
-                const CHANNEL: &'static str = #channel;
-            }
-        })
-    });
-    // The list is the whole membership, in either form: what the document reports as leaving the
-    // slot is exactly what the publish builder admits.
-    let memberships = dictionary.iter().map(|entry| {
-        let ty = &entry.ty;
+    // The list is the whole membership: what the document reports as leaving the slot is exactly
+    // what the publish builder admits.
+    let memberships = dictionary.iter().map(|ty| {
         quote! {
             impl ::ruststream::runtime::PublishedThrough<#name> for #ty {}
         }
@@ -513,56 +437,22 @@ pub fn derive_out_slot(item: TokenStream) -> TokenStream {
             #outgoing
         }
 
-        #(#channels)*
-
         #(#memberships)*
     }
     .into()
 }
 
-/// The marker's `outgoing()` override, reporting its `#[publishes(..)]` dictionary as the
-/// document's outgoing messages. A listed type declaring its own destination contributes what it
-/// declares; one carrying the deprecated `= "channel"` form is described from the marker, as
-/// before. An empty dictionary keeps the trait's own default (nothing declared).
-fn slot_outgoing_metadata(name: &Ident, dictionary: &[PublishesEntry]) -> TokenStream2 {
+/// The marker's `outgoing()` override, reporting its `#[publishes(..)]` list as the document's
+/// outgoing messages: each listed type contributes what its own `#[derive(Outgoing)]` declares.
+/// An empty list keeps the trait's own default (nothing declared).
+fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
     if dictionary.is_empty() {
         return quote!();
     }
-    let entries = dictionary.iter().map(|entry| {
-        let ty = &entry.ty;
-        let Some(channel) = &entry.channel else {
-            return quote! {
-                __rs_entries.extend(
-                    <#ty as ::ruststream::runtime::OutMessages<#name>>::outgoing(),
-                );
-            };
-        };
+    let entries = dictionary.iter().map(|ty| {
         quote! {
-            __rs_entries.push(
-                ::ruststream::runtime::OutgoingMessageMetadata::new(
-                    #channel,
-                    ::core::any::type_name::<#ty>(),
-                )
-                .with_message_name({
-                    #[allow(unused_imports)]
-                    use ::ruststream::__private::NoMessageProbe as _;
-                    ::ruststream::__private::Probe::<#ty>::new().message_name()
-                })
-                .with_message_description({
-                    #[allow(unused_imports)]
-                    use ::ruststream::__private::NoMessageProbe as _;
-                    ::ruststream::__private::Probe::<#ty>::new().message_description()
-                })
-                .with_payload_schema({
-                    #[allow(unused_imports)]
-                    use ::ruststream::__private::NoSchemaProbe as _;
-                    ::ruststream::__private::Probe::<#ty>::new().schema_json()
-                })
-                .with_headers_schema({
-                    #[allow(unused_imports)]
-                    use ::ruststream::__private::NoHeadersSchemaProbe as _;
-                    ::ruststream::__private::Probe::<#ty>::new().headers_schema_json()
-                }),
+            __rs_entries.extend(
+                <#ty as ::ruststream::runtime::OutMessages<#name>>::outgoing(),
             );
         }
     });
@@ -580,11 +470,11 @@ fn slot_outgoing_metadata(name: &Ident, dictionary: &[PublishesEntry]) -> TokenS
 /// constructed, its variants' inner types are the set.
 ///
 /// Naming the enum as the third `Out` argument (`Out<impl Publisher, Marker, SendSet>`)
-/// declares that the handler publishes exactly those models: `publish_typed` compiles for each
-/// of them (routed by the marker's `#[publishes(..)]` dictionary), and the generated `AsyncAPI`
-/// document lists them as the handler's `send` operations.
+/// declares that the handler publishes exactly those models: the publish builder compiles for
+/// each of them (and for nothing else), and the generated `AsyncAPI` document lists them as the
+/// handler's `send` operations. Each model declares where it goes with `#[derive(Outgoing)]`.
 ///
-/// Do not combine with `#[derive(Message)]` on the same enum: a type is a message or a set,
+/// Do not combine with `#[derive(Outgoing)]` on the same enum: a type is a message or a set,
 /// and the two derives deliberately produce conflicting impls.
 ///
 /// ```ignore
@@ -598,7 +488,7 @@ fn slot_outgoing_metadata(name: &Ident, dictionary: &[PublishesEntry]) -> TokenS
 /// async fn convert(
 ///     chunk: &Chunk,
 ///     Out(out): Out<impl Publisher, Events, ConvertSends>,
-/// ) -> HandlerResult { /* out.publish_typed(&Progress { .. }) */ }
+/// ) -> HandlerResult { /* out.message(&Progress { .. }).publish() */ }
 /// ```
 #[proc_macro_derive(OutMessages)]
 pub fn derive_out_messages(item: TokenStream) -> TokenStream {
@@ -634,47 +524,29 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
             }
         }
     });
+    // Each model already declares itself as a one-element set; the enum's contribution is the
+    // concatenation, so a model's destination is described in exactly one place.
     let entries = models.iter().map(|model| {
         quote! {
-            ::ruststream::runtime::OutgoingMessageMetadata::new(
-                <#model as ::ruststream::runtime::OutMessage<__RsM>>::CHANNEL,
-                ::core::any::type_name::<#model>(),
-            )
-            .with_message_name({
-                #[allow(unused_imports)]
-                use ::ruststream::__private::NoMessageProbe as _;
-                ::ruststream::__private::Probe::<#model>::new().message_name()
-            })
-            .with_message_description({
-                #[allow(unused_imports)]
-                use ::ruststream::__private::NoMessageProbe as _;
-                ::ruststream::__private::Probe::<#model>::new().message_description()
-            })
-            .with_payload_schema({
-                #[allow(unused_imports)]
-                use ::ruststream::__private::NoSchemaProbe as _;
-                ::ruststream::__private::Probe::<#model>::new().schema_json()
-            })
-            .with_headers_schema({
-                #[allow(unused_imports)]
-                use ::ruststream::__private::NoHeadersSchemaProbe as _;
-                ::ruststream::__private::Probe::<#model>::new().headers_schema_json()
-            })
+            __rs_entries.extend(
+                <#model as ::ruststream::runtime::OutMessages<__RsM>>::outgoing(),
+            );
         }
     });
     quote! {
         #(#memberships)*
 
-        #[allow(deprecated)]
         impl<__RsM: ::ruststream::runtime::OutSlot> ::ruststream::runtime::OutMessages<__RsM>
             for #name
         where
-            #(#models: ::ruststream::runtime::OutMessage<__RsM>,)*
+            #(#models: ::ruststream::runtime::OutMessages<__RsM>,)*
         {
             fn outgoing()
                 -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata>
             {
-                ::std::vec![#(#entries),*]
+                let mut __rs_entries = ::std::vec::Vec::new();
+                #(#entries)*
+                __rs_entries
             }
         }
     }
@@ -682,7 +554,7 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
 }
 
 /// The set enum's models, one per variant: each variant wraps exactly one type, and a
-/// duplicate model is rejected (its `publish_typed` index inference would be ambiguous).
+/// duplicate model is rejected (its membership index inference would be ambiguous).
 fn out_messages_models(data: &syn::DataEnum) -> syn::Result<Vec<&Type>> {
     let mut models: Vec<&Type> = Vec::new();
     for variant in &data.variants {
@@ -706,7 +578,7 @@ fn out_messages_models(data: &syn::DataEnum) -> syn::Result<Vec<&Type>> {
         {
             return Err(syn::Error::new_spanned(
                 model,
-                "this model is already in the set: a duplicate would make publish_typed's \
+                "this model is already in the set: a duplicate would make the membership \
                  index inference ambiguous",
             ));
         }
@@ -715,54 +587,27 @@ fn out_messages_models(data: &syn::DataEnum) -> syn::Result<Vec<&Type>> {
     Ok(models)
 }
 
-/// One entry of the `#[publishes(..)]` attribute: a type the slot may publish, optionally
-/// carrying the deprecated `= "channel"` destination.
-struct PublishesEntry {
-    ty: Type,
-    /// The channel value of the deprecated name-carrying form: a string literal, or a
-    /// const-evaluable `&'static str` expression (an associated const initializer cannot read a
-    /// `static`). `None` for the plain `#[publishes(Type, ..)]` list, where the destination
-    /// comes from the message type's own `#[derive(Outgoing)]` declaration.
-    channel: Option<Expr>,
-}
-
-impl Parse for PublishesEntry {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ty: Type = input.parse()?;
-        let channel = if input.peek(Token![=]) {
-            input.parse::<Token![=]>()?;
-            Some(input.parse::<Expr>()?)
-        } else {
-            None
-        };
-        Ok(Self { ty, channel })
-    }
-}
-
-/// Parses every `#[publishes(Type = "channel", ..)]` attribute into one dictionary, rejecting a
-/// type listed twice (its destination would be ambiguous at the publish site).
-fn publishes_dictionary(attrs: &[Attribute]) -> syn::Result<Vec<PublishesEntry>> {
-    let mut dictionary: Vec<PublishesEntry> = Vec::new();
+/// Parses every `#[publishes(Type, ..)]` attribute into one list, rejecting a type listed twice
+/// (a second entry would say nothing the first does not).
+fn publishes_dictionary(attrs: &[Attribute]) -> syn::Result<Vec<Type>> {
+    let mut dictionary: Vec<Type> = Vec::new();
     for attr in attrs
         .iter()
         .filter(|attr| attr.path().is_ident("publishes"))
     {
-        let entries =
-            attr.parse_args_with(Punctuated::<PublishesEntry, Token![,]>::parse_terminated)?;
-        for entry in entries {
-            let name = entry.ty.to_token_stream().to_string();
+        let entries = attr.parse_args_with(Punctuated::<Type, Token![,]>::parse_terminated)?;
+        for ty in entries {
+            let name = ty.to_token_stream().to_string();
             if dictionary
                 .iter()
-                .any(|existing| existing.ty.to_token_stream().to_string() == name)
+                .any(|existing| existing.to_token_stream().to_string() == name)
             {
                 return Err(syn::Error::new_spanned(
-                    &entry.ty,
-                    "this type is already listed on the slot: a type appears once (with the \
-                     deprecated `= \"channel\"` form, a second entry would also make its \
-                     destination ambiguous)",
+                    &ty,
+                    "this type is already listed on the slot: a type appears once",
                 ));
             }
-            dictionary.push(entry);
+            dictionary.push(ty);
         }
     }
     Ok(dictionary)

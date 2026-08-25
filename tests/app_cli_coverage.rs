@@ -9,9 +9,12 @@
     feature = "memory",
     feature = "macros",
     feature = "json",
+    feature = "cbor",
     feature = "testing",
     feature = "logging"
 ))]
+
+mod common;
 
 use std::future::{pending, ready};
 use std::io;
@@ -24,32 +27,19 @@ use ruststream::memory::{
 };
 use ruststream::runtime::{
     AppInfo, Context, DefaultSlot, HandlerMetadata, HandlerResult, HealthState, Out, Outgoing,
-    PublishContext, PublishTransform, RustStream, RustStreamError, TypedPublisher,
+    PublishContext, PublishError, PublishExt, PublishTransform, RustStream, RustStreamError,
+    TypedPublisher,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, ConnectedBroker, DescribeServer, OutgoingMessage, Publisher, ServerSpec,
-    SubscriptionSource, subscriber,
+    Broker, ConnectedBroker, DescribeServer, Publisher, ServerSpec, SubscriptionSource, subscriber,
 };
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).expect("serializable")
-}
+use common::{Order, Receipt, order_bytes};
 
 // ---------------------------------------------------------------------------------------------
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is
@@ -200,7 +190,9 @@ async fn run_until_returns_when_the_service_tears_itself_down() {
     let run = tokio::spawn(app.run_until(pending()));
     FAIL_FAST_READY.notified().await;
     publisher
-        .publish(OutgoingMessage::new("cov.failfast", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("cov.failfast")
+        .publish()
         .await
         .expect("publish failed");
 
@@ -315,12 +307,15 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
         .await
         .expect_err("the refused subscription must abort startup");
     assert!(matches!(err, RustStreamError::Subscribe(_)), "got: {err:?}");
-    assert_eq!(
-        publisher
-            .publish(OutgoingMessage::new("cov.refused", b"x".as_slice()))
-            .await,
-        Err(MemoryError::ShutDown),
-        "the connected broker must not survive the failed startup",
+    let refused = publisher
+        .raw(b"x")
+        .to("cov.refused")
+        .publish()
+        .await
+        .expect_err("the connected broker must not survive the failed startup");
+    assert!(
+        matches!(refused, PublishError::Publish(MemoryError::ShutDown)),
+        "got: {refused:?}",
     );
     line_with(
         &logs.text(),
@@ -463,7 +458,9 @@ async fn the_shutdown_timeout_aborts_a_handler_that_never_returns() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("cov.hung", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("cov.hung")
+        .publish()
         .await
         .expect("publish failed");
     HUNG_HANDLER.notified().await;
@@ -496,7 +493,9 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("cov.continuation", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("cov.continuation")
+        .publish()
         .await
         .expect("publish failed");
     HUNG_CONTINUATION.notified().await;
@@ -546,7 +545,9 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
     // CBOR bytes: the scope codec decodes them, the default (JSON) codec could not.
     let payload = CborCodec.encode(&Order { id: 11 }).expect("cbor encode");
     tb.broker::<MemoryBroker>()
-        .publish_raw("cov.labeled", &payload)
+        .raw(&payload)
+        .to("cov.labeled")
+        .publish()
         .await
         .expect("raw publish");
 
@@ -568,9 +569,10 @@ impl<C> PublishTransform<C> for Envelope {
 
 #[subscriber("cov.audit.in", raw, publish_raw("cov.audit.out"))]
 async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
-    let copy = OutgoingMessage::new("cov.audit.copy", frame);
     audit
-        .publish(copy)
+        .raw(frame)
+        .to("cov.audit.copy")
+        .publish()
         .await
         .expect("the slot publisher is live");
     frame.to_vec()
@@ -589,7 +591,9 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .publish_raw("cov.audit.in", b"frame")
+        .raw(b"frame")
+        .to("cov.audit.in")
+        .publish()
         .await
         .expect("raw publish");
 
@@ -604,10 +608,10 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
 
 #[subscriber("cov.gate.in", publish("cov.gate.out"))]
 async fn gate(order: &Order, Out(audit): Out<impl Publisher>) -> Receipt {
-    let payload = order_bytes(order.id);
-    let copy = OutgoingMessage::new("cov.gate.copy", payload.as_slice());
     audit
-        .publish(copy)
+        .raw(&order_bytes(order.id))
+        .to("cov.gate.copy")
+        .publish()
         .await
         .expect("the slot publisher is live");
     Receipt { id: order.id }
@@ -626,7 +630,9 @@ async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.publish("cov.gate.in", &Order { id: 3 })
+    tb.message(&Order { id: 3 })
+        .to("cov.gate.in")
+        .publish()
         .await
         .expect("publish");
 

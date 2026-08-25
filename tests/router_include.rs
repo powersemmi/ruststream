@@ -8,21 +8,13 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, layers::TracingLayer};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
+use ruststream::runtime::{
+    AppInfo, HandlerResult, PublishExt, Router, RustStream, layers::TracingLayer,
+};
+use ruststream::{Publisher, subscriber};
 
 /// Publishes `payload` once to each topic (the app is already started, so the subscriptions are
 /// open and every publish lands), then waits until every counter is non-zero.
@@ -34,7 +26,9 @@ async fn publish_and_await_all(
     let payload = order_bytes(1);
     for topic in topics {
         publisher
-            .publish(OutgoingMessage::new(topic, &payload))
+            .raw(&payload)
+            .to(*topic)
+            .publish()
             .await
             .expect("publish");
     }

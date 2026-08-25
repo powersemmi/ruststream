@@ -10,30 +10,16 @@ use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, Receipt, wait_for};
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
     MemoryPublisher, MemorySubscriber,
 };
 use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, Router, RouterHandlers, RustStream,
-    RustStreamError, TypedPublisher,
+    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RouterHandlers,
+    RustStream, RustStreamError, TypedPublisher,
 };
-use ruststream::{
-    IncomingMessage, Name, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    SubscriptionSource, subscriber,
-};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
+use ruststream::{IncomingMessage, Name, PairError, PublishPolicy, SubscriptionSource, subscriber};
 
 #[subscriber("brc-in", publish("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {
@@ -75,7 +61,9 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("brc-handle", b"ping".as_slice()))
+        .raw(b"ping")
+        .to("brc-handle")
+        .publish()
         .await
         .expect("publish");
     wait_for(

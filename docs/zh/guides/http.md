@@ -53,8 +53,8 @@ cargo run --example http_outbox --features macros,memory,json
 ## 直接在请求里发布
 
 最简单的集成方式，是把发布者放进 HTTP 框架的状态里，直接在请求路径上发布，做法与
-[在处理器内部发布](publishing.md)完全一样：用编解码器编码，构建一个 `OutgoingMessage`，再 await
-这次发布。[指标指南里的完整服务器](metrics.md)就是这么驱动它的计数器的。
+[在处理器内部发布](publishing.md)完全一样：`publisher.message(&event).publish().await`。
+[指标指南里的完整服务器](metrics.md)就是这么驱动它的计数器的。
 
 代价是耦合：Broker 一旦故障，HTTP 请求就会失败或卡住；而在写完数据库、还没发布之前崩溃，就会丢掉
 该事件（若顺序反过来，则会为一次已回滚的写入发布出事件）。如果该端点还要写数据库，那这道缝隙就是

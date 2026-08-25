@@ -76,8 +76,9 @@ use ruststream::runtime::Out;
 
 `message(&value)` encodes with the scope's codec (name another one for a single call with
 `.with_codec(..)`), `raw(&bytes)` sends a payload the service already holds encoded and has no
-codec position at all. Both take the typed headers with `.with_headers(&meta)` and an
-already-built map with `.with_header_map(headers)`, and both end in `publish()`.
+codec position at all. Both fill the headers position with `.with_headers(..)` - the message's
+declared contract by reference (`&meta`), or an already-built `Headers` map by value - and both
+end in `publish()`.
 
 The include site names the source; for the scope's own broker it is the publish policy:
 

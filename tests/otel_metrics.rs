@@ -17,16 +17,12 @@ use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, ConnectedBroker, OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
+use ruststream::{ConnectedBroker, subscriber};
 use tokio::sync::{Mutex, Notify};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
+use common::{Order, connected};
 
 #[subscriber("otel.orders")]
 async fn consume(_order: &Order) -> HandlerResult {
@@ -191,11 +187,15 @@ async fn consume_layer_records_per_delivery_metrics() {
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
-        .publish("otel.orders", &Order { id: 7 })
+        .message(&Order { id: 7 })
+        .to("otel.orders")
+        .publish()
         .await
         .expect("publish failed");
     tb.broker::<MemoryBroker>()
-        .publish("otel.drops", &Order { id: 8 })
+        .message(&Order { id: 8 })
+        .to("otel.drops")
+        .publish()
         .await
         .expect("publish failed");
     tb.broker::<MemoryBroker>()
@@ -227,7 +227,9 @@ async fn an_undecodable_payload_bumps_the_decode_failure_counter() {
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
-        .publish_raw("otel.orders", b"not json")
+        .raw(b"not json")
+        .to("otel.orders")
+        .publish()
         .await
         .expect("publish failed");
     tb.broker::<MemoryBroker>()
@@ -293,7 +295,9 @@ async fn a_panicking_handler_does_not_leak_the_in_flight_gauge() {
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
-        .publish("otel.panics", &Order { id: 1 })
+        .message(&Order { id: 1 })
+        .to("otel.panics")
+        .publish()
         .await
         .expect("publish failed");
     tb.broker::<MemoryBroker>()
@@ -336,11 +340,7 @@ async fn a_failed_publish_keeps_error_type_low_cardinality() {
     let publisher = broker.publisher();
     // An aliased connected clone: shutting it down kills the shared bus mid-flight, which is
     // the only way a memory publish fails.
-    let bus_killer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let bus_killer = connected(&broker).await;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(otel.publish_layer())
         .with_broker(broker, |b| {
@@ -349,10 +349,9 @@ async fn a_failed_publish_keeps_error_type_low_cardinality() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new(
-            "otel.failing",
-            serde_json::to_vec(&Order { id: 5 }).unwrap().as_slice(),
-        ))
+        .message(&Order { id: 5 })
+        .to("otel.failing")
+        .publish()
         .await
         .expect("publish failed");
 
@@ -417,11 +416,7 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
         .publish_layer(otel.publish_layer())
@@ -431,10 +426,9 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new(
-            "otel.requests",
-            serde_json::to_vec(&Order { id: 3 }).unwrap().as_slice(),
-        ))
+        .message(&Order { id: 3 })
+        .to("otel.requests")
+        .publish()
         .await
         .expect("publish failed");
 
@@ -490,10 +484,9 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
     let running = app.start().await.expect("startup failed");
     for id in 0..3u32 {
         publisher
-            .publish(OutgoingMessage::new(
-                "otel.batches",
-                serde_json::to_vec(&Order { id }).unwrap().as_slice(),
-            ))
+            .message(&Order { id })
+            .to("otel.batches")
+            .publish()
             .await
             .expect("publish failed");
     }

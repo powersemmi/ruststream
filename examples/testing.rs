@@ -10,13 +10,13 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
 // --8<-- [start:app]
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
 struct Order {
     id: u64,
 }
@@ -42,7 +42,9 @@ async fn handle_order(
     if ctx
         .state()
         .receipts
-        .publish(OutgoingMessage::new("receipts", &payload))
+        .raw(&payload)
+        .to("receipts")
+        .publish()
         .await
         .is_err()
     {
@@ -70,7 +72,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Inject an order; the publish drives the handler to a standstill before returning.
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 42 })
+        .message(&Order { id: 42 })
+        .to("orders")
+        .publish()
         .await?;
 
     // The handler ran once, decoded the order, and acked.

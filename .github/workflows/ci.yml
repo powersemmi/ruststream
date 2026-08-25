@@ -122,6 +122,17 @@ jobs:
         # the log then lists every red test, not just the first binary's.
         run: cargo test --locked --workspace --all-features --no-fail-fast
 
+      # The tests themselves on a reduced feature set. Everything above either builds the tests
+      # with every feature on, or builds the library alone without them - so a test that reached
+      # for a gated item, or a mount that demanded a codec the byte path never uses, compiled
+      # nowhere and rotted unnoticed. The byte path is the one that must hold with no codec at
+      # all: `raw` in, `publish_raw` out, on both the scope and the router.
+      - name: cargo test (reduced features)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo test --locked --no-default-features --lib
+          cargo test --locked --no-default-features --features macros,memory,testing --test raw_subscriber
+
       # All-features hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it.
       - name: cargo test --doc (feature edges)
@@ -137,6 +148,15 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --all-features --no-deps
+
+      # trybuild compiles each UI case in a scratch crate under `target/tests`, which is not a
+      # cargo profile directory. The cache action walks `target` before it saves, cannot read
+      # that tree as one, and reports the miss as a job annotation - a red mark on a green run.
+      # The scratch is rebuilt per run anyway, so there is nothing to keep. Runs last and
+      # unconditionally: a failing test must not leave the tree behind either.
+      - name: Drop the trybuild scratch tree
+        if: always()
+        run: rm -rf target/tests
 
   features:
     name: Each feature alone
@@ -336,6 +356,13 @@ jobs:
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: cargo publish --locked --dry-run -p ruststream-macros -p ruststream --all-features
+
+      # The dry-run verifies each package by building it under `target/package/<crate>`, whose
+      # inner trees the cache action cannot read as cargo profiles either (same annotation as
+      # the trybuild scratch above). Verification output is per-run; nothing here is reusable.
+      - name: Drop the packaging scratch tree
+        if: always()
+        run: rm -rf target/package
 
   security:
     name: Security scans

@@ -31,7 +31,7 @@ use crate::runtime::router::{RouterDef, RouterSink};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
-use super::include::MountCodec;
+use super::include::{InputCodec, MountCodec};
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 
 /// A handler-registration scope bound to one broker.
@@ -336,7 +336,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Source::Subscriber: Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + Sync + 'static,
         Def: PublishingCall<State> + 'static,
-        Def::Input: DecodeWith<SC::Codec>,
+        Def::Input: DecodeWith<<SC as InputCodec<Def::Input>>::Codec>,
         Def::Injections: FromStartup<B, Source::Subscriber, OutExtra> + Send + Sync + 'static,
         Def::Reply: Send + Sync + 'static,
         Def::Context: crate::BuildContext<<Source::Subscriber as Subscriber>::Message>
@@ -346,11 +346,19 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         ReplySource: PublishPolicy<Connected<B>> + Send + 'static,
         ReplySource::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
         OutExtra: Send + Sync + 'static,
-        SC: MountCodec,
+        // The publishing mount resolves its decode codec against the input kind: a byte input
+        // asks for none, which is what lets `publish_raw` mount with no codec feature at all.
+        SC: InputCodec<Def::Input>,
         Pipeline: PublishPipeline + Clone + Send + 'static,
         State: Send + Sync + 'static,
-        Layers: Layer<PublishingHandler<Def, SC::Codec, ReplySource::Live, Pipeline>>
-            + Clone
+        Layers: Layer<
+                PublishingHandler<
+                    Def,
+                    <SC as InputCodec<Def::Input>>::Codec,
+                    ReplySource::Live,
+                    Pipeline,
+                >,
+            > + Clone
             + Send
             + 'static,
         Layers::Handler:
@@ -360,7 +368,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let codec = self.codec.mount_codec();
+        let codec = InputCodec::<Def::Input>::input_codec(&self.codec);
         let pipeline = self.pipeline.clone();
         let global = self.global.clone();
         // The injected primitive: the reply source pairs against the connected broker and the

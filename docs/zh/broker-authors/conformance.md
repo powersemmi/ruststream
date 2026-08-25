@@ -12,7 +12,7 @@ conformance 校验套件用来证明一个 Broker 遵守了核心契约。它有
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.6", features = ["conformance"] }
+ruststream = { version = "0.7", features = ["conformance"] }
 ```
 
 `conformance` feature 会连带引入 `testing`，因此你的 crate 提供的那唯一一个 `TestableBroker` 既能用于

@@ -15,17 +15,18 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use ruststream::memory::MemoryBroker;
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
 // needs no import (matching the `examples/publishing.rs` pattern).
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishError, PublishExt, RustStream};
 use ruststream::testing::{Outcome, TestApp, TestError};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Order {
     id: u64,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[outgoing(name = "events")]
 struct Event {
     id: u64,
 }
@@ -66,7 +67,9 @@ async fn records_received_value_and_ack() {
     let tb = TestApp::start(app).await.unwrap();
 
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 7 })
+        .message(&Order { id: 7 })
+        .to("orders")
+        .publish()
         .await
         .unwrap();
 
@@ -95,7 +98,11 @@ async fn records_drop_outcome() {
         .with_broker(MemoryBroker::new(), |b| b.include(drop_all));
     let tb = TestApp::start(app).await.unwrap();
 
-    tb.publish("dropme", &Order { id: 1 }).await.unwrap();
+    tb.message(&Order { id: 1 })
+        .to("dropme")
+        .publish()
+        .await
+        .unwrap();
 
     tb.broker::<MemoryBroker>()
         .subscriber("dropme")
@@ -112,7 +119,9 @@ async fn records_decode_failure() {
 
     // Not valid JSON for `Order`: the typed adapter fails to decode, the handler never runs.
     tb.broker::<MemoryBroker>()
-        .publish_raw("orders", b"not json")
+        .raw(b"not json")
+        .to("orders")
+        .publish()
         .await
         .unwrap();
 
@@ -134,7 +143,9 @@ async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
     // --8<-- [start:panic]
     // The panicking delivery still drives to quiescence (the message is dropped, unsettled).
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 0 })
+        .message(&Order { id: 0 })
+        .to("orders")
+        .publish()
         .await
         .unwrap();
 
@@ -150,9 +161,11 @@ async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
     // A publish after the fail-fast shutdown is rejected.
     assert!(matches!(
         tb.broker::<MemoryBroker>()
-            .publish("orders", &Order { id: 1 })
+            .message(&Order { id: 1 })
+            .to("orders")
+            .publish()
             .await,
-        Err(TestError::ShutDown)
+        Err(PublishError::Publish(TestError::ShutDown))
     ));
     // --8<-- [end:panic]
 }
@@ -163,7 +176,11 @@ async fn skip_policy_panic_keeps_running() {
         .with_broker(MemoryBroker::new(), |b| b.include(skip_panics));
     let tb = TestApp::start(app).await.unwrap();
 
-    tb.publish("skipper", &Order { id: 0 }).await.unwrap();
+    tb.message(&Order { id: 0 })
+        .to("skipper")
+        .publish()
+        .await
+        .unwrap();
 
     tb.broker::<MemoryBroker>()
         .subscriber("skipper")
@@ -180,8 +197,11 @@ async fn perpetual_requeue_hits_the_step_budget() {
         .with_broker(MemoryBroker::new(), |b| b.include(loop_forever));
     let tb = TestApp::start(app).await.unwrap();
 
-    let result = tb.publish("loops", &Order { id: 1 }).await;
-    assert!(matches!(result, Err(TestError::NotQuiescent { .. })));
+    let result = tb.message(&Order { id: 1 }).to("loops").publish().await;
+    assert!(matches!(
+        result,
+        Err(PublishError::Publish(TestError::NotQuiescent { .. }))
+    ));
     tb.shutdown().await.unwrap();
 }
 
@@ -213,7 +233,9 @@ async fn custom_codec_assertions_use_the_handlers_codec() {
     // Inject CBOR-encoded input (the default-codec `publish` would be JSON the handler can't read).
     let bytes = CborCodec.encode(&Order { id: 7 }).unwrap();
     tb.broker::<MemoryBroker>()
-        .publish_raw("orders", &bytes)
+        .raw(&bytes)
+        .to("orders")
+        .publish()
         .await
         .unwrap();
 
@@ -258,7 +280,11 @@ async fn requeue_redelivers_and_settles() {
         .with_broker(MemoryBroker::new(), |b| b.include(retry_once));
     let tb = TestApp::start(app).await.unwrap();
 
-    tb.publish("retryonce", &Order { id: 1 }).await.unwrap();
+    tb.message(&Order { id: 1 })
+        .to("retryonce")
+        .publish()
+        .await
+        .unwrap();
 
     // Called twice: the first delivery requeued, the redelivery acked.
     tb.broker::<MemoryBroker>()
@@ -294,7 +320,11 @@ async fn retry_after_redelivers_after_advancing_time() {
     let tb = TestApp::start(app).await.unwrap();
 
     // The publish records the immediate NackAfter settlement and returns; the redelivery is pending.
-    tb.publish("delayed", &Order { id: 1 }).await.unwrap();
+    tb.message(&Order { id: 1 })
+        .to("delayed")
+        .publish()
+        .await
+        .unwrap();
     tb.broker::<MemoryBroker>()
         .subscriber("delayed")
         .assert_called_once()
@@ -321,14 +351,7 @@ async fn retry_after_redelivers_after_advancing_time() {
 #[subscriber("ingress")]
 async fn forward(order: &Order, ctx: &mut Context<'_, (), Egress>) -> HandlerResult {
     let event = Event { id: order.id };
-    let payload = serde_json::to_vec(&event).expect("serialize");
-    if ctx
-        .state()
-        .egress
-        .publish(OutgoingMessage::new("events", &payload))
-        .await
-        .is_err()
-    {
+    if ctx.state().egress.message(&event).publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -359,7 +382,9 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
     // Publishing into "ingress" drives the ingress handler, its publish into "egress", and the
     // egress handler - all before publish returns.
     tb.broker_named("ingress")
-        .publish("ingress", &Order { id: 5 })
+        .message(&Order { id: 5 })
+        .to("ingress")
+        .publish()
         .await
         .unwrap();
 
@@ -394,8 +419,8 @@ async fn unscoped_publish_is_ambiguous_with_two_brokers() {
     let tb = TestApp::start(app).await.unwrap();
 
     assert!(matches!(
-        tb.publish("orders", &Order { id: 1 }).await,
-        Err(TestError::Ambiguous)
+        tb.message(&Order { id: 1 }).to("orders").publish().await,
+        Err(PublishError::Publish(TestError::Ambiguous))
     ));
 }
 
@@ -436,7 +461,9 @@ async fn with_state_injects_a_mirror_state() {
     .unwrap();
 
     tb.broker::<MemoryBroker>()
-        .publish("ingress", &Order { id: 9 })
+        .message(&Order { id: 9 })
+        .to("ingress")
+        .publish()
         .await
         .unwrap();
 
@@ -464,7 +491,9 @@ async fn inspect_raw_messages_and_debug_surfaces() {
 
     let raw = JsonCodec.encode(&Order { id: 7 }).unwrap();
     tb.broker::<MemoryBroker>()
-        .publish("echo", &Order { id: 7 })
+        .message(&Order { id: 7 })
+        .to("echo")
+        .publish()
         .await
         .unwrap();
 

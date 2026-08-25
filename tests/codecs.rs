@@ -11,17 +11,11 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, wait_for};
 use ruststream::codec::{CborCodec, Codec, MsgpackCodec};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, Router, RustStream};
+use ruststream::subscriber;
 
 static CBOR_SEEN: AtomicUsize = AtomicUsize::new(0);
 static MSGPACK_SEEN: AtomicUsize = AtomicUsize::new(0);
@@ -65,11 +59,15 @@ async fn non_default_codecs_dispatch_through_the_router() {
     let cbor_bytes = CborCodec.encode(&Order { id: 7 }).unwrap();
     let msgpack_bytes = MsgpackCodec.encode(&Order { id: 7 }).unwrap();
     publisher
-        .publish(OutgoingMessage::new("orders-cbor", &cbor_bytes))
+        .raw(&cbor_bytes)
+        .to("orders-cbor")
+        .publish()
         .await
         .expect("publish");
     publisher
-        .publish(OutgoingMessage::new("orders-msgpack", &msgpack_bytes))
+        .raw(&msgpack_bytes)
+        .to("orders-msgpack")
+        .publish()
         .await
         .expect("publish");
 

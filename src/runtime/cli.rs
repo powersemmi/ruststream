@@ -205,7 +205,10 @@ mod tests {
     #[cfg(feature = "memory")]
     use crate::runtime::{App, AppInfo, RustStream, RustStreamError};
 
-    use super::{CliError, Command, execute, parse, report};
+    // `execute` drives a built service, so only the tests that can build one reach it.
+    #[cfg(feature = "memory")]
+    use super::execute;
+    use super::{CliError, Command, parse, report};
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_owned()).collect()

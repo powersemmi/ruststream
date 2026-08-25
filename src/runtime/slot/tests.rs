@@ -1,11 +1,16 @@
-// The dictionary and the typed publish methods are deprecated in place: they keep working, so
-// they keep their regression coverage here alongside the builder's.
-#![allow(deprecated)]
+// The declared-message fixtures below are built by the tests that need a broker to publish
+// them through; without those features the types stay, because their trait impls are what
+// pins the declaration surface, and the compiler checks those whether or not one is built.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use super::*;
-use crate::{FixedName, OutgoingDestination};
+#[cfg(feature = "memory")]
+use crate::runtime::PublishExt;
+use crate::{FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeaders};
 
 #[derive(Debug)]
 struct A;
@@ -58,10 +63,6 @@ impl Progress {
     }
 }
 
-impl OutMessage<Events> for Progress {
-    const CHANNEL: &'static str = "events.progress";
-}
-
 impl MessageHeaders for Progress {
     type Contract = NoHeaders;
 }
@@ -87,28 +88,10 @@ struct NestedMeta {
     inner: Meta,
 }
 
-/// A contract-carrying message with the same unencodable payload.
-#[derive(Serialize)]
-struct Blob {
-    samples: HashMap<(u8, u8), u8>,
-}
-
-impl OutMessage<Events> for Blob {
-    const CHANNEL: &'static str = "events.blob";
-}
-
-impl MessageHeaders for Blob {
-    type Contract = WithHeaders<Meta>;
-}
-
 /// A contract-carrying message that encodes, so the headers are what fails.
 #[derive(Serialize)]
 struct Done {
     key: &'static str,
-}
-
-impl OutMessage<Events> for Done {
-    const CHANNEL: &'static str = "events.done";
 }
 
 impl MessageHeaders for Done {
@@ -147,7 +130,9 @@ async fn a_slot_publisher_delegates_the_transaction_protocol() {
     let slot = SlotPublisher::<_, Events>::new(broker.publisher());
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.publish(OutgoingMessage::new("slots.ledger", b"staged".as_slice()))
+    slot.raw(b"staged")
+        .to("slots.ledger")
+        .publish()
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");
@@ -168,7 +153,7 @@ async fn a_typed_slot_delegates_request_reply() {
 
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
-    use crate::{IncomingMessage, Publisher as _, Subscriber};
+    use crate::{IncomingMessage, Subscriber};
 
     let broker = MemoryBroker::new();
     let mut service = broker.subscribe("slots.echo");
@@ -191,7 +176,9 @@ async fn a_typed_slot_delegates_request_reply() {
             .expect("a request carries reply-to")
             .to_owned();
         responder
-            .publish(OutgoingMessage::new(&reply_to, msg.payload()))
+            .raw(msg.payload())
+            .to(reply_to)
+            .publish()
             .await
             .expect("reply publish failed");
         msg.ack().await.expect("ack failed");
@@ -228,7 +215,9 @@ async fn a_typed_slot_delegates_the_transaction_protocol() {
     );
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.publish(OutgoingMessage::new("slots.ledger", b"staged".as_slice()))
+    slot.raw(b"staged")
+        .to("slots.ledger")
+        .publish()
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");
@@ -240,87 +229,8 @@ async fn a_typed_slot_delegates_the_transaction_protocol() {
     );
 }
 
-/// A payload the codec cannot encode is reported by both typed publish forms, and nothing
-/// leaves for the broker.
-#[cfg(all(feature = "memory", feature = "json"))]
-#[tokio::test]
-async fn an_unencodable_payload_stops_both_typed_publish_forms() {
-    use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
-
-    let broker = MemoryBroker::new();
-    let slot = TypedSlot::<_, (), Events, _>::new(
-        SlotPublisher::<_, Events>::new(broker.publisher()),
-        JsonCodec,
-    );
-
-    let plain = slot
-        .publish_typed(&Progress::new())
-        .await
-        .expect_err("the codec cannot encode this payload");
-    assert!(
-        matches!(plain, PublishTypedError::Encode(_)),
-        "the encode arm must be distinguishable from a broker rejection: {plain:?}",
-    );
-
-    let meta = Meta { task_id: 7 };
-    let with_headers = slot
-        .with_headers(&meta)
-        .publish_typed(&Blob {
-            samples: Progress::new().samples,
-        })
-        .await
-        .expect_err("the codec cannot encode this payload");
-    assert!(
-        matches!(with_headers, PublishTypedError::Encode(_)),
-        "the payload is encoded before the headers are serialized: {with_headers:?}",
-    );
-}
-
-/// Headers that a header map cannot carry fail the publish with their own arm, before the
-/// message is handed to the broker.
-#[cfg(all(feature = "memory", feature = "json"))]
-#[tokio::test]
-async fn unrepresentable_headers_fail_the_typed_publish() {
-    use futures::StreamExt;
-
-    use crate::Subscriber;
-    use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
-
-    let broker = MemoryBroker::new();
-    let mut subscriber = broker.subscribe("events.done");
-    let slot = TypedSlot::<_, (), Events, _>::new(
-        SlotPublisher::<_, Events>::new(broker.publisher()),
-        JsonCodec,
-    );
-
-    let headers = NestedMeta {
-        inner: Meta { task_id: 7 },
-    };
-    let err = slot
-        .with_headers(&headers)
-        .publish_typed(&Done { key: "out/1" })
-        .await
-        .expect_err("a nested struct is not a header value");
-    assert!(
-        matches!(err, PublishTypedError::Headers(_)),
-        "the headers arm names what failed: {err:?}",
-    );
-    assert!(
-        err.to_string().contains("serializing the typed headers"),
-        "the message must point at the headers: {err}",
-    );
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-    assert!(
-        futures::poll!(stream.next()).is_pending(),
-        "nothing may be published once the headers are rejected",
-    );
-}
-
-/// The builder reports the same two failures on its own error, each in its own arm, and stops
-/// before the broker sees anything.
+/// The builder reports both pre-broker failures, each in its own arm, and stops before the
+/// broker sees anything.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[tokio::test]
 async fn the_builder_separates_the_encode_and_the_headers_failure() {

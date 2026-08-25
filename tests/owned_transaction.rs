@@ -8,9 +8,10 @@ use std::pin::pin;
 
 use futures::{FutureExt, Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryError, MemoryMessage};
+use ruststream::runtime::PublishExt;
 use ruststream::{
-    Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions, Publisher,
-    Subscriber, Transaction,
+    Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions, Subscriber,
+    Transaction,
 };
 
 /// Drains the next already-enqueued delivery (acking it), or `None` when the queue is empty.
@@ -53,7 +54,9 @@ async fn concurrent_transactions_commit_independently_and_atomically() {
 
     // The handle stays direct while both transactions are open.
     publisher
-        .publish(OutgoingMessage::new("orders", b"direct".as_slice()))
+        .raw(b"direct")
+        .to("orders")
+        .publish()
         .await
         .expect("direct publish failed");
 
@@ -108,7 +111,9 @@ async fn abort_discards_the_owned_buffer() {
 
     // The handle is unaffected by the settled transaction.
     publisher
-        .publish(OutgoingMessage::new("orders", b"kept".as_slice()))
+        .raw(b"kept")
+        .to("orders")
+        .publish()
         .await
         .expect("direct publish failed");
     assert_eq!(
@@ -138,13 +143,14 @@ async fn commit_against_a_shut_down_bus_errors() {
 /// needs a codec feature, hence the gate.
 #[cfg(feature = "json")]
 mod typed {
+    use ruststream::Outgoing;
     use ruststream::codec::{Codec, DefaultCodec};
     use ruststream::runtime::TypedPublisher;
     use serde::{Deserialize, Serialize};
 
     use super::*;
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Outgoing, PartialEq, Serialize, Deserialize)]
     struct Order {
         id: u32,
     }
@@ -162,7 +168,9 @@ mod typed {
         let publisher = TypedPublisher::new(broker.publisher());
 
         let mut txn = publisher.transaction().await.expect("transaction failed");
-        txn.publish("orders", &Order { id: 7 })
+        txn.message(&Order { id: 7 })
+            .to("orders")
+            .publish()
             .await
             .expect("typed publish into the transaction failed");
 
@@ -190,11 +198,15 @@ mod typed {
         let mut first = publisher.transaction().await.expect("first transaction");
         let mut second = publisher.transaction().await.expect("second transaction");
         first
-            .publish("orders", &Order { id: 1 })
+            .message(&Order { id: 1 })
+            .to("orders")
+            .publish()
             .await
             .expect("publish into first failed");
         second
-            .publish("orders", &Order { id: 2 })
+            .message(&Order { id: 2 })
+            .to("orders")
+            .publish()
             .await
             .expect("publish into second failed");
 
@@ -225,7 +237,9 @@ mod typed {
         let publisher = TypedPublisher::new(broker.publisher());
 
         let mut txn = publisher.transaction().await.expect("transaction failed");
-        txn.publish("orders", &Order { id: 9 })
+        txn.message(&Order { id: 9 })
+            .to("orders")
+            .publish()
             .await
             .expect("typed publish into the transaction failed");
 

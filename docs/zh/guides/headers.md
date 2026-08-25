@@ -90,8 +90,8 @@ id、序号、总数），一个结构体就能声明这份契约，并同时驱
 --8<-- "examples/typed_headers.rs:reply"
 
 在运行时，回复的消息头依旧沿用原来的做法：由回复发布者上的一个 `PublishTransform` 来设置，而
-[`Headers::insert_typed`] 负责在变换内部（或任何构建 `OutgoingMessage` 的地方）把一个契约值序列化
-进该映射。
+[`Headers::insert_typed`] 负责在变换内部把一个契约值序列化进该映射 - 变换正是服务看到整条出站消息
+的地方，而消息本身已由发布构建器组装好。
 
 [`Headers::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.insert_typed
 
@@ -109,7 +109,7 @@ AsyncAPI 生态文档化消息头契约的方式一致，而该生态刻意把�
 
 ## 测试
 
-进程内的测试工具能驱动整条路径：`publish_with_headers` 注入一次带类型化契约的投递，而发布日志会
-展示一次类型化发布所产生的消息头。
+进程内的测试工具能驱动整条路径：注入构建器上的 `with_headers(&meta)` 发出一次带类型化契约的投递，
+而发布日志会展示一次类型化发布所产生的消息头。
 
 --8<-- "examples/typed_headers.rs:drive"

@@ -11,8 +11,8 @@ use std::error::Error;
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Seek};
-use ruststream::{OutgoingMessage, Publisher, Seeker, subscriber};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, Seek};
+use ruststream::{Seeker, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
@@ -57,9 +57,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // visible to the audit subscription.
     for id in 1..=2u64 {
         let payload = serde_json::to_vec(&Job { id })?;
-        ingress
-            .publish(OutgoingMessage::new("audit", payload.as_slice()))
-            .await?;
+        ingress.raw(&payload).to("audit").publish().await?;
     }
 
     // --8<-- [start:mount]
@@ -77,9 +75,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // jumps it to the fourth, so id 3 is never processed.
     for id in [1, 999, 3, 4] {
         let payload = serde_json::to_vec(&Job { id })?;
-        ingress
-            .publish(OutgoingMessage::new("jobs", payload.as_slice()))
-            .await?;
+        ingress.raw(&payload).to("jobs").publish().await?;
     }
     // A demo-only pause so the dispatch loops drain; a real service reacts to its own signals.
     sleep(Duration::from_millis(100)).await;

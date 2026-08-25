@@ -11,33 +11,16 @@
     feature = "testing"
 ))]
 
-use std::time::Duration;
+mod common;
+
+use common::{Event, connected, expect_id, observed_memory, payload};
 
 use tokio::sync::Notify;
 
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource,
-};
-use ruststream::runtime::{AppInfo, HandlerResult, Out, Router, RustStream, Seek};
-use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, OutSlot, OutgoingMessage, Publisher, Seeker, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
-
-fn payload(id: u64) -> Vec<u8> {
-    serde_json::to_vec(&Event { id }).expect("serializable")
-}
-
-async fn expect_id(observer: &ConnectedMemoryBroker, name: &str, id: u64) {
-    let seen = expect_published(observer, name, 1, Duration::from_secs(2)).await;
-    assert_eq!(seen.len(), 1, "expected one publish on {name}");
-    let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
-    assert_eq!(event.id, id);
-}
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
+use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, Router, RustStream, Seek};
+use ruststream::testing::TestApp;
+use ruststream::{Broker, OutSlot, Publisher, Seeker, subscriber};
 
 // ---------------------------------------------------------------------------------------------
 // Out slots: the single-slot shorthand, named slots, and the batch counterpart.
@@ -45,10 +28,9 @@ async fn expect_id(observer: &ConnectedMemoryBroker, name: &str, id: u64) {
 #[subscriber("rp.out.in")]
 async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
     if out
-        .publish(OutgoingMessage::new(
-            "rp.out.forwarded",
-            payload(event.id).as_slice(),
-        ))
+        .raw(&payload(event.id))
+        .to("rp.out.forwarded")
+        .publish()
         .await
         .is_err()
     {
@@ -60,11 +42,7 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
 /// The one-slot shorthand on a router: `.publisher(policy)` binds the slot and commits.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_single_out_slot() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(forward)
@@ -74,7 +52,9 @@ async fn a_router_mounts_a_single_out_slot() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.out.in", payload(3).as_slice()))
+        .raw(&payload(3))
+        .to("rp.out.in")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "rp.out.forwarded", 3).await;
@@ -95,7 +75,9 @@ async fn transcode(
     Out(audit): Out<impl Publisher, Audit>,
 ) -> HandlerResult {
     if encoded
-        .publish(OutgoingMessage::new("rp.slots.encoded", chunk))
+        .raw(chunk)
+        .to("rp.slots.encoded")
+        .publish()
         .await
         .is_err()
     {
@@ -103,7 +85,9 @@ async fn transcode(
     }
     let receipt = chunk.len().to_be_bytes();
     if audit
-        .publish(OutgoingMessage::new("rp.slots.audit", receipt.as_slice()))
+        .raw(&receipt)
+        .to("rp.slots.audit")
+        .publish()
         .await
         .is_err()
     {
@@ -126,7 +110,9 @@ async fn a_router_binds_named_out_slots_by_marker() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .publish_raw("rp.slots.in", b"frame")
+        .raw(b"frame")
+        .to("rp.slots.in")
+        .publish()
         .await
         .expect("raw publish");
 
@@ -138,10 +124,9 @@ async fn a_router_binds_named_out_slots_by_marker() {
 async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerResult {
     for event in events {
         if out
-            .publish(OutgoingMessage::new(
-                "rp.page.forwarded",
-                payload(event.id).as_slice(),
-            ))
+            .raw(&payload(event.id))
+            .to("rp.page.forwarded")
+            .publish()
             .await
             .is_err()
         {
@@ -153,11 +138,7 @@ async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> Handle
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_batch_out_slot() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(forward_page)
@@ -167,7 +148,9 @@ async fn a_router_mounts_a_batch_out_slot() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.page.in", payload(9).as_slice()))
+        .raw(&payload(9))
+        .to("rp.page.in")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "rp.page.forwarded", 9).await;
@@ -194,7 +177,9 @@ async fn a_router_mounts_a_seek_parameter() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .publish_raw("rp.seek.in", payload(1).as_slice())
+        .raw(&payload(1))
+        .to("rp.seek.in")
+        .publish()
         .await
         .expect("publish");
     tb.settle().await.expect("settle");
@@ -227,7 +212,9 @@ async fn a_router_mounts_a_batch_seek_parameter() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.seek.page", payload(1).as_slice()))
+        .raw(&payload(1))
+        .to("rp.seek.page")
+        .publish()
         .await
         .expect("publish");
     PAGE_SEEN.notified().await;
@@ -246,11 +233,7 @@ async fn relay(event: &Event) -> Event {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_reply_publisher_on_mount() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new().include(relay).mount();
     let app = RustStream::new(AppInfo::new("rp-reply", "0.1.0"))
@@ -258,7 +241,9 @@ async fn a_router_defaults_the_reply_publisher_on_mount() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.reply.in", payload(1).as_slice()))
+        .raw(&payload(1))
+        .to("rp.reply.in")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "rp.reply.out", 2).await;
@@ -280,7 +265,9 @@ async fn a_router_mounts_the_byte_reply_form() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .publish_raw("rp.raw.in", b"frame")
+        .raw(b"frame")
+        .to("rp.raw.in")
+        .publish()
         .await
         .expect("raw publish");
     tb.settle().await.expect("settle");
@@ -307,7 +294,9 @@ async fn a_router_takes_an_explicit_bare_reply_policy() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .publish_raw("rp.raw.on.in", b"frame")
+        .raw(b"frame")
+        .to("rp.raw.on.in")
+        .publish()
         .await
         .expect("raw publish");
     tb.settle().await.expect("settle");
@@ -324,10 +313,9 @@ async fn a_router_takes_an_explicit_bare_reply_policy() {
 #[subscriber("rp.gate.in", publish("rp.gate.reply"))]
 async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, HandlerResult> {
     if out
-        .publish(OutgoingMessage::new(
-            "rp.gate.audit",
-            payload(event.id).as_slice(),
-        ))
+        .raw(&payload(event.id))
+        .to("rp.gate.audit")
+        .publish()
         .await
         .is_err()
     {
@@ -339,11 +327,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 /// The reply side defaults while the slot side is bound explicitly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_composes_a_default_reply_with_out_slots() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(gate)
@@ -354,7 +338,9 @@ async fn a_router_composes_a_default_reply_with_out_slots() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.gate.in", payload(7).as_slice()))
+        .raw(&payload(7))
+        .to("rp.gate.in")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "rp.gate.audit", 7).await;
@@ -366,7 +352,9 @@ async fn a_router_composes_a_default_reply_with_out_slots() {
 #[subscriber("rp.audit.in", raw, publish_raw("rp.audit.out"))]
 async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
     audit
-        .publish(OutgoingMessage::new("rp.audit.copy", frame))
+        .raw(frame)
+        .to("rp.audit.copy")
+        .publish()
         .await
         .expect("the slot publisher is live");
     frame.to_vec()
@@ -384,7 +372,9 @@ async fn a_router_composes_a_byte_reply_with_out_slots() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .publish_raw("rp.audit.in", b"frame")
+        .raw(b"frame")
+        .to("rp.audit.in")
+        .publish()
         .await
         .expect("raw publish");
     tb.settle().await.expect("settle");
@@ -408,10 +398,9 @@ async fn settle_page(
         id: u64::try_from(events.len()).expect("a page fits in u64"),
     };
     if out
-        .publish(OutgoingMessage::new(
-            "rp.ledger.pages",
-            serde_json::to_vec(&page).expect("serializable").as_slice(),
-        ))
+        .raw(&serde_json::to_vec(&page).expect("serializable"))
+        .to("rp.ledger.pages")
+        .publish()
         .await
         .is_err()
     {
@@ -428,11 +417,7 @@ async fn settle_page(
 async fn a_router_composes_a_batch_reply_with_out_slots() {
     use ruststream::runtime::TypedPublisher;
 
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(settle_page)
@@ -444,7 +429,9 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.ledger.in", payload(7).as_slice()))
+        .raw(&payload(7))
+        .to("rp.ledger.in")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "rp.ledger.receipts", 107).await;
@@ -460,9 +447,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
 async fn a_router_accepts_a_cross_broker_bind_token() {
     let egress_broker = MemoryBroker::new().bindable();
     let egress = egress_broker.bind(MemoryPublish);
-    let observer = Broker::connect(egress_broker.broker().clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(egress_broker.broker()).await;
 
     let ingress_broker = MemoryBroker::new();
     let ingress = ingress_broker.publisher();
@@ -478,7 +463,9 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.out.in", payload(5).as_slice()))
+        .raw(&payload(5))
+        .to("rp.out.in")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "rp.out.forwarded", 5).await;
@@ -500,11 +487,7 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
 /// `.mount()` on the batch publishing form takes the broker's own default publish policy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new().include(bulk_relay).mount();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))
@@ -512,7 +495,9 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .publish(OutgoingMessage::new("rp.batch.in", payload(1).as_slice()))
+        .raw(&payload(1))
+        .to("rp.batch.in")
+        .publish()
         .await
         .expect("publish");
     expect_id(&observer, "rp.batch.out", 2).await;
