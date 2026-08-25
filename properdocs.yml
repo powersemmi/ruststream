@@ -109,6 +109,7 @@ plugins:
             Observability: Наблюдаемость
             Testing: Тестирование
             Brokers: Брокеры
+            Benchmarks: Бенчмарки
             Broker authors: Авторам брокеров
             API reference: Справочник API
         - locale: zh
@@ -122,6 +123,12 @@ plugins:
             Observability: 可观测性
             Testing: 测试
             Brokers: Broker
+            Benchmarks: 基准测试
+
+# The benchmarks page builds its table in the browser from the results each broker publishes with
+# its own site. The script is a no-op on every other page.
+extra_javascript:
+  - assets/benchmarks.js
 
 extra:
   version:
@@ -174,6 +181,7 @@ nav:
       - ZeroMQ: https://powersemmi.github.io/ruststream-zeromq/
       - Stream files / stdio: https://powersemmi.github.io/ruststream-sea-file/
       - AWS Kinesis: https://powersemmi.github.io/ruststream-kinesis/
+  - Benchmarks: benchmarks.md
   - Broker authors:
       - broker-authors/index.md
       - broker-authors/example-nats.md
