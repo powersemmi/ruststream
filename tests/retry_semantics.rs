@@ -205,7 +205,7 @@ async fn retry_completes_inside_keyed_lanes() {
             headers.insert("partition-key", key);
             publisher
                 .raw(&order_bytes(id))
-                .with_header_map(headers)
+                .with_headers(headers)
                 .to("lane-retry")
                 .publish()
                 .await

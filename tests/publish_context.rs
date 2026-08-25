@@ -104,7 +104,7 @@ async fn delivery_context_propagates_to_the_reply() {
     headers.insert("correlation-id", "trace-abc");
     ingress_pub
         .raw(&payload)
-        .with_header_map(headers)
+        .with_headers(headers)
         .to("in")
         .publish()
         .await

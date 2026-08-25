@@ -111,7 +111,7 @@ async fn convert(
     headers.insert("source", "jobs.in");
     if out
         .raw(b"frame")
-        .with_header_map(headers)
+        .with_headers(headers)
         .to("chunks.raw")
         .publish()
         .await
@@ -329,7 +329,7 @@ async fn a_contract_less_message_still_carries_a_header_map() {
     connected
         .publisher()
         .message(&Progress { percent: 5 })
-        .with_header_map(headers)
+        .with_headers(headers)
         .publish()
         .await
         .expect("map headers on a contract-less message");

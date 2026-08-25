@@ -64,8 +64,9 @@ use ruststream::runtime::Out;
 ```
 
 `message(&value)` 用作用域的编解码器编码（想给单次调用换一个，用 `.with_codec(..)`）；`raw(&bytes)`
-发送的是服务已经编码好的载荷，因此根本没有编解码器的位置。两者都能用 `.with_headers(&meta)` 带上
-类型化的消息头，用 `.with_header_map(headers)` 带上一张已经建好的表，也都以 `publish()` 收尾。
+发送的是服务已经编码好的载荷，因此根本没有编解码器的位置。两者都用 `.with_headers(..)` 填上消息头
+这一位置 - 按引用传消息自己声明的契约（`&meta`），或者按值传一张已经建好的 `Headers` 表 - 也都以
+`publish()` 收尾。
 
 挂载点指明来源；对作用域自己的 Broker 来说，来源就是发布策略：
 

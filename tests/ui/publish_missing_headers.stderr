@@ -4,7 +4,7 @@ error[E0277]: the headers of this publish do not match the message's `WithHeader
 33 |         .publish()
    |          ^^^^^^^ the trait `SatisfiesContract<WithHeaders<DoneMeta>>` is not implemented for `HeadersUnset`
    |
-   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no typed headers (an arbitrary map still travels through `.with_header_map(..)`)
+   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no contract value (an arbitrary map still travels through `.with_headers(headers)`)
 help: the trait `SatisfiesContract<WithHeaders<DoneMeta>>` is not implemented for `HeadersUnset`
       but trait `SatisfiesContract<NoHeaders>` is implemented for it
   --> src/runtime/publish/builder.rs
@@ -32,7 +32,7 @@ error[E0277]: the headers of this publish do not match the message's `WithHeader
 33 | |         .publish()
    | |__________________^ the trait `SatisfiesContract<WithHeaders<DoneMeta>>` is not implemented for `HeadersUnset`
    |
-   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no typed headers (an arbitrary map still travels through `.with_header_map(..)`)
+   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no contract value (an arbitrary map still travels through `.with_headers(headers)`)
 help: the trait `SatisfiesContract<WithHeaders<DoneMeta>>` is not implemented for `HeadersUnset`
       but trait `SatisfiesContract<NoHeaders>` is implemented for it
   --> src/runtime/publish/builder.rs
@@ -55,7 +55,7 @@ error[E0277]: the headers of this publish do not match the message's `WithHeader
 34 |         .await;
    |          ^^^^^ the trait `SatisfiesContract<WithHeaders<DoneMeta>>` is not implemented for `HeadersUnset`
    |
-   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no typed headers (an arbitrary map still travels through `.with_header_map(..)`)
+   = note: a message declaring `#[outgoing(headers = Meta)]` is published as `.message(&value).with_headers(&meta)`; one declaring no contract takes no contract value (an arbitrary map still travels through `.with_headers(headers)`)
 help: the trait `SatisfiesContract<WithHeaders<DoneMeta>>` is not implemented for `HeadersUnset`
       but trait `SatisfiesContract<NoHeaders>` is implemented for it
   --> src/runtime/publish/builder.rs

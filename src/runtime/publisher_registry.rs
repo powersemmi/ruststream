@@ -60,7 +60,7 @@ pub trait ErasedPublisher: sealed::Sealed + Send + Sync {
     #[deprecated(
         since = "0.6.4",
         note = "headers are a position on the publish builder, not a second method: use \
-                publisher.raw(payload).with_header_map(headers).to(name).publish()"
+                publisher.raw(payload).with_headers(headers).to(name).publish()"
     )]
     fn publish_message<'a>(
         &'a self,
@@ -162,7 +162,7 @@ mod tests {
         let mut headers = Headers::new();
         headers.insert("k", "v");
         raw_of(ErasedSink(erased), b"deferred")
-            .with_header_map(headers)
+            .with_headers(headers)
             .to("erased.builder")
             .publish()
             .await

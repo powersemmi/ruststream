@@ -98,7 +98,7 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
     }
     ingress
         .raw(&payload)
-        .with_header_map(headers)
+        .with_headers(headers)
         .to("in")
         .publish()
         .await

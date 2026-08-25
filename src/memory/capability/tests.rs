@@ -748,7 +748,7 @@ async fn partition_key_reads_well_known_header() {
     headers.insert(PARTITION_KEY_HEADER, b"user-42".as_slice());
     publisher
         .raw(b"a")
-        .with_header_map(headers)
+        .with_headers(headers)
         .to("keyed")
         .publish()
         .await

@@ -66,13 +66,13 @@ pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
-    CallCodec, ForBatch, HeadersUnset, MapHeaders, MessageBody, MissingSegment, Outgoing, Publish,
-    PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
-    PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer, PublishNext,
-    PublishPipeline, PublishSink, PublishStack, PublishTransform, PublishTransformIdentity,
-    PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring, ResolvedName, SatisfiesContract,
-    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, Transactional,
-    TypedHeaders, TypedPublisher, TypedTransaction, for_batch,
+    CallCodec, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MissingSegment,
+    Outgoing, Publish, PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext,
+    PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer,
+    PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
+    PublishTransformIdentity, PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring,
+    ResolvedName, SatisfiesContract, SuppliedName, TemplateAddress, TransactionPublishError,
+    TransactionScope, Transactional, TypedHeaders, TypedPublisher, TypedTransaction, for_batch,
 };
 // The builder's entry points, for the surfaces outside `runtime` that offer one: the test
 // harness injects through the same positions as a live publish.

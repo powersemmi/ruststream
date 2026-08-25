@@ -112,7 +112,7 @@ async fn by_key_lanes_preserve_per_key_order() {
             headers.insert("partition-key", key);
             publisher
                 .raw(&order_bytes(id))
-                .with_header_map(headers)
+                .with_headers(headers)
                 .to("keyed")
                 .publish()
                 .await

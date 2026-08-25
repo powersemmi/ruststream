@@ -479,7 +479,7 @@ async fn router_publishing_threads_typed_delivery_context() {
     headers.insert("correlation-id", "trace-xyz");
     publisher
         .raw(&payload)
-        .with_header_map(headers)
+        .with_headers(headers)
         .to("tc-in")
         .publish()
         .await

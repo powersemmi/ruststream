@@ -41,7 +41,7 @@ async fn transcode(
     headers.insert("source", "slots.in");
     if encoded
         .raw(chunk)
-        .with_header_map(headers)
+        .with_headers(headers)
         .to("slots.encoded")
         .publish()
         .await
