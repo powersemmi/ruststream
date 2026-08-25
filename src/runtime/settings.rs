@@ -450,13 +450,19 @@ mod tests {
     use std::time::Duration;
 
     use super::{AllOpen, Declared, SubscriberBuilder, SubscriberSettings};
+    // Reading a source's name needs some connected broker to name the impl, and the in-process
+    // one is the only broker the core ships. The settings themselves are broker-agnostic, so
+    // that one assertion is gated rather than the whole module.
+    #[cfg(feature = "memory")]
+    use crate::SubscriptionSource;
+    #[cfg(feature = "memory")]
     use crate::memory::ConnectedMemoryBroker;
     use crate::runtime::dispatch::Workers;
     use crate::runtime::failure::{FailurePolicies, FailurePolicy};
     use crate::runtime::forms;
     use crate::runtime::input::Decoded;
     use crate::runtime::subscriber_def::SubscriberDef;
-    use crate::{Name, SubscriptionSource, Unnamed, nonzero};
+    use crate::{Name, Unnamed, nonzero};
 
     /// Stands in for a generated definition: the steps only move it around, so it carries the
     /// bare structural surface a definition has, and none of the settings.
@@ -496,6 +502,7 @@ mod tests {
         assert_eq!(built.workers, Workers::pool(nonzero!(4)));
         assert_eq!(built.failures.decode, FailurePolicy::Skip);
         // The buffer wraps the named source, so the name survives the wrap.
+        #[cfg(feature = "memory")]
         assert_eq!(
             SubscriptionSource::<ConnectedMemoryBroker>::name(&built.source),
             "orders",

@@ -13,6 +13,9 @@
 ///
 /// Needs a tracing subscriber, hence the `logging` feature gate.
 #[cfg(feature = "logging")]
+// Its callers sit behind broker and codec features of their own, so a build with `logging`
+// alone compiles the capture with nobody reaching for it.
+#[allow(dead_code)]
 pub(crate) mod log_capture {
     use std::collections::HashMap;
     use std::fmt::Debug;

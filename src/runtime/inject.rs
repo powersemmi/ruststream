@@ -15,7 +15,6 @@ use std::future::{Future, ready};
 
 use tracing::warn;
 
-use crate::codec::Codec;
 use crate::{Broker, Connected, IncomingMessage, PairError, PublishPolicy, Seekable};
 
 use super::context::Context;
@@ -342,7 +341,9 @@ where
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Context: Send + Sync,
     Def::Injections: Send + Sync,
-    DecodeCodec: Codec,
+    // See the same relaxation on `PublishingHandler`: `DecodeWith` carries whatever the input
+    // needs of the codec, and a raw input needs nothing.
+    DecodeCodec: Send + Sync,
     State: Send + Sync,
 {
     async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {

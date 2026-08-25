@@ -1,10 +1,15 @@
 // The dictionary and the typed publish methods are deprecated in place: they keep working, so
 // they keep their regression coverage here alongside the builder's.
 #![allow(deprecated)]
+// The declared-message fixtures below are built by the tests that need a broker to publish
+// them through; without those features the types stay, because their trait impls are what
+// pins the declaration surface, and the compiler checks those whether or not one is built.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 
 use super::*;
+#[cfg(feature = "memory")]
 use crate::runtime::PublishExt;
 use crate::{FixedName, OutgoingDestination};
 

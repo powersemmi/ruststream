@@ -1,8 +1,16 @@
+// Every fixture below sits behind the feature whose surface it exercises, so the imports they
+// need follow them rather than the file.
+#[cfg(feature = "logging")]
 use std::fmt;
+#[cfg(any(feature = "logging", all(feature = "memory", feature = "json")))]
 use std::sync::Arc;
 
+#[cfg(all(feature = "memory", feature = "json"))]
+use crate::PublishPolicy;
+#[cfg(all(feature = "json", any(feature = "logging", feature = "memory")))]
+use crate::Publisher;
+#[cfg(all(feature = "memory", feature = "json"))]
 use crate::codec::Codec;
-use crate::{PublishPolicy, Publisher};
 
 use super::*;
 
@@ -113,6 +121,8 @@ mod fixtures {
 /// Collects the `tracing` messages emitted on this thread: a warning's field values are only
 /// evaluated while a subscriber listens, so asserting on one needs a capture in place.
 #[cfg(feature = "logging")]
+// The tests reading it also need a codec, so `logging` alone leaves it uncalled.
+#[allow(dead_code)]
 fn capture_events() -> (
     Arc<std::sync::Mutex<Vec<String>>>,
     tracing::subscriber::DefaultGuard,

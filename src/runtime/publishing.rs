@@ -251,7 +251,11 @@ where
     Def::Injections: Send + Sync,
     Def::Reply: Send + Sync,
     Def::Context: Send + Sync,
-    DecodeCodec: Codec,
+    // `Send + Sync` rather than `Codec`: what the input needs of the codec is exactly what
+    // `DecodeWith` asks for, and a raw input asks for nothing - so demanding a codec would
+    // shut the byte-in/byte-out handler out of a build with no codec feature at all. The
+    // thread bounds stay, because the handler is held across an await.
+    DecodeCodec: Send + Sync,
     Wiring: ReplySink<Def::Reply, Def::Context, Pipeline>,
     Pipeline: Send + Sync,
     State: Send + Sync,
