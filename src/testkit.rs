@@ -2,8 +2,7 @@
 //!
 //! Some scenarios need the same scaffolding in several modules: a tracing subscriber that records
 //! the fields of the events a handler emits, and a few helpers that drive the in-memory broker to
-//! produce a batch. Copying them per module is how they drift, and one such copy had already
-//! diverged into a different capture behaviour, so they live here once.
+//! produce a batch. They live here once so the copies cannot drift apart.
 //!
 //! This module is `#[cfg(test)]` and everything in it is `pub(crate)`: nothing here is part of the
 //! published surface. The user-facing test harness is [`crate::testing`].

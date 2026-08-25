@@ -1,8 +1,8 @@
 //! Native capability-trait implementations for the in-memory broker.
 //!
-//! These are first-class features of the broker's own in-process semantics, not simulations of
-//! another broker: real buffered transactions, real greedy batching, real correlated request /
-//! reply over an in-process inbox. The conformance harness offers a suite per capability (see
+//! These run on the broker's own in-process semantics: buffered transactions, greedy batching,
+//! correlated request / reply over an in-process inbox. The conformance harness offers a suite
+//! per capability (see
 //! `conformance::capabilities`), and these implementations are the executable reference for
 //! them.
 

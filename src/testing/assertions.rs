@@ -5,7 +5,7 @@
 //! checks chain: `subscriber("orders").assert_called_once().with(&Order { id: 1 }).settled(Ack)`.
 
 // These methods run their check eagerly (panicking on failure) and return `self` only for optional
-// chaining, so they are deliberately not `#[must_use]` (ending a chain on one is fine).
+// chaining, so ending a chain on one is fine and none of them is `#[must_use]`.
 #![allow(clippy::return_self_not_must_use, clippy::must_use_candidate)]
 
 use std::marker::PhantomData;

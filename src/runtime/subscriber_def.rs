@@ -31,8 +31,7 @@ pub trait SubscriberDef: Sized {
     /// The handler bound is enforced where the def is mounted (against the app's state type `St`),
     /// not on the trait: a handler that reads typed application state is
     /// [`Handler<Target, Context, St>`](Handler) only for its declared `St`, while one that
-    /// ignores state is generic over it. Pinning a single state type here would reject both
-    /// shapes.
+    /// ignores state is generic over it.
     type Handler;
 
     /// The subscription source this handler binds to. The bound to

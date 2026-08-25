@@ -389,9 +389,8 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-// A typed delivery context on a ROUTER-mounted publishing handler. The old SubscribeRoute-based
-// router path forced the context to `()`; the deferred PublishingRoute threads `D::Context`, so a
-// publish layer can read the delivery by key. This would not compile on the pre-#113 router.
+// A typed delivery context on a ROUTER-mounted publishing handler: the route threads
+// `D::Context`, so a publish layer can read the delivery by key.
 #[derive(Default)]
 struct TraceCtx {
     correlation: Option<String>,

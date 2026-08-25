@@ -291,8 +291,8 @@ fn parse_source(input: ParseStream) -> syn::Result<(SourceArg, bool, bool)> {
     let mut batch = false;
     let mut expr: Expr = input.parse()?;
     // `batch(<source>)` is a marker around the usual source argument, not a constructor: unwrap
-    // it and remember the form. A real constructor is never a bare one-segment call (free
-    // functions are rejected by `source_tokens`), so this cannot misfire.
+    // it and remember the form. A real constructor is never a bare one-segment call: free
+    // functions are rejected by `source_tokens`.
     if let Expr::Call(call) = &expr
         && let Expr::Path(ExprPath {
             path, qself: None, ..

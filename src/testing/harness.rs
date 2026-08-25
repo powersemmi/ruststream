@@ -709,15 +709,14 @@ impl fmt::Debug for BrokerHandle<'_> {
 ///
 /// Produced by the `message(..)` and `raw(..)` entry points of [`TestApp`] and [`BrokerHandle`],
 /// so a test injects through the same positions - destination, typed headers, codec - that the
-/// service itself publishes through. You never name this type. Every other entry point of the
-/// handle ends here too, so one place decides what an injection does.
+/// service itself publishes through. You never name this type.
 pub struct InjectSink<'a>(Target<'a>);
 
 /// What an [`InjectSink`] sends into: a resolved broker, or none because the unscoped entry
 /// point had more than one to choose from.
 ///
 /// The unscoped `message(..)` / `raw(..)` exist whatever the app registered, so the ambiguity
-/// rides here and surfaces from the publish, keeping the error the caller already handles.
+/// rides here and surfaces from the publish.
 enum Target<'a> {
     Broker {
         coordinator: &'a Coordinator,

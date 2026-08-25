@@ -95,8 +95,8 @@ pub struct DefaultBareReply;
 
 /// The mount tokens keying the commit traits: which mount a committed attachment drives.
 ///
-/// Strategies of different form families are impls on the same attachment types with different
-/// concrete tokens, so they never overlap without negative reasoning.
+/// Form families are impls on the same attachment types with different tokens, so they never
+/// overlap.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 pub struct PublishMount;

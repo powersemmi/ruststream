@@ -2,8 +2,6 @@
 
 use std::fmt;
 
-// `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
-// way, so an ungated import would break `--no-default-features`.
 use super::Outgoing;
 use crate::Headers;
 

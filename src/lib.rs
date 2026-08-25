@@ -176,7 +176,7 @@ pub mod __private {
 
     /// A type-carrying probe the macro reads a payload schema off.
     ///
-    /// Schema selection uses inherent-vs-trait specialization (a stable-Rust trick): the schema
+    /// Schema selection uses inherent-vs-trait specialization: the schema
     /// path is an inherent method on `Probe<T>` bounded by `T: JsonSchema`, and
     /// [`NoSchemaProbe::schema_json`] is the trait fallback. Inherent methods win when present, so
     /// `Probe::<T>::new().schema_json()` returns the schema for a concrete `T: JsonSchema` and

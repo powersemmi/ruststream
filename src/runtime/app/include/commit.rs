@@ -1,11 +1,8 @@
 //! Mount tokens and the commit trait every registration builder resolves through.
 
-// The typed default-reply commits need a default codec, so that import is gated the same way;
-// the raw default-reply commit publishes bare bytes and needs only `DefaultPublish`.
+// The typed default-reply commits build a `TypedPublisher`, so the codec import is gated.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-// The default-reply commits build a `TypedPublisher` over the broker's default policy, so those
-// imports are gated with the default codec they require.
 use crate::{
     Broker, BuildContext, Connected, DefaultPublish, PublishPolicy, Subscriber, SubscriptionSource,
 };
@@ -32,16 +29,14 @@ use crate::runtime::app::scope::BrokerScope;
 //
 // The builder commits on Drop, so `b.include(def)` alone still registers (with the broker's
 // default publish policy where one exists), while `b.include(def).publisher(src)` replaces the
-// commit with the attached source. User sources are wrapped in `WithSource` so the default
-// marker and the source-driven commit live on different type constructors (disjoint impls, no
-// negative reasoning needed).
+// commit with the attached source. User sources are wrapped in `WithSource`: the default marker
+// and the source-driven commit must live on different type constructors to keep the impls
+// disjoint.
 //
-// Every form family shares one commit trait, keyed by a mount token: strategies of different
-// families are impls on the same attachment types with different concrete tokens, so they
-// never overlap without negative reasoning. Two generic builders then serve every family -
-// [`IncludeWith`] (one attachment, replaced by `.publisher(..)`) and [`IncludeWithOut`] (a
-// reply attachment plus the `Out` parameter's own `.out(..)`) - and the per-form names are
-// aliases picking the token and the initial attachment.
+// Every form family shares one commit trait, keyed by a mount token. Two generic builders serve
+// every family - [`IncludeWith`] (one attachment, replaced by `.publisher(..)`) and
+// [`IncludeWithOut`] (a reply attachment plus the `Out` parameter's own `.out(..)`) - and the
+// per-form names are aliases picking the token and the initial attachment.
 
 /// One commit strategy of a registration builder, keyed by its `Mount` token. Machinery;
 /// never named directly.

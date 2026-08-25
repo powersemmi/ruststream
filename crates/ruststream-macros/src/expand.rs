@@ -951,8 +951,7 @@ fn split_seek<'a>(
 /// `&[T]` a whole decoded batch, and `&[&[u8]]` a batch of payloads.
 ///
 /// A batch of `u8` values is not a thing anyone means, so `&[u8]` reads as the payload; spelling
-/// `batch(..)` in the attribute still says otherwise, which is what keeps the retiring clause
-/// meaning what it always did.
+/// `batch(..)` in the attribute says otherwise.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Shape {
     Single,
@@ -1898,9 +1897,8 @@ fn slot_bounds(outs: &[OutParam<'_>], generics: &[SlotGenerics]) -> Vec<TokenStr
         let publisher = &slot.publisher;
         let codec = &slot.codec;
         let bounds = out.bounds;
-        // The dispatch machinery shares the injected value across worker tasks, so
-        // Send + Sync are structural, not optional; adding them here keeps broker-defined
-        // capability bounds (which need not imply them) as ergonomic as the core ones.
+        // The dispatch machinery shares the injected value across worker tasks, so Send + Sync
+        // are structural: a broker-defined capability bound need not imply them.
         out_bounds.push(
             quote!(#publisher: #bounds + ::core::marker::Send + ::core::marker::Sync + 'static),
         );

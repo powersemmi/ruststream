@@ -1,5 +1,5 @@
 //! The typed per-delivery context reaches the publish path: a static `PublishTransform` reads the
-//! originating delivery (issue #103) and stamps the reply, propagating a correlation id.
+//! originating delivery and stamps the reply, propagating a correlation id.
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
 mod common;

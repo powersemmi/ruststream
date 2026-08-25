@@ -144,8 +144,8 @@ pub trait Positioned: IncomingMessage {
 /// paths.
 ///
 /// This is the borrowed kind of the two transaction capabilities: the handle carries at most one
-/// broker-side transaction, and [`begin_transaction`] takes an exclusive claim on it - which is
-/// why a second begin while one is open must error. Kafka-like brokers, whose client object
+/// broker-side transaction, and [`begin_transaction`] takes an exclusive claim on it. Kafka-like
+/// brokers, whose client object
 /// holds exactly one transaction per producer, implement only this kind. Brokers whose
 /// transactions are client buffers can additionally implement [`OwnedTransactions`], the owned
 /// kind: every call there opens an independent buffer-owning [`Transaction`] value, so
@@ -204,8 +204,7 @@ pub trait TransactionalPublisher: Publisher {
 /// the whole buffer atomically, and [`abort`] discards it. Both settle the transaction by
 /// consuming `self`, so a double commit, a commit after an abort, or a publish after settling
 /// are compile errors, not runtime checks. Dropping an unsettled transaction discards the buffer
-/// like an abort (destructors cannot run async work); implementations log a warning, because a
-/// silently vanishing buffer is almost always a missing `commit`.
+/// like an abort (destructors cannot run async work); implementations log a warning.
 ///
 /// This is the transaction value of the owned kind; see [`OwnedTransactions`] for the contrast
 /// with the borrowed [`TransactionalPublisher`] kind.
@@ -413,7 +412,7 @@ pub trait Partitioned {
 /// [`SubscriptionSource`](crate::SubscriptionSource) instead.
 ///
 /// Implemented on the [`ConnectedBroker`](crate::ConnectedBroker) form: a subscription needs a
-/// live connection, and the ladder makes that requirement a type, not a runtime check.
+/// live connection.
 ///
 /// # Examples
 ///
@@ -457,9 +456,9 @@ pub struct ServerSpec {
     /// An optional human description of this server.
     pub description: Option<String>,
     /// How clients authenticate to this server, emitted as the `AsyncAPI` server's `security`
-    /// list. Empty by default: authentication is a property of the described deployment (the same
-    /// broker is deployed publicly and internally with different schemes), so the service author
-    /// states it at registration ([`with_security`](Self::with_security)); brokers never set it.
+    /// list. Empty by default: authentication is a property of the described deployment, so the
+    /// service author states it at registration ([`with_security`](Self::with_security)); brokers
+    /// never set it.
     pub security: Vec<SecurityScheme>,
 }
 
@@ -542,7 +541,7 @@ pub struct SecurityScheme {
 /// The scheme kind and its type-specific fields. Raw JSON payloads (`oauth2` flows, `custom`)
 /// are stored as serialized text so the containing types stay `Eq`.
 // Only the asyncapi module reads the fields (into the generated document); without that feature
-// they are write-only, which is fine - the data still travels through ServerSpec equality.
+// they are write-only.
 #[cfg_attr(not(feature = "asyncapi"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SecuritySchemeKind {
@@ -788,8 +787,7 @@ impl SecurityScheme {
     /// ```
     #[cfg(feature = "json")]
     #[must_use]
-    // By-value keeps the natural `oauth2(json!(..))` call shape; the value is serialized on the
-    // spot, so borrowing would only force callers to hold a temporary.
+    // The value is serialized on the spot; by-value keeps the `oauth2(json!(..))` call shape.
     #[allow(clippy::needless_pass_by_value)]
     pub fn oauth2(flows: serde_json::Value) -> Self {
         Self::of(SecuritySchemeKind::Oauth2 {
@@ -810,8 +808,7 @@ impl SecurityScheme {
     /// ```
     #[cfg(feature = "json")]
     #[must_use]
-    // By-value keeps the natural `custom(json!(..))` call shape; the value is serialized on the
-    // spot, so borrowing would only force callers to hold a temporary.
+    // The value is serialized on the spot; by-value keeps the `custom(json!(..))` call shape.
     #[allow(clippy::needless_pass_by_value)]
     pub fn custom(object: serde_json::Value) -> Self {
         Self::of(SecuritySchemeKind::Custom {

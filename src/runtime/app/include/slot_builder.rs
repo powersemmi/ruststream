@@ -3,10 +3,6 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-// The typed default-reply commits need a default codec, so that import is gated the same way;
-// the raw default-reply commit publishes bare bytes and needs only `DefaultPublish`.
-// The default-reply commits build a `TypedPublisher` over the broker's default policy, so those
-// imports are gated with the default codec they require.
 use crate::Broker;
 
 use crate::runtime::slot::{BindSlot, MissingSlot, OutSlot, WithSource};
@@ -92,9 +88,8 @@ where
     ///
     /// Never in practice: the internal expects guard builder invariants that hold until the
     /// commit consumes them.
-    // The marker travels by value on purpose (a unit inference driver keeps the call site
-    // `.out(Encoded, ..)`), and the return type is the builder itself with the bound slot - an
-    // alias would only hide which position changed.
+    // The unit marker drives inference, so it travels by value to keep the call site
+    // `.out(Encoded, ..)`; the return type names the builder with the bound slot.
     #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
     pub fn out<M, NewSource, Index>(
         self,

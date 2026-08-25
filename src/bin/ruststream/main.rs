@@ -6,8 +6,8 @@
 //! - `ruststream run` shells out to `cargo run -- run` against the target crate.
 //! - `ruststream asyncapi gen` shells out to `cargo run -- asyncapi gen`.
 //!
-//! Scaffolding a new project is `cargo generate` against a template (the in-memory starter lives in
-//! this repo under `templates/memory`; brokers own theirs); this tool no longer ships its own `new`.
+//! Scaffolding a new project is `cargo generate` against a template: the in-memory starter lives
+//! in this repo under `templates/memory`, and brokers own theirs.
 
 #![forbid(unsafe_code)]
 

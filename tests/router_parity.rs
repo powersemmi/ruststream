@@ -506,8 +506,7 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
 }
 
 /// Every route kind contributes its registration metadata, in registration order: that list is
-/// what the `AsyncAPI` document is generated from, so a form that mounts but stays invisible
-/// there would be a silent hole.
+/// what the `AsyncAPI` document is generated from.
 #[test]
 fn every_new_route_kind_reports_its_metadata_in_registration_order() {
     let router = Router::<MemoryBroker>::new()
@@ -534,8 +533,7 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The builders identify themselves while half-built: their pieces are the user's own definition
-// and policies, so the name is all a `Debug` can usefully carry.
+// The builders identify themselves by name while half-built.
 
 #[test]
 fn the_registration_builders_name_themselves() {

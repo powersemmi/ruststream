@@ -523,7 +523,7 @@ where
                 self.inner.handle(msg, ctx).await
             };
             // The decode adapter (wrapped by this layer) marks the context when the payload did
-            // not decode, so one bool read per delivery is the whole cost of this counter.
+            // not decode.
             if ctx.decode_failed() {
                 instruments.decode_failures.add(1, &attrs);
             }
@@ -553,8 +553,7 @@ impl Drop for InFlightGuard<'_> {
         self.instruments.in_flight.add(-1, self.attrs);
         // A panicking handler unwinds through this Drop (the handler future's live locals are
         // dropped as part of the unwind) before the dispatch loop's catch_unwind resolves it, so
-        // this is exactly one panic per unwound delivery - and free on the success path, where
-        // the guard drops with no panic in flight.
+        // this counts exactly one panic per unwound delivery.
         if thread::panicking() {
             self.instruments.panics.add(1, self.attrs);
         }

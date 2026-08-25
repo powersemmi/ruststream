@@ -2,8 +2,7 @@
 //!
 //! What lives here is what a suite needs but is never the subject of its assertions: the
 //! stand-in message, the wait primitive, the connected form the publish-log assertions read
-//! from. A suite that tests one of these shapes itself declares its own instead - `app_dispatch`
-//! keeps an `Order` carrying a second field because decoding it is the point there.
+//! from. A suite that tests one of these shapes itself declares its own instead.
 //!
 //! Each test binary compiles its own copy of this module and uses what it needs, hence the
 //! `dead_code` allowances.
@@ -87,9 +86,8 @@ pub(crate) struct Resp {
 
 /// The connected form of `broker`, for the assertions that read a broker's publish log.
 ///
-/// Connecting is where a broker's `TestableBroker` surface appears, and for the in-process bus
-/// the transition performs no I/O - so an observer costs nothing but says the quiet part: the
-/// log belongs to the connection, not to the configuration the app was built from.
+/// A broker's `TestableBroker` surface appears on the connected form: the log belongs to the
+/// connection, not to the configuration the app was built from.
 #[cfg(feature = "memory")]
 #[allow(dead_code)]
 pub(crate) async fn connected(
@@ -132,11 +130,9 @@ pub(crate) async fn expect_id(
 
 /// A service running in the background, stopped by the handle rather than by a signal.
 ///
-/// The suites that drive `run_until` all want the same thing: start the service on its own task,
-/// poke it through a publisher, then end the run and see what it returned. Spelling that out
-/// takes a `Notify`, a clone of it, a spawn and a join - five lines of scaffolding around one
-/// line of intent. A suite whose subject IS the teardown (a drain that must time out, a signal
-/// arriving mid-handler) still writes it by hand.
+/// Starts the service on its own task and hands back a handle that pokes it through a publisher
+/// and ends the run. A suite whose subject IS the teardown (a drain that must time out, a signal
+/// arriving mid-handler) writes the spawn by hand instead.
 #[allow(dead_code)]
 pub(crate) struct BackgroundRun {
     shutdown: std::sync::Arc<tokio::sync::Notify>,

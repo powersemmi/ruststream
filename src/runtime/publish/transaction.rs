@@ -6,10 +6,8 @@ use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
-use crate::codec::{Codec, CodecError};
-// `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
-// way, so an ungated import would break `--no-default-features`.
 use super::{HeadersUnset, MessageBody, Publish, RawBody, TypedPublisher, message_of, raw_of};
+use crate::codec::{Codec, CodecError};
 use crate::{
     CallerName, OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction,
     TransactionalPublisher,

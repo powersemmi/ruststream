@@ -274,8 +274,8 @@ pub trait HeaderSource {
 }
 
 // A borrowed value is the contract form: it is serialized into the map when the publish runs, so
-// the `Serialize` bound stays on `PublishHeaders` rather than here - a value that cannot be
-// serialized has to fail at the publish, with serde's own guidance, not at "no such method".
+// the `Serialize` bound stays on `PublishHeaders` - an unserializable value must fail at the
+// publish, with serde's own guidance, not at "no such method".
 impl<'a, H: ?Sized> HeaderSource for &'a H {
     type Position = TypedHeaders<'a, H>;
 
@@ -468,10 +468,9 @@ where
     ///
     /// As cancel-safe as the sink's own send: dropping the future mid-flight may leave the
     /// message in an indeterminate state.
-    // The position bounds and the encodability of the value sit on the method, not on the impl
-    // block: a bound the impl block carries makes an under-specified publish "method not found",
-    // which drops the guidance these traits declare - serde's own note about the missing derive
-    // included - while a bound the method carries reports it.
+    // The position bounds sit on the method, not on the impl block: on the block an
+    // under-specified publish reads as "method not found" and loses the guidance the bounds
+    // carry, serde's own note about a missing derive included.
     pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
     where
         T: Serialize,

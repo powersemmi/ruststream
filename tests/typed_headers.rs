@@ -516,8 +516,7 @@ async fn routed(chunks: &[Chunk], FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_router_path_carries_the_batch_header_contract() {
-    // The chain codec form: mounting through `with_codec` proves both entry points, since the
-    // default-codec one shares the same mount.
+    // The chain codec form: `with_codec` and the default-codec entry point share one mount.
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
         .include(routed);

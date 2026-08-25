@@ -2,8 +2,8 @@
 //! [`RustStream`](super::RustStream) can hold brokers of different concrete types in one
 //! collection.
 //!
-//! Only the ladder transitions (`connect`, `shutdown`) are erased here. They run once per broker
-//! at startup and shutdown, never on the message hot path, so the boxing cost is negligible.
+//! Only the ladder transitions (`connect`, `shutdown`) are erased here; they run once per broker
+//! at startup and shutdown, never on the message hot path.
 //! The transitions consume `self` in the public traits, and consuming survives erasure through
 //! `self: Box<Self>` receivers. Subscribers and publishers stay fully typed elsewhere: the typed
 //! connected broker travels from the erased `connect` to the typed starters through a shared

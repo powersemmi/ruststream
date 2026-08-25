@@ -223,9 +223,6 @@ pub trait IncomingMessage: Send + Sync {
     /// (`JetStream` `NAK` with delay, a durable delayed queue) override this to `true` and
     /// override `nack_after`.
     ///
-    /// Adding this provided method is additive: implementations that do not override it keep
-    /// compiling and opt into the fallback path automatically.
-    ///
     /// # Examples
     ///
     /// ```

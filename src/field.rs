@@ -50,8 +50,8 @@ pub trait Field<Src: ?Sized> {
 /// It powers the [`Ctx`](crate::runtime::Ctx) extractor: because the key carries its context
 /// as an associated type, a handler taking `Ctx(value): Ctx<Key>` needs no `&mut Context`
 /// parameter at all - the `#[subscriber]` macro projects the subscription's context type from
-/// the first `Ctx` key it sees. The value is owned (`'static`) on purpose: extractor values
-/// bind before the handler body runs, so borrowing from the context is not an option. Borrowed
+/// the first `Ctx` key it sees. The value is owned (`'static`): extractor values bind before the
+/// handler body runs, so borrowing from the context is not an option. Borrowed
 /// keys keep working through [`Field`] and `ctx.context(KEY)`.
 ///
 /// Broker crates implement it next to [`Field`] on the same zero-sized keys; a key typically
@@ -144,8 +144,7 @@ pub trait FieldMut<Src: ?Sized>: Field<Src> {
 /// gives the zero-field default, so a broker that exposes nothing needs no implementation.
 ///
 /// The built context is an owned value (it reads its fields out of the message rather than
-/// borrowing it), so it does not tie the handler's context type to the delivery lifetime; broker
-/// metadata is typically `Copy` (offsets, sequence numbers), so this is a stack copy.
+/// borrowing it), so it does not tie the handler's context type to the delivery lifetime.
 ///
 /// # Examples
 ///

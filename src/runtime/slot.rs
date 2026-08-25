@@ -94,11 +94,8 @@ impl OutSlot for DefaultSlot {
 /// marker's dictionary as what the handler sends, so a message outside it would be a publish the
 /// document never declared.
 ///
-/// The membership is declared on the message type rather than on the marker, which keeps the
-/// compile error about the message: with the marker as `Self` and the message as the parameter,
-/// a single-entry dictionary would leave the message type to be inferred from the one impl, and
-/// the call site would report a type mismatch against the listed type instead of the missing
-/// membership.
+/// The membership is declared on the message type, with the slot as the parameter, so the
+/// compile error names the message that is not in the dictionary.
 ///
 /// # Examples
 ///
@@ -127,9 +124,7 @@ impl OutSlot for DefaultSlot {
 )]
 pub trait PublishedThrough<Slot> {}
 
-// The implicit slot is the one a handler gets without naming a marker, so there is no
-// declaration site to list types on and nothing for the document to report; narrowing it would
-// leave `Out<impl Publisher>` with no typed publish at all.
+// The implicit slot has no declaration site to list types on, so it admits every message.
 impl<T> PublishedThrough<DefaultSlot> for T {}
 
 /// The live publisher an [`Out`](super::Out) slot injects: the attachment's paired publisher,

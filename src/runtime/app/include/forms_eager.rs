@@ -1,9 +1,5 @@
 //! Eager mount forms: plain, raw, attachment-free injections and plain batch.
 
-// The typed default-reply commits need a default codec, so that import is gated the same way;
-// the raw default-reply commit publishes bare bytes and needs only `DefaultPublish`.
-// The default-reply commits build a `TypedPublisher` over the broker's default policy, so those
-// imports are gated with the default codec they require.
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::{BatchDef, BatchWithHeadersDef};

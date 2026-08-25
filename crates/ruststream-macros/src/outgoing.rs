@@ -376,11 +376,9 @@ fn template_builder(
                 /// Returns [`PublishError`](::ruststream::runtime::PublishError) when the
                 /// payload cannot be encoded, the typed headers cannot be serialized, or the
                 /// broker rejects the message.
-                // Every bound sits on the method, not on the impl block: on the block they
-                // turn a publish the message's own declarations reject into "method not
-                // found", which drops the guidance those declarations come with. The segment
-                // witnesses are here for the same reason, so a forgotten placeholder is
-                // reported by the witness instead of by the terminal being absent.
+                // Every bound, segment witnesses included, sits on the method: on the impl
+                // block a rejected publish reads as "method not found" and loses the guidance
+                // the bounds carry.
                 pub async fn publish(
                     self,
                 ) -> ::core::result::Result<
@@ -393,8 +391,7 @@ fn template_builder(
                     Cont: ::ruststream::runtime::PublishAt,
                     #(#bound,)*
                 {
-                    // A templated address is rendered per publish: that allocation is what
-                    // computing an address at run time costs, and the fixed form avoids it.
+                    // A templated address is rendered per publish; the fixed form is not.
                     let address = ::std::format!(#format_string #(, #format_args)*);
                     ::ruststream::runtime::PublishAt::publish_at(self.cont, &address).await
                 }

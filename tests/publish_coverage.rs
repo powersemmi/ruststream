@@ -1,7 +1,7 @@
 //! The publishing handler's failure paths, end to end over the memory broker: a decode failure
 //! settled by the per-subscriber policy, and a reply the publisher rejects. Both are diagnosed
-//! by a warning, so the test binary installs a capturing subscriber - a warning's field values
-//! are only evaluated while someone listens, and an unexplained failure is half a failure.
+//! by a warning, so the test binary installs a capturing subscriber: a warning's field values are
+//! only evaluated while someone listens.
 #![cfg(all(
     feature = "macros",
     feature = "memory",

@@ -34,8 +34,7 @@ pub trait Message {
 /// headers schema of the message) and the publish builder: `publish()` compiles only with the
 /// headers the contract declares (none for [`NoHeaders`]).
 ///
-/// The two contract shapes are a closed vocabulary ([`HeadersContract`] is sealed), so the
-/// publish machinery can branch on them at compile time without negative reasoning.
+/// The two contract shapes are a closed vocabulary: [`HeadersContract`] is sealed.
 ///
 /// # Examples
 ///

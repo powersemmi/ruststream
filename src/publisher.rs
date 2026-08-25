@@ -125,9 +125,7 @@ pub trait Publisher: Send + Sync {
 ///
 /// `pair` is async and fallible because some brokers do real work when a publisher comes alive
 /// (a transactional producer initializing its transactions); for most it is a cheap constructor
-/// call. The error is the type-erased [`PairError`]: pairing runs once at startup, never on the
-/// hot path, and a cross-broker token pairs against a different broker than the scope's, so a
-/// broker-typed error could not name one broker anyway.
+/// call. It reports the type-erased [`PairError`].
 ///
 /// # Examples
 ///
@@ -163,9 +161,8 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 /// The error of [`PublishPolicy::pair`]: whatever the broker reported while bringing a publisher
 /// alive, type-erased.
 ///
-/// Pairing runs once per publisher at startup (a cold path), and a cross-broker token pairs
-/// against a broker other than the including scope's, so the error is erased rather than typed
-/// to one broker.
+/// A cross-broker token pairs against a broker other than the including scope's, so the error
+/// cannot be typed to one broker.
 #[derive(Debug, Error)]
 #[error("pairing a publisher failed: {0}")]
 pub struct PairError(#[source] Box<dyn StdError + Send + Sync>);

@@ -285,7 +285,7 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
 /// the derive does not touch, and the publish builder then demands `with_headers(&meta)`.
 ///
 /// Do not combine with `#[derive(Message)]` on the same type: this derive already provides the
-/// message metadata, and the two deliberately produce conflicting impls.
+/// message metadata, and the two produce conflicting impls.
 ///
 /// ```ignore
 /// /// A finished order.
@@ -475,7 +475,7 @@ fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
 /// handler's `send` operations. Each model declares where it goes with `#[derive(Outgoing)]`.
 ///
 /// Do not combine with `#[derive(Outgoing)]` on the same enum: a type is a message or a set,
-/// and the two derives deliberately produce conflicting impls.
+/// and the two derives produce conflicting impls.
 ///
 /// ```ignore
 /// #[derive(OutMessages)]

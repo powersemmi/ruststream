@@ -140,8 +140,7 @@ pub struct Channel {
 
 /// An `AsyncAPI` channel parameter: one `{placeholder}` segment of a templated address.
 ///
-/// The declaration names the segments; what a service puts in them is a run-time value, so the
-/// object carries no enumeration.
+/// The declaration names the segments; what a service puts in them is a run-time value.
 #[derive(Debug, Clone, Default, Serialize)]
 #[non_exhaustive]
 pub struct Parameter {

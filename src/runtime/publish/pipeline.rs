@@ -2,10 +2,8 @@
 
 use std::{fmt, future::Future, sync::Arc};
 
-use crate::runtime::lifecycle::BoxError;
-// `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
-// way, so an ungated import would break `--no-default-features`.
 use super::{Outgoing, PublishFut};
+use crate::runtime::lifecycle::BoxError;
 use crate::{OutgoingMessage, Publisher};
 
 /// A static, app-wide publish pipeline: an around-style chain of [`PublishLayer`] ending in

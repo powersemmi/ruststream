@@ -101,8 +101,7 @@ impl Name {
 ///
 /// A kind that genuinely needs more than a name to exist (a Pulsar source takes a topic *and* a
 /// subscription name) does not implement it, and the name-only attribute form does not compile
-/// for that kind. That is the honest boundary: nothing is ever built from thin air, and no
-/// source needs a `Default` that would make a stream without a key representable.
+/// for that kind.
 ///
 /// # Examples
 ///
@@ -131,8 +130,8 @@ impl FromName for Name {
 /// The stand-in a definition carries while its subscription has no name yet.
 ///
 /// `#[subscriber]` and `#[subscriber(Kind)]` fix the subscription *kind* and leave its value to
-/// the mount site, so the definition's source starts as `Unnamed<Kind>`. It deliberately
-/// implements no [`SubscriptionSource`]: mounting a definition that was never named is a compile
+/// the mount site, so the definition's source starts as `Unnamed<Kind>`. It implements no
+/// [`SubscriptionSource`]: mounting a definition that was never named is a compile
 /// error, not a startup one. [`name`](crate::runtime::SubscriberSettings::name) replaces it with
 /// the kind itself, built through [`FromName`].
 ///
