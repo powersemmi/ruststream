@@ -13,7 +13,7 @@ A template is a directory rendered by `cargo generate`:
 ```
 templates/<name>/
 ├── cargo-generate.toml   # manifest: description, any declared placeholders
-├── Cargo.toml            # name = "{{project-name}}"; pins ruststream + the broker crate
+├── Cargo.toml.liquid     # name = "{{project-name}}"; pins ruststream + the broker crate
 └── src/
     ├── main.rs           # the #[ruststream::app] builder
     ├── orders.rs         # #[subscriber] handlers
@@ -22,12 +22,18 @@ templates/<name>/
 
 - Placeholders use cargo-generate's Liquid syntax; `{{project-name}}` (the `--name` value) is
   built in, so a minimal template declares none.
-- `Cargo.toml` pins `ruststream` to the supported minor and the broker crate to its own version.
+- The manifest is named `Cargo.toml.liquid`, and cargo-generate drops the `.liquid` suffix once it
+  has rendered the file. The suffix is not cosmetic: cargo's git-source package discovery parses
+  every `Cargo.toml` in a repository regardless of `exclude`, and a placeholder package name makes
+  it reject the manifest, so anyone depending on the crate by git source sees the error. Name any
+  other templated file cargo would parse the same way.
+- The manifest pins `ruststream` to the supported minor and the broker crate to its own version.
 - One template per broker transport or topology (for example `nats` vs `nats-js`, or
   `redis-stream` / `redis-pubsub` / `redis-list`), mirroring the one-kind-per-template model.
 
 The template sources carry `{{...}}` placeholders, so they are not valid Rust/TOML until rendered
-and must stay out of the crate's cargo workspace (`exclude = ["templates"]`).
+and must stay out of the crate's cargo workspace (`exclude = ["templates"]`), on top of the
+`.liquid` naming that hides the manifest from cargo entirely.
 
 ## CI-compiled (the contract)
 

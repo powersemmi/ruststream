@@ -2,7 +2,9 @@
 members = ["crates/ruststream-macros"]
 # `templates/` holds cargo-generate scaffolds (rendered by `cargo generate`, not built here): their
 # sources carry `{{project-name}}` placeholders that are not valid Rust/TOML until rendered, so they
-# must stay out of the workspace.
+# must stay out of the workspace. `exclude` alone is not enough: cargo's git-source package
+# discovery ignores it and parses every `Cargo.toml` in the repository, which is why the scaffold
+# manifests are named `Cargo.toml.liquid` (cargo-generate drops the suffix when it renders them).
 exclude = ["templates"]
 
 [workspace.package]

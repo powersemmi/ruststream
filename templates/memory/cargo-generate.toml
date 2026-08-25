@@ -4,5 +4,8 @@
 #   cargo generate --git https://github.com/powersemmi/ruststream templates/memory --name my-service
 #
 # `{{project-name}}` (the --name value) is a cargo-generate built-in; no placeholders need declaring.
+#
+# The manifest is `Cargo.toml.liquid`: cargo-generate drops the suffix after rendering, and cargo
+# never parses a placeholder package name when it walks this repository as a git source.
 [template]
 description = "An in-memory RustStream starter service (no external broker)"
