@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
@@ -23,17 +23,7 @@ use ruststream::runtime::{
     typed,
 };
 use ruststream::{Headers, Name, nonzero, subscriber};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Barrier;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 static CRUNCHED: AtomicU32 = AtomicU32::new(0);
 static GATE: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(4));

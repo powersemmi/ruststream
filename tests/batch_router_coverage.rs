@@ -22,10 +22,7 @@ use ruststream::runtime::{
 use ruststream::{IncomingMessage, Name, PairError, PublishPolicy, SubscriptionSource, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
+use common::Order;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Receipt {

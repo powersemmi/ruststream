@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::wait_for;
+use common::{Order, order_bytes, wait_for};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -14,16 +14,6 @@ use ruststream::runtime::{
     AppInfo, HandlerResult, PublishExt, Router, RustStream, RustStreamError, TypedPublisher,
 };
 use ruststream::{Publisher, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 // Counters keyed per handler so the parallel tests do not interfere; each handler is used by one
 // test only.

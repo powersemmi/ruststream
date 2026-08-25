@@ -7,6 +7,8 @@
     feature = "testing"
 ))]
 
+mod common;
+
 use std::time::Duration;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
@@ -14,6 +16,8 @@ use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::testing::expect_published;
 use ruststream::{Broker, subscriber};
 use serde::{Deserialize, Serialize};
+
+use common::connected;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Event {
@@ -37,9 +41,7 @@ async fn expect_payload(observer: &ConnectedMemoryBroker, name: &str, expected: 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
     let broker = MemoryBroker::new();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
         b.include(consume);
@@ -58,9 +60,7 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
     let broker = MemoryBroker::new().bindable();
-    let observer = Broker::connect(broker.broker().clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(broker.broker()).await;
     let egress = broker.bind(MemoryPublish);
 
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {

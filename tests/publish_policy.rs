@@ -7,6 +7,8 @@
     feature = "testing"
 ))]
 
+mod common;
+
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemoryRequest};
@@ -17,10 +19,7 @@ use ruststream::testing::expect_published;
 use ruststream::{Broker, OutgoingMessage, PublishPolicy, RequestReply, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
+use common::{Order, connected};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Receipt {
@@ -94,12 +93,10 @@ async fn a_typed_policy_stack_pairs_functorially() {
 
     // The stack itself is a policy: pairing it manually against a connected clone yields the
     // same wiring type over the live leaf (the functorial half of the seam)...
-    let connected = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let live = connected(&broker).await;
     let paired = TypedPublisher::new(MemoryPublish)
         .transform(Envelope)
-        .pair(&connected)
+        .pair(&live)
         .await
         .expect("memory pairing is infallible");
     let _type_check: TypedPublisher<MemoryPublisher, _, _> = paired;
@@ -118,7 +115,7 @@ async fn a_typed_policy_stack_pairs_functorially() {
         .await
         .expect("publish request");
 
-    let seen = expect_published(&connected, "policy.replies", 1, Duration::from_secs(2)).await;
+    let seen = expect_published(&live, "policy.replies", 1, Duration::from_secs(2)).await;
     assert_eq!(seen.len(), 1, "the reply must be published");
     assert_eq!(
         seen[0].headers().get("x-envelope"),

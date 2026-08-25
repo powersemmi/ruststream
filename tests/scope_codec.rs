@@ -12,17 +12,12 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Receipt {

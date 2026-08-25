@@ -7,6 +7,8 @@
 //! no republish loops.
 #![cfg(feature = "macros")]
 
+mod common;
+
 use std::convert::Infallible;
 use std::future::ready;
 use std::io;
@@ -20,18 +22,10 @@ use ruststream::runtime::{
     RustStreamError,
 };
 use ruststream::{Broker, ConnectedBroker, subscriber};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
+use common::{Order, order_bytes};
 
 // Notifies keyed per handler so the parallel tests do not interfere; each handler is used by one
 // test only. `notify_one` stores a permit, so the handler may fire before the test awaits.

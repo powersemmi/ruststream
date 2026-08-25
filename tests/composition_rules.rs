@@ -14,25 +14,16 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, connected, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, Buffered, Name, nonzero, subscriber};
+use ruststream::{Buffered, Name, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Receipt {
     id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
 }
 
 static TX_HANDLED: AtomicUsize = AtomicUsize::new(0);
@@ -52,11 +43,7 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     let publisher = broker.publisher();
     // The observing side needs the TestableBroker surface, which lives on the connected form;
     // the shared in-process bus makes this clone observe the app's broker.
-    let observer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let replies = TypedPublisher::new(MemoryPublish).transactional();
     let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {

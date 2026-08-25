@@ -7,7 +7,11 @@
     feature = "testing"
 ))]
 
+mod common;
+
 use std::time::Duration;
+
+use common::connected;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, DefaultSlot, HandlerResult, Out, PublishExt, RustStream};
@@ -48,9 +52,7 @@ async fn an_injected_publisher_reaches_the_handler_live() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
     // The observing side needs the TestableBroker surface, which lives on the connected form.
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(broker, |b| {
         b.include(forward).publisher(MemoryPublish);
@@ -111,9 +113,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let ingress_broker = MemoryBroker::new();
     let ingress = ingress_broker.publisher();
     let other = MemoryBroker::new().bindable();
-    let observer = Broker::connect(other.broker().clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(other.broker()).await;
 
     // --8<-- [start:cross_broker]
     let to_other = other.bind(MemoryPublish);
@@ -155,9 +155,7 @@ async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> Handle
 async fn a_batch_handler_composes_with_an_out_parameter() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
         b.include(forward_page).publisher(MemoryPublish);
@@ -207,9 +205,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 async fn a_publishing_handler_composes_with_an_out_parameter() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(broker, |b| {
         b.include(gate).out(DefaultSlot, MemoryPublish).mount();
@@ -258,9 +254,7 @@ async fn settle_page(
 async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
         b.include(settle_page)

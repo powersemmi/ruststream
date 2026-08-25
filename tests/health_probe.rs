@@ -5,23 +5,16 @@
 //! [`RunningApp`]: ruststream::runtime::RunningApp
 #![cfg(feature = "macros")]
 
+mod common;
+
 use std::time::Duration;
 
+use common::{Order, order_bytes};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     AppInfo, HandlerResult, HealthState, PublishExt, RustStream, RustStreamError,
 };
 use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 #[subscriber("health.ok")]
 async fn fine(_order: &Order) -> HandlerResult {

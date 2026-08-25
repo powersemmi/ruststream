@@ -11,17 +11,11 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, wait_for};
 use ruststream::codec::{CborCodec, Codec, MsgpackCodec};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, Router, RustStream};
 use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
 
 static CBOR_SEEN: AtomicUsize = AtomicUsize::new(0);
 static MSGPACK_SEEN: AtomicUsize = AtomicUsize::new(0);

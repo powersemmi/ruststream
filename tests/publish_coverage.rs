@@ -9,6 +9,8 @@
     feature = "logging"
 ))]
 
+mod common;
+
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,11 +23,12 @@ use ruststream::runtime::{AppInfo, PublishExt, RustStream, RustStreamError, Type
 use ruststream::{
     IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, Subscriber, subscriber,
 };
-use serde::{Deserialize, Serialize};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber as TracingSubscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
+
+use common::{Order, order_bytes};
 
 /// Every warning this binary emitted, one string of `field=value` pairs per event.
 static EVENTS: LazyLock<Arc<Mutex<Vec<String>>>> =
@@ -72,15 +75,6 @@ fn logged(needle: &str) -> bool {
         .unwrap()
         .iter()
         .any(|event| event.contains(needle))
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).expect("an order serializes")
 }
 
 /// The reply publisher's refusal.

@@ -14,6 +14,8 @@
     feature = "logging"
 ))]
 
+mod common;
+
 use std::future::{pending, ready};
 use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -30,8 +32,7 @@ use ruststream::runtime::{
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, ConnectedBroker, DescribeServer, Outgoing, Publisher, ServerSpec, SubscriptionSource,
-    subscriber,
+    Broker, ConnectedBroker, DescribeServer, Publisher, ServerSpec, SubscriptionSource, subscriber,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -39,18 +40,11 @@ use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
-#[derive(Debug, Outgoing, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
+use common::{Order, order_bytes};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Receipt {
     id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).expect("serializable")
 }
 
 // ---------------------------------------------------------------------------------------------

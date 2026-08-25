@@ -19,14 +19,10 @@ use ruststream::memory::MemoryBroker;
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, ConnectedBroker, Outgoing, subscriber};
-use serde::{Deserialize, Serialize};
+use ruststream::{ConnectedBroker, subscriber};
 use tokio::sync::{Mutex, Notify};
 
-#[derive(Debug, Outgoing, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
+use common::{Order, connected};
 
 #[subscriber("otel.orders")]
 async fn consume(_order: &Order) -> HandlerResult {
@@ -344,11 +340,7 @@ async fn a_failed_publish_keeps_error_type_low_cardinality() {
     let publisher = broker.publisher();
     // An aliased connected clone: shutting it down kills the shared bus mid-flight, which is
     // the only way a memory publish fails.
-    let bus_killer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let bus_killer = connected(&broker).await;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(otel.publish_layer())
         .with_broker(broker, |b| {
@@ -424,11 +416,7 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
         .publish_layer(otel.publish_layer())

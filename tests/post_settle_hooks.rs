@@ -14,20 +14,11 @@ use std::{
     time::Duration,
 };
 
+use common::{Order, order_bytes};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 // Shared counters keyed by a static so the macro handler (a free fn) can reach them.
 #[derive(Clone, Default)]

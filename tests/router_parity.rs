@@ -11,7 +11,11 @@
     feature = "testing"
 ))]
 
+mod common;
+
 use std::time::Duration;
+
+use common::connected;
 
 use tokio::sync::Notify;
 
@@ -61,9 +65,7 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
 async fn a_router_mounts_a_single_out_slot() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let router = Router::<MemoryBroker>::new()
         .include(forward)
@@ -161,9 +163,7 @@ async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> Handle
 async fn a_router_mounts_a_batch_out_slot() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let router = Router::<MemoryBroker>::new()
         .include(forward_page)
@@ -260,9 +260,7 @@ async fn relay(event: &Event) -> Event {
 async fn a_router_defaults_the_reply_publisher_on_mount() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let router = Router::<MemoryBroker>::new().include(relay).mount();
     let app = RustStream::new(AppInfo::new("rp-reply", "0.1.0"))
@@ -358,9 +356,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 async fn a_router_composes_a_default_reply_with_out_slots() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let router = Router::<MemoryBroker>::new()
         .include(gate)
@@ -452,9 +448,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
 
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let router = Router::<MemoryBroker>::new()
         .include(settle_page)
@@ -484,9 +478,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
 async fn a_router_accepts_a_cross_broker_bind_token() {
     let egress_broker = MemoryBroker::new().bindable();
     let egress = egress_broker.bind(MemoryPublish);
-    let observer = Broker::connect(egress_broker.broker().clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(egress_broker.broker()).await;
 
     let ingress_broker = MemoryBroker::new();
     let ingress = ingress_broker.publisher();
@@ -528,9 +520,7 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let router = Router::<MemoryBroker>::new().include(bulk_relay).mount();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))

@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
@@ -25,17 +25,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 struct Receipt {
     id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
 }
 
 /// Publishes an order once to each ingress topic (the app is already started, so the

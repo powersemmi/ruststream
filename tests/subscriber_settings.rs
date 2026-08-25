@@ -11,23 +11,13 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
 use ruststream::runtime::{
     AppInfo, FailurePolicies, FailurePolicy, HandlerResult, PublishExt, Router, RustStream,
     SubscriberSettings,
 };
 use ruststream::{nonzero, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 static NAMED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 

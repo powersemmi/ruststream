@@ -15,21 +15,12 @@ use std::{
     time::Duration,
 };
 
-use common::wait_for;
+use common::{Order, connected, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, Router, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, Buffered, Name, nonzero, subscriber};
+use ruststream::{Buffered, Name, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Order {
-    id: u32,
-}
-
-fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).unwrap()
-}
 
 static BATCHES: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
 
@@ -272,11 +263,7 @@ async fn audit(orders: &[Order]) -> Vec<Confirmation> {
 async fn batch_replies_publish_transactionally() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let observer = broker
-        .clone()
-        .connect()
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let replies = TypedPublisher::new(MemoryPublish).transactional();
     let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(broker, |b| {

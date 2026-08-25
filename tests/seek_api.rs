@@ -7,6 +7,8 @@
     feature = "testing"
 ))]
 
+mod common;
+
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -16,8 +18,10 @@ use tokio::sync::Notify;
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, Seek};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, Publisher, Seeker, subscriber};
+use ruststream::{Publisher, Seeker, subscriber};
 use serde::{Deserialize, Serialize};
+
+use common::connected;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Event {
@@ -396,9 +400,7 @@ async fn ledger(
 async fn a_batch_publishing_handler_composes_with_a_seek_parameter() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    let observer = Broker::connect(broker.clone())
-        .await
-        .expect("memory connect is infallible");
+    let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
         b.include(ledger);
