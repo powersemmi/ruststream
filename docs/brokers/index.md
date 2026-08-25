@@ -1,15 +1,16 @@
 # Brokers
 
 Handlers, routers, codecs, and middleware are broker-agnostic, so moving a service between brokers
-is a one-line change at `with_broker`. The framework ships an in-memory broker for development and
-tests; production brokers are separate crates you add as a dependency.
+is a one-line change at `with_broker`. The framework ships a full in-memory broker for queues that
+stay inside a single application; brokers backed by an external service are separate crates you add
+as a dependency.
 
 Each broker crate has its own documentation site, linked in the Docs column and from the
 **Brokers** menu.
 
 | Broker | Crate | Transport | Docs |
 |---|---|---|---|
-| [Memory](memory.md) | `ruststream` (feature `memory`) | in-process, for development and tests | this site |
+| [Memory](memory.md) | `ruststream` (feature `memory`) | in-process queue, no external service | this site |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS and JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, cluster, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (queues, exchanges, publisher confirms, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |

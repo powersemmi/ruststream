@@ -54,9 +54,10 @@ ruststream = { version = "0.7", default-features = false }
 
 ## 具体的 Broker
 
-`memory` Broker 用于本地开发和测试。生产环境下依赖某个 Broker crate，它会从 `ruststream` 中重新导出
-自己需要的东西。每个 Broker 独立做版本管理和发布，因此确切的依赖写法连同它的 `Config` 和各项能力，都
-写在它自己的文档里，其中也包括当前版本和用于处理器测试的 `testing` feature。
+`memory` Broker 内置在 crate 里，不需要外部服务。要连到进程之外的 Broker，就依赖某个 Broker crate，
+它会从 `ruststream` 中重新导出自己需要的东西。每个 Broker 独立做版本管理和发布，因此确切的依赖写法连
+同它的 `Config` 和各项能力，都写在它自己的文档里，其中也包括当前版本和用于处理器测试的 `testing`
+feature。
 
 可用的 Broker 列在 [Broker](../brokers/index.md) 一节，从那里的链接可以进到每个 Broker 的文档查看安装
 方式。想自己写一个，参见 [Broker 作者](../broker-authors/index.md)。

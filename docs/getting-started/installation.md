@@ -57,10 +57,11 @@ generate` against a template, covered in the [quick start](quickstart.md).
 
 ## Concrete brokers
 
-The `memory` broker is for local development and tests. For production, depend on a broker crate,
-which re-exports what it needs from `ruststream`. Each broker is versioned and released
-independently, so its own documentation carries the exact dependency line (including the current
-version and the `testing` feature for handler tests) alongside its `Config` and capabilities.
+The `memory` broker is built in and needs no external service. To reach a broker outside the
+process, depend on a broker crate, which re-exports what it needs from `ruststream`. Each broker is
+versioned and released independently, so its own documentation carries the exact dependency line
+(including the current version and the `testing` feature for handler tests) alongside its `Config`
+and capabilities.
 
 The available brokers are listed under [Brokers](../brokers/index.md); follow the link there to each
 broker's documentation for installation. To write one yourself, see

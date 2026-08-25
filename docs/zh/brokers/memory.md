@@ -1,8 +1,8 @@
 # 内存 Broker
 
-`memory` feature 提供了 `MemoryBroker`，一个进程内的 Broker。它不需要任何外部服务，很适合示例、单元
-测试和原型；默认的 `cargo generate` 模板（`templates/memory`）用的就是它，所以一个新建的项目零依赖
-即可运行。
+`memory` feature 提供了 `MemoryBroker`，一个完整的进程内 Broker：当队列只属于单个应用、而不属于网络
+时，选它即可，不需要任何外部服务。默认的 `cargo generate` 模板（`templates/memory`）用的就是它，所以
+一个新建的项目零依赖即可运行。
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
