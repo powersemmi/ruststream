@@ -5,7 +5,7 @@ RustStream 以单个 crate `ruststream` 发布，其接口全部由可加的 car
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -43,7 +43,7 @@ crate 附带的 JSON 编解码器（比如某个只需要 trait 接口和运行�
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", default-features = false }
+ruststream = { version = "0.7", default-features = false }
 ```
 
 ## CLI

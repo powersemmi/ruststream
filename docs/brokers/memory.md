@@ -5,7 +5,7 @@ examples, unit tests, and prototypes need no external service at all. The defaul
 template (`templates/memory`) uses it, and a fresh project runs with zero dependencies.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 ```
 
 <!-- inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) -->

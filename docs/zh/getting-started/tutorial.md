@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ruststream = { version = "0.6", features = ["macros", "memory", "json", "asyncapi"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi"] }
 serde = { version = "1", features = ["derive"] }
 ```
 

@@ -1,17 +1,21 @@
 name: Deploy docs
 
 on:
-  push:
-    branches: [main]
-    # Deliberately narrower than docs.yml: examples / snippet sources / Cargo.toml feed the
-    # rendered site but must not trigger a deploy on their own, or a code-only merge after a
-    # version bump would publish stale docs under the new version. A snippet-only change is
-    # deployed by the next docs change or manually via workflow_dispatch.
-    paths:
-      - docs/**
-      - properdocs.yml
-      - overrides/**
+  # The published site tracks releases, not main. A docs change merged today describes the
+  # crate that will ship, not the one a reader has installed, so publishing it immediately puts
+  # instructions for unreleased API in front of everyone on the current version. Deploying from
+  # the release keeps each documented version next to the code it documents; `docs.yml` still
+  # builds and lints every docs change on its PR, so nothing reaches main unchecked.
+  release:
+    types: [published]
+  # The escape hatch: a typo fix or a broken link worth publishing between releases, run
+  # against the tag it belongs to.
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or ref to deploy the site from (defaults to the current branch)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -27,6 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # On a release this is the tag; a manual run may name one, and falls back to the
+          # branch it was started from.
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v7
@@ -41,9 +48,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # The site is versioned by the crate's minor line, read from the manifest at the deployed
+      # ref. On a release that ref is the tag, so the two must agree: a tag deployed against a
+      # manifest still on the previous version would publish the new docs under the old number,
+      # and `latest` would point at a version nobody released.
       - name: Deploy with mike
+        env:
+          TAG: ${{ github.event_name == 'release' && github.ref_name || '' }}
         run: |
           version="$(sed -nE 's/^version = "([0-9]+)\.([0-9]+).*/\1.\2/p' Cargo.toml | head -1)"
+          if [ -n "$TAG" ] && [ "${TAG#v}" != "$(sed -nE 's/^version = "([^"]+)".*/\1/p' Cargo.toml | head -1)" ]; then
+            echo "Tag '${TAG}' does not match the manifest version; refusing to publish docs"
+            exit 1
+          fi
           mike deploy --update-aliases "$version" latest
           mike set-default latest
 

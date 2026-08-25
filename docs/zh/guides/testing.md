@@ -45,7 +45,7 @@ RustStream 服务在两个层面上测试：
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.6", features = ["testing", "memory", "macros", "json"] }
+ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json"] }
 ```
 
 ### 指定 Broker

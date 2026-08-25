@@ -6,7 +6,7 @@ members = ["crates/ruststream-macros"]
 exclude = ["templates"]
 
 [workspace.package]
-version = "0.6.3"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -311,7 +311,7 @@ tracing = "0.1"
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
-ruststream-macros = { version = "=0.6.3", path = "crates/ruststream-macros", optional = true }
+ruststream-macros = { version = "=0.7.0", path = "crates/ruststream-macros", optional = true }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.33 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.

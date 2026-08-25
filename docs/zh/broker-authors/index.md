@@ -5,7 +5,7 @@ trait 接口和运行时，既不会带上自带的 JSON 编解码器，也不�
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", default-features = false }
+ruststream = { version = "0.7", default-features = false }
 ```
 
 本页就是这份契约。实现必需的 trait，暴露你自己的 `Config`，为你的 Broker 支持的功能补上能力 trait，

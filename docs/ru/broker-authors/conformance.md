@@ -14,7 +14,7 @@
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.6", features = ["conformance"] }
+ruststream = { version = "0.7", features = ["conformance"] }
 ```
 
 Фича `conformance` подтягивает `testing`, поэтому один-единственный `TestableBroker`, который

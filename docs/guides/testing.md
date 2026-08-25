@@ -50,7 +50,7 @@ Enable the `testing` feature in your dev-dependencies:
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.6", features = ["testing", "memory", "macros", "json"] }
+ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json"] }
 ```
 
 ### Addressing brokers

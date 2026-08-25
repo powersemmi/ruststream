@@ -6,7 +6,7 @@
 преобразование публикации может прочитать доставку, породившую ответ.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "json", "otel"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] }
 ```
 
 У фичи две половины. Распространение переносит

@@ -5,7 +5,7 @@
 即可运行。
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 ```
 
 <!-- inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) -->

@@ -5,7 +5,7 @@ features. Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -45,7 +45,7 @@ Codec features are mutually compatible; enable as many as you need (see
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", default-features = false }
+ruststream = { version = "0.7", default-features = false }
 ```
 
 ## The CLI

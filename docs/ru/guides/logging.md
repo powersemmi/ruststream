@@ -16,7 +16,7 @@ RustStream шлёт структурированные события [`tracing`
 `run`, поэтому сгенерированный по шаблону сервис логирует сразу:
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "json", "logging"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "logging"] }
 ```
 
 ```bash

@@ -64,7 +64,7 @@ block, so the guarantee cannot regress.
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 schemars = "1"
 ```

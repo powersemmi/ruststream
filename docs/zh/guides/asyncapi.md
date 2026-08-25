@@ -6,7 +6,7 @@
 所以文档里每个处理器都会有一条。
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "asyncapi"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "asyncapi"] }
 ```
 
 ## 生成文档

@@ -4,7 +4,7 @@
 并以 Prometheus 的 exposition 格式暴露数据。
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "metrics"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 ```
 
 ## 接线

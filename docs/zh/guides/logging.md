@@ -14,7 +14,7 @@ feature 提供了一个：由 `RUST_LOG` 驱动的、带颜色的控制台订阅
 骨架生成的服务开箱即有日志：
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "memory", "json", "logging"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "logging"] }
 ```
 
 ```bash
