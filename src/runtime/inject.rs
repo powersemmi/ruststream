@@ -7,8 +7,7 @@
 //! minted off the subscription's own subscriber. Every such parameter implements
 //! [`FromStartup`], the definition carries them as one tuple ([`InjectDef::Injections`])
 //! resolved element-by-element against a matching extra tuple, and a single handler adapter
-//! serves every combination - fully monomorphized, nothing to check on the hot path. Adding a
-//! new injected parameter kind is one `FromStartup` impl, not a new definition form.
+//! serves every combination - fully monomorphized, nothing to check on the hot path.
 
 use std::fmt;
 use std::future::{Future, ready};

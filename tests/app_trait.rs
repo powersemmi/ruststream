@@ -20,8 +20,8 @@ struct Order {
 #[subscriber("orders")]
 async fn handle(_order: &Order) {}
 
-// The concrete return type would be `RustStream<Identity, (), PublishIdentity>` with a server and a
-// handler baked in; `impl App` hides it. Returning the trait is the whole point of the sugar.
+// The concrete return type would be `RustStream<Identity, (), PublishIdentity>` with a server and
+// a handler baked in; `impl App` hides it.
 fn build() -> impl App {
     RustStream::new(AppInfo::new("svc", "0.2.0").with_description("demo"))
         .server("mem", ServerSpec::new("mem://local", "memory"))

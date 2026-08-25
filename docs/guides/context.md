@@ -31,7 +31,7 @@ omits the `Context` parameter entirely and still mounts on a stateful app, but o
 explicitly to mount such a handler on a stateful app.
 
 Handlers borrow the state with `ctx.state()`, which returns `&S`, the typed state itself - no
-lookup, no `Option`, no downcast. The state is shared behind an `Arc` once the service runs, so
+lookup and no `Option` to unwrap. The state is shared behind an `Arc` once the service runs, so
 handlers get cheap shared references, not copies; interior mutability (an `AtomicU64`, a
 mutex-guarded map) is the tool when a shared value must change at runtime. For data scoped to one
 message rather than the whole service, use the [per-delivery context](#per-delivery-context)
@@ -51,8 +51,7 @@ running the body.
 
 To inject a piece of the state, derive `FromRef` on the state and take `State<T>` in the handler -
 no extractor impl by hand. `State<T>` resolves for any field type (`T: FromRef<S>`), including types
-from other crates (a broker publisher, a client pool) that a bare per-field impl could not cover
-under the orphan rule:
+from other crates - a broker publisher, a client pool:
 
 ```rust
 --8<-- "examples/from_context.rs:state"
@@ -99,11 +98,11 @@ second argument.
 ## Per-delivery context
 
 Beside the shared application state, the context carries the broker's typed per-delivery context,
-read by **compile-time key** with no hashing, boxing, or downcasting. A key is a zero-sized selector the
-broker exports; `ctx.context(KEY)` resolves it to a direct field read off the context, so a handler
-reads native delivery metadata - a stream id, an offset, a delivery handle - without the broker
-serializing it into the byte-only headers. A key implements `Field` only for the context types that
-carry its field, so an inapplicable key is a compile error rather than a runtime miss.
+read by **compile-time key** and free on the delivery path. A key is a selector the broker exports;
+`ctx.context(KEY)` reads the field straight off the context, so a handler reads native delivery
+metadata - a stream id, an offset, a delivery handle - without the broker serializing it into the
+byte-only headers. A key the subscription's broker does not carry is a compile error, not a
+runtime miss.
 
 ```rust
 --8<-- "examples/context_field.rs:field"
@@ -121,10 +120,9 @@ never leak into the next.
 ## Context fields as parameters
 
 A field can also arrive as a handler argument, the way `State<T>` injects a state component: the
-`Ctx<K>` extractor binds the value the key `K` reads. The key implements `ContextField` - a
-`Field`-style trait that additionally names the context type it reads from and yields an owned
-value - so the handler needs no `&mut Context` parameter at all: the `#[subscriber]` macro projects
-the subscription's context type from the first `Ctx` key in the signature.
+`Ctx<K>` extractor binds the value the key `K` reads. The handler needs no `&mut Context`
+parameter at all: the `#[subscriber]` macro projects the subscription's context type from the
+first `Ctx` key in the signature.
 
 ```rust
 --8<-- "examples/ctx_extractor.rs:key"
@@ -136,11 +134,10 @@ the subscription's context type from the first `Ctx` key in the signature.
 
 Three things to know:
 
-- Values are owned (`ContextField::Value` is `'static`): extractor values bind before the handler
-  body runs, so borrowing from the context is not an option. Keys yielding borrowed values (a name
-  as `&str`) stay readable through `ctx.context(KEY)` with a declared ctx parameter.
-- With a `&mut Context<'_, C>` parameter also present, every `Ctx` key must read that same `C`;
-  the compiler enforces it through the extractor bounds.
+- Values are owned: an extractor binds before the handler body runs, so it cannot borrow from the
+  context. Keys yielding borrowed values (a name as `&str`) stay readable through
+  `ctx.context(KEY)` with a declared ctx parameter.
+- With a `&mut Context<'_, C>` parameter also present, every `Ctx` key must read that same `C`.
 - The projection is syntactic: the macro recognizes the literal `Ctx<K>` shape (any path ending in
   `Ctx` with one type argument). A type alias hides it, and the context type falls back to `()`.
 
@@ -176,9 +173,8 @@ To publish from inside a handler (beyond the `publish(..)` reply form), do not p
 in the state: take it as a handler parameter with `Out` - the pattern
 `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body. The policy is
 attached where the handler is included, the concrete publisher type is inferred from it, and
-the runtime pairs it after the broker connects, so the handler never sees a "not connected"
-publisher and the state stays free of connection-bound values. The full pattern and its snippet
-live in [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
+the runtime pairs it after the broker connects. The full pattern and its snippet live in
+[Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ## Post-settle hooks
 
@@ -220,8 +216,7 @@ Because a batch has per-element outcomes, the outcome gate is ill-defined there:
 
 ## Context in middleware
 
-Every middleware form receives the same `&mut Context` the handler will see, which is what makes
-the enrichment pattern work:
+Every middleware form receives the same `&mut Context` the handler will see:
 
 - A static layer's `Handler::handle(&self, msg, ctx)` - as in the example above.
 - A dynamic `DynMiddleware::handle(&self, input, ctx, next)` - inspect or enrich, then

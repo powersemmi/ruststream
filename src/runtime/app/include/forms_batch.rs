@@ -2,12 +2,9 @@
 
 use serde::Serialize;
 
-// The typed default-reply commits need a default codec, so that import is gated the same way;
-// the raw default-reply commit publishes bare bytes and needs only `DefaultPublish`.
+// The typed default-reply commits build a `TypedPublisher`, so the codec import is gated.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-// The default-reply commits build a `TypedPublisher` over the broker's default policy, so those
-// imports are gated with the default codec they require.
 use crate::{BatchSubscriber, Broker, Connected, PublishPolicy, Subscriber, SubscriptionSource};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::{DefaultPublish, Publisher};

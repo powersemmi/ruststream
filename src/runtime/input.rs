@@ -5,8 +5,7 @@
 //! no codec, no copy. The adapter owns the decode product for the duration of the call
 //! ([`InputKind::Owned`], held on its stack) and the handler borrows a reference to
 //! [`InputKind::Target`], so no allocation, copying, or boxing appears on the delivery
-//! path: the raw form borrows straight out of the broker's buffer on every broker. Adding an
-//! input kind is one pair of impls, not a new definition form.
+//! path: the raw form borrows straight out of the broker's buffer on every broker.
 
 use std::marker::PhantomData;
 

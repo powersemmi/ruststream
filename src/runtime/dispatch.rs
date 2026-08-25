@@ -1,6 +1,6 @@
 //! The per-subscriber dispatch loop: pulls messages off one subscriber and invokes its handler
-//! until shutdown is signalled or the stream ends. Lifted out of the former `Router` so
-//! [`RustStream`](super::RustStream) can own task spawning directly.
+//! until shutdown is signalled or the stream ends. [`RustStream`](super::RustStream) owns the
+//! task spawning.
 
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -69,7 +69,7 @@ fn current_retry_count(headers: &Headers) -> u64 {
 ///   [`partition_key`](crate::IncomingMessage::partition_key), and each lane is sequential, so
 ///   per-key ordering is preserved. Messages without a key rotate over the lanes.
 ///
-/// The default is sequential dispatch (`workers(1)`), the pre-pool behaviour.
+/// The default is sequential dispatch (`workers(1)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Workers {
     count: usize,
@@ -262,9 +262,8 @@ async fn drain_hooks(hooks: TaskTracker) {
 /// Sequential policies delegate to [`spawn_dispatch`]. On shutdown the stream stops being
 /// polled and in-flight workers drain; if the app's `shutdown_timeout` aborts this task, the
 /// owned worker tasks abort with it.
-// The dispatch loop is wired from many independent runtime parts (subscriber, handler, shutdown,
-// identity, state, publish context, failure policy, worker policy); bundling them only to satisfy
-// the arg-count lint would hide what each spawn site passes.
+// The parts are independent and each spawn site passes its own; bundling them into a struct
+// would hide that.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     subscriber: S,
@@ -753,7 +752,7 @@ async fn settle_outcome<M: IncomingMessage>(
 /// [`IncomingMessage::nack_after`]. Otherwise it captures the message, drops the original, and
 /// schedules a deferred re-publish of the captured copy to its source subject with the
 /// [`RETRY_COUNT_HEADER`] incremented. With no `retry_publisher` configured on the scope, it falls
-/// back to an immediate requeue (the legacy behavior) and warns.
+/// back to an immediate requeue and warns.
 ///
 /// # Cancel safety
 ///

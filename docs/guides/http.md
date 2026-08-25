@@ -2,8 +2,8 @@
 
 A service that serves an HTTP API and consumes messages runs both sides in one process, on one
 tokio runtime: your HTTP framework (axum, actix-web, or any other tokio-based stack) beside the
-RustStream app. RustStream is not an HTTP framework and does not try to become one. The wiring
-below is axum, and the pattern that keeps the two sides consistent is a transactional outbox.
+RustStream app. RustStream is not an HTTP framework. The wiring below is axum, and the pattern
+that keeps the two sides consistent is a transactional outbox.
 
 The full compiled example lives at
 [`examples/http_outbox.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/http_outbox.rs):
@@ -32,9 +32,8 @@ handlers bounded by the [shutdown timeout](lifespan.md#shutdown-timeout), then b
 
 The publisher arrives through a bound token. `.bindable()` wraps the broker and `bind(..)` mints
 the token before the app consumes it; `running.publisher(token)` pairs it once `start()` has
-connected the broker. The sibling task therefore gets a live publisher, never a "not connected"
-state, and the live form is a plain value - safe to clone into whatever state the HTTP framework
-carries.
+connected the broker. The paired publisher is a plain value, safe to clone into whatever state
+the HTTP framework carries.
 
 ## A healthz endpoint
 

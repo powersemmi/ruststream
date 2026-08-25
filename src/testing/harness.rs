@@ -709,15 +709,14 @@ impl fmt::Debug for BrokerHandle<'_> {
 ///
 /// Produced by the `message(..)` and `raw(..)` entry points of [`TestApp`] and [`BrokerHandle`],
 /// so a test injects through the same positions - destination, typed headers, codec - that the
-/// service itself publishes through. You never name this type. Every other entry point of the
-/// handle ends here too, so one place decides what an injection does.
+/// service itself publishes through. You never name this type.
 pub struct InjectSink<'a>(Target<'a>);
 
 /// What an [`InjectSink`] sends into: a resolved broker, or none because the unscoped entry
 /// point had more than one to choose from.
 ///
 /// The unscoped `message(..)` / `raw(..)` exist whatever the app registered, so the ambiguity
-/// rides here and surfaces from the publish, keeping the error the caller already handles.
+/// rides here and surfaces from the publish.
 enum Target<'a> {
     Broker {
         coordinator: &'a Coordinator,
@@ -875,13 +874,9 @@ impl BrokerHandle<'_> {
     /// Publishes `value` (encoded with [`DefaultCodec`](crate::codec::DefaultCodec)) to `name`, then
     /// drives the resulting reaction to a standstill before returning.
     ///
-    /// The builder did not replace this one, which is why it outlived the byte-publishing method
-    /// beside it. [`message`](Self::message) reads the destination form off the value's type
-    /// through [`OutgoingDestination`], which `#[derive(Outgoing)]` implements - so a `Serialize`
-    /// type the test does not own is out of reach: the orphan rule forbids both the derive and a
-    /// hand-written impl on a foreign type. Derive `Outgoing` on the injected type and inject it
-    /// through the builder wherever that is possible; this method stays for the case where it is
-    /// not.
+    /// Use it for a `Serialize` type the test does not own: [`message`](Self::message) reads the
+    /// destination form off the value's type through [`OutgoingDestination`], which the orphan
+    /// rule keeps a foreign type from declaring. Inject an owned type through the builder.
     ///
     /// # Errors
     ///
@@ -906,7 +901,7 @@ impl BrokerHandle<'_> {
     /// [`Headers::insert_typed`](crate::Headers::insert_typed)) - the input a
     /// [`FromHeaders`](crate::runtime::FromHeaders) handler parses.
     ///
-    /// Kept for the reason spelled out on [`publish`](Self::publish): the builder's
+    /// Same reach as [`publish`](Self::publish): the builder's
     /// `message(&value).with_headers(&meta)` needs the value's type to declare a destination.
     ///
     /// # Errors

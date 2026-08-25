@@ -21,7 +21,7 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] 
 ## Связывание
 
 Создайте `OpenTelemetry`, добавьте его слой потребления на уровне приложения и вшейте его
-распространение в публикатор ответов:
+распространение в издателя ответов:
 
 ```rust
 --8<-- "tests/opentelemetry.rs:wiring"
@@ -33,7 +33,7 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] 
   через [роутер](routing.md).
 - `propagation()` - это статический [слой публикации](publishing.md): он копирует рабочий
   `traceparent` (и `tracestate`) в каждый ответ, поэтому сервис ниже по потоку видит спан
-  потребителя как родителя ответа. Для пакетного публикатора переиспользуйте его через
+  потребителя как родителя ответа. Для пакетного издателя переиспользуйте его через
   `for_batch(otel.propagation())`.
 
 ## Что именно распространяется
@@ -85,7 +85,7 @@ OpenTelemetry **глобально** для процесса и перекиды
 | `ruststream.messages.processed` | counter, атрибут `outcome` | исходы завершения доставки: `ack`, `nack_requeue`, `nack_drop`, `retry_after` |
 | `ruststream.messages.in_flight` | up-down counter | доставки внутри обработчиков (насыщение пула относительно `workers(n)`) |
 | `ruststream.message.queue_time` | histogram | задержка от публикации до старта обработчика, по проставленному заголовку с временем публикации |
-| `ruststream.messages.decode_failures` | counter | доставки, чью полезную нагрузку кодек отверг |
+| `ruststream.messages.decode_failures` | counter | доставки с полезной нагрузкой, отвергнутой кодеком |
 | `ruststream.messages.panics` | counter | вызовы обработчика, завершившиеся паникой |
 | `messaging.client.sent.messages` | counter, при ошибке с `error.type` | публикации |
 | `messaging.client.operation.duration` | histogram | операция публикации |
@@ -101,7 +101,7 @@ OpenTelemetry **глобально** для процесса и перекиды
 
 Раз `init()` ставит глобальные провайдеры, бизнес-метрикам не нужна отдельная обвязка экспорта:
 соберите инструменты один раз на старте в один объект-хранилище, раздайте его через типизированное
-состояние (внедряется как `State<..>` через `FromRef`) - и всё, что в нём лежит, поедет по тому же
+состояние (внедряется как `State<..>` через `FromRef`) - и всё, что в нём лежит, пройдёт по тому же
 конвейеру OTLP:
 
 ```rust

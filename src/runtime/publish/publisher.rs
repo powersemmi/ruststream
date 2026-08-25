@@ -4,15 +4,14 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::codec::Codec;
-use crate::runtime::lifecycle::BoxError;
-// `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
-// way, so an ungated import would break `--no-default-features`.
 use super::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, HeadersUnset,
     MessageBody, Outgoing, Publish, PublishContext, PublishPipeline, PublishTransform,
     PublishTransformIdentity, PublishTransformStack, RawBody, message_of, raw_of,
 };
+use crate::codec::Codec;
+use crate::runtime::lifecycle::BoxError;
+// `DefaultCodec` only exists when a codec feature is on.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::{CallerName, OutgoingDestination};
@@ -251,9 +250,8 @@ impl<P, C, PL, BL> fmt::Debug for TypedPublisher<P, C, PL, BL> {
     }
 }
 
-// Pairing is functorial over the combinator stack: a typed publisher whose leaf is a policy is
-// itself a policy, and pairing swaps the leaf for its live form while the codec and transform
-// stacks travel unchanged. Fully monomorphized; no erasure anywhere on this path.
+// A typed publisher whose leaf is a policy is itself a policy: pairing swaps the leaf for its
+// live form while the codec and transform stacks travel unchanged.
 impl<CB, P, C, PL, BL> PublishPolicy<CB> for TypedPublisher<P, C, PL, BL>
 where
     CB: ConnectedBroker,

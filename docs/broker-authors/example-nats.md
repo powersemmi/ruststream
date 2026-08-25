@@ -62,8 +62,7 @@ pub enum NatsError {
 
 ## The broker ladder
 
-`new` is synchronous and records only the address - that is what lets a NATS service compose with
-the synchronous `#[ruststream::app]` builder. The consuming `connect` dials and returns the
+`new` is synchronous and records only the address. The consuming `connect` dials and returns the
 connected form, which holds the live client directly. One shared cell remains: a publisher can be
 built while the application is being assembled, before `connect` runs, and it reads the client
 through the cell `connect` fills. The cell exists for the publishers (one publisher type serves
@@ -159,17 +158,17 @@ impl ConnectedBroker for ConnectedNatsBroker {
 }
 ```
 
-Consuming `self` means there is no second `connect` and no publish-after-shutdown to mishandle on
-the owner path; a publisher created earlier keeps its cell, and a publish after the drain surfaces
-the client's own error (the aliased-handle contract the lifecycle check verifies). `shutdown` does
-all fallible teardown and never panics, as the contract requires.
+Consuming `self` rules out a second `connect` and a publish after shutdown on the owner path. A
+publisher created earlier keeps its cell, and a publish after the drain surfaces the client's own
+error - the aliased-handle contract the lifecycle check verifies. `shutdown` does all fallible
+teardown and never panics.
 
 ## One subscription for Core and JetStream
 
-Core NATS is fire-and-forget; JetStream is persisted and acknowledged. Rather than two subscriber
-types, model both behind a single `SubscribeOptions` descriptor and a single `NatsSubscriber`.
-`SubscribeOptions` is the `SubscriptionSource`; the broker dispatches on whether `jetstream(..)` was
-called. Each builder method maps onto one keyword of the `#[subscriber(..)]` decorator.
+Core NATS is fire-and-forget; JetStream is persisted and acknowledged. Both sit behind a single
+`SubscribeOptions` descriptor and a single `NatsSubscriber`. `SubscribeOptions` is the
+`SubscriptionSource`; the broker dispatches on whether `jetstream(..)` was called. Each builder
+method maps onto one keyword of the `#[subscriber(..)]` decorator.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -423,9 +422,9 @@ impl IncomingMessage for NatsMessage {
 }
 ```
 
-Returning `AckError::Unsupported` (rather than a real error) for core deliveries is what lets the
-conformance lifecycle check pass for Core NATS. Each message converts its headers once at
-construction; the two converters are the one spot that tracks the `async-nats` version:
+The conformance lifecycle check accepts `AckError::Unsupported`, so Core NATS passes it. Each
+message converts its headers once at construction; the two converters are the one spot that
+tracks the `async-nats` version:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust

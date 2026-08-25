@@ -1,10 +1,9 @@
 //! Colorful, environment-driven console logging built on [`tracing_subscriber`].
 //!
 //! RustStream emits structured [`tracing`] events throughout dispatch, publishing and the service
-//! lifecycle, but - like any well-behaved library - installs no subscriber on its own. That choice
-//! belongs to the application. This module is the batteries-included answer: one call wires up a
-//! human-friendly, colored formatter whose verbosity is read from the `RUST_LOG` environment
-//! variable, so `RUST_LOG=debug cargo run -- run` just works.
+//! lifecycle, and installs no subscriber on its own. One call here wires up a human-friendly,
+//! colored formatter whose verbosity is read from the `RUST_LOG` environment variable, so
+//! `RUST_LOG=debug cargo run -- run` just works.
 //!
 //! Output goes to **stderr** (keeping stdout clean for machine-readable command output such as
 //! `asyncapi gen`), and ANSI colors are enabled automatically when stderr is a terminal.
@@ -180,8 +179,7 @@ pub fn init() -> Result<(), LoggingInitError> {
 }
 
 /// A compact, colorful event formatter: dim timestamp, a bold colored level badge, a dim cyan
-/// target, and the message (tinted for warnings and errors so they stand out). Hand-rolled ANSI
-/// keeps the dependency surface to `tracing-subscriber` alone.
+/// target, and the message (tinted for warnings and errors so they stand out).
 #[derive(Debug, Clone, Copy)]
 struct ColorFormatter {
     ansi: bool,

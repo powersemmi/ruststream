@@ -110,8 +110,7 @@ where
         } = self;
         // The apply-and-push tail: the handler only exists once the injections resolve, and
         // `BlanketLayer::apply` returns an unnameable `impl Handler<..>`, so the wrapped handler
-        // cannot be returned out of a factory closure; apply and spawn stay in one block. The
-        // scope's tail names its `Layers::Handler` instead and uses the factory helper.
+        // cannot be returned out of a factory closure; apply and spawn stay in one block.
         let global = global.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         sink.push_raw(
@@ -170,8 +169,7 @@ where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
-        // Per-message layers cannot wrap a whole-batch handler, so no layer applies here and
-        // this whole mount is shared with the scope rather than split per surface.
+        // Per-message layers cannot wrap a whole-batch handler, so no layer applies here.
         let Self {
             source,
             def,

@@ -82,10 +82,9 @@ cargo run -- run
 --8<-- "examples/tutorial/routes.rs:routes"
 ```
 
-路由器本身不持有 Broker，因此注册无法像作用域的构建器那样在丢弃时自动提交，它要以一个显式的终结调用
-收尾。`.publisher(..)` 指定回复的接线方式，发布策略仍然是纯粹的声明，所以路由器依旧不需要 Broker；
-`.mount()` 则采用 Broker 自带的默认发布策略，也就是把第 4 步自动拿到的那一份显式写出来。路由器的
-其余接口参见[路由](../guides/routing.md)。
+路由器上的注册要以一个显式的终结调用收尾。`.publisher(..)` 指定回复的接线方式 - 发布策略是纯粹的
+声明，所以路由器依旧不需要 Broker - 而 `.mount()` 则采用 Broker 自带的默认发布策略，也就是把第 4 步
+自动拿到的那一份显式写出来。路由器的其余接口参见[路由](../guides/routing.md)。
 
 ```rust title="src/main.rs"
 --8<-- "examples/tutorial/main.rs:main"

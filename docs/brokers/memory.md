@@ -1,8 +1,9 @@
 # Memory
 
-`MemoryBroker`, behind the `memory` feature, keeps the whole broker inside your process, so
-examples, unit tests, and prototypes need no external service at all. The default `cargo generate`
-template (`templates/memory`) uses it, and a fresh project runs with zero dependencies.
+`MemoryBroker`, behind the `memory` feature, is a complete broker that runs entirely inside your
+process: the one to reach for when a queue belongs to a single application rather than to a
+network, with no external service involved. The default `cargo generate` template
+(`templates/memory`) uses it, and a fresh project runs with zero dependencies.
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
@@ -30,9 +31,8 @@ let broker = MemoryBroker::new();
 It is a real broker rather than a test double: the runtime drives it through the same dispatch path
 it drives a production broker through, so a handler, its middleware and its decoding behave here
 exactly as they will in production. What it does not do is emulate any particular broker's delivery
-semantics - durable cursors, redelivery timers, partitions, dead-letter routing. Both halves matter:
-the first is why a passing test means something, the second is why it does not mean the same code
-passes against Kafka.
+semantics - durable cursors, redelivery timers, partitions, dead-letter routing - so a test passing
+here does not say the same code passes against Kafka.
 
 ## Capabilities
 
@@ -64,8 +64,7 @@ a simulation of another broker's:
   through a `Seek` parameter (see [Seeking](../guides/subscribers.md#seeking)).
 - **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
   `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
-  reporting how many subscriber registrations the teardown dropped. The bus itself is a single
-  enum (so the lifecycle and the registrations cannot disagree): aliased handles used after the
+  reporting how many subscriber registrations the teardown dropped. Aliased handles used after the
   shutdown - publishers, transaction commits, requests - error with `MemoryError::ShutDown` /
   `RequestError::ShutDown` instead of silently succeeding.
 

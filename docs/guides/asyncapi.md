@@ -51,8 +51,7 @@ message type an `Out` slot declares. See [typed headers](headers.md).
 
 A message type whose declared name is a template (`#[outgoing(name = "orders.{tenant}.v1")]`)
 is declared on that templated address, with the channel's **parameters** block filled from its
-placeholders, so the declaration and the call site cannot drift apart. A type that declares no
-destination contributes no channel, which is what it says about itself. See
+placeholders. A type that declares no destination contributes no channel. See
 [publishing](publishing.md#declaring-where-a-message-goes).
 
 ## Message names and descriptions
@@ -110,9 +109,8 @@ Declare how clients authenticate with `ServerSpec::with_security`; each scheme l
 `SecurityScheme::custom(json)` as the escape hatch for anything they do not model. Without
 `with_security` the document carries no security sections at all.
 
-Security is the service author's statement, not the broker's: the same broker is
-deployed publicly and internally with different authentication, so `DescribeServer` never reports
-it. To secure a server a broker registered automatically (`with_broker_labeled`), declare it
+`DescribeServer` never reports security; it is the service author's statement, not the broker's.
+To secure a server a broker registered automatically (`with_broker_labeled`), declare it
 explicitly instead: `.server(label, broker.describe_server().with_security(..))` with the same
 label.
 

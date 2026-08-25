@@ -39,10 +39,10 @@ The first layer added is the outermost. Both stacks are static: zero runtime dis
 the type grows as you call `layer`.
 
 !!! note "Reaching router handlers requires a `BlanketLayer`"
-    A router hides its handlers' concrete types, so a layer that wraps them (the app stack at
-    `include_router`, or `Router::layer`) must implement `BlanketLayer` - one generic method that
-    wraps any handler. The bundled layers implement it; for a custom layer it is a few lines next
-    to its `Layer` impl (see `LogLayer` in the examples above).
+    A layer that wraps router handlers (the app stack at `include_router`, or `Router::layer`)
+    must implement `BlanketLayer` - one generic method that wraps any handler. The bundled layers
+    implement it; for a custom layer it is a few lines next to its `Layer` impl (see `LogLayer` in
+    the examples above).
 
 ## Writing a layer
 
@@ -72,28 +72,18 @@ let handler = base_handler.with(LogLayer);
 
 This is the right tool when only some handlers need a layer. It composes with the global stack.
 
-## Why middleware is static by default
+## What a layer costs
 
-The layers above are resolved at compile time: `with`/`layer` build a concrete, nested handler type
-(`Logged<Typed<..>>`), and `Handler::handle` returns an `impl Future` whose type is known. The
-compiler monomorphizes the whole chain into one state machine and inlines across the layer
-boundaries, so a static layer adds no dispatch cost and no allocation - it is a zero-cost
-abstraction.
-
-A dynamic (`dyn`) chain gives that up. `Handler::handle` is an `async fn in trait`, so its future is
-an anonymous `impl Future` - and a trait with an `impl Trait` return is not object-safe. To store
-middleware behind `dyn`, the future has to be boxed (`Pin<Box<dyn Future>>`): one heap allocation per
-layer per message, and the call can no longer be inlined or specialized across the `dyn` boundary.
-`dyn` + `async` does not optimize, so that cost would land on every handler while the chain is
-almost always known at compile time - hence the static default.
+Static layers are free on the hot path. Dynamic layers pay per message, so reach for them when the
+chain is assembled at runtime.
 
 ## Dynamic middleware
 
 When the chain is decided at runtime (layers toggled by config, or held behind `dyn`), opt
 into the dynamic stack for exactly those handlers: `DynStack`, `DynMiddleware`, and `Next`. A
 `DynMiddleware` has an around/next signature - it inspects the input and context, then either calls
-`next.run(..)` to continue or short-circuits with its own result. Because it is object-safe, it
-returns a boxed future explicitly:
+`next.run(..)` to continue or short-circuits with its own result. It spells its return type out
+explicitly:
 
 ```rust
 use std::future::Future;
@@ -106,8 +96,7 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 
 Only the *list* is dynamic. Build it at runtime, freeze it into a `DynStack`, and the result is an
 ordinary static `Layer` - compose it into the application stack with `layer`, exactly like a
-hand-written one. The rest of the dispatch chain stays static; the boxing cost is paid only inside
-the stack:
+hand-written one. The rest of the dispatch chain stays static; only the stack itself pays:
 
 ```rust
 use std::sync::Arc;
@@ -126,9 +115,8 @@ decoding handler, so it is built over the broker's raw message type (`DynStack<M
 above) and runs before decoding - a middleware generic over `I`, like `Audit`, works at either
 level. To run on the decoded value instead, build a `DynStack<Order>` and apply it to the inner
 typed handler with `with` (the manual registration form). Middleware in the same `DynStack` runs
-in list order, outermost first. Each dynamic layer costs one boxed future per call, against zero
-for the static layers, so keep the static chain as the default and reach for `DynStack` only where
-runtime composition earns it.
+in list order, outermost first. Keep the static chain as the default and reach for `DynStack` only
+where runtime composition earns it.
 
 ## Publish-side middleware { #publish-side-middleware }
 

@@ -1,10 +1,9 @@
 # 模板契约
 
 一个 crate 如何提供与自身 API 保持同步的
-[`cargo generate`](https://github.com/cargo-generate/cargo-generate) 骨架。这份契约是
-[conformance 校验套件](conformance.md)在骨架生成这一侧的对应物：模板是由 CI 编译的产物，属于它所接线
-的 Broker 所在的 crate，而不是核心 CLI 里手工维护的一堆字符串。核心只提供内存版的
-`templates/memory`，每个 Broker crate 拥有自己各种传输方式的模板。
+[`cargo generate`](https://github.com/cargo-generate/cargo-generate) 骨架。模板是由 CI 编译的产物，
+属于它所接线的 Broker 所在的 crate。核心只提供内存版的 `templates/memory`；每个 Broker crate 拥有
+自己各种传输方式的模板。
 
 ## 形态
 
@@ -49,13 +48,11 @@ workspace 之外（`exclude = ["templates"]`）；在此之上，`.liquid` 这�
 
 feature 分支只能做加法，不得出现 `{% else %}` 或 `{% if not flag %}` 这类否定分支。这样一来，不开任何
 flag 的渲染结果就是全开渲染结果的严格子集，因此每个模板只需一次全 feature 的 `cargo check` 就能抓住所有
-API 漂移导致的破坏，没有任何东西能藏在关闭的分支里。关闭 flag 的各种组合属于静态写法层面的问题（悬空的
-`use`、没填上的槽位），在本地检查即可，不必进 CI。
+API 漂移导致的破坏。关闭 flag 的各种组合属于静态写法层面的问题（悬空的 `use`、没填上的槽位），在本地
+检查即可，不必进 CI。
 
 ## 归属
 
 - 核心（`ruststream`）只拥有 `templates/memory`（也就是它自带的进程内 Broker），这样默认的
   `cargo generate` 离线可用，且不引入任何 Broker 依赖。
 - 每个 Broker crate 拥有自己各种传输方式的模板，并在自己的 CI 里跑该防漂移任务。
-- 这样划分能让 Broker 专有的 API 不进入核心 CLI：核心对某个 Broker 的描述符一无所知，模板则与定义它们
-  的 crate 待在一起。

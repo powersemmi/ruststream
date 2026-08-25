@@ -1,6 +1,5 @@
-// The declared-message fixtures below are built by the tests that need a broker to publish
-// them through; without those features the types stay, because their trait impls are what
-// pins the declaration surface, and the compiler checks those whether or not one is built.
+// The declared-message fixtures below pin the declaration surface through their trait impls,
+// which the compiler checks whether or not a test constructs one.
 #![allow(dead_code)]
 
 use std::collections::HashMap;

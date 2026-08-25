@@ -123,8 +123,7 @@ impl Headers {
     /// by key. Keys arrive already normalized (every insertion path lowercases them), so the
     /// entries move straight across.
     pub(crate) fn overwrite_with(&mut self, other: Self) {
-        // Nothing to keep means nothing to merge: the map moves in whole, which is what a publish
-        // without a base has always done.
+        // Nothing to keep means nothing to merge: the map moves in whole.
         if self.inner.is_empty() {
             *self = other;
         } else {

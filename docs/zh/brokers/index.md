@@ -1,7 +1,7 @@
 # Broker
 
-Broker 负责把 RustStream 接到某种消息传输上。框架自带一个内存 Broker，供开发和测试使用；生产环境
-用的 Broker 是一个个独立的 crate，按依赖加进来即可。
+Broker 负责把 RustStream 接到某种消息传输上。框架自带一个完整的内存 Broker，用于队列只在单个应用内
+部的场景；基于外部服务的 Broker 是一个个独立的 crate，按依赖加进来即可。
 
 处理器、路由器、编解码器和中间件都与具体 Broker 无关，因此在不同 Broker 之间切换，只是 `with_broker`
 处的一行改动。
@@ -10,7 +10,7 @@ Broker 负责把 RustStream 接到某种消息传输上。框架自带一个内�
 
 | Broker | Crate | 传输 | 文档 |
 |---|---|---|---|
-| [内存](memory.md) | `ruststream`（feature `memory`） | 进程内，供开发与测试使用 | 本站 |
+| [内存](memory.md) | `ruststream`（feature `memory`） | 进程内队列，无需外部服务 | 本站 |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS 与 JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams（单机、集群、哨兵） | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1（队列、交换机、发布者确认、direct reply-to） | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |

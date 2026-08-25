@@ -216,9 +216,8 @@ where
     /// target). Calls bind by marker, so their order does not matter; binding the same slot
     /// twice, or a marker the handler does not declare, fails to compile. Finish with
     /// [`mount`](Self::mount).
-    // The marker travels by value on purpose (a unit inference driver keeps the call site
-    // `.out(Encoded, ..)`), and the return type is the builder itself with the bound slot - an
-    // alias would only hide which position changed.
+    // The unit marker drives inference, so it travels by value to keep the call site
+    // `.out(Encoded, ..)`; the return type names the builder with the bound slot.
     #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
     pub fn out<M, Policy, Index>(
         self,

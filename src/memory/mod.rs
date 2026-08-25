@@ -10,8 +10,8 @@
 //! timing, `Kafka` offsets, `RabbitMQ` exchanges); for those, use the corresponding broker
 //! crate.
 //!
-//! Every capability trait has a native implementation here, as a first-class feature of the
-//! broker's own in-process semantics (not a simulation of someone else's): request / reply via
+//! Every capability trait has a native implementation here, on the broker's own in-process
+//! semantics: request / reply via
 //! [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
 //! [`MemoryPublisher`], partition keys on [`MemoryMessage`], and log repositioning through
 //! [`MemorySeeker`] over the per-name publish log.
@@ -179,7 +179,7 @@ impl MemoryState {
                 headers: Arc::clone(&headers),
                 seq: entries.len(),
             };
-            // The log owns its copy (the one unavoidable materialization per publish).
+            // The log owns its copy.
             entries.push(RawMessage::new(&*name, payload).with_headers((*headers).clone()));
             self.send_to(subscribers, &delivery);
         }
@@ -374,9 +374,9 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 
 /// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
 ///
-/// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`]. Exists so the memory
-/// broker exercises the full [`PublishPolicy`] surface the way richer
-/// brokers do with real options (an exchange, a queue timeout, a transactional id).
+/// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`], filling the same
+/// [`PublishPolicy`] position where a richer broker carries real options (an exchange, a queue
+/// timeout, a transactional id).
 ///
 /// # Examples
 ///
@@ -528,8 +528,7 @@ impl Subscribe for ConnectedMemoryBroker {
 /// A subscription descriptor for [`MemoryBroker`], naming the subject to receive on.
 ///
 /// The broker-owned counterpart to the generic [`Name`](crate::Name) source: it carries no extra
-/// configuration (the in-memory broker has none), but giving every broker its own
-/// [`SubscriptionSource`] keeps the macro-subscriber and startup paths uniform across brokers.
+/// configuration, the in-memory broker having none.
 /// Pass it to the descriptor form of the macro, `#[subscriber(MemorySource::new("orders"))]`, the
 /// way a NATS service passes `SubscribeOptions`.
 #[derive(Debug, Clone)]
@@ -781,8 +780,8 @@ impl MemoryMessage {
     #[must_use]
     pub fn into_raw(mut self) -> RawMessage {
         let delivery = self.delivery.take().expect("delivery already consumed");
-        // Cold path (test assertions): materializing the shared name and headers here keeps
-        // the hot fanout free of owned copies.
+        // Cold path (test assertions): the shared name and headers are materialized here, not
+        // on the fanout.
         RawMessage::new(&*delivery.name, delivery.payload).with_headers((*delivery.headers).clone())
     }
 }

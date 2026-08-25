@@ -2,9 +2,8 @@
 //!
 //! Brokers whose clients batch on the wire implement [`BatchSubscriber`] natively. [`Buffered`]
 //! gives every other broker the same consumption shape by buffering single deliveries on the
-//! client, bounded by batch size and wait time. A blanket implementation is impossible without
-//! robbing broker crates of their native implementations (coherence), hence the explicit
-//! wrapper.
+//! client, bounded by batch size and wait time. It is an explicit wrapper: a blanket impl would
+//! collide with the native ones broker crates write.
 
 use std::num::NonZeroUsize;
 use std::time::Duration;

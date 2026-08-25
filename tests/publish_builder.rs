@@ -342,7 +342,7 @@ async fn a_contract_less_message_still_carries_a_header_map() {
 }
 
 /// A publisher handle carrying an argument for every message it sends: the shape a broker
-/// adapter takes now that the base reaches the builder instead of being stamped in `publish`.
+/// adapter takes when the base reaches the builder.
 struct Tenanted<P>(P, Headers);
 
 impl<P: Publisher> Publisher for Tenanted<P> {
@@ -473,8 +473,7 @@ async fn the_call_site_wins_over_the_handles_base_key_by_key() {
 }
 
 /// A message declaring a header contract publishes over the handle's base: the contract fields
-/// win on the keys they name, the base carries the rest - the combination the single headers
-/// position alone could not express.
+/// win on the keys they name, the base carries the rest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_header_contract_serializes_over_the_handles_base() {
     let broker = MemoryBroker::new();

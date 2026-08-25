@@ -1,7 +1,8 @@
 # Брокеры
 
-Брокер связывает RustStream с транспортом сообщений. В составе фреймворка идёт in-memory брокер для
-разработки и тестов; брокеры для продакшена - отдельные крейты, которые вы добавляете в зависимости.
+Брокер связывает RustStream с транспортом сообщений. В составе фреймворка идёт полноценный in-memory
+брокер для очередей в рамках одного приложения; брокеры поверх внешнего сервиса - отдельные крейты,
+которые вы добавляете в зависимости.
 
 Обработчики, роутеры, кодеки и middleware не зависят от брокера, поэтому переезд с одного брокера на
 другой - правка одной строки в `with_broker`.
@@ -11,10 +12,10 @@
 
 | Брокер | Крейт | Транспорт | Документация |
 |---|---|---|---|
-| [Memory](memory.md) | `ruststream` (фича `memory`) | внутри процесса, для разработки и тестов | этот сайт |
+| [Memory](memory.md) | `ruststream` (фича `memory`) | очередь внутри процесса, без внешнего сервиса | этот сайт |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS и JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, кластер, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
-| RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (очереди, обменники, подтверждения публикатора, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
+| RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (очереди, обменники, подтверждения издателя, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
 | Kafka | [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka) | Apache Kafka (consumer-группы, отслеживаемые коммиты, транзакции, exactly-once конвейеры) | [powersemmi.github.io/ruststream-rdkafka](https://powersemmi.github.io/ruststream-rdkafka/) |
 | AMQP 1.0 | [`ruststream-amqp`](https://github.com/powersemmi/ruststream-amqp) | ActiveMQ Artemis, RabbitMQ 4.x, Azure Service Bus и остальное семейство AMQP 1.0 (request-reply, транзакции) | [powersemmi.github.io/ruststream-amqp](https://powersemmi.github.io/ruststream-amqp/) |
 | Google Cloud Pub/Sub | [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub) | Pub/Sub через официальный клиент (ключи порядка доставки, exactly-once подтверждение, политики dead-letter) | [powersemmi.github.io/ruststream-gcp-pubsub](https://powersemmi.github.io/ruststream-gcp-pubsub/) |

@@ -2,8 +2,7 @@
 //!
 //! `with_broker_codec` sets a scope default codec, switching every `include*` call to the
 //! `BrokerScope<B, L, C: Codec>` impl block; the bare `with_broker` path uses the default-codec
-//! block (`C = ()`). The own-source default-codec variants are covered elsewhere; the explicit-
-//! source `_on` variants of both blocks were not. This drives every `_on` form (plus batch and
+//! block (`C = ()`). This drives every explicit-source `_on` form (plus batch and
 //! batch-publishing) through one codec scope and one default-codec scope, end to end.
 #![cfg(feature = "macros")]
 

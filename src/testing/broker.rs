@@ -30,10 +30,9 @@ use super::Coordinator;
 /// [`ConnectedMemoryBroker`](crate::memory::ConnectedMemoryBroker) is the in-tree reference
 /// implementation.
 ///
-/// It is a separate, object-safe capability (not a
-/// [`ConnectedBroker`](crate::ConnectedBroker) supertrait, since the broker traits are not
-/// dyn-compatible), so the harness can hold `&dyn TestableBroker` recovered from the type-erased
-/// app.
+/// It is a separate, object-safe capability rather than a
+/// [`ConnectedBroker`](crate::ConnectedBroker) supertrait: the broker traits are not
+/// dyn-compatible, and the harness holds `&dyn TestableBroker`.
 ///
 /// # Examples
 ///

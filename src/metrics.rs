@@ -186,9 +186,7 @@ impl<H> Layer<H> for MetricsLayer {
 }
 
 // Lets the consume metric ride the application-wide stack and reach handlers mounted through a
-// router (whose concrete types the router hides), the same way [`TracingLayer`] does. The wrapped
-// `MetricsHandler<H>` is already `Handler<M>` for any `H: Handler<M>`, so the blanket form just
-// delegates to the static one.
+// router (whose concrete types the router hides), the same way [`TracingLayer`] does.
 impl BlanketLayer for MetricsLayer {
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where

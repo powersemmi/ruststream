@@ -35,10 +35,9 @@
 不断增长。
 
 !!! note "要作用到路由器里的处理器，需要 `BlanketLayer`"
-    路由器隐藏了其处理器的具体类型，因此想要包裹它们的层（`include_router` 处的应用栈，或者
-    `Router::layer`）必须实现 `BlanketLayer`，也就是一个能包裹任意处理器的泛型方法。内置的各个层
-    都实现了它；对自定义的层来说，在它的 `Layer` 实现旁边多写几行即可（参见上面示例中的
-    `LogLayer`）。
+    包裹路由器里处理器的层（`include_router` 处的应用栈，或者 `Router::layer`）必须实现
+    `BlanketLayer`，也就是一个能包裹任意处理器的泛型方法。内置的各个层都实现了它；对自定义的层
+    来说，在它的 `Layer` 实现旁边多写几行即可（参见上面示例中的 `LogLayer`）。
 
 ## 编写一个层
 
@@ -67,25 +66,17 @@ let handler = base_handler.with(LogLayer);
 
 只有部分处理器需要某个层时，这才是合适的工具。它可以和全局栈组合使用。
 
-## 为什么中间件默认是静态的
+## 一个层的代价
 
-上面这些层都在编译期解析完毕：`with` / `layer` 会构建出一个具体的嵌套处理器类型
-（`Logged<Typed<..>>`），而 `Handler::handle` 返回的 `impl Future` 类型也是已知的。编译器会把整条链
-单态化成一个状态机，并跨层边界内联，因此静态的层不增加任何分发开销，也不产生任何分配，它是一个
-零成本抽象。
-
-动态（`dyn`）的链条则要放弃这些。`Handler::handle` 是 `async fn in trait`，它的 future 是一个匿名的
-`impl Future`，而返回 `impl Trait` 的 trait 不是对象安全的。要把中间件放到 `dyn` 背后，就必须把
-future 装箱（`Pin<Box<dyn Future>>`）：每条消息、每一层都要做一次堆分配，而且跨过 `dyn` 边界之后，
-调用再也无法内联或特化。`dyn` + `async` 优化不掉，这份代价会落到每一个处理器头上，而链条几乎总是在
-编译期就已经确定，所以默认才是静态的。
+静态的层在热路径上不花任何代价。动态的层每条消息都要付出代价，所以只在链条要到运行时才组装出来时
+才用它们。
 
 ## 动态中间件
 
 当链条要到运行时才能决定（层由配置开关控制，或者藏在 `dyn` 背后）时，只针对这些处理器显式启用
 动态栈：`DynStack`、`DynMiddleware` 和 `Next`。`DynMiddleware` 采用 around/next 形式的签名：它先
-检查输入和上下文，然后要么调用 `next.run(..)` 继续往下走，要么用自己的结果短路返回。因为它是
-对象安全的，所以它显式地返回一个装箱的 future：
+检查输入和上下文，然后要么调用 `next.run(..)` 继续往下走，要么用自己的结果短路返回。它把自己的
+返回类型显式写出来：
 
 ```rust
 use std::future::Future;
@@ -97,8 +88,8 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 ```
 
 动态的只有那份*列表*。在运行时把它构建出来，冻结成一个 `DynStack`，得到的就是一个普通的静态
-`Layer`，可以像手写的层那样用 `layer` 组合进应用栈。分发链的其余部分仍然是静态的；装箱的代价只在
-该栈内部支付：
+`Layer`，可以像手写的层那样用 `layer` 组合进应用栈。分发链的其余部分仍然是静态的；只有该栈自身
+付出代价：
 
 ```rust
 use std::sync::Arc;
@@ -116,8 +107,7 @@ use ruststream::runtime::DynStack;
 Broker 的原始消息类型之上（上面的 `DynStack<MemoryMessage>`），并且运行在解码之前；像 `Audit` 这样
 对 `I` 泛型的中间件在两个层次上都能工作。若想让它作用在解码后的值上，就构建一个 `DynStack<Order>`，
 再用 `with` 把它套到内层的类型化处理器上（手工注册的写法）。同一个 `DynStack` 里的中间件按列表顺序
-执行，最外层的先跑。每个动态层每次调用都要付出一个装箱 future 的代价，而静态层的代价是零，所以把
-静态链条当作默认选择，只在运行时组合确实值回票价的地方才动用 `DynStack`。
+执行，最外层的先跑。把静态链条当作默认选择，只在运行时组合确实值回票价的地方才动用 `DynStack`。
 
 ## 发布侧的中间件 { #publish-side-middleware }
 

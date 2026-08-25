@@ -10,8 +10,7 @@ on the produce side, and the headers schema in the generated AsyncAPI document.
 A header contract is a flat struct: each field names a header, values are scalars (numbers,
 booleans, strings, raw bytes, unit-only enums) or `Option`s of them. On the wire every value is
 string-encoded - the framework parses `"3"` into a `u32` field and writes it back the same way -
-while schemas keep describing the logical types, which is the AsyncAPI convention for header
-documentation.
+while schemas keep describing the logical types.
 
 --8<-- "examples/typed_headers.rs:contracts"
 
@@ -96,11 +95,10 @@ A payload the service already holds encoded, or a foreign type that cannot carry
 `out.raw(&bytes).to(dest).publish()`. It takes the same headers positions and no codec; wrap
 the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own.
 
-The contract fills that position once, and it is still the whole of what the call site says
-about the headers. What the publisher itself contributes travels underneath: a handle carrying
-an argument for every message it sends exposes it as a base, and the contract's fields
-serialize over that base field by field, so a message with a contract also carries the broker's
-argument - see [where the headers come from](publishing.md#where-the-headers-come-from).
+The contract fills that position once. What the publisher itself contributes travels
+underneath: a handle carrying an argument for every message it sends exposes it as a base, and
+the contract's fields serialize over that base field by field - see
+[where the headers come from](publishing.md#where-the-headers-come-from).
 
 ## The reply form
 
@@ -111,8 +109,7 @@ the document, and the destination is already in the attribute.
 
 At runtime, reply headers stay where they were: a `PublishTransform` on the reply publisher
 sets them, and [`Headers::insert_typed`] serializes a contract value into the map from inside
-a transform - which is where a service sees an outgoing message as a whole, the publish builder
-having assembled it.
+a transform.
 
 [`Headers::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.insert_typed
 
@@ -127,8 +124,7 @@ With the `asyncapi` feature, `build_spec` renders:
   every message type a slot declares - each with its payload and headers schemas.
 
 Schemas describe the logical field types (`task_id: integer`), while wire values are
-string-encoded headers; that convention matches how header contracts are documented across the
-AsyncAPI ecosystem, which deliberately leaves value encoding to the protocol.
+string-encoded headers.
 
 ## Testing
 

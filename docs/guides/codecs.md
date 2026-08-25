@@ -2,7 +2,8 @@
 
 A codec turns wire bytes into your typed payload and back. It is a separate seam from the broker:
 the pipeline on the consume side is `bytes -> Codec -> typed payload -> handler`, and the publish
-side runs it in reverse. Codecs are compile-time types, so decoding has no dynamic dispatch.
+side runs it in reverse. The codec is fixed when the handler is mounted, so it costs nothing on
+the delivery path.
 
 ## Built-in codecs
 
@@ -19,8 +20,8 @@ Codec features are strictly additive; enable as many as you need. Message types 
 
 `DefaultCodec` is a feature-selected alias: `json` if enabled, otherwise `cbor`, otherwise
 `msgpack`. It is what `include(def)` and `TypedPublisher::new(publisher)` use when nothing names a
-codec, which is why neither takes a codec argument. It exists only when at least one codec feature
-is enabled; with no codec features, only the explicit-codec methods are available.
+codec; neither takes a codec argument. It exists only when at least one codec feature is enabled;
+with no codec features, only the explicit-codec methods are available.
 
 ## Where the decode codec comes from
 

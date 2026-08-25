@@ -126,9 +126,6 @@ impl HandlerResult {
 /// still works through [`From<HandlerResult>`](From), which leaves the continuation empty. Build one
 /// with a continuation via [`HandlerResult::and_after`].
 ///
-/// The future never lives inside [`HandlerResult`], so that stays a small `Copy` decision enum
-/// (metrics, tracing, and batch settling all classify by the outcome inside `Settle`).
-///
 /// # Cancel safety
 ///
 /// The continuation runs after the message is already settled, so it is at-most-once: a panic or a

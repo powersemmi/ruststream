@@ -5,14 +5,12 @@ use std::future::Future;
 use serde::Serialize;
 use tracing::warn;
 
-use crate::codec::Codec;
-use crate::runtime::lifecycle::BoxError;
-// `DefaultCodec` only exists when a codec feature is on; the impl that names it is gated the same
-// way, so an ungated import would break `--no-default-features`.
 use super::{
     BatchPublishTransform, PublishContext, PublishPipeline, TransactionScope, Transactional,
     TypedPublisher,
 };
+use crate::codec::Codec;
+use crate::runtime::lifecycle::BoxError;
 use crate::runtime::publish::sealed::Sealed;
 use crate::{Publisher, TransactionalPublisher};
 

@@ -52,9 +52,8 @@ pub struct PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
 }
 
 /// One reply-publishing registration whose reply leaves byte-for-byte through a bare publisher
-/// (the `publish_raw("dest")` form). See [`PublishingRoute`]; the split is what lets each route
-/// name the wiring its replies travel, which a route must do because the app's publish pipeline
-/// is not known when the registration is made.
+/// (the `publish_raw("dest")` form). See [`PublishingRoute`]: the app's publish pipeline is not
+/// known when the registration is made, so each route names the wiring its replies travel.
 #[doc(hidden)]
 pub struct RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) source: Source,
@@ -153,8 +152,7 @@ where
         } = self;
         // The apply-and-push tail: `BlanketLayer::apply` is an RPITIT whose hidden type cannot
         // be named, so the wrapped handler cannot leave the startup factory; apply and spawn
-        // stay in one block instead. The scope's own tail names its `Layers::Handler` and uses
-        // the factory helper.
+        // stay in one block instead.
         let global = global.clone();
         let pipeline = pipeline.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());

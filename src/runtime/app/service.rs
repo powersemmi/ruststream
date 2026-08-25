@@ -42,9 +42,8 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// the publish pipeline ([`publish_layer`](Self::publish_layer)) are still configurable; the
 /// first [`with_broker`] moves it to [`Wired`], where those methods no longer exist - so a
 /// configuration call that would silently not apply to already-registered handlers does not
-/// compile. `Phase` defaults to [`Wired`] because a signature that names `RustStream` almost
-/// always means the built service; the `Setup` state lives inside a builder chain and is rarely
-/// written out.
+/// compile. `Phase` defaults to [`Wired`], the built service; `Setup` lives inside a builder
+/// chain and is rarely written out.
 ///
 /// [`with_broker`]: Self::with_broker
 /// [`layer`]: Self::layer

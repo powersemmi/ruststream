@@ -241,7 +241,6 @@ async fn overlap(_orders: &[Order]) -> HandlerResult {
 
 /// A batch pool genuinely overlaps batches: with `workers(2)`, a second batch is pulled and
 /// dispatched while the first is still being handled (both sit on the release latch at once).
-/// The existing smoke test only proved a batch arrives through the pool.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_pool_overlaps_batches() {
     let broker = MemoryBroker::new();

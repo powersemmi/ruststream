@@ -155,8 +155,8 @@ docker run -d -p 4222:4222 nats:latest -js
 NATS_TEST_URL=nats://127.0.0.1:4222 cargo test --test integration_nats
 ```
 
-这与 faststream 的 `with_real=True` 分法如出一辙：处理器逻辑走内存路径，Broker 语义走真实路径。让
-两个测试集覆盖同一批处理器模块，生产代码才有唯一的事实来源。
+处理器逻辑归内存路径，Broker 语义归真实路径。让两个测试集覆盖同一批处理器模块，生产代码才有唯一的
+事实来源。
 
 !!! note "正在写一个 Broker crate？"
     让 `TestApp` 能在某个 Broker 上跑起来的那套机制，也就是进程内传输层和 `TestableBroker` 契约，

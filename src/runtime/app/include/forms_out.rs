@@ -1,9 +1,5 @@
 //! Mount form for Out injection.
 
-// The typed default-reply commits need a default codec, so that import is gated the same way;
-// the raw default-reply commit publishes bare bytes and needs only `DefaultPublish`.
-// The default-reply commits build a `TypedPublisher` over the broker's default policy, so those
-// imports are gated with the default codec they require.
 use crate::{Broker, BuildContext, Connected, SubscriptionSource};
 
 use crate::runtime::handler::Handler;

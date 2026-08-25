@@ -163,9 +163,8 @@ impl<H> Layer<H> for OpenTelemetryLayer {
 }
 
 // Lets the span layer ride the app-wide stack and reach handlers mounted through a router (whose
-// concrete types the router hides), the same way `MetricsLayer` does. The wrapped handler reads the
-// trace context off the typed `Context`, not the broker message, so it needs no `IncomingMessage`
-// bound and applies to any handler.
+// concrete types the router hides), the same way `MetricsLayer` does. The wrapped handler reads
+// the trace context off the typed `Context`, so it applies to any handler.
 impl BlanketLayer for OpenTelemetryLayer {
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where

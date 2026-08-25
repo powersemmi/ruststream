@@ -392,9 +392,8 @@ pub trait SubscriberSettings: Declared {
     /// Wraps the subscription in the framework's own buffer, so a handler taking `&[T]` gets
     /// batches on a broker whose subscription does not batch by itself.
     ///
-    /// A batch closes at `max_size` deliveries, or `max_wait` after its first one. Named after
-    /// the adapter on purpose: batches come either from the broker (configured through the
-    /// broker's own settings) or from this wrap, and the two are different things.
+    /// A batch closes at `max_size` deliveries, or `max_wait` after its first one. Broker-native
+    /// batching is a different thing, configured through the broker's own settings.
     fn buffered(
         self,
         max_size: NonZeroUsize,

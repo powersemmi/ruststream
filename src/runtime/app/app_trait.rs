@@ -78,15 +78,13 @@ pub trait App: sealed::Sealed + Sized {
     fn handlers(&self) -> &[HandlerMetadata];
 }
 
-// `Pipeline: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the publish
-// pipeline. Every real pipeline is `Send` (the `PublishLayer` trait requires `Send + Sync`), so the
-// bound never gets in the way; it just lets the type system see what is already true.
+// `Pipeline: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the
+// publish pipeline. `State: 'static` mirrors the inherent impl in run.rs: `start` needs it to bind
+// the state into the shutdown hooks.
 //
 // Each method names `RustStream` explicitly rather than `Self`: the inherent methods share these
 // names with the trait, so spelling the type makes clear the call delegates to the inherent method
 // (which wins by priority) and does not recurse into the trait method.
-// `State: 'static` mirrors the inherent impl in run.rs: every constructible app already satisfies
-// it, and `start` needs it to bind the state into the shutdown hooks.
 #[allow(clippy::use_self)]
 impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
     for RustStream<Layers, State, Pipeline, Phase>

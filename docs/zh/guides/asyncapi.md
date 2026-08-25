@@ -47,8 +47,8 @@ ruststream asyncapi gen --yaml
 形式的回复，以及 `Out` 槽位声明的每一种消息类型。参见[类型化消息头](headers.md)。
 
 如果一个消息类型声明的名字是一个模板（`#[outgoing(name = "orders.{tenant}.v1")]`），它就声明在
-该模板化的地址上，通道的 **parameters** 块由模板里的占位符填出，这样声明和调用点就不可能各走各的。一个
-没有声明目的地的类型不贡献任何通道，这正是它对自己的说明。参见
+该模板化的地址上，通道的 **parameters** 块由模板里的占位符填出。没有声明目的地的类型不贡献任何
+通道。参见
 [发布](publishing.md#declaring-where-a-message-goes)。
 
 ## 消息的名字与描述
@@ -101,9 +101,8 @@ Broker crate 也可以实现 `DescribeServer` 能力，这样 `broker.describe_s
 `SecurityScheme::custom(json)`，作为它们没有建模的一切的逃生口。不调用 `with_security` 的话，文档里
 根本不会有任何安全相关的部分。
 
-安全是服务作者的声明，而不是 Broker 的声明：同一个 Broker 既会公开部署也会内网部署，两者的认证方式
-并不相同，所以 `DescribeServer` 从不报告它。要给一个自动注册的 Broker（`with_broker_labeled`）加上
-安全声明，改为显式声明：用同一个标签写
+`DescribeServer` 从不报告安全，因为这是服务作者的声明，而不是 Broker 的声明。要给一个自动注册的
+Broker（`with_broker_labeled`）加上安全声明，改为显式声明：用同一个标签写
 `.server(label, broker.describe_server().with_security(..))`。
 
 ## 把文档提供出去

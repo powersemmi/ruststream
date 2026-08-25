@@ -109,8 +109,7 @@ pub trait Broker: Send + Sync + Sized {
 /// A connected broker: the typed witness of a live connection.
 ///
 /// Obtained only from [`Broker::connect`]. The `'static` supertrait keeps the connected form an
-/// owned value the runtime can hold and erase; a connected broker borrowing from elsewhere could
-/// not travel through startup.
+/// owned value the runtime can hold and erase.
 ///
 /// # Examples
 ///

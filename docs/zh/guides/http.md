@@ -21,8 +21,7 @@ cargo run --example http_outbox --features macros,memory,json
 之后执行 `on_shutdown` 钩子、把仍在处理中的处理器排空（时长受[关闭超时](lifespan.md#shutdown-timeout)
 约束）、并关闭 Broker。发布者通过一个绑定 token 拿到：`.bindable()` 把 Broker 包起来，`bind(..)`
 在应用消费掉它之前铸出该 token。随后 `running.publisher(token)` 会在 `start()` 连上 Broker 之后把
-该 token 配对成发布者，于是兄弟任务拿到的是一个活的发布者，绝不会碰上“尚未连接”的状态。活形态
-本身就是一个普通的值，可以放心地克隆进 HTTP 框架所携带的任何状态里：
+该 token 配对好。配对出来的发布者是一个普通的值，可以放心地克隆进 HTTP 框架所携带的任何状态里：
 
 ```rust
 --8<-- "examples/http_outbox.rs:wiring"

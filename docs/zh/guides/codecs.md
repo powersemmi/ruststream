@@ -1,8 +1,8 @@
 # 编解码器与序列化
 
 编解码器负责把线上的字节变成带类型的载荷，再变回去。它与 Broker 是彼此独立的接缝：消费一侧的管线是
-`bytes -> Codec -> typed payload -> handler`，发布一侧则反向走一遍。编解码器是编译期的类型，所以解码
-不涉及任何动态分发。
+`bytes -> Codec -> typed payload -> handler`，发布一侧则反向走一遍。编解码器在处理器挂载时就已固定，
+因此在投递路径上不花任何代价。
 
 ## 内置的编解码器
 
@@ -19,8 +19,8 @@
 
 `DefaultCodec` 是一个由 feature 选出的别名：启用了 `json` 就是它，否则是 `cbor`，再否则是
 `msgpack`。当没有任何地方指定编解码器时，`include(def)` 和 `TypedPublisher::new(publisher)` 用的
-就是它，这也是这两者都不需要编解码器参数的原因。它只在至少启用一个编解码器 feature 时才存在；一个
-编解码器 feature 都不开时，就只剩下需要显式指定编解码器的那些方法。
+就是它；这两者都不接收编解码器参数。它只在至少启用一个编解码器 feature 时才存在；一个编解码器
+feature 都不开时，就只剩下需要显式指定编解码器的那些方法。
 
 ## 解码用的编解码器从哪里来 { #where-the-decode-codec-comes-from }
 

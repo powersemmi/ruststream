@@ -573,9 +573,8 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
 /// bypass the per-message otel layer (the documented middleware exception), so the metric is
 /// recorded at the batch decode choke point every batch form passes through instead.
 ///
-/// Built off the process-global meter rather than an `Otel` handle: threading instruments into
-/// the dispatch would couple the runtime to the otel wiring for a per-batch (not per-message)
-/// record. Until `Otel::builder().init()` installs the SDK's global provider the global meter is
+/// Built off the process-global meter, not an `Otel` handle. Until
+/// `Otel::builder().init()` installs the SDK's global provider the global meter is
 /// a no-op, so an app without the exporters records nothing; the instrument binds to whatever
 /// provider is global at the first dispatched batch, and the documented wiring runs `init()`
 /// before `app.start()`.

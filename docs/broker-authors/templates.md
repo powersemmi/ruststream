@@ -1,10 +1,9 @@
 # Template contract
 
 How a crate ships a [`cargo generate`](https://github.com/cargo-generate/cargo-generate) scaffold
-that stays in sync with its API. The contract is the scaffolding parallel of the
-[conformance harness](conformance.md): a template is a CI-compiled artifact owned by the
-crate whose broker it wires, not hand-maintained strings in the core CLI. Core ships only the
-in-memory `templates/memory`; each broker crate owns the templates for its transports.
+that stays in sync with its API. A template is a CI-compiled artifact owned by the crate whose
+broker it wires. Core ships only the in-memory `templates/memory`; each broker crate owns the
+templates for its transports.
 
 ## Shape
 
@@ -53,14 +52,11 @@ uses), so the scaffold compiles against the unpublished version.
 
 Feature blocks only ADD; no `{% else %}` or `{% if not flag %}` negative branches. The no-flag
 render is then a strict subset of the all-features render, so a single all-features `cargo check`
-per template catches every API-drift break - nothing can hide in an off branch. Off-flag
-combinations are static authoring concerns (a dangling `use`, an unfilled slot), checked locally,
-not in CI.
+per template catches every API-drift break. Off-flag combinations are static authoring concerns
+(a dangling `use`, an unfilled slot), checked locally, not in CI.
 
 ## Ownership
 
 - Core (`ruststream`) owns only `templates/memory` (the in-process broker it ships), so a default
   `cargo generate` works offline with no broker dependency.
 - Each broker crate owns the templates for its transports and runs the drift job in its own CI.
-- This split keeps broker-specific API out of the core CLI: core knows nothing about a broker's
-  descriptors; the template lives with the crate that defines them.

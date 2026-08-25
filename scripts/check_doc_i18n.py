@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """Structural and terminological parity between a documentation page and its translations.
 
-A translated page decays silently: the reader who would notice that a section is missing is
-the one relying on the page. Three properties are cheap to check and cover the failure modes
-that matter, without needing a reviewer who reads the target language.
+Three properties are checked, none of which needs a reviewer who reads the target language:
 
-- The same snippet includes, in the same order. Code is never translated - every fence pulls
-  the same lines out of the same compiling example - so a difference here means the
-  translation dropped or duplicated a block of code the original shows.
+- The same snippet includes, in the same order. Code is never translated, so a difference
+  here means the translation dropped or duplicated a block of code the original shows.
 - The same heading levels, in the same order. Heading text is translated; the shape of the
-  page is not. This is what turns "the translation missed the section added last week" into
-  a failing build.
+  page is not.
 - The locked rendering for every term of art the English page uses, per
   `scripts/doc_glossary.toml`.
 

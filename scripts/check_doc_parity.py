@@ -1,28 +1,24 @@
 #!/usr/bin/env python3
 """Require an edit to a documentation page to reach that page's other languages.
 
-The rule is symmetric and takes its input from changed pages in any language, not from
-English alone. English being normative decides whose wording wins when two pages disagree;
-it says nothing about which page an edit starts from, and in practice an edit often starts
-from the language the reviewer reads in, which means it is a correction to the explanation
-rather than to the wording - and a correction to the explanation belongs in every language.
+The rule is symmetric: it takes its input from changed pages in any language, not from
+English alone.
 
-Three properties keep the rule from being routed around, and each has a reason:
+Three properties bound what it enforces:
 
-- A page with no counterpart yet is skipped, not failed. Pages arrive in each language over
-  time, so demanding a translation that has not been written would block every edit until
-  the whole site is translated. This skip is temporary: once every page exists in every
-  language it goes away, and a missing counterpart becomes a failure like any other.
-- Adding a page does not demand an edit elsewhere. Landing a translation is exactly the case
-  where the other languages are already correct, so only pages that were modified, deleted or
+- A page with no counterpart yet is skipped, not failed. Demanding a translation that has
+  not been written would block every edit until the whole site is translated. The skip is
+  temporary: once every page exists in every language, a missing counterpart is a failure
+  like any other.
+- Adding a page does not demand an edit elsewhere: only pages that were modified, deleted or
   renamed put the rule in force.
 - It checks that a file changed, not that it changed correctly, and one character satisfies
-  it. It is a reminder, and it is deliberately paired with a review of the translation
-  itself: this rule catches "forgot the translation entirely", nothing more.
+  it. It catches "forgot the translation entirely", nothing more, and is paired with a
+  review of the translation itself.
 
 The declared way out is a label on the pull request, handled in the workflow rather than
-here. Without one the way out becomes a token edit to the translated file, and a token edit
-is worse than none: it marks a page as revisited when nobody read it.
+here. Without one the way out becomes a token edit to the translated file, which marks a
+page as revisited when nobody read it.
 """
 
 import argparse

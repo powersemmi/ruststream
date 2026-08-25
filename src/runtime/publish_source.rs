@@ -210,8 +210,7 @@ where
 }
 
 // The token is a policy for ANY connected broker: it ignores the scope's broker and pairs
-// against its own. Covering every `C` here also keeps coherence simple - no downstream impl can
-// exist for a `Bound`, so it composes with the blanket source handling at the include sites.
+// against its own.
 impl<C, B2, S> PublishPolicy<C> for Bound<B2, S>
 where
     C: ConnectedBroker,

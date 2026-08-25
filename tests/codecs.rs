@@ -3,7 +3,6 @@
 //! The codec unit tests in `src/codec/*` prove each codec round-trips in isolation; this drives a
 //! `CborCodec` and a `MsgpackCodec` end to end - named on a router with `with_codec`, mounted on a
 //! live app, fed wire bytes that codec produced, and decoded back into a typed handler argument.
-//! Without this, only the default `json` codec ever travelled the dispatch path.
 #![cfg(all(feature = "macros", feature = "cbor", feature = "msgpack"))]
 
 mod common;

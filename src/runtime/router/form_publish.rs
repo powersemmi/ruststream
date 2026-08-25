@@ -67,9 +67,8 @@ where
 }
 
 // ---------------------------------------------------------------------------------------------
-// The commits. A user policy is wrapped in `WithSource` so the default marker and the
-// policy-driven commit live on different type constructors (disjoint impls, no negative
-// reasoning needed).
+// The commits. A user policy is wrapped in `WithSource`: the default marker and the
+// policy-driven commit must live on different type constructors to keep the impls disjoint.
 
 impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
     RouterCommit<PublishMount, B, Routes, RouteCodec, RouteLayers, Def> for WithSource<Policy>

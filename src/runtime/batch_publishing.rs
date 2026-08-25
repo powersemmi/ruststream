@@ -30,9 +30,8 @@ use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPubl
 ///
 /// The batch counterpart of [`PublishingDef`](super::PublishingDef): the handler consumes the
 /// whole decoded batch and returns the replies for it, all-or-nothing. Selective per-element
-/// outcomes are deliberately unsupported here - there is no coherent transaction commit for a
-/// half-nacked batch; handlers needing both publish manually from a plain batch handler through a
-/// publisher held in the typed application state.
+/// outcomes are not available here: a handler needing them publishes manually from a plain batch
+/// handler, through a publisher held in the typed application state.
 pub trait BatchPublishingDef: Send + Sync {
     /// The input kind of one batch element ([`Decoded<T>`](super::Decoded); see
     /// [`BatchDef::Input`](super::BatchDef::Input)). The handler consumes `&[T]`.

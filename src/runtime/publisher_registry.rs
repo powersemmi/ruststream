@@ -21,10 +21,8 @@ use super::publish::PublishSink;
 /// Blanket-implemented for every [`Publisher`], so any broker's publisher can be held as
 /// `Arc<dyn ErasedPublisher>` for the `retry_after` fallback.
 ///
-/// Sealed: erasure is the runtime's own machinery and the blanket impl already covers every
-/// publisher, so there is nothing outside this crate to implement it for. That is what keeps
-/// the method list free to follow the publish builder - growing or retiring a method here
-/// reaches no downstream implementor.
+/// Sealed: the blanket impl already covers every publisher, so there is nothing outside this
+/// crate to implement it for.
 pub trait ErasedPublisher: sealed::Sealed + Send + Sync {
     /// Publishes one message, with whatever destination, payload and headers it carries.
     ///
