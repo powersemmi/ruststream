@@ -61,7 +61,7 @@ use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
 
 ## Middleware для одного обработчика
 
-Обернуть один обработчик вместо всего приложения позволяет `HandlerExt::with`:
+`HandlerExt::with` оборачивает один обработчик вместо всего приложения:
 
 <!-- inline-rust: HandlerExt::with API-shape fragment with placeholder handler and layer; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above -->
 ```rust
@@ -82,9 +82,9 @@ let handler = base_handler.with(LogLayer);
 
 Когда цепочка решается в рантайме (слои включаются конфигом или лежат за `dyn`), включите
 динамический стек ровно для этих обработчиков: `DynStack`, `DynMiddleware` и `Next`. У
-`DynMiddleware` сигнатура вида around/next: он смотрит на вход и контекст, а дальше либо вызывает
-`next.run(..)`, чтобы продолжить, либо коротко замыкает цепочку собственным результатом. Свой
-возвращаемый тип он записывает явно:
+`DynMiddleware` сигнатура вида around/next: он получает на вход сообщение и контекст, а дальше либо
+вызывает `next.run(..)`, чтобы продолжить, либо коротко замыкает цепочку собственным результатом.
+Свой возвращаемый тип он записывает явно:
 
 ```rust
 use std::future::Future;
@@ -97,7 +97,8 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 
 Динамичен только *список*. Соберите его в рантайме, заморозьте в `DynStack` - и результат станет
 обычным статическим `Layer`, который добавляется в стек приложения через `layer` ровно так же, как
-написанный руками. Остальная цепочка диспетчеризации остаётся статической, платит только сам стек:
+написанный руками. Остальная цепочка диспетчеризации остаётся статической, накладные расходы есть
+только у самого стека:
 
 ```rust
 use std::sync::Arc;

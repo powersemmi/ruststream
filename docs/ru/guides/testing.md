@@ -20,7 +20,7 @@
     забота настоящего брокера; проверяйте это в
     [интеграционном наборе](#integration-tests-against-a-real-broker).
 
-    Что такое `MemoryBroker` и чем он не является, сказано на его собственной странице:
+    Что такое `MemoryBroker` и что он не заменяет, сказано на его собственной странице:
     [брокер в памяти](../brokers/memory.md).
 
 ## Юнит-тестирование сервиса через `TestApp` {#unit-testing-a-service-with-testapp}
@@ -92,7 +92,7 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 другое по порядку.
 
 Декодирующие помощники (`with`, `received`, `decoded`) работают кодеком по умолчанию. Если обработчик
-или публикатор смонтирован с другим кодеком (`include_with` / `with_broker_codec`), передайте его
+или издатель смонтирован с другим кодеком (`include_with` / `with_broker_codec`), передайте его
 явно через варианты `_with` / `with_codec` - `subscriber(name).with_codec(&CborCodec, &expected)`,
 `.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
 `.decoded_with(&CborCodec)`, - а `with_raw` / `received_raw` / `messages` кодека не касаются.
@@ -101,7 +101,7 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 
 Слот [`Out`](publishing.md#named-slots) обработчика служит заодно его тестовой идентичностью:
 `tb.out::<Marker>()` возвращает ровно те сообщения, которые опубликованы через этот внедрённый
-публикатор, - вместе с адресатами и заголовками, по всем брокерам сразу - и с тем же набором
+издателя, - вместе с адресатами и заголовками, по всем брокерам сразу - и с тем же набором
 проверок, что у `published` (`assert_called_once`, `with_raw`, `messages`; для типизированного `with`
 добавьте в цепочку `.decoded_as::<T>()`). Взгляд через слот добавляет только атрибуцию: те же
 сообщения видит и поканальный журнал публикаций брокера.
@@ -129,8 +129,8 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 сервис.
 
 !!! note "Чтобы ловить панику, нужна раскрутка стека"
-    Обвязка едет на `catch_unwind` рантайма, поэтому намеренная паника не убивает тестовый поток.
-    Сборка, скомпилированная с `panic = "abort"`, панику обработчика поймать не может.
+    Обвязка работает через `catch_unwind` рантайма, поэтому намеренная паника не убивает тестовый
+    поток. Сборка, скомпилированная с `panic = "abort"`, панику обработчика поймать не может.
 
 ### Отложенная повторная доставка (`retry_after`)
 
@@ -144,7 +144,7 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 
 ## Интеграционные тесты против настоящего брокера {#integration-tests-against-a-real-broker}
 
-Поведение, которое зависит от семантики настоящего брокера, живёт в отдельном наборе, включаемом
+Поведение, которое зависит от семантики настоящего брокера, вынесено в отдельный набор, включаемый
 переменной окружения, - чтобы обычный `cargo test` оставался быстрым и офлайновым:
 
 <!-- inline-rust: integration-test skeleton with a pseudocode body; it drives a real NatsBroker (external crate) behind an env gate, so it has no compiled home here -->

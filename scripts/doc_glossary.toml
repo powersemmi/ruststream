@@ -49,9 +49,23 @@ zh = "订阅者"
 [[term]]
 en = "publisher"
 en_match = "publishers?"
-ru = "публикатор"
-ru_match = "публикатор"
+ru = "издатель"
+ru_match = "издател"
 zh = "发布者"
+
+[[term]]
+en = "capability"
+en_match = "capabilit(y|ies)"
+ru = "совместимость"
+ru_match = "совместимост"
+zh = "能力"
+
+[[term]]
+en = "batch"
+en_match = "batch(es|ed|ing)?"
+ru = "пакет"
+ru_match = "пакет"
+zh = "批"
 
 [[term]]
 en = "subscription"
