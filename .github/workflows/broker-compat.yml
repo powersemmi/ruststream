@@ -1,0 +1,170 @@
+name: Broker compatibility
+
+# A release that breaks the broker crates announces itself to nobody: every broker pins the
+# previous minor line, so nothing fails anywhere when the tag lands - the breakage only surfaces
+# when a broker author starts the adoption by hand. This probe builds each broker against the
+# released core the moment the release exists, and reports what broke where the broker's
+# maintainer will look for it: an issue in that broker's repository, carrying the compiler's own
+# error text.
+#
+# The probe is compile-surface only. `--all-targets` compiles the broker's tests and examples
+# without running them, which is exactly what a core version bump breaks; behavioral drift is the
+# broker CI's job once the adoption lands. Runtime suites would also need each broker's docker
+# stand, and shared-runner flakiness would turn a compatibility signal into noise.
+
+on:
+  release:
+    types: [published]
+  # Re-runs: probe an older tag, or probe again after a broker fixed itself without waiting for
+  # the next release.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Core tag or ref to probe against (defaults to the ref the run started from)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: broker-compat-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: ${{ matrix.broker }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Every broker gets its verdict: one broken broker must not hide the other eleven.
+      fail-fast: false
+      matrix:
+        broker:
+          - ruststream-nats
+          - ruststream-fred
+          - ruststream-lapin
+          - ruststream-rdkafka
+          - ruststream-amqp
+          - ruststream-gcp-pubsub
+          - ruststream-sqs-sns
+          - ruststream-pulsar
+          - ruststream-rumqttc
+          - ruststream-zeromq
+          - ruststream-sea-file
+          - ruststream-kinesis
+    steps:
+      - name: Check out the core at the probed ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          path: core
+          persist-credentials: false
+
+      - name: Check out the broker at its default branch
+        uses: actions/checkout@v7
+        with:
+          repository: powersemmi/${{ matrix.broker }}
+          path: broker
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: broker
+          key: ${{ matrix.broker }}
+
+      # The same probe a broker author's adoption branch starts from: the version requirement is
+      # replaced by a path to the released core, everything else in the manifest stays as the
+      # broker declared it. A red check here therefore reproduces exactly what the maintainer
+      # will see, not an artifact of the harness.
+      - name: Point the broker at the released core
+        run: |
+          sed -i 's#^ruststream = { version = "[^"]*"#ruststream = { path = "../core"#' broker/Cargo.toml
+          grep '^ruststream = ' broker/Cargo.toml
+
+      - name: Build the broker against the core
+        id: check
+        continue-on-error: true
+        working-directory: broker
+        run: |
+          set -o pipefail
+          status=0
+          {
+            echo "\$ cargo check --workspace --all-targets --all-features"
+            cargo check --workspace --all-targets --all-features 2>&1 || status=1
+            echo
+            echo "\$ cargo check --workspace --no-default-features"
+            cargo check --workspace --no-default-features 2>&1 || status=1
+          } | tee "$RUNNER_TEMP/check.log"
+          exit "$status"
+
+      - name: Report the verdict to the broker repository
+        env:
+          GH_TOKEN: ${{ secrets.BROKER_COMPAT_TOKEN }}
+          BROKER: ${{ matrix.broker }}
+          OUTCOME: ${{ steps.check.outcome }}
+          CORE_REF: ${{ inputs.ref || github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::BROKER_COMPAT_TOKEN is not set; the verdict for $BROKER is only this run's status"
+            exit 0
+          fi
+          repo="powersemmi/$BROKER"
+          version="${CORE_REF#v}"
+          marker="against ruststream v$version"
+          # One open core-compat issue per repo is the whole protocol: filing opens it, the next
+          # broken release comments on it, the first green probe closes it.
+          existing="$(gh issue list --repo "$repo" --state open --search 'core-compat in:title' \
+            --json number --jq '.[0].number // empty')"
+
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$repo" \
+                --comment "Builds $marker (checked by [this probe]($RUN_URL))."
+            fi
+            exit 0
+          fi
+
+          # The error section is what the maintainer needs; everything before the first error is
+          # build progress. GitHub caps an issue body at 65536 characters, the cap below leaves
+          # room for the prose around the log.
+          log="$(sed -n '/^error/,$p' "$RUNNER_TEMP/check.log" | head -c 50000)"
+          # A failure with no compiler error line (a network hiccup, a missing tool) still needs
+          # a report the maintainer can read.
+          [ -n "$log" ] || log="$(tail -c 20000 "$RUNNER_TEMP/check.log")"
+          body="$(printf '%s\n' \
+            "ruststream v$version was released and this crate does not build against it." \
+            "Checked by [this probe]($RUN_URL): the version requirement replaced by a path" \
+            "dependency on the released core, then \`cargo check --workspace --all-targets" \
+            "--all-features\` and \`--no-default-features\`." \
+            "" \
+            "<details><summary>error log</summary>" \
+            "" \
+            '```text' \
+            "$log" \
+            '```' \
+            "" \
+            "</details>")"
+
+          if [ -n "$existing" ]; then
+            # A re-run of the same probe adds nothing; a new version failing on an open issue does.
+            if gh issue view "$existing" --repo "$repo" --json body,comments \
+                --jq '.body, .comments[].body' | grep -qF "$marker"; then
+              echo "already reported $marker in $repo#$existing"
+              exit 0
+            fi
+            comment="$(printf 'Still broken %s.\n\n%s' "$marker" "$body")"
+            gh issue comment "$existing" --repo "$repo" --body "$comment"
+          else
+            gh issue create --repo "$repo" \
+              --title "core-compat: broken against ruststream v$version" \
+              --body "$body"
+          fi
+
+      # continue-on-error swallowed the check's status so the report step could run; put it back,
+      # so the run page reads as the summary: a red leg is a broken broker.
+      - name: Propagate the verdict
+        if: steps.check.outcome == 'failure'
+        run: exit 1
