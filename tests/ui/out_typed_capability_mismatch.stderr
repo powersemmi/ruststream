@@ -13,7 +13,7 @@ help: the trait `Handler<Msg, <Def as InjectDef>::Context, State>` is conditiona
    | | where
    | |     Msg: IncomingMessage,
 ...  |
-   | |     DecodeCodec: Codec,
+   | |     DecodeCodec: Send + Sync,
    | |     State: Send + Sync,
    | |                       ^ unsatisfied requirement introduced here: `<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)> as InjectDef>::Context == ()`
    | |_______________________|
