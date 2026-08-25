@@ -1,15 +1,15 @@
-use ruststream::{Message, OutSlot};
+use ruststream::{OutSlot, Outgoing};
 use serde::Serialize;
 
-#[derive(Message, Serialize)]
+#[derive(Outgoing, Serialize)]
+#[outgoing(name = "reports.hourly")]
 struct Report {
     id: u64,
 }
 
-// One type maps to one channel per slot: a duplicate would make publish_typed's destination
-// ambiguous.
+// A type appears once on a slot: a second entry says nothing the first does not.
 #[derive(OutSlot)]
-#[publishes(Report = "reports.hourly", Report = "reports.daily")]
+#[publishes(Report, Report)]
 struct Reports;
 
 fn main() {}

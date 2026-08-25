@@ -1,5 +1,5 @@
-error: this type is already listed on the slot: a type appears once (with the deprecated `= "channel"` form, a second entry would also make its destination ambiguous)
-  --> tests/ui/out_slot_duplicate_publishes.rs:12:40
+error: this type is already listed on the slot: a type appears once
+  --> tests/ui/out_slot_duplicate_publishes.rs:12:21
    |
-12 | #[publishes(Report = "reports.hourly", Report = "reports.daily")]
-   |                                        ^^^^^^
+12 | #[publishes(Report, Report)]
+   |                     ^^^^^^

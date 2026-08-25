@@ -874,8 +874,8 @@ impl BrokerHandle<'_> {
     /// Publishes `value` (encoded with [`DefaultCodec`](crate::codec::DefaultCodec)) to `name`, then
     /// drives the resulting reaction to a standstill before returning.
     ///
-    /// Unlike [`publish_raw`](Self::publish_raw) this is not deprecated, because the builder does
-    /// not cover it. [`message`](Self::message) reads the destination form off the value's type
+    /// The builder did not replace this one, which is why it outlived the byte-publishing method
+    /// beside it. [`message`](Self::message) reads the destination form off the value's type
     /// through [`OutgoingDestination`], which `#[derive(Outgoing)]` implements - so a `Serialize`
     /// type the test does not own is out of reach: the orphan rule forbids both the derive and a
     /// hand-written impl on a foreign type. Derive `Outgoing` on the injected type and inject it
@@ -905,7 +905,7 @@ impl BrokerHandle<'_> {
     /// [`Headers::insert_typed`](crate::Headers::insert_typed)) - the input a
     /// [`FromHeaders`](crate::runtime::FromHeaders) handler parses.
     ///
-    /// Not deprecated, for the reason spelled out on [`publish`](Self::publish): the builder's
+    /// Kept for the reason spelled out on [`publish`](Self::publish): the builder's
     /// `message(&value).with_headers(&meta)` needs the value's type to declare a destination.
     ///
     /// # Errors
@@ -930,21 +930,6 @@ impl BrokerHandle<'_> {
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
         self.inject(msg).await
-    }
-
-    /// Publishes raw `payload` bytes to `name`, then drives the reaction to a standstill.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::NoTransport`]
-    /// if this broker has no in-process transport, or [`TestError::NotQuiescent`] if the reaction
-    /// does not settle.
-    #[deprecated(
-        since = "0.6.4",
-        note = "use the publish builder: handle.raw(&payload).to(name).publish()"
-    )]
-    pub async fn publish_raw(&self, name: &str, payload: &[u8]) -> Result<(), TestError> {
-        self.inject(OutgoingMessage::new(name, payload)).await
     }
 
     /// Injects one already-built message onto this broker's transport and drives the resulting

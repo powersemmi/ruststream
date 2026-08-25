@@ -243,7 +243,7 @@ struct OutParam<'a> {
 enum BodyDecl<'a> {
     /// A tuple listing the types inline.
     List(Vec<&'a Type>),
-    /// A set-defining type: a `#[derive(Message)]` type (itself) or a `#[derive(OutMessages)]`
+    /// A set-defining type: a `#[derive(Outgoing)]` type (itself) or a `#[derive(OutMessages)]`
     /// enum (its variants' models).
     Set(&'a Type),
 }
@@ -650,7 +650,7 @@ fn outgoing_method(
                 __rs_outgoing.extend(<#marker as ::ruststream::runtime::OutSlot>::outgoing());
             },
             // Each listed type declares itself: a one-element set whose channel comes from the
-            // type's own #[outgoing(name = ..)], or from the marker's deprecated dictionary.
+            // type's own #[outgoing(name = ..)].
             Some(BodyDecl::List(bodies)) => {
                 let entries = bodies.iter().map(|body| {
                     quote! {
@@ -883,10 +883,10 @@ fn split_outs<'a>(extractors: &mut Vec<(&'a Pat, &'a Type)>) -> syn::Result<Vec<
 
 /// The declared message set of an `Out` parameter's third position: a tuple lists types
 /// inline (`()` = unrestricted, like an absent position), a bare type defines its own set.
-/// Rejects a duplicate list entry (its `publish_typed` index inference would be ambiguous).
+/// Rejects a duplicate list entry (its membership index inference would be ambiguous).
 fn body_decl(body: &Type) -> syn::Result<Option<BodyDecl<'_>>> {
     let Type::Tuple(tuple) = body else {
-        // A bare type defines its own set: a #[derive(Message)] type declares itself, a
+        // A bare type defines its own set: a #[derive(Outgoing)] type declares itself, a
         // #[derive(OutMessages)] enum declares its variants' models.
         return Ok(Some(BodyDecl::Set(body)));
     };

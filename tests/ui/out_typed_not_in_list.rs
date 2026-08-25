@@ -1,5 +1,5 @@
 use ruststream::runtime::{HandlerResult, Out};
-use ruststream::{Message, OutSlot, Publisher, subscriber};
+use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -7,21 +7,23 @@ struct Order {
     id: u32,
 }
 
-#[derive(Message, Serialize)]
+#[derive(Outgoing, Serialize)]
+#[outgoing(name = "orders.progress")]
 struct Progress {
     percent: u8,
 }
 
-#[derive(Message, Serialize)]
+#[derive(Outgoing, Serialize)]
+#[outgoing(name = "orders.done")]
 struct Done {
     key: String,
 }
 
 #[derive(OutSlot)]
-#[publishes(Progress = "orders.progress", Done = "orders.done")]
+#[publishes(Progress, Done)]
 struct Events;
 
-// `Done` is in the slot's dictionary, but the parameter only declares `Progress`: the handler
+// `Done` is in the slot's list, but the parameter only declares `Progress`: the handler
 // publishes what it declared, nothing else.
 #[subscriber("orders")]
 async fn forward(
@@ -29,9 +31,10 @@ async fn forward(
     Out(out): Out<impl Publisher, Events, (Progress,)>,
 ) -> HandlerResult {
     let _ = out
-        .publish_typed(&Done {
+        .message(&Done {
             key: order.id.to_string(),
         })
+        .publish()
         .await;
     HandlerResult::Ack
 }

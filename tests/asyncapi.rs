@@ -431,7 +431,7 @@ mod typed_headers_spec {
     use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
     use ruststream::schemars::JsonSchema;
-    use ruststream::{Message, OutSlot, Publisher, subscriber};
+    use ruststream::{Message, OutSlot, Outgoing, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
 
     use super::build_spec;
@@ -453,13 +453,14 @@ mod typed_headers_spec {
         seq: u64,
     }
 
-    #[derive(Message, Serialize, JsonSchema)]
-    #[message(headers(DoneMeta))]
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    #[outgoing(name = "chunks.done", headers = DoneMeta)]
     struct ChunkDone {
         output_key: String,
     }
 
-    #[derive(Message, Serialize, JsonSchema)]
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    #[outgoing(name = "chunks.progress")]
     struct Progress {
         percent: u8,
     }
@@ -477,7 +478,7 @@ mod typed_headers_spec {
     }
 
     #[derive(OutSlot)]
-    #[publishes(ChunkDone = "chunks.done", Progress = "chunks.progress")]
+    #[publishes(ChunkDone, Progress)]
     struct Events;
 
     #[subscriber("chunks.raw")]
@@ -514,7 +515,7 @@ mod typed_headers_spec {
             "got: {headers}"
         );
 
-        // The slot dictionary becomes send operations on the declared channels.
+        // The slot's listed types become send operations on the channels they declare.
         assert_eq!(
             spec.operations["send_chunks_raw_chunks_done"].action,
             "send"
@@ -527,7 +528,7 @@ mod typed_headers_spec {
         assert!(spec.channels.contains_key("chunks.progress"));
         let done = &spec.components.messages["ChunkDone"];
         assert!(done.payload.is_some());
-        let done_headers = done.headers.as_ref().expect("dictionary headers schema");
+        let done_headers = done.headers.as_ref().expect("declared headers schema");
         assert!(done_headers["properties"].get("task_id").is_some());
         assert!(spec.components.messages["Progress"].headers.is_none());
 

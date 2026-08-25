@@ -1,9 +1,6 @@
 //! Subscriber clause values sourced from constants and statics rather than literals: the
-//! workers count (a `static usize`), the reply destination and a dictionary channel
-//! (`const &str`), and a failure policy (`const FailurePolicy`).
-//!
-//! The dictionary channel belongs to the deprecated name-carrying `#[publishes(..)]` form,
-//! which this file keeps under test: a destination declared on the message type is a literal.
+//! workers count (a `static usize`), the reply destination (`const &str`), and a failure policy
+//! (`const FailurePolicy`).
 
 #![cfg(all(
     feature = "memory",
@@ -11,7 +8,6 @@
     feature = "json",
     feature = "testing"
 ))]
-#![allow(deprecated)]
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FailurePolicy, HandlerResult, Out, RustStream};
@@ -21,7 +17,6 @@ use serde::{Deserialize, Serialize};
 
 static WORKERS: usize = 2;
 const REPLY_TOPIC: &str = "params.replies";
-const PROGRESS_CHANNEL: &str = "params.progress";
 const ON_DECODE: FailurePolicy = FailurePolicy::Skip;
 
 #[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
@@ -34,13 +29,14 @@ struct Pong {
     id: u64,
 }
 
-#[derive(Message, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
+#[outgoing(name = "params.progress")]
 struct Progress {
     percent: u8,
 }
 
 #[derive(OutSlot)]
-#[publishes(Progress = PROGRESS_CHANNEL)]
+#[publishes(Progress)]
 struct Events;
 
 #[subscriber(
@@ -50,7 +46,7 @@ struct Events;
     on_failure(decode = ON_DECODE)
 )]
 async fn respond(ping: &Ping, Out(events): Out<impl Publisher, Events, Progress>) -> Pong {
-    let _ = events.publish_typed(&Progress { percent: 10 }).await;
+    let _ = events.message(&Progress { percent: 10 }).publish().await;
     Pong { id: ping.id }
 }
 
@@ -70,13 +66,13 @@ async fn clause_values_come_from_constants_and_statics() {
         .await
         .expect("publish");
 
-    // The reply went to the const destination, the dictionary publish to the const channel.
+    // The reply went to the const destination, the slot publish to its declared channel.
     broker
         .published::<Pong>(REPLY_TOPIC)
         .assert_called_once()
         .with(&Pong { id: 7 });
     broker
-        .published::<Progress>(PROGRESS_CHANNEL)
+        .published::<Progress>("params.progress")
         .assert_called_once()
         .with(&Progress { percent: 10 });
 

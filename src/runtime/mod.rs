@@ -97,13 +97,11 @@ pub use settings::{
     AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
-#[allow(deprecated)]
-pub use slot::OutMessage;
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{
-    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishTypedError,
-    PublishedThrough, SlotPublisher, TypedSlot, TypedSlotWithHeaders, Unrestricted,
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
+    SlotPublisher, TypedSlot, Unrestricted,
 };
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

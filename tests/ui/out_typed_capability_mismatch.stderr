@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `InjectHandler<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)>, JsonCodec>: Handler<MemoryMessage>` is not satisfied
-  --> tests/ui/out_typed_capability_mismatch.rs:34:55
+  --> tests/ui/out_typed_capability_mismatch.rs:35:55
    |
-34 |         b.include(forward).out(Events, MemoryPublish).mount();
+35 |         b.include(forward).out(Events, MemoryPublish).mount();
    |                                                       ^^^^^ unsatisfied trait bound
    |
    = help: the trait `Handler<MemoryMessage>` is not implemented for `InjectHandler<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)>, JsonCodec>`
@@ -29,9 +29,9 @@ note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pip
    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
 
 error[E0277]: `MemoryPublisher` does not support request / reply messaging
-  --> tests/ui/out_typed_capability_mismatch.rs:34:55
+  --> tests/ui/out_typed_capability_mismatch.rs:35:55
    |
-34 |         b.include(forward).out(Events, MemoryPublish).mount();
+35 |         b.include(forward).out(Events, MemoryPublish).mount();
    |                                                       ^^^^^ the trait `RequestReply` is not implemented for `MemoryPublisher`
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
@@ -54,12 +54,12 @@ help: the following other types implement trait `RequestReply`
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
    = note: required for `SlotPublisher<MemoryPublisher, Events>` to implement `RequestReply`
 note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>` to implement `InjectDef`
-  --> tests/ui/out_typed_capability_mismatch.rs:23:1
+  --> tests/ui/out_typed_capability_mismatch.rs:24:1
    |
-23 | #[subscriber("orders")]
+24 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
 ...
-26 |     Out(out): Out<impl RequestReply, Events, Progress>,
+27 |     Out(out): Out<impl RequestReply, Events, Progress>,
    |                        ------------ unsatisfied trait bound introduced here
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open)>>`
 note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
