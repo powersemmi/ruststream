@@ -6,8 +6,7 @@
 //!
 //! # Cargo features
 //!
-//! Codecs are additive cargo features: enable only what you need. Mutually-exclusive
-//! combinations are forbidden by design.
+//! Codecs are additive cargo features: enable only what you need.
 //!
 //! * `json` (default): [`JsonCodec`] via `serde_json`.
 //! * `msgpack`: [`MsgpackCodec`] via `rmp-serde`.

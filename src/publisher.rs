@@ -63,18 +63,12 @@ pub trait Publisher: Send + Sync {
     /// The headers this publisher contributes to every message sent through the publish builder,
     /// underneath whatever the call site names.
     ///
-    /// `None` by default: a plain broker publisher contributes nothing, and the builder starts
-    /// from an empty map exactly as it always has. A handle that carries an argument for a run of
-    /// publishes - a partition key, a tenant, a delivery option the broker expresses as a header -
-    /// returns it here instead of stamping it into the message inside
-    /// [`publish`](Self::publish). The builder then assembles the outgoing map once: the base
-    /// first, the publish's own headers written over it key by key.
-    ///
-    /// That is the precedence ladder the whole builder follows, the one codec selection already
-    /// uses: the call site wins over the handle, the handle wins over nothing. A handle serves
-    /// many publishes; a call names one message, so it has the last word. It also makes a message
-    /// declaring `#[outgoing(headers = Meta)]` compatible with a broker argument, which the single
-    /// headers position alone could not express.
+    /// `None` by default: a plain broker publisher contributes nothing and the builder starts from
+    /// an empty map. A handle that carries an argument for a run of publishes - a partition key, a
+    /// tenant, a delivery option the broker expresses as a header - returns it here instead of
+    /// stamping it into the message inside [`publish`](Self::publish). The builder then assembles
+    /// the outgoing map once: the base first, the publish's own headers written over it key by
+    /// key, so the call site wins over the handle.
     ///
     /// The map is borrowed, never rebuilt per publish, so a handle that has one keeps it in its
     /// own state.

@@ -263,8 +263,7 @@ async fn chain_codec_router_batch_publishing_replies() {
 }
 
 // A static, app-wide publish middleware that stamps a header onto every reply. Used to prove the
-// app's `publish_layer` chain reaches a router-mounted publishing handler (it previously did not -
-// router publishing handlers were built with an empty pipeline).
+// app's `publish_layer` chain reaches a router-mounted publishing handler.
 #[derive(Clone)]
 struct StampApp;
 
@@ -334,8 +333,8 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-// The same fix on the BATCH router-publishing path: the app's publish_layer must reach a
-// router-mounted batch publishing handler (previously built with an empty pipeline).
+// The same on the BATCH router-publishing path: the app's publish_layer must reach a
+// router-mounted batch publishing handler.
 #[subscriber(batch("bl-in"), publish("bl-out"))]
 async fn bl_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()

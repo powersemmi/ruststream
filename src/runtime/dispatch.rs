@@ -69,7 +69,7 @@ fn current_retry_count(headers: &Headers) -> u64 {
 ///   [`partition_key`](crate::IncomingMessage::partition_key), and each lane is sequential, so
 ///   per-key ordering is preserved. Messages without a key rotate over the lanes.
 ///
-/// The default is sequential dispatch (`workers(1)`), the pre-pool behaviour.
+/// The default is sequential dispatch (`workers(1)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Workers {
     count: usize,
@@ -753,7 +753,7 @@ async fn settle_outcome<M: IncomingMessage>(
 /// [`IncomingMessage::nack_after`]. Otherwise it captures the message, drops the original, and
 /// schedules a deferred re-publish of the captured copy to its source subject with the
 /// [`RETRY_COUNT_HEADER`] incremented. With no `retry_publisher` configured on the scope, it falls
-/// back to an immediate requeue (the legacy behavior) and warns.
+/// back to an immediate requeue and warns.
 ///
 /// # Cancel safety
 ///
