@@ -169,7 +169,7 @@ impl ConnectedBroker for ConnectedNatsBroker {
 ## Одна подписка на Core и JetStream
 
 Core NATS работает по принципу fire-and-forget, JetStream сохраняет сообщения и подтверждает их через
-ack. Оба режима стоят за одним дескриптором `SubscribeOptions` и одним
+ack. Оба режима описывает один дескриптор `SubscribeOptions` и один
 `NatsSubscriber`. `SubscribeOptions` и есть `SubscriptionSource`, а брокер разветвляется по
 тому, вызывали ли `jetstream(..)`. Каждый метод билдера отвечает одному именованному параметру
 атрибута `#[subscriber(..)]`.
@@ -530,8 +530,8 @@ impl RequestReply for NatsPublisher {
 Реализуйте только те возможности, которые поддерживает транспорт: у Core NATS нет ни пакетной
 подписки, ни транзакционной публикации, ни воспроизводимого лога, поэтому `BatchSubscriber`,
 `TransactionalPublisher` и `Seekable` здесь не реализованы (место для NATS-варианта `Seekable` - это
-consumer JetStream, чей поток и есть воспроизводимый лог). `DescribeServer` в `ruststream-nats` тоже
-пока не реализован; добавьте его, если хотите, чтобы брокер попадал в AsyncAPI-документ как сервер.
+consumer JetStream, поток которого и есть воспроизводимый лог). `DescribeServer` в `ruststream-nats`
+тоже пока не реализован; добавьте его, если хотите, чтобы брокер попадал в AsyncAPI-документ как сервер.
 
 ## Политика публикации
 
