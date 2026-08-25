@@ -16,13 +16,10 @@ use ruststream::memory::{
     MemoryPublisher, MemorySubscriber,
 };
 use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, Router, RouterHandlers, RustStream,
-    RustStreamError, TypedPublisher,
+    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RouterHandlers,
+    RustStream, RustStreamError, TypedPublisher,
 };
-use ruststream::{
-    IncomingMessage, Name, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    SubscriptionSource, subscriber,
-};
+use ruststream::{IncomingMessage, Name, PairError, PublishPolicy, SubscriptionSource, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,7 +72,9 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("brc-handle", b"ping".as_slice()))
+        .raw(b"ping")
+        .to("brc-handle")
+        .publish()
         .await
         .expect("publish");
     wait_for(

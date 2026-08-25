@@ -219,12 +219,13 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// use futures::StreamExt;
 /// use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
-/// use ruststream::{Broker, IncomingMessage, OutgoingMessage, Publisher, StartAt};
+/// use ruststream::runtime::PublishExt;
+/// use ruststream::{Broker, IncomingMessage, StartAt};
 /// use ruststream::{Subscriber, SubscriptionSource};
 ///
 /// let connected = MemoryBroker::new().connect().await?;
 /// let publisher = connected.publisher();
-/// publisher.publish(OutgoingMessage::new("audit", b"one".as_slice())).await?;
+/// publisher.raw(b"one").to("audit").publish().await?;
 ///
 /// // A fresh subscription opened at the start of the log replays the earlier publish.
 /// let mut subscriber = StartAt::new(MemorySource::new("audit"), MemoryPosition::start())

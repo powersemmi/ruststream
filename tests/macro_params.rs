@@ -16,7 +16,7 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FailurePolicy, HandlerResult, Out, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{Message, OutSlot, Publisher, subscriber};
+use ruststream::{Message, OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 static WORKERS: usize = 2;
@@ -24,7 +24,7 @@ const REPLY_TOPIC: &str = "params.replies";
 const PROGRESS_CHANNEL: &str = "params.progress";
 const ON_DECODE: FailurePolicy = FailurePolicy::Skip;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
 struct Ping {
     id: u64,
 }
@@ -64,7 +64,9 @@ async fn clause_values_come_from_constants_and_statics() {
     let broker = tb.broker::<MemoryBroker>();
 
     broker
-        .publish("params.pings", &Ping { id: 7 })
+        .message(&Ping { id: 7 })
+        .to("params.pings")
+        .publish()
         .await
         .expect("publish");
 
@@ -81,7 +83,9 @@ async fn clause_values_come_from_constants_and_statics() {
     // The const decode policy applies: an undecodable payload is acked past (Skip), body never
     // runs.
     broker
-        .publish_raw("params.pings", b"\x00")
+        .raw(b"\x00")
+        .to("params.pings")
+        .publish()
         .await
         .expect("publish");
     broker

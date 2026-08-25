@@ -10,10 +10,11 @@ use std::pin::pin;
 use futures::{FutureExt, StreamExt};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::TypedPublisher;
-use ruststream::{IncomingMessage, Subscriber};
+use ruststream::{IncomingMessage, Outgoing, Subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
+#[outgoing(name = "orders.settled")]
 struct Order {
     id: u32,
 }
@@ -24,13 +25,15 @@ async fn commit_makes_scope_publishes_visible_atomically() {
     let mut subscriber = broker.subscribe("orders.settled");
     let publisher = TypedPublisher::new(broker.publisher()).transactional();
 
-    let mut scope = publisher.begin().await.expect("begin failed");
+    let scope = publisher.begin().await.expect("begin failed");
     scope
-        .publish("orders.settled", &Order { id: 1 })
+        .message(&Order { id: 1 })
+        .publish()
         .await
         .expect("publish failed");
     scope
-        .publish("orders.settled", &Order { id: 2 })
+        .message(&Order { id: 2 })
+        .publish()
         .await
         .expect("publish failed");
 
@@ -63,9 +66,10 @@ async fn abort_discards_scope_publishes_and_frees_the_wrapper() {
     let mut subscriber = broker.subscribe("orders.settled");
     let publisher = TypedPublisher::new(broker.publisher()).transactional();
 
-    let mut scope = publisher.begin().await.expect("begin failed");
+    let scope = publisher.begin().await.expect("begin failed");
     scope
-        .publish("orders.settled", &Order { id: 1 })
+        .message(&Order { id: 1 })
+        .publish()
         .await
         .expect("publish failed");
     scope.abort().await.expect("abort failed");
@@ -77,9 +81,10 @@ async fn abort_discards_scope_publishes_and_frees_the_wrapper() {
     );
 
     // The wrapper is free again: a fresh scope on the same handle commits normally.
-    let mut scope = publisher.begin().await.expect("second begin failed");
+    let scope = publisher.begin().await.expect("second begin failed");
     scope
-        .publish("orders.settled", &Order { id: 3 })
+        .message(&Order { id: 3 })
+        .publish()
         .await
         .expect("publish failed");
     scope.commit().await.expect("commit failed");

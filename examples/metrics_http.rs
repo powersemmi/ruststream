@@ -22,8 +22,8 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{AppInfo, RustStream};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{AppInfo, PublishExt, RustStream};
+use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -54,10 +54,7 @@ struct AppState {
 }
 
 async fn publish_order(State(state): State<Arc<AppState>>, body: Bytes) -> &'static str {
-    let _ = state
-        .ingest
-        .publish(OutgoingMessage::new("orders", body.as_ref()))
-        .await;
+    let _ = state.ingest.raw(body.as_ref()).to("orders").publish().await;
     "published\n"
 }
 

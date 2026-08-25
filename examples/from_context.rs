@@ -13,10 +13,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, RustStream, State};
 use ruststream::testing::TestApp;
-use ruststream::{FromRef, subscriber};
+use ruststream::{FromRef, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
 struct Order {
     id: u64,
 }
@@ -65,10 +65,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tb = TestApp::start(app).await?;
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 40 })
+        .message(&Order { id: 40 })
+        .to("orders")
+        .publish()
         .await?;
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 2 })
+        .message(&Order { id: 2 })
+        .to("orders")
+        .publish()
         .await?;
 
     println!("processed total = {}", processed.load(Ordering::Relaxed));

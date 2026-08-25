@@ -16,8 +16,8 @@ use opentelemetry::trace::{SpanContext, TraceContextExt};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::otel::OpenTelemetry;
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
-use ruststream::{Headers, OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
+use ruststream::{Headers, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -97,7 +97,10 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
         headers.insert("traceparent", tp);
     }
     ingress
-        .publish(OutgoingMessage::new("in", &payload).with_headers(headers))
+        .raw(&payload)
+        .with_header_map(headers)
+        .to("in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), GOT.notified())

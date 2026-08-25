@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use super::*;
+use crate::runtime::PublishExt;
 use crate::{FixedName, OutgoingDestination};
 
 #[derive(Debug)]
@@ -147,7 +148,9 @@ async fn a_slot_publisher_delegates_the_transaction_protocol() {
     let slot = SlotPublisher::<_, Events>::new(broker.publisher());
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.publish(OutgoingMessage::new("slots.ledger", b"staged".as_slice()))
+    slot.raw(b"staged")
+        .to("slots.ledger")
+        .publish()
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");
@@ -168,7 +171,7 @@ async fn a_typed_slot_delegates_request_reply() {
 
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
-    use crate::{IncomingMessage, Publisher as _, Subscriber};
+    use crate::{IncomingMessage, Subscriber};
 
     let broker = MemoryBroker::new();
     let mut service = broker.subscribe("slots.echo");
@@ -191,7 +194,9 @@ async fn a_typed_slot_delegates_request_reply() {
             .expect("a request carries reply-to")
             .to_owned();
         responder
-            .publish(OutgoingMessage::new(&reply_to, msg.payload()))
+            .raw(msg.payload())
+            .to(reply_to)
+            .publish()
             .await
             .expect("reply publish failed");
         msg.ack().await.expect("ack failed");
@@ -228,7 +233,9 @@ async fn a_typed_slot_delegates_the_transaction_protocol() {
     );
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.publish(OutgoingMessage::new("slots.ledger", b"staged".as_slice()))
+    slot.raw(b"staged")
+        .to("slots.ledger")
+        .publish()
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");

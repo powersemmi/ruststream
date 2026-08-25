@@ -74,6 +74,15 @@ pub use publish::{
     SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, Transactional,
     TypedHeaders, TypedPublisher, TypedTransaction, for_batch,
 };
+// The builder's entry points, for the surfaces outside `runtime` that offer one: the test
+// harness injects through the same positions as a live publish.
+#[cfg(all(
+    feature = "testing",
+    any(feature = "json", feature = "cbor", feature = "msgpack")
+))]
+pub(crate) use publish::message_of;
+#[cfg(feature = "testing")]
+pub(crate) use publish::raw_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};

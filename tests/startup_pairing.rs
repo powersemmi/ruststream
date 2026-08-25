@@ -10,9 +10,9 @@
 use std::time::Duration;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
+use ruststream::{Broker, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,9 +44,7 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
         b.include(consume);
         b.after_startup(MemoryPublish, async move |publisher| {
-            publisher
-                .publish(OutgoingMessage::new("pairing.seeded", b"first".as_slice()))
-                .await
+            publisher.raw(b"first").to("pairing.seeded").publish().await
         });
     });
 
@@ -75,7 +73,9 @@ async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
         .await
         .expect("pairing after start is infallible for memory");
     publisher
-        .publish(OutgoingMessage::new("pairing.sibling", b"late".as_slice()))
+        .raw(b"late")
+        .to("pairing.sibling")
+        .publish()
         .await
         .expect("publish");
     expect_payload(&observer, "pairing.sibling", b"late").await;

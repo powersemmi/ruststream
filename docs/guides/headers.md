@@ -125,7 +125,8 @@ AsyncAPI ecosystem, which deliberately leaves value encoding to the protocol.
 
 ## Testing
 
-The in-process harness drives the whole path: `publish_with_headers` injects a delivery with a
-typed contract, and the publish log shows the headers a typed publish produced.
+The in-process harness drives the whole path: `with_headers(&meta)` on the injection builder sends
+a delivery carrying a typed contract, and the publish log shows the headers a typed publish
+produced.
 
 --8<-- "examples/typed_headers.rs:drive"

@@ -9,10 +9,10 @@
 ))]
 
 // --8<-- [start:handler]
-use ruststream::subscriber;
+use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
 struct Order {
     id: u64,
     quantity: u32,
@@ -53,7 +53,9 @@ async fn confirms_valid_orders() {
     // handler to a standstill before it returns.
     let tb = TestApp::start(app).await.expect("start harness");
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 1, quantity: 2 })
+        .message(&Order { id: 1, quantity: 2 })
+        .to("orders")
+        .publish()
         .await
         .expect("publish");
 

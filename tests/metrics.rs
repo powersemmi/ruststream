@@ -11,10 +11,12 @@ use common::wait_for;
 
 use std::time::Duration;
 
+use ruststream::Name;
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, Router, RustStream};
-use ruststream::{Name, OutgoingMessage, Publisher};
+use ruststream::runtime::{
+    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RustStream,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consume_metrics_are_recorded() {
@@ -34,7 +36,9 @@ async fn consume_metrics_are_recorded() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("pings", b"{}"))
+        .raw(b"{}")
+        .to("pings")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(
@@ -74,7 +78,9 @@ async fn consume_metrics_are_recorded_through_a_router() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("pings", b"{}"))
+        .raw(b"{}")
+        .to("pings")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(
@@ -99,8 +105,8 @@ mod publish {
     use super::{Duration, wait_for};
     use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::metrics::Metrics;
-    use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
-    use ruststream::{Broker, OutgoingMessage, Publisher, subscriber};
+    use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
+    use ruststream::{Broker, subscriber};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
@@ -137,7 +143,9 @@ mod publish {
         let running = app.start().await.expect("startup failed");
         let payload = serde_json::to_vec(&Req { n: 7 }).unwrap();
         ingress_pub
-            .publish(OutgoingMessage::new("requests", &payload))
+            .raw(&payload)
+            .to("requests")
+            .publish()
             .await
             .expect("publish failed");
         wait_for(

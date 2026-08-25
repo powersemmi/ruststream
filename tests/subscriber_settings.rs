@@ -14,9 +14,10 @@ use std::time::Duration;
 use common::wait_for;
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
 use ruststream::runtime::{
-    AppInfo, FailurePolicies, FailurePolicy, HandlerResult, Router, RustStream, SubscriberSettings,
+    AppInfo, FailurePolicies, FailurePolicy, HandlerResult, PublishExt, Router, RustStream,
+    SubscriberSettings,
 };
-use ruststream::{OutgoingMessage, Publisher, nonzero, subscriber};
+use ruststream::{nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,7 +50,9 @@ async fn a_bare_attribute_is_named_at_the_mount_site() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new(&subject, &order_bytes(11)))
+        .raw(&order_bytes(11))
+        .to(&*subject)
+        .publish()
         .await
         .expect("publish failed");
     wait_for(|| !NAMED.lock().unwrap().is_empty(), Duration::from_secs(5)).await;
@@ -80,7 +83,9 @@ async fn a_named_kind_is_built_from_the_name_the_mount_site_gives() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("record-kind", &order_bytes(3)))
+        .raw(&order_bytes(3))
+        .to("record-kind")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(|| !KIND.lock().unwrap().is_empty(), Duration::from_secs(5)).await;
@@ -116,10 +121,9 @@ async fn the_builder_supplies_the_worker_policy() {
 
     for id in 0..4u32 {
         publisher
-            .publish(OutgoingMessage::new(
-                "workers-from-builder",
-                &order_bytes(id),
-            ))
+            .raw(&order_bytes(id))
+            .to("workers-from-builder")
+            .publish()
             .await
             .expect("publish failed");
     }
@@ -148,17 +152,15 @@ async fn the_builder_supplies_the_failure_policies() {
 
     // The undecodable payload is skipped by the mount-site policy; the next one still arrives.
     publisher
-        .publish(OutgoingMessage::new(
-            "failures-from-builder",
-            b"not json".as_slice(),
-        ))
+        .raw(b"not json")
+        .to("failures-from-builder")
+        .publish()
         .await
         .expect("publish failed");
     publisher
-        .publish(OutgoingMessage::new(
-            "failures-from-builder",
-            &order_bytes(9),
-        ))
+        .raw(&order_bytes(9))
+        .to("failures-from-builder")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(
@@ -185,7 +187,9 @@ async fn the_builder_supplies_the_start_position() {
     let publisher = broker.publisher();
     // Published before the service exists: only a subscription opened at the start sees it.
     publisher
-        .publish(OutgoingMessage::new("replay", &order_bytes(42)))
+        .raw(&order_bytes(42))
+        .to("replay")
+        .publish()
         .await
         .expect("publish failed");
 
@@ -231,7 +235,9 @@ async fn the_builder_supplies_the_buffer() {
 
     for id in 0..3u32 {
         publisher
-            .publish(OutgoingMessage::new("correlate", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("correlate")
+            .publish()
             .await
             .expect("publish failed");
     }
@@ -269,7 +275,9 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
 
     for frame in [b"one".as_slice(), b"two".as_slice()] {
         publisher
-            .publish(OutgoingMessage::new("frames", frame))
+            .raw(frame)
+            .to("frames")
+            .publish()
             .await
             .expect("publish failed");
     }
@@ -301,7 +309,9 @@ async fn a_router_mounts_the_settings_builder() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new("routed", &order_bytes(5)))
+        .raw(&order_bytes(5))
+        .to("routed")
+        .publish()
         .await
         .expect("publish failed");
     wait_for(

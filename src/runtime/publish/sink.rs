@@ -109,7 +109,7 @@ impl<C: Codec> PublishCodec for &C {
 /// Produced by [`Publish::with_codec`](super::Publish::with_codec); you never construct it
 /// directly.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct CallCodec<C>(pub(super) C);
+pub struct CallCodec<C>(pub(crate) C);
 
 impl<C: Codec> PublishCodec for CallCodec<C> {
     type Codec = C;

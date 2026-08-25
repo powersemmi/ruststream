@@ -12,7 +12,7 @@ use crate::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublisher,
     MemorySubscriber,
 };
-use crate::runtime::Decoded;
+use crate::runtime::{Decoded, PublishExt};
 use crate::{
     BatchSubscriber, Headers, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
 };
@@ -79,7 +79,9 @@ async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
     let publisher = broker.publisher();
     for n in numbers {
         publisher
-            .publish(OutgoingMessage::new(name, &serde_json::to_vec(n).unwrap()))
+            .raw(&serde_json::to_vec(n).unwrap())
+            .to(name)
+            .publish()
             .await
             .unwrap();
     }
@@ -88,10 +90,7 @@ async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
 async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
     let publisher = broker.publisher();
     for payload in payloads {
-        publisher
-            .publish(OutgoingMessage::new(name, payload))
-            .await
-            .unwrap();
+        publisher.raw(payload).to(name).publish().await.unwrap();
     }
 }
 

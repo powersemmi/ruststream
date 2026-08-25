@@ -10,12 +10,10 @@ use std::time::Duration;
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
-    PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream, TypedPublisher,
-    for_batch,
+    PublishExt, PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream,
+    TypedPublisher, for_batch,
 };
-use ruststream::{
-    Broker, BuildContext, Field, Headers, IncomingMessage, OutgoingMessage, Publisher, subscriber,
-};
+use ruststream::{Broker, BuildContext, Field, Headers, IncomingMessage, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -105,7 +103,10 @@ async fn delivery_context_propagates_to_the_reply() {
     let mut headers = Headers::new();
     headers.insert("correlation-id", "trace-abc");
     ingress_pub
-        .publish(OutgoingMessage::new("in", &payload).with_headers(headers))
+        .raw(&payload)
+        .with_header_map(headers)
+        .to("in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), GOT.notified())
@@ -161,7 +162,9 @@ async fn batch_layer_runs_only_on_batched_replies() {
 
     let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
     ingress_pub
-        .publish(OutgoingMessage::new("batch-in", &payload))
+        .raw(&payload)
+        .to("batch-in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), BATCH_GOT.notified())
@@ -227,7 +230,9 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
 
     let payload = serde_json::to_vec(&Req { n: 3 }).expect("encode");
     ingress_pub
-        .publish(OutgoingMessage::new("dyn-in", &payload))
+        .raw(&payload)
+        .to("dyn-in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), DYN_GOT.notified())
@@ -316,7 +321,9 @@ async fn publish_layer_last_added_runs_outermost() {
 
     let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
     ingress_pub
-        .publish(OutgoingMessage::new("ord-in", &payload))
+        .raw(&payload)
+        .to("ord-in")
+        .publish()
         .await
         .expect("publish");
     tokio::time::timeout(Duration::from_secs(5), ORDER_GOT.notified())

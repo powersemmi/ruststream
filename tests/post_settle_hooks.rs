@@ -15,8 +15,8 @@ use std::{
 };
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
+use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -91,9 +91,7 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
     let publish = |id: u32| {
         let publisher = &publisher;
         async move {
-            let _ = publisher
-                .publish(OutgoingMessage::new("orders", &order_bytes(id)))
-                .await;
+            let _ = publisher.raw(&order_bytes(id)).to("orders").publish().await;
         }
     };
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -160,9 +158,7 @@ async fn hooks_drain_on_graceful_shutdown() {
 
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let _ = publisher
-                .publish(OutgoingMessage::new("slow", &order_bytes(1)))
-                .await;
+            let _ = publisher.raw(&order_bytes(1)).to("slow").publish().await;
             tokio::select! {
                 () = SLOW_HANDLED.notified() => break,
                 () = tokio::task::yield_now() => {}
@@ -216,7 +212,9 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
         loop {
             for id in 0..3u32 {
                 let _ = publisher
-                    .publish(OutgoingMessage::new("batched", &order_bytes(id)))
+                    .raw(&order_bytes(id))
+                    .to("batched")
+                    .publish()
                     .await;
             }
             tokio::select! {

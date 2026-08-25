@@ -11,10 +11,10 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemoryRequest};
 use ruststream::runtime::{
-    AppInfo, Outgoing, PublishContext, PublishTransform, RustStream, TypedPublisher,
+    AppInfo, Outgoing, PublishContext, PublishExt, PublishTransform, RustStream, TypedPublisher,
 };
 use ruststream::testing::expect_published;
-use ruststream::{Broker, OutgoingMessage, PublishPolicy, Publisher, RequestReply, subscriber};
+use ruststream::{Broker, OutgoingMessage, PublishPolicy, RequestReply, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,7 +48,9 @@ async fn a_bare_policy_pairs_into_a_live_publisher() {
         .expect("memory pairing is infallible");
 
     publisher
-        .publish(OutgoingMessage::new("policy.out", b"paired".as_slice()))
+        .raw(b"paired")
+        .to("policy.out")
+        .publish()
         .await
         .expect("publish through the paired publisher");
 
@@ -110,10 +112,9 @@ async fn a_typed_policy_stack_pairs_functorially() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .publish(OutgoingMessage::new(
-            "policy.requests",
-            serde_json::to_vec(&Order { id: 7 }).unwrap().as_slice(),
-        ))
+        .raw(&serde_json::to_vec(&Order { id: 7 }).unwrap())
+        .to("policy.requests")
+        .publish()
         .await
         .expect("publish request");
 

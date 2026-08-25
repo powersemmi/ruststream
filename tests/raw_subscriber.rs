@@ -43,7 +43,9 @@ async fn raw_handler_receives_exact_bytes() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("frames", FRAME)
+        .raw(FRAME)
+        .to("frames")
+        .publish()
         .await
         .expect("publish");
 
@@ -84,7 +86,9 @@ async fn raw_reply_round_trips_exact_bytes() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("relay-in", FRAME)
+        .raw(FRAME)
+        .to("relay-in")
+        .publish()
         .await
         .expect("publish");
 
@@ -123,7 +127,9 @@ async fn raw_reply_defaults_to_the_brokers_publish_policy() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("relay-default-in", FRAME)
+        .raw(FRAME)
+        .to("relay-default-in")
+        .publish()
         .await
         .expect("publish");
 
@@ -160,7 +166,9 @@ async fn raw_reply_result_form_controls_the_publish() {
 
     // The Err arm: nothing is published and the delivery settles by the returned result.
     tb.broker::<MemoryBroker>()
-        .publish_raw("relay-checked-in", b"")
+        .raw(b"")
+        .to("relay-checked-in")
+        .publish()
         .await
         .expect("publish empty");
     tb.broker::<MemoryBroker>()
@@ -173,7 +181,9 @@ async fn raw_reply_result_form_controls_the_publish() {
 
     // The Ok arm publishes the bytes as-is.
     tb.broker::<MemoryBroker>()
-        .publish_raw("relay-checked-in", FRAME)
+        .raw(FRAME)
+        .to("relay-checked-in")
+        .publish()
         .await
         .expect("publish");
     tb.broker::<MemoryBroker>()
@@ -246,7 +256,9 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("relay-flaky-in", FRAME)
+        .raw(FRAME)
+        .to("relay-flaky-in")
+        .publish()
         .await
         .expect("publish");
 
@@ -345,7 +357,9 @@ mod typed_in {
         let tb = TestApp::start(app).await.expect("start");
         // Not valid JSON: the typed input side keeps the decode failure policy, unlike raw.
         tb.broker::<MemoryBroker>()
-            .publish_raw("gateway-checked-in", FRAME)
+            .raw(FRAME)
+            .to("gateway-checked-in")
+            .publish()
             .await
             .expect("publish");
         tb.broker::<MemoryBroker>()
@@ -399,7 +413,9 @@ async fn state_extractor_and_ctx_resolve_alongside_raw() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("frames-state", FRAME)
+        .raw(FRAME)
+        .to("frames-state")
+        .publish()
         .await
         .expect("publish");
 
@@ -456,7 +472,9 @@ async fn ctx_extractor_projects_the_context_under_raw() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("frames-meta", FRAME)
+        .raw(FRAME)
+        .to("frames-meta")
+        .publish()
         .await
         .expect("publish");
 
@@ -482,7 +500,9 @@ async fn workers_and_panic_policy_apply_to_raw() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("frames-workers", b"boom")
+        .raw(b"boom")
+        .to("frames-workers")
+        .publish()
         .await
         .expect("publish");
     tb.broker::<MemoryBroker>()
@@ -492,7 +512,9 @@ async fn workers_and_panic_policy_apply_to_raw() {
 
     // The panic policy dropped the poison frame; the app keeps serving.
     tb.broker::<MemoryBroker>()
-        .publish_raw("frames-workers", b"ok")
+        .raw(b"ok")
+        .to("frames-workers")
+        .publish()
         .await
         .expect("publish after panic");
     tb.broker::<MemoryBroker>()
@@ -520,7 +542,9 @@ async fn router_mounts_raw_definitions() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish_raw("routed-raw", FRAME)
+        .raw(FRAME)
+        .to("routed-raw")
+        .publish()
         .await
         .expect("publish");
 
@@ -538,10 +562,11 @@ async fn router_mounts_raw_definitions() {
 mod scope_codec {
     use super::*;
 
+    use ruststream::Outgoing;
     use ruststream::codec::JsonCodec;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    #[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
     struct Order {
         id: u32,
     }
@@ -575,7 +600,9 @@ mod scope_codec {
         let tb = TestApp::start(app).await.expect("start");
         // Bytes no JSON decoder would accept reach the raw handler untouched...
         tb.broker::<MemoryBroker>()
-            .publish_raw("mixed-raw", FRAME)
+            .raw(FRAME)
+            .to("mixed-raw")
+            .publish()
             .await
             .expect("publish raw");
         tb.broker::<MemoryBroker>()
@@ -590,7 +617,9 @@ mod scope_codec {
 
         // ...while the typed neighbour still decodes with the scope codec.
         tb.broker::<MemoryBroker>()
-            .publish("mixed-typed", &Order { id: 9 })
+            .message(&Order { id: 9 })
+            .to("mixed-typed")
+            .publish()
             .await
             .expect("publish typed");
         tb.broker::<MemoryBroker>()

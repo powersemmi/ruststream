@@ -14,12 +14,10 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerResult, Layer, RustStream,
-    Settle,
+    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerResult, Layer, PublishExt,
+    RustStream, Settle,
 };
-use ruststream::{
-    AckError, BuildContext, Field, FieldMut, Headers, IncomingMessage, OutgoingMessage, Publisher,
-};
+use ruststream::{AckError, BuildContext, Field, FieldMut, Headers, IncomingMessage};
 use tokio::sync::Notify;
 
 /// A broker that attaches native per-delivery metadata: `TaggedMessage` carries a tag, and the
@@ -124,14 +122,8 @@ async fn broker_contributed_field_reaches_handler_by_key() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    publisher
-        .publish(OutgoingMessage::new("orders", b"a"))
-        .await
-        .unwrap();
-    publisher
-        .publish(OutgoingMessage::new("orders", b"b"))
-        .await
-        .unwrap();
+    publisher.raw(b"a").to("orders").publish().await.unwrap();
+    publisher.raw(b"b").to("orders").publish().await.unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").len() >= 2,
@@ -257,14 +249,8 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    publisher
-        .publish(OutgoingMessage::new("orders", b"a"))
-        .await
-        .unwrap();
-    publisher
-        .publish(OutgoingMessage::new("orders", b"b"))
-        .await
-        .unwrap();
+    publisher.raw(b"a").to("orders").publish().await.unwrap();
+    publisher.raw(b"b").to("orders").publish().await.unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").len() >= 2,
@@ -310,10 +296,7 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    publisher
-        .publish(OutgoingMessage::new("orders", b"x"))
-        .await
-        .unwrap();
+    publisher.raw(b"x").to("orders").publish().await.unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").is_some(),

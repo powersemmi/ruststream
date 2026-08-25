@@ -14,7 +14,7 @@ use ruststream::testing::{TestApp, TestableBroker};
 use ruststream::{Broker, Headers, OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Outgoing, PartialEq, Serialize, Deserialize)]
 struct Job {
     id: u64,
 }
@@ -130,7 +130,9 @@ async fn every_destination_form_resolves_through_one_builder() {
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.publish("jobs.in", &Job { id: 3 })
+    tb.message(&Job { id: 3 })
+        .to("jobs.in")
+        .publish()
         .await
         .expect("publish");
 
@@ -293,7 +295,9 @@ async fn a_batch_publishing_handler_carries_the_builder() {
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.publish("jobs.bulk", &Job { id: 4 })
+    tb.message(&Job { id: 4 })
+        .to("jobs.bulk")
+        .publish()
         .await
         .expect("publish");
 

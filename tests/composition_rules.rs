@@ -16,9 +16,9 @@ use std::{
 
 use common::wait_for;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, Buffered, Name, OutgoingMessage, Publisher, nonzero, subscriber};
+use ruststream::{Broker, Buffered, Name, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,7 +68,9 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     // Four orders, each published once; expect one committed receipt per handled order.
     for id in 1..=4u32 {
         publisher
-            .publish(OutgoingMessage::new("tx-in", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("tx-in")
+            .publish()
             .await
             .expect("publish");
     }
@@ -118,7 +120,9 @@ async fn buffered_sources_compose_with_a_batch_pool() {
     // Six deliveries against a size cap of two: they cannot all fit in one batch.
     for id in 1..=6u32 {
         publisher
-            .publish(OutgoingMessage::new("buf-in", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("buf-in")
+            .publish()
             .await
             .expect("publish");
     }
@@ -165,7 +169,9 @@ async fn publishing_replies_compose_with_a_worker_pool() {
 
     for id in 1..=4u32 {
         publisher
-            .publish(OutgoingMessage::new("pub-in", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("pub-in")
+            .publish()
             .await
             .expect("publish");
     }

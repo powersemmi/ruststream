@@ -79,14 +79,13 @@ pub trait Publisher: Send + Sync {
 /// # #[cfg(feature = "memory")]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryPublish};
-/// use ruststream::{Broker, OutgoingMessage, PublishPolicy, Publisher};
+/// use ruststream::runtime::PublishExt;
+/// use ruststream::{Broker, PublishPolicy};
 ///
 /// let policy = MemoryPublish; // no broker in sight
 /// let connected = MemoryBroker::new().connect().await?;
 /// let publisher = policy.pair(&connected).await?; // live only past this point
-/// publisher
-///     .publish(OutgoingMessage::new("orders", b"{}".as_slice()))
-///     .await?;
+/// publisher.raw(b"{}").to("orders").publish().await?;
 /// # Ok(())
 /// # }
 /// ```

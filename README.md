@@ -153,7 +153,9 @@ let tb = TestApp::start(service()).await?;
 
 // Inject an order; the harness drives the handler to completion before returning.
 tb.broker::<MemoryBroker>()
-    .publish("orders", &Order { id: 42 })
+    .message(&Order { id: 42 })
+    .to("orders")
+    .publish()
     .await?;
 
 // The handler ran once, decoded the order, and acked.

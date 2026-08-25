@@ -166,9 +166,8 @@ mod tests {
     use super::*;
     use crate::codec::JsonCodec;
     use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
-    use crate::{
-        BatchSubscriber, Headers, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
-    };
+    use crate::runtime::PublishExt;
+    use crate::{BatchSubscriber, Headers, Name, Subscriber, SubscriptionSource};
 
     /// A definition whose "injection" is a plain multiplier: the real ones are `Out` / `Seek`
     /// values, but the handler side only cares that the resolved tuple is handed to every call.
@@ -216,10 +215,7 @@ mod tests {
     async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
         let publisher = broker.publisher();
         for payload in payloads {
-            publisher
-                .publish(OutgoingMessage::new(name, payload))
-                .await
-                .unwrap();
+            publisher.raw(payload).to(name).publish().await.unwrap();
         }
     }
 

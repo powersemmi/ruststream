@@ -10,10 +10,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, Context, FromContext, HandlerResult, RustStream, State};
 use ruststream::testing::TestApp;
-use ruststream::{FromRef, subscriber};
+use ruststream::{FromRef, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
 struct Order {
     id: u64,
 }
@@ -52,7 +52,9 @@ async fn extractor_resolves_from_state() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 7 })
+        .message(&Order { id: 7 })
+        .to("orders")
+        .publish()
         .await
         .expect("publish");
 
@@ -106,7 +108,9 @@ async fn extractor_rejection_short_circuits() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish("guard", &Order { id: 1 })
+        .message(&Order { id: 1 })
+        .to("guard")
+        .publish()
         .await
         .expect("publish");
 
@@ -154,7 +158,9 @@ async fn derive_from_ref_injects_fields() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .publish("derived", &Order { id: 3 })
+        .message(&Order { id: 3 })
+        .to("derived")
+        .publish()
         .await
         .expect("publish");
 

@@ -8,8 +8,10 @@
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, HealthState, RustStream, RustStreamError};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{
+    AppInfo, HandlerResult, HealthState, PublishExt, RustStream, RustStreamError,
+};
+use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,7 +66,9 @@ async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
     let mut health = running.health();
 
     publisher
-        .publish(OutgoingMessage::new("health.boom", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("health.boom")
+        .publish()
         .await
         .expect("publish failed");
 
@@ -104,7 +108,9 @@ async fn probe_taken_after_the_fail_fast_still_sees_failed() {
     // Deliberately no probe yet: the transition must be stored even with zero subscribers,
     // because in the real deployment the healthz task may come up after the failure.
     publisher
-        .publish(OutgoingMessage::new("health.boom", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("health.boom")
+        .publish()
         .await
         .expect("publish failed");
     running.stopping().await;

@@ -58,18 +58,14 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::runtime::{HandlerResult, Out};
-/// use ruststream::{OutgoingMessage, Publisher, subscriber};
+/// use ruststream::{Publisher, subscriber};
 /// # #[derive(serde::Deserialize)]
 /// # struct Event { id: u64 }
 ///
 /// #[subscriber("ingress")]
 /// async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
 ///     let payload = event.id.to_be_bytes();
-///     if out
-///         .publish(OutgoingMessage::new("out", payload.as_slice()))
-///         .await
-///         .is_err()
-///     {
+///     if out.raw(&payload).to("out").publish().await.is_err() {
 ///         return HandlerResult::retry();
 ///     }
 ///     HandlerResult::Ack

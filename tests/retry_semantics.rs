@@ -17,8 +17,8 @@ use std::{
 };
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
+use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
@@ -70,7 +70,9 @@ async fn retry_after_delay_is_honored_by_the_dispatcher() {
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
     publisher
-        .publish(OutgoingMessage::new("delayed", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("delayed")
+        .publish()
         .await
         .expect("publish");
 
@@ -135,7 +137,9 @@ async fn retry_completes_inside_a_worker_pool() {
 
     for id in 1..=4u32 {
         publisher
-            .publish(OutgoingMessage::new("pool-retry", &order_bytes(id)))
+            .raw(&order_bytes(id))
+            .to("pool-retry")
+            .publish()
             .await
             .expect("publish");
     }
@@ -200,7 +204,10 @@ async fn retry_completes_inside_keyed_lanes() {
             let mut headers = ruststream::Headers::new();
             headers.insert("partition-key", key);
             publisher
-                .publish(OutgoingMessage::new("lane-retry", &order_bytes(id)).with_headers(headers))
+                .raw(&order_bytes(id))
+                .with_header_map(headers)
+                .to("lane-retry")
+                .publish()
                 .await
         }
     };
@@ -258,7 +265,9 @@ async fn batch_pool_overlaps_batches() {
     // messages arrive in distinct batches - which a sequential batch loop could never hold in
     // flight simultaneously.
     publisher
-        .publish(OutgoingMessage::new("overlap", &order_bytes(1)))
+        .raw(&order_bytes(1))
+        .to("overlap")
+        .publish()
         .await
         .expect("publish");
     let first_held = tokio::time::timeout(Duration::from_secs(5), async {
@@ -270,7 +279,9 @@ async fn batch_pool_overlaps_batches() {
     assert!(first_held.is_ok(), "the first batch never reached the pool");
 
     publisher
-        .publish(OutgoingMessage::new("overlap", &order_bytes(2)))
+        .raw(&order_bytes(2))
+        .to("overlap")
+        .publish()
         .await
         .expect("publish");
     let result = tokio::time::timeout(Duration::from_secs(5), async {

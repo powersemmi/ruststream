@@ -11,8 +11,10 @@ use std::time::Duration;
 use common::wait_for;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, layers::TracingLayer};
-use ruststream::{OutgoingMessage, Publisher, subscriber};
+use ruststream::runtime::{
+    AppInfo, HandlerResult, PublishExt, Router, RustStream, layers::TracingLayer,
+};
+use ruststream::{Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,7 +36,9 @@ async fn publish_and_await_all(
     let payload = order_bytes(1);
     for topic in topics {
         publisher
-            .publish(OutgoingMessage::new(topic, &payload))
+            .raw(&payload)
+            .to(*topic)
+            .publish()
             .await
             .expect("publish");
     }

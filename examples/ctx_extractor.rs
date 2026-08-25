@@ -11,10 +11,10 @@
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{AppInfo, Ctx, HandlerResult, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{BuildContext, ContextField, IncomingMessage, subscriber};
+use ruststream::{BuildContext, ContextField, IncomingMessage, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
 struct Order {
     id: u64,
 }
@@ -65,7 +65,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tb = TestApp::start(app).await?;
     tb.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 40 })
+        .message(&Order { id: 40 })
+        .to("orders")
+        .publish()
         .await?;
 
     println!("done");

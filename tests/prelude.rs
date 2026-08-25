@@ -17,7 +17,7 @@ use ruststream::prelude::*;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Order {
     id: u64,
 }
@@ -64,7 +64,9 @@ async fn the_prelude_carries_a_canonical_service() {
 
     let test = TestApp::start(app).await.expect("the app should start");
     test.broker::<MemoryBroker>()
-        .publish("orders", &Order { id: 7 })
+        .message(&Order { id: 7 })
+        .to("orders")
+        .publish()
         .await
         .expect("publish should reach the subscriber");
     test.settle().await.expect("dispatch should settle");

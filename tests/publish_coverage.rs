@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, RustStream, RustStreamError, TypedPublisher};
+use ruststream::runtime::{AppInfo, PublishExt, RustStream, RustStreamError, TypedPublisher};
 use ruststream::{
     IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, Subscriber, subscriber,
 };
@@ -153,7 +153,9 @@ async fn a_fail_fast_decode_failure_tears_the_service_down_and_says_why() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("pubff", b"not json".as_slice()))
+        .raw(b"not json")
+        .to("pubff")
+        .publish()
         .await
         .expect("publish failed");
 
@@ -194,7 +196,9 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .publish(OutgoingMessage::new("flaky", &order_bytes(7)))
+        .raw(&order_bytes(7))
+        .to("flaky")
+        .publish()
         .await
         .expect("publish failed");
 

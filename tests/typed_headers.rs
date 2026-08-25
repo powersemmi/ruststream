@@ -21,12 +21,12 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Buffered, Message, Name, OutMessages, OutSlot, OutgoingMessage, Publisher,
-    TransactionalPublisher, nonzero, subscriber,
+    Buffered, Message, Name, OutMessages, OutSlot, Outgoing, Publisher, TransactionalPublisher,
+    nonzero, subscriber,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
 struct Chunk {
     seq: u64,
 }
@@ -205,11 +205,7 @@ async fn transactional_convert(
     }
     // The Publisher supertrait: a per-message computed destination stays available.
     let audit = format!("audit.{}", chunk.seq);
-    if events
-        .publish(OutgoingMessage::new(&audit, b"seen"))
-        .await
-        .is_err()
-    {
+    if events.raw(b"seen").to(audit).publish().await.is_err() {
         return HandlerResult::retry();
     }
     HandlerResult::Ack
@@ -227,7 +223,9 @@ async fn typed_out_composes_with_transactional_capability() {
     let broker = tb.broker::<MemoryBroker>();
 
     broker
-        .publish("txn.raw", &Chunk { seq: 9 })
+        .message(&Chunk { seq: 9 })
+        .to("txn.raw")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -271,7 +269,9 @@ async fn header_contract_violation_follows_decode_policy() {
 
     // Missing headers: the default policy drops, and the body never runs.
     broker
-        .publish("audit", &Chunk { seq: 1 })
+        .message(&Chunk { seq: 1 })
+        .to("audit")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -283,7 +283,9 @@ async fn header_contract_violation_follows_decode_policy() {
     // on_failure(decode = skip) covers the header contract too: the delivery is acked past,
     // and the body (which would retry) never runs.
     broker
-        .publish("lenient", &Chunk { seq: 2 })
+        .message(&Chunk { seq: 2 })
+        .to("lenient")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -326,7 +328,9 @@ async fn raw_input_composes_with_from_headers() {
 
     // And the raw handler still applies the decode policy to a broken contract.
     broker
-        .publish_raw("frames", b"\x00")
+        .raw(b"\x00")
+        .to("frames")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -360,7 +364,9 @@ async fn unrestricted_slot_publishes_any_dictionary_type() {
     let broker = tb.broker::<MemoryBroker>();
 
     broker
-        .publish("unrestricted.raw", &Chunk { seq: 3 })
+        .message(&Chunk { seq: 3 })
+        .to("unrestricted.raw")
+        .publish()
         .await
         .expect("publish");
     broker
@@ -434,7 +440,9 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
     for seq in [1u64, 2, 3, 4] {
         if seq == 2 {
             broker
-                .publish("chunks.bulk", &Chunk { seq })
+                .message(&Chunk { seq })
+                .to("chunks.bulk")
+                .publish()
                 .await
                 .expect("publish");
             continue;
