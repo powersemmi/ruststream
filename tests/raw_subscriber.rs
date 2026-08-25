@@ -556,6 +556,36 @@ async fn router_mounts_raw_definitions() {
     assert_eq!(ROUTED.load(Ordering::Relaxed), FRAME.len());
 }
 
+#[subscriber("routed-relay-in", raw, publish_raw("routed-relay-out"))]
+async fn routed_relay(frame: &[u8]) -> Vec<u8> {
+    frame.to_vec()
+}
+
+/// The byte-reply form on a router, next to the scope-mounted one above: both mounts resolve
+/// the decode codec against the input kind, so neither asks for a codec the byte path does not
+/// use. This file compiles with no codec feature at all, which is what pins that.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn router_mounts_a_byte_reply_definition() {
+    let router = Router::<MemoryBroker>::new()
+        .include(routed_relay)
+        .publisher(MemoryPublish);
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+
+    let tb = TestApp::start(app).await.expect("start");
+    tb.broker::<MemoryBroker>()
+        .raw(FRAME)
+        .to("routed-relay-in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Vec<u8>>("routed-relay-out")
+        .assert_called_once()
+        .with_raw(FRAME);
+}
+
 // --- under a scope codec, raw mounts ignore it while typed neighbours decode with it ---
 
 #[cfg(feature = "json")]

@@ -21,8 +21,8 @@ use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::{
     CommitVia, DefaultBareReply, DefaultReply, IncludeMount, IncludePublishing,
-    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, MountCodec, PublishInjectMount,
-    PublishMount, SlotCommit, forms,
+    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, InputCodec, MountCodec,
+    PublishInjectMount, PublishMount, SlotCommit, forms,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -123,13 +123,21 @@ macro_rules! impl_publishing_out_commit {
             for (WithSource<Source>, ($(WithSource<$attach>,)+))
         where
             B: Broker + 'static,
-            C: MountCodec,
-            Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
+            // Two codec questions, and they are not the same one: the slots encode what leaves
+            // through them (`MountCodec`), while the input decodes with whatever its kind asks
+            // for - nothing, on the byte path.
+            C: MountCodec + InputCodec<Bound::Input>,
+            Def: BindSlots<
+                Connected<B>,
+                ($(($attach, <C as MountCodec>::Codec),)+),
+                Bound = Bound,
+                Extra = Extra,
+            >,
             Bound: PublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Sync + Send + 'static,
             SourceMessage<B, Bound::Source>: Send + Sync + 'static,
-            Bound::Input: DecodeWith<C::Codec>,
+            Bound::Input: DecodeWith<<C as InputCodec<Bound::Input>>::Codec>,
             Bound::Injections: FromStartup<B, SourceSubscriber<B, Bound::Source>, Extra>
                 + Send
                 + Sync
@@ -141,7 +149,14 @@ macro_rules! impl_publishing_out_commit {
             Extra: Send + Sync + 'static,
             Pipeline: PublishPipeline + Clone + Send + 'static,
             State: Send + Sync + 'static,
-            Layers: Layer<PublishingHandler<Bound, C::Codec, Source::Live, Pipeline>>
+            Layers: Layer<
+                PublishingHandler<
+                    Bound,
+                    <C as InputCodec<Bound::Input>>::Codec,
+                    Source::Live,
+                    Pipeline,
+                >,
+            >
                 + Clone
                 + Send
                 + 'static,

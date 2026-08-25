@@ -39,7 +39,7 @@ pub use mount::IncludeDef;
 pub use mount::RouterMount;
 pub(crate) use mount::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultBareReply, DefaultReply,
-    InjectMount, MountCodec, PublishInjectMount, PublishMount,
+    InjectMount, InputCodec, MountCodec, PublishInjectMount, PublishMount,
 };
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;

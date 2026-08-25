@@ -122,6 +122,17 @@ jobs:
         # the log then lists every red test, not just the first binary's.
         run: cargo test --locked --workspace --all-features --no-fail-fast
 
+      # The tests themselves on a reduced feature set. Everything above either builds the tests
+      # with every feature on, or builds the library alone without them - so a test that reached
+      # for a gated item, or a mount that demanded a codec the byte path never uses, compiled
+      # nowhere and rotted unnoticed. The byte path is the one that must hold with no codec at
+      # all: `raw` in, `publish_raw` out, on both the scope and the router.
+      - name: cargo test (reduced features)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo test --locked --no-default-features --lib
+          cargo test --locked --no-default-features --features macros,memory,testing --test raw_subscriber
+
       # All-features hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it.
       - name: cargo test --doc (feature edges)
