@@ -63,8 +63,7 @@ a simulation of another broker's:
   through a `Seek` parameter (see [Seeking](../guides/subscribers.md#seeking)).
 - **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
   `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
-  reporting how many subscriber registrations the teardown dropped. The bus itself is a single
-  enum (so the lifecycle and the registrations cannot disagree): aliased handles used after the
+  reporting how many subscriber registrations the teardown dropped. Aliased handles used after the
   shutdown - publishers, transaction commits, requests - error with `MemoryError::ShutDown` /
   `RequestError::ShutDown` instead of silently succeeding.
 

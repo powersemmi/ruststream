@@ -10,8 +10,7 @@ on the produce side, and the headers schema in the generated AsyncAPI document.
 A header contract is a flat struct: each field names a header, values are scalars (numbers,
 booleans, strings, raw bytes, unit-only enums) or `Option`s of them. On the wire every value is
 string-encoded - the framework parses `"3"` into a `u32` field and writes it back the same way -
-while schemas keep describing the logical types, which is the AsyncAPI convention for header
-documentation.
+while schemas keep describing the logical types.
 
 --8<-- "examples/typed_headers.rs:contracts"
 

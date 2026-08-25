@@ -213,8 +213,8 @@ The macro follows the chain down to the base `Type::new(..)` to name the source 
 in the chain must return `Self`. Free functions are rejected, since their type is not visible to the
 macro.
 
-A source built this way is rebuilt for each mount, so a broker's descriptor type is `Clone`; that
-is what lets one definition mount on two brokers.
+A source built this way is rebuilt for each mount, so a broker's descriptor type is `Clone`. One
+definition can mount on two brokers.
 
 ## Settings at the mount site
 
@@ -296,10 +296,9 @@ size or by a deadline after its first delivery:
 --8<-- "examples/subscribers.rs:batch_buffered"
 ```
 
-The setting is named after the adapter, not after the broker's own batching: batches come either
-from the broker (configured by the broker's own settings) or from this wrap. Because the wrap
-changes the subscription type, it goes last - broker settings bound to the unwrapped type stop
-applying past it.
+Batches come either from the broker (configured by the broker's own settings) or from this wrap;
+the setting is named after the adapter to keep the two apart. The wrap changes the subscription
+type, so it goes last - broker settings bound to the unwrapped type stop applying past it.
 
 The semantics differ from single-message handlers in a few ways:
 
@@ -408,8 +407,8 @@ Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
 the injected `Out` / `Seek` parameters work unchanged on the single-delivery shape (the batch of
 payloads does not take `Out` / `Seek` yet), and a raw subscriber mounts with the
 same `include` as every other definition - a scope codec, when one is set, does not apply
-to it. Because no codec is involved, raw subscribers are also the one subscriber form available
-with no codec feature enabled at all. For a custom serialization format you want *typed*
+to it. Raw subscribers are also the one subscriber form available with no codec feature enabled
+at all. For a custom serialization format you want *typed*
 handlers for, implement [`Codec`](codecs.md) instead and keep the typed path.
 
 A raw subscriber can also reply in kind: the `publish_raw("dest")` clause publishes the

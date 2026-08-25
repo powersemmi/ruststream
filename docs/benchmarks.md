@@ -59,7 +59,7 @@ RustStream or through the broker client directly.
 - **Same build.** Profile, `RUSTFLAGS`, and the allocator match, and the observability features
   (`logging`, `metrics`, `otel`) are off on both sides or on on both sides. A machine with
   `-C target-cpu=native` in the environment produces numbers that another machine cannot
-  reproduce, which is why the flags are published with the results.
+  reproduce; the flags are published with the results.
 
 ### The run
 

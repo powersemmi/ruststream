@@ -166,12 +166,12 @@ transition rather than a runtime flag: a plain policy pairs into the plain publi
 `transactional_id(..)` builder step moves to a distinct transactional policy type whose live form
 implements `TransactionalPublisher` - so the plain publisher has no transactional surface at all.
 The in-memory broker's `MemoryPublish` / `MemoryRequest` are the minimal reference (no options, so
-they are unit markers); the core's typed combinators implement `PublishPolicy` functorially, which
-is what lets users compose codecs and transforms over your policy before it pairs.
+they are unit markers); the core's typed combinators implement `PublishPolicy` functorially, so
+users compose codecs and transforms over your policy before it pairs.
 
 When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
-the connected form to name it. That is what lets the runtime build the default reply publisher
-when a `publish("dest")` handler is included without an explicit `.publisher(..)` - `b.include(def)`
+the connected form to name it. The runtime then builds the default reply publisher when a
+`publish("dest")` handler is included without an explicit `.publisher(..)`: `b.include(def)`
 alone compiles. Brokers whose publishers always need explicit options do not implement it, and
 their users attach a policy at every registration.
 
@@ -222,8 +222,8 @@ impl FromName for OrdersStream {
 }
 ```
 
-That is what makes `#[subscriber(OrdersStream)]` legal: the attribute fixes the kind, and the
-mount site supplies the value. A kind that genuinely needs more than a name to exist (a topic
+`#[subscriber(OrdersStream)]` is then legal: the attribute fixes the kind, and the mount site
+supplies the value. A kind that genuinely needs more than a name to exist (a topic
 *and* a subscription name) does not implement it, and that form does not compile for it.
 
 ### Settings in your own vocabulary

@@ -51,8 +51,7 @@ message type an `Out` slot declares. See [typed headers](headers.md).
 
 A message type whose declared name is a template (`#[outgoing(name = "orders.{tenant}.v1")]`)
 is declared on that templated address, with the channel's **parameters** block filled from its
-placeholders, so the declaration and the call site cannot drift apart. A type that declares no
-destination contributes no channel, which is what it says about itself. See
+placeholders. A type that declares no destination contributes no channel. See
 [publishing](publishing.md#declaring-where-a-message-goes).
 
 ## Message names and descriptions

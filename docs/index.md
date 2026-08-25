@@ -24,7 +24,7 @@ Two architectural commitments shape the framework:
 
 - **Fully async, tokio-based.** No blocking APIs in the public surface.
 - **Generic core, no `dyn` in the contract.** Associated types and native `async fn in trait`;
-  object-safe erasure lives in consumers, not the core.
+  type erasure, where a service needs it, lives in the runtime rather than the contract.
 - **Subscribers are `Stream`s, not callbacks.** Back-pressure for free; the callback DX is built on
   top in the runtime.
 - **Ack consumes `self`.** You cannot ack twice - the compiler enforces it.

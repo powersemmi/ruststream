@@ -64,8 +64,8 @@ effects), take the publisher as a handler parameter with `Out`: the pattern
 `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body. The signature
 names only the capability the handler needs, never a broker publisher type: the concrete type
 is inferred from the policy attached where the handler is included, and the runtime pairs it
-after the broker connects. The same handler therefore mounts unchanged on a production broker
-and on its in-process test transport.
+after the broker connects. The same handler mounts unchanged on a production broker and on its
+in-process test transport.
 
 ```rust
 use ruststream::runtime::Out;
@@ -85,8 +85,8 @@ The include site names the source; for the scope's own broker it is the publish 
 --8<-- "examples/publishing.rs:forward_mount"
 ```
 
-An `Out` slot left unbound is a compile error, not a runtime one: an injected publisher has no
-broker-side default, so the registration does not build until every slot has a policy.
+An `Out` slot left unbound is a compile error, not a runtime one: the registration does not build
+until every slot has a policy.
 
 ### Named slots
 
@@ -98,7 +98,7 @@ slot twice (or a marker the handler does not declare) fails to compile, and `.mo
 only once every slot is bound - a forgotten binding is a compile error whose attachment type
 names the slot (`MissingSlot<Audit>`). A single unnamed `Out<impl Publisher>` parameter binds
 the implicit `DefaultSlot` through the plain `.publisher(policy)` call, which binds and commits
-in one step, so the common case stays noise-free.
+in one step.
 
 ```rust
 use ruststream::OutSlot;
@@ -120,7 +120,7 @@ The `Out` parameter's optional third position declares what this handler sends
 a marker's own `#[publishes(A, B)]` list says what the slot may publish, which is what the
 generated document reports for a handler that leaves the position unrestricted. A typed publish
 of a type the marker does not name is a compile error naming the missing membership. A marker
-listing nothing therefore publishes nothing typed, and byte publishes through
+listing nothing publishes nothing typed, and byte publishes through
 `raw(..)` are unaffected - they carry no message type to list. The implicit `DefaultSlot` of a
 single unnamed `Out<impl Publisher>` has no declaration site to list types on, so it admits
 every declared message. See [typed headers](headers.md).
@@ -152,13 +152,12 @@ The declaration decides which destination position the call site has:
 A message declaring `headers = Meta` publishes only with `.with_headers(&meta)` - forgetting it,
 or passing another type, does not compile. In the generated document a fixed name becomes its
 channel, a template becomes a templated address whose parameters block is filled from its
-placeholders, and a type declaring no destination contributes nothing, which is what it says
-about itself.
+placeholders, and a type declaring no destination contributes nothing.
 
-The derive is what makes a value publishable this way, the third case included, so a `Serialize`
-type owned by another crate stays outside the builder - the orphan rule forbids deriving on it.
-Wrap such a value in a newtype that derives `Outgoing`, or, inside a transaction, keep the
-scope's `publish(name, &value)`.
+The derive is what makes a value publishable this way, the third case included. A `Serialize`
+type owned by another crate cannot derive `Outgoing`, so it stays outside the builder: wrap it in
+a newtype that derives `Outgoing`, or, inside a transaction, keep the scope's
+`publish(name, &value)`.
 
 ```rust
 --8<-- "examples/publishing.rs:declared_mount"
@@ -220,8 +219,7 @@ over it key by key, the most specific level winning:
 - the **handle** wins over nothing, on every key the call leaves alone;
 - a handle with no base of its own leaves the call site's headers exactly as written.
 
-A key both name therefore takes the call site's value, and a base key the call does not mention
-travels untouched. Both forms merge the same way: a map upserts entry by entry, and a declared
+Both forms merge the same way: a map upserts entry by entry, and a declared
 `headers = Meta` contract serializes its fields over the base, so a message with a contract
 still carries the handle's argument.
 
@@ -236,8 +234,8 @@ Two kinds of transform run before a message leaves the process, and they compose
   correlation id onto the reply). They run first, closest to the value.
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
-  send so they can observe its result. The chain composes into a concrete type (no `dyn` dispatch at
-  all), so it becomes part of the app's type. A builder usually returns `impl App` and never spells
+  send so they can observe its result. The chain composes into a concrete type, so it becomes part
+  of the app's type. A builder usually returns `impl App` and never spells
   it; name the concrete `RustStream<L, St, PublishStack<MyMiddleware, PublishIdentity>>` and the
   pipeline shows up there, while an app with no `publish_layer` keeps the default `PublishIdentity`.
   Each middleware must be `Clone` (the pipeline is cloned into each publishing handler), and the last
