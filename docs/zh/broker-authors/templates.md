@@ -13,7 +13,7 @@
 ```
 templates/<name>/
 ├── cargo-generate.toml   # 清单：描述，以及声明的占位符
-├── Cargo.toml            # name = "{{project-name}}"；固定 ruststream 与 Broker crate 的版本
+├── Cargo.toml.liquid     # name = "{{project-name}}"；固定 ruststream 与 Broker crate 的版本
 └── src/
     ├── main.rs           # #[ruststream::app] 构建器
     ├── orders.rs         # #[subscriber] 处理器
@@ -22,12 +22,16 @@ templates/<name>/
 
 - 占位符使用 cargo-generate 的 Liquid 语法；`{{project-name}}`（即 `--name` 的取值）是内置的，因此一个
   最简模板一个占位符都不用声明。
-- `Cargo.toml` 把 `ruststream` 固定到所支持的次版本，把 Broker crate 固定到它自己的版本。
+- 清单文件名为 `Cargo.toml.liquid`，cargo-generate 渲染完就会去掉 `.liquid` 后缀。这个后缀不是装饰。
+  cargo 在 git 源里查找包时会无视 `exclude`，逐个解析仓库中的每一个 `Cargo.toml`，而包名里的占位符
+  会让它直接拒绝该清单，于是任何通过 git 源依赖这个 crate 的人都会看到这条错误。其他会被 cargo 解析
+  的模板文件也照此命名。
+- 该清单把 `ruststream` 固定到所支持的次版本，把 Broker crate 固定到它自己的版本。
 - 每种 Broker 传输方式或拓扑对应一个模板（例如 `nats` 与 `nats-js`，或者 `redis-stream` /
   `redis-pubsub` / `redis-list`），与“一个模板对应一种形态”的模型保持一致。
 
 模板源文件里带着 `{{...}}` 占位符，因此在渲染之前它们并不是合法的 Rust/TOML，必须留在 crate 的 cargo
-workspace 之外（`exclude = ["templates"]`）。
+workspace 之外（`exclude = ["templates"]`）；在此之上，`.liquid` 这个文件名让 cargo 根本看不到该清单。
 
 ## 由 CI 编译（这就是契约）
 
