@@ -138,6 +138,15 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --all-features --no-deps
 
+      # trybuild compiles each UI case in a scratch crate under `target/tests`, which is not a
+      # cargo profile directory. The cache action walks `target` before it saves, cannot read
+      # that tree as one, and reports the miss as a job annotation - a red mark on a green run.
+      # The scratch is rebuilt per run anyway, so there is nothing to keep. Runs last and
+      # unconditionally: a failing test must not leave the tree behind either.
+      - name: Drop the trybuild scratch tree
+        if: always()
+        run: rm -rf target/tests
+
   features:
     name: Each feature alone
     needs: changes
@@ -336,6 +345,13 @@ jobs:
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: cargo publish --locked --dry-run -p ruststream-macros -p ruststream --all-features
+
+      # The dry-run verifies each package by building it under `target/package/<crate>`, whose
+      # inner trees the cache action cannot read as cargo profiles either (same annotation as
+      # the trybuild scratch above). Verification output is per-run; nothing here is reusable.
+      - name: Drop the packaging scratch tree
+        if: always()
+        run: rm -rf target/package
 
   security:
     name: Security scans
