@@ -709,7 +709,8 @@ impl fmt::Debug for BrokerHandle<'_> {
 ///
 /// Produced by the `message(..)` and `raw(..)` entry points of [`TestApp`] and [`BrokerHandle`],
 /// so a test injects through the same positions - destination, typed headers, codec - that the
-/// service itself publishes through. You never name this type.
+/// service itself publishes through. You never name this type. Every other entry point of the
+/// handle ends here too, so one place decides what an injection does.
 pub struct InjectSink<'a>(Target<'a>);
 
 /// What an [`InjectSink`] sends into: a resolved broker, or none because the unscoped entry
@@ -897,7 +898,7 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.inject(OutgoingMessage::new(name, &bytes)).await
+        self.sink().send(OutgoingMessage::new(name, &bytes)).await
     }
 
     /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
@@ -929,21 +930,7 @@ impl BrokerHandle<'_> {
         let msg = OutgoingMessage::new(name, &bytes)
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.inject(msg).await
-    }
-
-    /// Injects one already-built message onto this broker's transport and drives the resulting
-    /// reaction to a standstill. What every entry point of this handle ends in, the builder's
-    /// sink included.
-    async fn inject(&self, msg: OutgoingMessage<'_>) -> Result<(), TestError> {
-        if self.token.is_cancelled() {
-            return Err(TestError::ShutDown);
-        }
-        let transport = self
-            .testable
-            .ok_or_else(|| TestError::NoTransport(self.label.clone()))?;
-        transport.inject(msg);
-        self.coordinator.drive().await
+        self.sink().send(msg).await
     }
 
     /// Asserts on what the handler subscribed to `name` received and how it settled.

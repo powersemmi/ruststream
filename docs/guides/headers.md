@@ -96,6 +96,12 @@ A payload the service already holds encoded, or a foreign type that cannot carry
 `out.raw(&bytes).to(dest).publish()`. It takes the same headers positions and no codec; wrap
 the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own.
 
+The contract fills that position once, and it is still the whole of what the call site says
+about the headers. What the publisher itself contributes travels underneath: a handle carrying
+an argument for every message it sends exposes it as a base, and the contract's fields
+serialize over that base field by field, so a message with a contract also carries the broker's
+argument - see [where the headers come from](publishing.md#where-the-headers-come-from).
+
 ## The reply form
 
 A `publish("dest")` handler needs no extra declaration: the reply type's own contract feeds

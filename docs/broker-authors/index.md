@@ -121,6 +121,9 @@ immediate requeue and keyed lanes rotating keyless messages.
 pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
+
+    /// Defaulted: headers this handle contributes under every publish.
+    fn base_headers(&self) -> Option<&Headers> { None }
 }
 ```
 
@@ -131,6 +134,15 @@ builder (`publisher.message(&value).publish()`, `publisher.raw(&bytes).to(dest).
 which resolves the destination, the codec and the headers and then makes exactly one call to
 this method. A broker implements `publish` and gets the whole builder for free - there is
 nothing else to provide, and nothing on the builder a broker crate has to keep in step.
+
+A handle that carries an argument for a run of messages - a tenant, a partition hint, a delivery
+option your broker expresses as a header - returns it from `base_headers` rather than writing it
+into the message inside `publish`. The builder starts the outgoing map from that base and writes
+the call site's headers over it key by key, which settles the precedence for every broker at once
+(the call site wins; see [where the headers come from](../guides/publishing.md#where-the-headers-come-from))
+and builds the map once instead of cloning it per publish. `Transaction` carries the same
+defaulted method, so a transaction opened from such a handle behaves identically. A publisher
+with nothing to add implements neither and pays nothing.
 
 ### `PublishPolicy`
 

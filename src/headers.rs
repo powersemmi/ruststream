@@ -116,6 +116,21 @@ impl Headers {
     pub fn message_id(&self) -> Option<&str> {
         self.get_str("message-id")
     }
+
+    /// Writes every entry of `other` over this map, keeping the entries `other` does not name.
+    ///
+    /// The publish builder's merge: a sink's base map takes the call site's map on top of it, key
+    /// by key. Keys arrive already normalized (every insertion path lowercases them), so the
+    /// entries move straight across.
+    pub(crate) fn overwrite_with(&mut self, other: Self) {
+        // Nothing to keep means nothing to merge: the map moves in whole, which is what a publish
+        // without a base has always done.
+        if self.inner.is_empty() {
+            *self = other;
+        } else {
+            self.inner.extend(other.inner);
+        }
+    }
 }
 
 impl<K, V> FromIterator<(K, V)> for Headers
@@ -199,6 +214,37 @@ mod tests {
         assert_eq!(h.len(), 2);
         assert_eq!(h.get_str("foo"), Some("1"));
         assert_eq!(h.get_str("bar"), Some("2"));
+    }
+
+    #[test]
+    fn overwrite_with_upserts_key_by_key() {
+        let mut base: Headers = [("tenant", "acme"), ("x-trace", "handle")]
+            .into_iter()
+            .collect();
+        base.overwrite_with(
+            [("x-trace", "call"), ("x-request-id", "r-1")]
+                .into_iter()
+                .collect(),
+        );
+
+        assert_eq!(base.get_str("x-trace"), Some("call"));
+        assert_eq!(base.get_str("tenant"), Some("acme"));
+        assert_eq!(base.get_str("x-request-id"), Some("r-1"));
+        assert_eq!(base.len(), 3);
+    }
+
+    #[test]
+    fn overwrite_with_moves_the_whole_map_over_an_empty_one() {
+        let mut call = Headers::new();
+        call.insert("x-trace", "call");
+        let mut base = Headers::new();
+        base.overwrite_with(call);
+        assert_eq!(base.get_str("x-trace"), Some("call"));
+
+        let mut kept = Headers::new();
+        kept.insert("tenant", "acme");
+        kept.overwrite_with(Headers::new());
+        assert_eq!(kept.get_str("tenant"), Some("acme"));
     }
 
     #[test]

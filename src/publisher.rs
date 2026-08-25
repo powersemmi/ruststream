@@ -4,7 +4,7 @@ use std::{error::Error as StdError, future::Future};
 
 use thiserror::Error;
 
-use crate::{ConnectedBroker, OutgoingMessage};
+use crate::{ConnectedBroker, Headers, OutgoingMessage};
 
 /// A producer that sends messages into the broker.
 ///
@@ -59,6 +59,60 @@ pub trait Publisher: Send + Sync {
         &self,
         msg: OutgoingMessage<'_>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// The headers this publisher contributes to every message sent through the publish builder,
+    /// underneath whatever the call site names.
+    ///
+    /// `None` by default: a plain broker publisher contributes nothing, and the builder starts
+    /// from an empty map exactly as it always has. A handle that carries an argument for a run of
+    /// publishes - a partition key, a tenant, a delivery option the broker expresses as a header -
+    /// returns it here instead of stamping it into the message inside
+    /// [`publish`](Self::publish). The builder then assembles the outgoing map once: the base
+    /// first, the publish's own headers written over it key by key.
+    ///
+    /// That is the precedence ladder the whole builder follows, the one codec selection already
+    /// uses: the call site wins over the handle, the handle wins over nothing. A handle serves
+    /// many publishes; a call names one message, so it has the last word. It also makes a message
+    /// declaring `#[outgoing(headers = Meta)]` compatible with a broker argument, which the single
+    /// headers position alone could not express.
+    ///
+    /// The map is borrowed, never rebuilt per publish, so a handle that has one keeps it in its
+    /// own state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "memory")]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::PublishExt;
+    /// use ruststream::{Headers, OutgoingMessage, Publisher};
+    ///
+    /// // A handle that tags every message it sends, without touching the message itself.
+    /// struct Tenanted<P>(P, Headers);
+    ///
+    /// impl<P: Publisher> Publisher for Tenanted<P> {
+    ///     type Error = P::Error;
+    ///
+    ///     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    ///         self.0.publish(msg).await
+    ///     }
+    ///
+    ///     fn base_headers(&self) -> Option<&Headers> {
+    ///         Some(&self.1)
+    ///     }
+    /// }
+    ///
+    /// let broker = MemoryBroker::new();
+    /// let base = [("tenant", "acme")].into_iter().collect();
+    /// let publisher = Tenanted(broker.publisher(), base);
+    /// publisher.raw(b"{}").to("orders").publish().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn base_headers(&self) -> Option<&Headers> {
+        None
+    }
 }
 
 /// The declaration half of a publisher: pure policy, no connection, no publish surface.

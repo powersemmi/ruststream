@@ -11,7 +11,10 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::{TestApp, TestableBroker};
-use ruststream::{Broker, Headers, OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{
+    Broker, Headers, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, Publisher, Transaction,
+    subscriber,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Outgoing, PartialEq, Serialize, Deserialize)]
@@ -336,4 +339,199 @@ async fn a_contract_less_message_still_carries_a_header_map() {
 
     let published = connected.published("chunks.progress");
     assert_eq!(published[0].headers().get_str("x-trace"), Some("abc"));
+}
+
+/// A publisher handle carrying an argument for every message it sends: the shape a broker
+/// adapter takes now that the base reaches the builder instead of being stamped in `publish`.
+struct Tenanted<P>(P, Headers);
+
+impl<P: Publisher> Publisher for Tenanted<P> {
+    type Error = P::Error;
+
+    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        self.0.publish(msg).await
+    }
+
+    fn base_headers(&self) -> Option<&Headers> {
+        Some(&self.1)
+    }
+}
+
+impl<P: OwnedTransactions> OwnedTransactions for Tenanted<P> {
+    type Transaction = Tagged<P::Transaction>;
+
+    async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
+        Ok(Tagged(self.0.transaction().await?, self.1.clone()))
+    }
+}
+
+/// The transaction the tenanted handle opens: the same argument, on the buffered path.
+struct Tagged<T>(T, Headers);
+
+impl<T: Transaction> Transaction for Tagged<T> {
+    type Error = T::Error;
+
+    async fn publish(&mut self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        self.0.publish(msg).await
+    }
+
+    async fn commit(self) -> Result<(), Self::Error> {
+        self.0.commit().await
+    }
+
+    async fn abort(self) -> Result<(), Self::Error> {
+        self.0.abort().await
+    }
+
+    fn base_headers(&self) -> Option<&Headers> {
+        Some(&self.1)
+    }
+}
+
+/// The base a tenanted handle contributes to every publish.
+fn tenant_base() -> Headers {
+    [("tenant", "acme"), ("x-trace", "handle")]
+        .into_iter()
+        .collect()
+}
+
+/// A publisher that names no base leaves the outgoing map exactly as the call site built it:
+/// the position still writes into an empty map, so nothing about an existing publish moves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publisher_without_a_base_sends_only_the_call_sites_headers() {
+    let broker = MemoryBroker::new();
+    let connected = broker.clone().connect().await.expect("connect");
+
+    let mut headers = Headers::new();
+    headers.insert("x-trace", "call");
+    connected
+        .publisher()
+        .raw(b"bytes")
+        .to("audit")
+        .with_headers(headers)
+        .publish()
+        .await
+        .expect("map headers without a base");
+    connected
+        .publisher()
+        .raw(b"bytes")
+        .to("audit.bare")
+        .publish()
+        .await
+        .expect("no headers at all");
+
+    let sent = connected.published("audit");
+    assert_eq!(sent[0].headers().get_str("x-trace"), Some("call"));
+    assert_eq!(
+        sent[0].headers().len(),
+        1,
+        "a publisher with no base adds nothing of its own",
+    );
+    assert!(connected.published("audit.bare")[0].headers().is_empty());
+}
+
+/// The handle's base travels with a publish that names no headers, and a call-site map wins key
+/// by key: the keys it names are overwritten, the ones it leaves alone survive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_call_site_wins_over_the_handles_base_key_by_key() {
+    let broker = MemoryBroker::new();
+    let connected = broker.clone().connect().await.expect("connect");
+    let publisher = Tenanted(connected.publisher(), tenant_base());
+
+    publisher
+        .message(&Progress { percent: 1 })
+        .publish()
+        .await
+        .expect("the base alone");
+
+    let mut headers = Headers::new();
+    headers.insert("x-trace", "call");
+    headers.insert("x-request-id", "r-1");
+    publisher
+        .message(&Progress { percent: 2 })
+        .with_headers(headers)
+        .publish()
+        .await
+        .expect("a map over the base");
+
+    let sent = connected.published("chunks.progress");
+    assert_eq!(sent[0].headers().get_str("tenant"), Some("acme"));
+    assert_eq!(sent[0].headers().get_str("x-trace"), Some("handle"));
+
+    let merged = sent[1].headers();
+    assert_eq!(
+        merged.get_str("x-trace"),
+        Some("call"),
+        "the call site has the last word on a key both name",
+    );
+    assert_eq!(
+        merged.get_str("tenant"),
+        Some("acme"),
+        "a base key the call does not name survives",
+    );
+    assert_eq!(merged.get_str("x-request-id"), Some("r-1"));
+}
+
+/// A message declaring a header contract publishes over the handle's base: the contract fields
+/// win on the keys they name, the base carries the rest - the combination the single headers
+/// position alone could not express.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_header_contract_serializes_over_the_handles_base() {
+    let broker = MemoryBroker::new();
+    let connected = broker.clone().connect().await.expect("connect");
+    let mut base = tenant_base();
+    base.insert("task_id", "0");
+    let publisher = Tenanted(connected.publisher(), base);
+
+    publisher
+        .message(&ChunkDone {
+            output_key: "out/1".to_owned(),
+        })
+        .with_headers(&DoneMeta { task_id: 7 })
+        .publish()
+        .await
+        .expect("a contract over the base");
+
+    let sent = connected.published("chunks.done");
+    let headers = sent[0].headers();
+    assert_eq!(
+        headers.get_str("task_id"),
+        Some("7"),
+        "the contract field overwrites the base's placeholder",
+    );
+    assert_eq!(headers.get_str("tenant"), Some("acme"));
+    assert_eq!(headers.get_str("x-trace"), Some("handle"));
+}
+
+/// A transaction behaves like the handle it came from: its base rides every buffered publish,
+/// under whatever the call site names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_transaction_carries_its_own_base_under_the_call_site() {
+    let broker = MemoryBroker::new();
+    let connected = broker.clone().connect().await.expect("connect");
+    let publisher =
+        TypedPublisher::with_codec(Tenanted(connected.publisher(), tenant_base()), JsonCodec);
+
+    let mut txn = publisher.transaction().await.expect("owned transaction");
+    txn.message(&Progress { percent: 3 })
+        .publish()
+        .await
+        .expect("the base alone, buffered");
+    let mut headers = Headers::new();
+    headers.insert("x-trace", "call");
+    txn.raw(b"ledger")
+        .to("audit.ledger")
+        .with_headers(headers)
+        .publish()
+        .await
+        .expect("a map over the base, buffered");
+    txn.commit().await.expect("commit");
+
+    let progress = connected.published("chunks.progress");
+    assert_eq!(progress[0].headers().get_str("tenant"), Some("acme"));
+    assert_eq!(progress[0].headers().get_str("x-trace"), Some("handle"));
+
+    let ledger = connected.published("audit.ledger");
+    assert_eq!(ledger[0].headers().get_str("x-trace"), Some("call"));
+    assert_eq!(ledger[0].headers().get_str("tenant"), Some("acme"));
 }

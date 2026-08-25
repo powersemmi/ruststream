@@ -5,7 +5,7 @@ use std::error::Error as StdError;
 use std::future::Future;
 
 use crate::codec::Codec;
-use crate::{OutgoingMessage, Publisher, Transaction};
+use crate::{Headers, OutgoingMessage, Publisher, Transaction};
 
 /// The byte sink a publish builder resolves down to.
 ///
@@ -53,6 +53,18 @@ pub trait PublishSink: Send {
         &mut self,
         msg: OutgoingMessage<'_>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// The headers the sink contributes underneath the publish's own, or `None` when it
+    /// contributes nothing.
+    ///
+    /// This is where [`Publisher::base_headers`] and [`Transaction::base_headers`] reach the
+    /// builder: the blanket impls forward theirs, and a sink of the runtime's own (the erased
+    /// publisher behind deferred redelivery, the test harness's injection point) forwards
+    /// whatever it wraps. The builder starts the outgoing header map from this and writes the
+    /// publish's headers over it key by key, so the call site has the last word.
+    fn base_headers(&self) -> Option<&Headers> {
+        None
+    }
 }
 
 // A shared publisher reference is the ordinary sink: publishing takes `&self`, so the builder
@@ -66,6 +78,10 @@ impl<P: Publisher + ?Sized> PublishSink for &P {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         (**self).publish(msg)
     }
+
+    fn base_headers(&self) -> Option<&Headers> {
+        (**self).base_headers()
+    }
 }
 
 // A transaction buffers into itself, so its sink is the unique borrow the builder holds for the
@@ -78,6 +94,10 @@ impl<T: Transaction> PublishSink for &mut T {
         msg: OutgoingMessage<'_>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         (**self).publish(msg)
+    }
+
+    fn base_headers(&self) -> Option<&Headers> {
+        (**self).base_headers()
     }
 }
 
