@@ -110,9 +110,12 @@ impl ResolvedName for SuppliedName<'_> {
 /// What a headers position contributes to the outgoing message.
 ///
 /// Implemented by the three header states; the publish calls it once, just before the message
-/// leaves.
+/// leaves, against the map the sink's base
+/// ([`base_headers`](crate::Publisher::base_headers)) already filled - empty when there is no
+/// base. A position writes over that map key by key, which is what gives the call site the last
+/// word over the handle it published through.
 pub trait PublishHeaders {
-    /// Writes this position's headers into the outgoing message's map.
+    /// Writes this position's headers over the outgoing message's map, one key at a time.
     ///
     /// # Errors
     ///
@@ -135,7 +138,7 @@ impl<H: Serialize + ?Sized> PublishHeaders for TypedHeaders<'_, H> {
 
 impl PublishHeaders for MapHeaders {
     fn write(self, headers: &mut Headers) -> Result<(), SerializeHeadersError> {
-        *headers = self.0;
+        headers.overwrite_with(self.0);
         Ok(())
     }
 }
@@ -420,7 +423,10 @@ async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     payload: &[u8],
     headers: Hdrs,
 ) -> Result<(), PublishError<Sink::Error>> {
-    let mut map = Headers::new();
+    // The one place the outgoing map is built: the sink's base first, the publish's own headers
+    // over it. A sink without a base yields the empty map this always started from, so nothing is
+    // cloned and nothing is allocated on the path every publisher takes today.
+    let mut map = sink.base_headers().cloned().unwrap_or_default();
     headers.write(&mut map).map_err(PublishError::Headers)?;
     let msg = OutgoingMessage::new(name, payload).with_headers(map);
     sink.send(msg).await.map_err(PublishError::Publish)

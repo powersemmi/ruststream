@@ -114,6 +114,9 @@ pub trait IncomingMessage: Send + Sync {
 pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
+
+    /// 带默认实现：这个发布者垫在每次发布下面的消息头。
+    fn base_headers(&self) -> Option<&Headers> { None }
 }
 ```
 
@@ -123,6 +126,13 @@ pub trait Publisher: Send + Sync {
 （`publisher.message(&value).publish()`、`publisher.raw(&bytes).to(dest).publish()`），由构建器解析
 目的地、编解码器和消息头，然后恰好调用一次该方法。Broker 只要实现 `publish`，就免费得到整个构建器，
 没有别的东西要提供，构建器上也没有任何东西需要 Broker crate 跟着同步。
+
+一个为一整串消息携带同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），
+应当把该参数从 `base_headers` 返回，而不是在 `publish` 内部写进消息里。构建器会以这层底作为出站
+映射的起点，再把调用点的消息头逐个键覆盖上去：优先级因此对所有 Broker 一次定死（调用点取胜，参见
+[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)），映射也只组装一次，不必每次
+发布都克隆一遍。`Transaction` 上有同样带默认实现的方法，因此从这样的发布者开启的事务行为完全一致。
+没有东西要补的发布者两个都不必实现，也不付出任何代价。
 
 ### `PublishPolicy`
 

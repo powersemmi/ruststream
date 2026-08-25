@@ -8,7 +8,9 @@ use std::{error::Error as StdError, future::Future, time::Duration};
 
 use futures::Stream;
 
-use crate::{Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
+use crate::{
+    Broker, ConnectedBroker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber,
+};
 
 /// A subscriber that natively delivers messages in batches.
 ///
@@ -259,6 +261,52 @@ pub trait Transaction: Send {
     /// Returns [`Self::Error`] when the implementation fails to discard staged broker-side
     /// state; for a pure client buffer this is infallible in practice.
     fn abort(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// The headers this transaction contributes to every message published through the publish
+    /// builder, underneath whatever the call site names.
+    ///
+    /// The transaction-side twin of [`Publisher::base_headers`], with the same default (`None`)
+    /// and the same precedence: the call site wins over the transaction, the transaction wins
+    /// over nothing. A transaction opened from a handle that carries an argument passes that
+    /// argument on here, so a publish behaves the same inside a transaction as outside one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{Headers, OutgoingMessage, Transaction};
+    ///
+    /// struct Tagged<T>(T, Headers);
+    ///
+    /// impl<T: Transaction> Transaction for Tagged<T> {
+    ///     type Error = T::Error;
+    ///
+    ///     async fn publish(&mut self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    ///         self.0.publish(msg).await
+    ///     }
+    ///
+    ///     async fn commit(self) -> Result<(), Self::Error> {
+    ///         self.0.commit().await
+    ///     }
+    ///
+    ///     async fn abort(self) -> Result<(), Self::Error> {
+    ///         self.0.abort().await
+    ///     }
+    ///
+    ///     fn base_headers(&self) -> Option<&Headers> {
+    ///         Some(&self.1)
+    ///     }
+    /// }
+    ///
+    /// async fn settle<T: Transaction>(txn: T) -> Result<(), T::Error> {
+    ///     let base = [("tenant", "acme")].into_iter().collect();
+    ///     Tagged(txn, base).commit().await
+    /// }
+    /// ```
+    ///
+    /// [`Publisher::base_headers`]: crate::Publisher::base_headers
+    fn base_headers(&self) -> Option<&Headers> {
+        None
+    }
 }
 
 /// A publisher that opens caller-owned, client-buffered transactions.

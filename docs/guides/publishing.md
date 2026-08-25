@@ -212,6 +212,31 @@ at all: the scope-level `b.after_startup(policy, hook)` runs the hook with an al
 publisher once subscriptions are open (see [Lifespan](lifespan.md#lifecycle-hooks)); the
 publishing example's seeding rides it.
 
+## Where the headers come from
+
+A publish takes its headers from two places. The call site names them with `.with_headers(..)` -
+the message's declared contract by reference, or an already-built `Headers` map by value - and
+the handle sending them may contribute a base of its own. A publisher that carries an argument
+for a run of messages (a tenant, a partition hint, a delivery option the broker expresses as a
+header) exposes it through `base_headers`, and so does a transaction opened from it.
+
+The builder assembles the outgoing map once - the base first, the call site's headers written
+over it key by key - so the precedence is the ladder codec selection already follows, the most
+specific level winning:
+
+- the **call site** wins over the handle, on every key it names;
+- the **handle** wins over nothing, on every key the call leaves alone;
+- a handle with no base of its own leaves the call site's headers exactly as written.
+
+A key both name therefore takes the call site's value, and a base key the call does not mention
+travels untouched. Both forms merge the same way: a map upserts entry by entry, and a declared
+`headers = Meta` contract serializes its fields over the base - which is how a message with a
+contract still carries a broker's argument, something one headers position could not express on
+its own.
+
+None of this reopens that position. `.with_headers(..)` is still filled once, and a second call
+is still a compile error.
+
 ## The publish pipeline
 
 Two kinds of transform run before a message leaves the process, and they compose:

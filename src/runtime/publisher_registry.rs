@@ -11,7 +11,7 @@ use std::future::Future;
 
 use thiserror::Error;
 
-use crate::{OutgoingMessage, Publisher};
+use crate::{Headers, OutgoingMessage, Publisher};
 
 use super::lifecycle::{BoxError, BoxFuture};
 use super::publish::PublishSink;
@@ -35,6 +35,12 @@ pub trait ErasedPublisher: sealed::Sealed + Send + Sync {
         &'a self,
         msg: OutgoingMessage<'a>,
     ) -> BoxFuture<'a, Result<(), BoxError>>;
+
+    /// The headers the underlying publisher contributes to every message, erased alongside it.
+    ///
+    /// See [`Publisher::base_headers`]: a publisher handed to the redelivery fallback keeps its
+    /// base here, so a republish through the erased path carries what a direct publish would.
+    fn base_headers_erased(&self) -> Option<&Headers>;
 }
 
 mod sealed {
@@ -52,6 +58,10 @@ impl<P: Publisher> ErasedPublisher for P {
         msg: OutgoingMessage<'a>,
     ) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(async move { self.publish(msg).await.map_err(|e| Box::new(e) as BoxError) })
+    }
+
+    fn base_headers_erased(&self) -> Option<&Headers> {
+        self.base_headers()
     }
 }
 
@@ -76,6 +86,10 @@ impl PublishSink for ErasedSink<'_> {
                 .await
                 .map_err(ErasedPublishError)
         }
+    }
+
+    fn base_headers(&self) -> Option<&Headers> {
+        self.0.base_headers_erased()
     }
 }
 
