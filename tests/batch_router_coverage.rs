@@ -10,7 +10,7 @@ use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
+use common::{Order, Receipt, wait_for};
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
     MemoryPublisher, MemorySubscriber,
@@ -20,14 +20,6 @@ use ruststream::runtime::{
     RustStream, RustStreamError, TypedPublisher,
 };
 use ruststream::{IncomingMessage, Name, PairError, PublishPolicy, SubscriptionSource, subscriber};
-use serde::{Deserialize, Serialize};
-
-use common::Order;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
 
 #[subscriber("brc-in", publish("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {

@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, order_bytes, wait_for};
+use common::{Order, Receipt, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
@@ -21,13 +21,7 @@ use ruststream::runtime::{
     RustStream, TypedPublisher,
 };
 use ruststream::{BuildContext, Field, Headers, IncomingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
 
 /// Publishes an order once to each ingress topic (the app is already started, so the
 /// subscriptions are open and every publish lands), then waits until every reply counter is

@@ -165,9 +165,9 @@ mod tests {
     use super::super::input::Decoded;
     use super::*;
     use crate::codec::JsonCodec;
-    use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
-    use crate::runtime::PublishExt;
-    use crate::{BatchSubscriber, Headers, Name, Subscriber, SubscriptionSource};
+    use crate::memory::{ConnectedMemoryBroker, MemoryBroker};
+    use crate::testkit::batch::{publish_payloads, pull_batch};
+    use crate::{Headers, Name, Subscriber, SubscriptionSource};
 
     /// A definition whose "injection" is a plain multiplier: the real ones are `Out` / `Seek`
     /// values, but the handler side only cares that the resolved tuple is handed to every call.
@@ -210,18 +210,6 @@ mod tests {
                 .extend(batch.iter().map(|n| n * factor));
             ready(BatchResult::Uniform(HandlerResult::Ack))
         }
-    }
-
-    async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
-        let publisher = broker.publisher();
-        for payload in payloads {
-            publisher.raw(payload).to(name).publish().await.unwrap();
-        }
-    }
-
-    async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
-        let mut stream = std::pin::pin!(sub.batches());
-        stream.next().await.unwrap().unwrap()
     }
 
     #[test]

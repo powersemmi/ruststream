@@ -34,18 +34,12 @@ use ruststream::testing::TestApp;
 use ruststream::{
     Broker, ConnectedBroker, DescribeServer, Publisher, ServerSpec, SubscriptionSource, subscriber,
 };
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
-use common::{Order, order_bytes};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
+use common::{Order, Receipt, order_bytes};
 
 // ---------------------------------------------------------------------------------------------
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is

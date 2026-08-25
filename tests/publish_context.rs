@@ -2,11 +2,14 @@
 //! originating delivery (issue #103) and stamps the reply, propagating a correlation id.
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
+mod common;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
+use common::{Req, Resp};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
@@ -14,18 +17,7 @@ use ruststream::runtime::{
     TypedPublisher, for_batch,
 };
 use ruststream::{Broker, BuildContext, Field, Headers, IncomingMessage, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
-
-#[derive(Serialize, Deserialize)]
-struct Req {
-    n: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Resp {
-    n: u32,
-}
 
 /// A broker context built from the incoming message: it lifts the correlation id off the headers so
 /// the handler (and the publish layer) can read it by key instead of re-parsing the headers.

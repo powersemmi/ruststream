@@ -102,22 +102,12 @@ async fn consume_metrics_are_recorded_through_a_router() {
 
 #[cfg(feature = "macros")]
 mod publish {
+    use super::common::{Req, Resp};
     use super::{Duration, wait_for};
     use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::metrics::Metrics;
     use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
     use ruststream::{Broker, subscriber};
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Serialize, Deserialize)]
-    struct Req {
-        n: u32,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct Resp {
-        n: u32,
-    }
 
     #[subscriber("requests", publish("responses"))]
     async fn reply(req: &Req) -> Resp {

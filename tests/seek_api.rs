@@ -19,18 +19,8 @@ use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeek
 use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, Seek};
 use ruststream::testing::{TestApp, expect_published};
 use ruststream::{Publisher, Seeker, subscriber};
-use serde::{Deserialize, Serialize};
 
-use common::connected;
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
-
-fn payload(id: u64) -> Vec<u8> {
-    serde_json::to_vec(&Event { id }).expect("serializable")
-}
+use common::{Event, observed_memory, payload};
 
 /// Jumps forward when the producer marks a poison region: everything queued before the
 /// resume point is skipped without dropping the subscription.
@@ -398,9 +388,7 @@ async fn ledger(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_publishing_handler_composes_with_a_seek_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
         b.include(ledger);

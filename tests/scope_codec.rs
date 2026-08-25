@@ -12,17 +12,11 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Order, wait_for};
+use common::{Order, Receipt, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
 use ruststream::subscriber;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
 
 static PLAIN_ON: AtomicUsize = AtomicUsize::new(0);
 static BATCH: AtomicUsize = AtomicUsize::new(0);

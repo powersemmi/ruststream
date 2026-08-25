@@ -11,18 +11,12 @@ mod common;
 
 use std::time::Duration;
 
-use common::connected;
+use common::{Event, connected, expect_id, observed_memory};
 
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, DefaultSlot, HandlerResult, Out, PublishExt, RustStream};
 use ruststream::testing::{Outcome, TestApp, expect_published};
 use ruststream::{Broker, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
 
 /// The destination is computed per message: exactly the case reply publishing cannot cover and
 /// the injected publisher exists for.
@@ -40,19 +34,9 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
     HandlerResult::Ack
 }
 
-async fn expect_id(observer: &ConnectedMemoryBroker, name: &str, id: u64) {
-    let seen = expect_published(observer, name, 1, Duration::from_secs(2)).await;
-    assert_eq!(seen.len(), 1, "expected one publish on {name}");
-    let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
-    assert_eq!(event.id, id);
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_injected_publisher_reaches_the_handler_live() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    // The observing side needs the TestableBroker surface, which lives on the connected form.
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(broker, |b| {
         b.include(forward).publisher(MemoryPublish);
@@ -153,9 +137,7 @@ async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> Handle
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_handler_composes_with_an_out_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
         b.include(forward_page).publisher(MemoryPublish);
@@ -203,9 +185,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publishing_handler_composes_with_an_out_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(broker, |b| {
         b.include(gate).out(DefaultSlot, MemoryPublish).mount();
@@ -252,9 +232,7 @@ async fn settle_page(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
         b.include(settle_page)

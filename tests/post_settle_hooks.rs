@@ -5,7 +5,6 @@
 
 mod common;
 
-use common::wait_for;
 use std::{
     sync::{
         Arc,
@@ -14,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, order_bytes};
+use common::{BackgroundRun, Order, order_bytes, wait_for};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::subscriber;
@@ -74,9 +73,7 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
         .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
         .with_broker(broker, |b| b.include(handle_order));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     // The macro subscription opens inside run(); retry until both deliveries land.
     let publish = |id: u32| {
@@ -117,8 +114,7 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
         "a retry-gated hook must not fire when messages are dropped",
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 static SLOW_DONE: AtomicU32 = AtomicU32::new(0);
@@ -143,9 +139,7 @@ async fn hooks_drain_on_graceful_shutdown() {
     let app = RustStream::new(AppInfo::new("slow", "0.1.0"))
         .with_broker(broker, |b| b.include(handle_slow));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -160,8 +154,7 @@ async fn hooks_drain_on_graceful_shutdown() {
     .expect("delivery within deadline");
 
     // Request shutdown immediately; the in-flight hook must still be drained.
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
     assert!(
         SLOW_DONE.load(Ordering::SeqCst) >= 1,
         "hook was not drained"
@@ -195,9 +188,7 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
     let app = RustStream::new(AppInfo::new("batched", "0.1.0"))
         .with_broker(broker, |b| b.include(handle_batch));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -228,6 +219,5 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
         "outcome-gated hooks must not run on the batch path",
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }

@@ -14,17 +14,11 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, connected, order_bytes, wait_for};
+use common::{Order, Receipt, connected, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
 use ruststream::{Buffered, Name, nonzero, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
 
 static TX_HANDLED: AtomicUsize = AtomicUsize::new(0);
 

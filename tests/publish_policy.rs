@@ -17,14 +17,8 @@ use ruststream::runtime::{
 };
 use ruststream::testing::expect_published;
 use ruststream::{Broker, OutgoingMessage, PublishPolicy, RequestReply, subscriber};
-use serde::{Deserialize, Serialize};
 
-use common::{Order, connected};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Receipt {
-    id: u32,
-}
+use common::{Order, Receipt, connected};
 
 /// Stamps every outgoing reply, so the test can prove the transform stack survived pairing.
 struct Envelope;

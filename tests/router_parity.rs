@@ -13,35 +13,14 @@
 
 mod common;
 
-use std::time::Duration;
-
-use common::connected;
+use common::{Event, connected, expect_id, observed_memory, payload};
 
 use tokio::sync::Notify;
 
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource,
-};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, Router, RustStream, Seek};
-use ruststream::testing::{TestApp, expect_published};
+use ruststream::testing::TestApp;
 use ruststream::{Broker, OutSlot, Publisher, Seeker, subscriber};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
-
-fn payload(id: u64) -> Vec<u8> {
-    serde_json::to_vec(&Event { id }).expect("serializable")
-}
-
-async fn expect_id(observer: &ConnectedMemoryBroker, name: &str, id: u64) {
-    let seen = expect_published(observer, name, 1, Duration::from_secs(2)).await;
-    assert_eq!(seen.len(), 1, "expected one publish on {name}");
-    let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
-    assert_eq!(event.id, id);
-}
 
 // ---------------------------------------------------------------------------------------------
 // Out slots: the single-slot shorthand, named slots, and the batch counterpart.
@@ -63,9 +42,7 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
 /// The one-slot shorthand on a router: `.publisher(policy)` binds the slot and commits.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_single_out_slot() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(forward)
@@ -161,9 +138,7 @@ async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> Handle
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_batch_out_slot() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(forward_page)
@@ -258,9 +233,7 @@ async fn relay(event: &Event) -> Event {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_reply_publisher_on_mount() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new().include(relay).mount();
     let app = RustStream::new(AppInfo::new("rp-reply", "0.1.0"))
@@ -354,9 +327,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 /// The reply side defaults while the slot side is bound explicitly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_composes_a_default_reply_with_out_slots() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(gate)
@@ -446,9 +417,7 @@ async fn settle_page(
 async fn a_router_composes_a_batch_reply_with_out_slots() {
     use ruststream::runtime::TypedPublisher;
 
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(settle_page)
@@ -518,9 +487,7 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
 /// `.mount()` on the batch publishing form takes the broker's own default publish policy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let observer = connected(&broker).await;
+    let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new().include(bulk_relay).mount();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))

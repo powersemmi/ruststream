@@ -15,14 +15,8 @@ use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
 use ruststream::testing::expect_published;
 use ruststream::{Broker, subscriber};
-use serde::{Deserialize, Serialize};
 
-use common::connected;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
+use common::{Event, connected};
 
 #[subscriber("pairing.seeded")]
 async fn consume(_event: &Event) -> HandlerResult {

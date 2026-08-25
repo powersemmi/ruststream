@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::wait_for;
+use common::{BackgroundRun, wait_for};
 use std::{
     sync::{
         Arc, Mutex,
@@ -110,9 +110,7 @@ async fn app_dispatches_typed_messages() {
         );
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     publisher
         .raw(&order_bytes(7, 9.99))
@@ -133,8 +131,7 @@ async fn app_dispatches_typed_messages() {
     )
     .await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -255,15 +252,12 @@ async fn app_subscribes_via_descriptor_after_connect() {
         );
     });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     // The descriptor subscribes inside run(); retry publishing until the subscription is live.
     wait_for_published(&publisher, &seen, Duration::from_secs(5)).await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -290,14 +284,11 @@ async fn included_router_handlers_dispatch() {
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     wait_for_published(&publisher, &seen, Duration::from_secs(5)).await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -326,9 +317,7 @@ async fn global_layer_reaches_router_handlers() {
         .layer(CountLayer(Arc::clone(&layer_hits)))
         .with_broker(broker, |b| b.include_router(router));
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     wait_for_published(&publisher, &handler_hits, Duration::from_secs(5)).await;
 
@@ -337,8 +326,7 @@ async fn global_layer_reaches_router_handlers() {
         "global layer did not reach the router handler"
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -367,9 +355,7 @@ async fn global_layer_wraps_handlers() {
             );
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     publisher.raw(b"x").to("orders").publish().await.unwrap();
 
@@ -379,8 +365,7 @@ async fn global_layer_wraps_handlers() {
     )
     .await;
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -425,9 +410,7 @@ async fn cross_broker_publish_via_captured_publisher() {
             );
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     // ingress "orders" subscribes inside run() (deferred); retry until the bridge fires.
     let result = tokio::time::timeout(Duration::from_secs(5), async {
@@ -445,8 +428,7 @@ async fn cross_broker_publish_via_captured_publisher() {
         "cross-broker publish did not arrive on egress"
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 struct Config {
@@ -486,9 +468,7 @@ async fn handler_reads_context_topic_and_state() {
             );
         });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     publisher.raw(b"x").to("orders").publish().await.unwrap();
 
@@ -502,8 +482,7 @@ async fn handler_reads_context_topic_and_state() {
         Some(("orders".to_owned(), "hello".to_owned())),
     );
 
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -552,17 +531,14 @@ async fn lifespan_hooks_run_in_order() {
         })
         .with_broker(MemoryBroker::new(), |_b| {});
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+    let run = BackgroundRun::spawn(app);
 
     wait_for(
         || order.lock().expect("poisoned").contains(&"after_startup"),
         Duration::from_secs(5),
     )
     .await;
-    shutdown.notify_one();
-    run.await.unwrap().unwrap();
+    run.stop().await;
 
     assert_eq!(
         *order.lock().expect("poisoned"),

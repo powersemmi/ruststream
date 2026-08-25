@@ -7,9 +7,12 @@
     feature = "json"
 ))]
 
+mod common;
+
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
+use common::{Req, Resp};
 use opentelemetry::Context as OtelContext;
 use opentelemetry::propagation::{Extractor, TextMapPropagator};
 use opentelemetry::trace::{SpanContext, TraceContextExt};
@@ -18,18 +21,7 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::otel::OpenTelemetry;
 use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
 use ruststream::{Headers, subscriber};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
-
-#[derive(Serialize, Deserialize)]
-struct Req {
-    n: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Resp {
-    n: u32,
-}
 
 #[subscriber("in", publish("out"))]
 async fn echo(req: &Req) -> Resp {

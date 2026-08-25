@@ -380,15 +380,9 @@ mod tests {
     /// subscriber listens.
     #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
     mod diagnostics {
-        use std::collections::HashMap;
         use std::future::ready;
-        use std::sync::{Arc, Mutex};
 
         use futures::StreamExt;
-        use tracing::field::{Field, Visit};
-        use tracing::subscriber::DefaultGuard;
-        use tracing_subscriber::Layer;
-        use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
 
         use super::ManualPub;
         use crate::codec::JsonCodec;
@@ -399,52 +393,8 @@ mod tests {
         use crate::runtime::handler::{Handler, HandlerResult};
         use crate::runtime::publish::{PublishIdentity, TypedPublisher};
         use crate::runtime::publishing::PublishingHandler;
+        use crate::testkit::log_capture::{find, start};
         use crate::{Headers, OutgoingMessage, Publisher, Subscriber};
-
-        type Events = Arc<Mutex<Vec<HashMap<String, String>>>>;
-
-        /// Collects each event's fields by name.
-        struct Capture(Events);
-
-        impl<S: tracing::Subscriber> Layer<S> for Capture {
-            fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
-                #[derive(Default)]
-                struct Fields(HashMap<String, String>);
-
-                impl Visit for Fields {
-                    // Without this, a string field arrives through record_debug and is captured in
-                    // its quoted Debug form, which no assertion here is written against.
-                    fn record_str(&mut self, field: &Field, value: &str) {
-                        self.0.insert(field.name().to_owned(), value.to_owned());
-                    }
-
-                    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-                        self.0.insert(field.name().to_owned(), format!("{value:?}"));
-                    }
-                }
-
-                let mut fields = Fields::default();
-                event.record(&mut fields);
-                self.0.lock().unwrap().push(fields.0);
-            }
-        }
-
-        fn start_capture() -> (Events, DefaultGuard) {
-            let events: Events = Arc::new(Mutex::new(Vec::new()));
-            let guard = tracing::subscriber::set_default(
-                tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
-            );
-            (events, guard)
-        }
-
-        fn find(events: &Events, message: &str) -> HashMap<String, String> {
-            let captured = events.lock().unwrap();
-            captured
-                .iter()
-                .find(|fields| fields.get("message").is_some_and(|m| m == message))
-                .cloned()
-                .unwrap_or_else(|| panic!("no `{message}` event was emitted"))
-        }
 
         /// Publishes `payload` to `name` and pulls the delivery back off the bus.
         async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
@@ -497,7 +447,7 @@ mod tests {
             let headers = Headers::new();
             let mut ctx = Context::new("in", &headers, &state, (), &delivery);
 
-            let (events, guard) = start_capture();
+            let (events, guard) = start();
             let settle = handler.handle(&msg, &mut ctx).await;
             drop(guard);
 
@@ -531,7 +481,7 @@ mod tests {
             let headers = Headers::new();
             let mut ctx = Context::new("in", &headers, &state, (), &delivery);
 
-            let (events, guard) = start_capture();
+            let (events, guard) = start();
             let settle = handler.handle(&msg, &mut ctx).await;
             drop(guard);
 

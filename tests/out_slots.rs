@@ -8,21 +8,19 @@
     feature = "testing"
 ))]
 
+mod common;
+
+use common::Event;
+
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
     AppInfo, DefaultSlot, HandlerResult, Out, PublishExt, RustStream, SlotPublisher,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, Headers, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, PairError,
-    PublishPolicy, Publisher, Transaction, subscriber,
+    Broker, Headers, OutSlot, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
+    Publisher, Transaction, subscriber,
 };
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Outgoing, PartialEq, Serialize, Deserialize)]
-struct Event {
-    id: u64,
-}
 
 #[derive(OutSlot)]
 struct Encoded;
