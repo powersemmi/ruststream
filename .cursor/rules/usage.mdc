@@ -411,15 +411,80 @@ fn app() -> impl App {
 }
 ```
 
-A first publish at startup goes through the scope's `after_startup`, which hands over wiring that
-is already paired with the connected broker, so seeding cannot race the connect:
+## First publish at startup (`after_startup`)
+
+A publish that has to happen once, at startup (seeding reference data, announcing the service),
+goes through the scope's `after_startup`. It takes two arguments: a **publish policy** and a hook.
+The runtime pairs the policy with the connected broker and hands the hook the **live** publisher,
+so the seed cannot race the connect - there is no "not connected yet" case to handle. The hook
+returns `Result<(), E>` for any `E: std::error::Error + Send + Sync`.
+
+The policy is the broker's own - usually there is nothing to wrap:
 
 ```rust
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::prelude::*;
+
+// in with_broker(broker, |b| { ... }):
+b.after_startup(MemoryPublish, async move |publisher| {
+    // `publisher` is the live MemoryPublisher, already connected
+    publisher
+        .message(&Region { code: "eu-west" })
+        .to("reference.regions")
+        .publish()
+        .await
+});
+```
+
+Every `Publisher` gets `.message(&value)` (encoded with `DefaultCodec`) and `.raw(&bytes)` from
+`PublishExt`, which the prelude carries - so a bare policy is enough for an ordinary typed publish.
+Reach for `TypedPublisher` only when you are changing something about how the value travels:
+
+```rust
+use ruststream::codec::CborCodec;
+
+// a codec other than the crate default
+b.after_startup(TypedPublisher::with_codec(MemoryPublish, CborCodec), async move |p| seed(p).await);
+
+// a per-publisher transform, e.g. stamping an envelope header on everything this handle sends
+b.after_startup(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform), hook);
+
+// an atomic seed: `.transactional()` marks the wiring, and pairing then checks that the live
+// publisher implements TransactionalPublisher
 b.after_startup(
-    TypedPublisher::new(MemoryPublish),
-    async move |publisher| seed(publisher).await.map_err(std::io::Error::other),
+    TypedPublisher::new(MemoryPublish).transactional(),
+    async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
 );
 ```
+
+The hook's error type is a single concrete error, so a body that mixes error types collects them
+in one function and the hook maps once, as above. The transaction scope owns the buffer, and both
+records become visible together on commit or not at all - a commit without a begin, a second
+commit, or a publish after settling do not compile:
+
+```rust
+use std::error::Error;
+
+use ruststream::TransactionalPublisher;
+use ruststream::codec::JsonCodec;
+use ruststream::runtime::Transactional;
+
+async fn seed_events<P>(
+    seeder: Transactional<P, JsonCodec>,
+) -> Result<(), Box<dyn Error + Send + Sync>>
+where
+    P: TransactionalPublisher,
+{
+    let scope = seeder.begin().await?;
+    scope.message(&Event { id: 1 }).to("events").publish().await?;
+    scope.message(&Event { id: 2 }).to("events").publish().await?;
+    scope.commit().await?;
+    Ok(())
+}
+```
+
+The same policy-plus-wrapper choice applies wherever a publisher is attached: `.publisher(..)` on a
+reply handler, `.out(marker, ..)` on a slot.
 
 ## Broker context fields (`Ctx<K>`)
 
