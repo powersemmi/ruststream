@@ -266,8 +266,16 @@ where
 `b.subscribe` / `b.handle` register with the default failure policies and no settings, because they
 take a handler, not a definition. They also never read the scope codec, so `with_broker_codec` and
 `Router::with_codec` are inert on a `subscribe` registration - the codec is the one you named at
-`typed(..)`. Everything else the attribute offers rides on the definition, so implement one and the
-whole mount surface opens up on your own type.
+`typed(..)`.
+
+A `Router` reaches a little further without a definition: `Router::workers(Workers::pool(n))` /
+`Workers::keyed(n)` is the functional counterpart of the `workers(..)` clause (`BrokerScope` has no
+worker control at all), and `Router::subscribe_batch` is the macro-free path for a typed batch - it
+does resolve the chain's codec, unlike `subscribe`. A raw batch has no such path, so it needs the
+definition written out.
+
+Everything else the attribute offers rides on the definition, so implement one and the whole mount
+surface opens up on your own type.
 
 ```rust
 use ruststream::runtime::{
