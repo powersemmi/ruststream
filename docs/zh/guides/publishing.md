@@ -247,9 +247,17 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 注册顺序无关紧要，一座双向的桥可以一上来就把两个方向都绑好。随后令牌就是挂载点上的来源（这里用
 两个内存 Broker 演示，任意一对 Broker 的写法都一样）：
 
-```rust
---8<-- "tests/out_injection.rs:cross_broker"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/out_injection.rs:cross_broker"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_out_injection.rs:cross_broker"
+    ```
 
 令牌与铸出它的 `Bindable` 包装器共享同一个槽位，所以要注册同一个包装器（`with_broker(bindable, ..)`），
 启动过程才会把已连接的 Broker 填进该槽位；如果某个令牌的 Broker 从未注册，配对时就会带着清晰的错误

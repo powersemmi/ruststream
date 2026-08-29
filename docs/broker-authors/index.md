@@ -284,9 +284,17 @@ router) - declare your own capability trait, implement it for the value, and gra
 wrapper with one blanket impl delegating through `SlotPublisher::inner`. Handlers then bound
 their slot with your trait, and the concrete type still never appears in application code:
 
-```rust
---8<-- "tests/out_slots.rs:extension"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/out_slots.rs:extension"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:extension"
+    ```
 
 Publishes made through values obtained from `inner` bypass the harness's per-slot capture
 (like a settled owned transaction's buffer); they stay visible in the broker's publish log.

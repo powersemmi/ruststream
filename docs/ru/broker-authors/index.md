@@ -296,9 +296,17 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 обёртке одним blanket-impl, делегирующим через `SlotPublisher::inner`. После этого обработчики
 ограничивают свой слот вашим трейтом, а конкретный тип по-прежнему не появляется в коде приложения:
 
-```rust
---8<-- "tests/out_slots.rs:extension"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/out_slots.rs:extension"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:extension"
+    ```
 
 Публикации, сделанные через значения, полученные из `inner`, обвязка не приписывает слоту (как и
 буфер уже завершённой owned-транзакции); в логе публикаций брокера они остаются видны.

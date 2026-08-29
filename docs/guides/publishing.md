@@ -270,9 +270,17 @@ wrap the target broker with `.bindable()` and mint a **bound token** before regi
 is then the source at the include site, shown here with two in-memory brokers; the shape is the
 same for any pair:
 
-```rust
---8<-- "tests/out_injection.rs:cross_broker"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/out_injection.rs:cross_broker"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_out_injection.rs:cross_broker"
+    ```
 
 Tokens exist before any `with_broker` runs, so registration order does not matter: a
 bidirectional bridge binds both directions up front.

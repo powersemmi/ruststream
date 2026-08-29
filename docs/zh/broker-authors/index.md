@@ -261,9 +261,17 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 时，就声明你自己的能力 trait，为该值实现它，再用一个通过 `SlotPublisher::inner` 转发的全覆盖实现把
 它嫁接到包装器上。此后处理器就用你的 trait 约束自己的槽位，而具体类型依然不会出现在应用代码里：
 
-```rust
---8<-- "tests/out_slots.rs:extension"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/out_slots.rs:extension"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:extension"
+    ```
 
 通过 `inner` 取出的值所做的发布会绕过测试套件按槽位的记录（就像一个已结算的 owned 事务的缓冲区那样）；
 它们仍然会出现在 Broker 的发布日志里。

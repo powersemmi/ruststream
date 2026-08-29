@@ -23,9 +23,17 @@ example [`tracing-opentelemetry`](https://docs.rs/tracing-opentelemetry)) stays 
 Create an `OpenTelemetry`, add its consume layer app-wide, and bake its propagation onto the reply
 publisher:
 
-```rust
---8<-- "tests/opentelemetry.rs:wiring"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/opentelemetry.rs:wiring"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_opentelemetry.rs:wiring"
+    ```
 
 - `consume_layer()` is a consume-side [layer](middleware.md): per delivery it reads the incoming
   `traceparent`, opens a `tracing` span for the handler, and records the *consumer's* span on the

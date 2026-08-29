@@ -33,15 +33,31 @@
 Тестируемый обработчик (в настоящем сервисе он лежит в вашем модуле обработчиков, а тест его
 импортирует):
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:handler"
+    ```
 
 Сам тест:
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:test"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:test"
+    ```
 
 !!! info "Этот тест выполняется в CI этого репозитория"
     Код выше подтянут из
@@ -138,9 +154,17 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 записывает немедленное завершение `NackAfter` и возвращает управление, а сама повторная доставка
 запускается отдельно - сдвигом остановленных часов:
 
-```rust
---8<-- "tests/testing_harness.rs:retry_after"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/testing_harness.rs:retry_after"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_testing_harness.rs:retry_after"
+    ```
 
 ## Интеграционные тесты против настоящего брокера {#integration-tests-against-a-real-broker}
 

@@ -31,15 +31,31 @@ cross-broker cascade. Then you assert.
 
 The handler under test (in a real service it lives in your handler module and the test imports it):
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:handler"
+    ```
 
 The test:
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:test"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:test"
+    ```
 
 !!! info "This test runs in this repository's CI"
     The code above is embedded from
@@ -133,9 +149,17 @@ A handler that returns `retry_after(delay)` schedules a delayed redelivery. `pub
 immediate `NackAfter` settlement and returns; the redelivery is driven separately by advancing a
 paused clock:
 
-```rust
---8<-- "tests/testing_harness.rs:retry_after"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/testing_harness.rs:retry_after"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_testing_harness.rs:retry_after"
+    ```
 
 ## Integration tests against a real broker
 

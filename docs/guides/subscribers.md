@@ -464,9 +464,17 @@ When the payload is not a serialized value at all (a binary frame, a foreign wir
 parse yourself), a `&[u8]` message parameter takes the codec out of the path entirely: the handler
 receives each delivery's bytes exactly as the broker handed them over.
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/raw_subscriber.rs:raw"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_raw_subscriber.rs:raw"
+    ```
 
 A batch of payloads is the same thing at the batch shape: `&[&[u8]]` is the typed batch without
 the decode step, with the payloads borrowed from the batch's own messages for the duration of the
@@ -501,18 +509,34 @@ at the include site (`b.include(relay).publisher(policy)`, or the broker's defau
 policy without the call) - no codec on either side, and a failed reply publish nacks the
 delivery with requeue:
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw_reply"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/raw_subscriber.rs:raw_reply"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_raw_subscriber.rs:raw_reply"
+    ```
 
 `publish_raw` is not tied to a raw input: on a typed handler it makes only the *reply* raw - the
 input still decodes with the scope codec (and keeps the decode failure policy), while the
 returned bytes go out unencoded. That is the gateway shape, consuming structured messages and
 emitting a wire format the handler produced itself:
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw_reply_typed"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/raw_subscriber.rs:raw_reply_typed"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_raw_subscriber.rs:raw_reply_typed"
+    ```
 
 The encoded `publish(..)` clause under `raw` is rejected (a raw handler's reply is bytes -
 `publish_raw` is the fix the error names), as is combining both reply clauses on one handler.

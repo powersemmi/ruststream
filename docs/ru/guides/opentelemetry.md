@@ -23,9 +23,17 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] 
 Создайте `OpenTelemetry`, добавьте его слой потребления на уровне приложения и вшейте его
 распространение в издателя ответов:
 
-```rust
---8<-- "tests/opentelemetry.rs:wiring"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/opentelemetry.rs:wiring"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_opentelemetry.rs:wiring"
+    ```
 
 - `consume_layer()` - это [слой](middleware.md) на стороне потребления: на каждую доставку он читает
   входящий `traceparent`, открывает спан `tracing` для обработчика и записывает спан *потребителя* в

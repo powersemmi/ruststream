@@ -20,9 +20,17 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] 
 
 创建一个 `OpenTelemetry`，把它的消费侧层加到整个应用上，再把它的传播能力固化到回复发布者上：
 
-```rust
---8<-- "tests/opentelemetry.rs:wiring"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/opentelemetry.rs:wiring"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_opentelemetry.rs:wiring"
+    ```
 
 - `consume_layer()` 是消费侧的一个[层](middleware.md)：每次投递时，它读取传入的 `traceparent`，为
   处理器开一个 `tracing` span，并把*消费方*的 span 记录到工作消息头上。它对直接挂载的处理器，以及

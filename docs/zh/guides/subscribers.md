@@ -430,9 +430,17 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 当载荷根本不是一个序列化后的值时（一个二进制帧、一种你自己解析的外部线上格式），把消息参数写成
 `&[u8]` 就能把编解码器彻底移出这条路径：处理器收到的是每次投递的字节，和 Broker 交过来时一模一样。
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/raw_subscriber.rs:raw"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_raw_subscriber.rs:raw"
+    ```
 
 一批载荷就是同一件事在批量形态下的样子：`&[&[u8]]` 是去掉了解码步骤的类型化批量，其中的载荷在调用
 期间从这批消息自身借用。不发生任何拷贝，结算规则沿用批量路径的那一套。
@@ -462,17 +470,33 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 名字上，走的是挂载点附加的裸发布者（`b.include(relay).publisher(policy)`，不写该调用时就用
 Broker 的默认发布策略）；两端都不经过编解码器，而回复发布失败会让这次投递 nack 并重新入队：
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw_reply"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/raw_subscriber.rs:raw_reply"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_raw_subscriber.rs:raw_reply"
+    ```
 
 `publish_raw` 并不绑定原始字节输入：用在类型化的处理器上时，它只让*回复*是原始字节的，输入仍然用
 作用域的编解码器解码（解码失败策略也照旧），而返回的字节则不经编码直接发出。这就是网关式的形态：
 消费结构化的消息，发出由处理器自己产生的线上格式：
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw_reply_typed"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/raw_subscriber.rs:raw_reply_typed"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_raw_subscriber.rs:raw_reply_typed"
+    ```
 
 宏会拒绝 `raw` 之下会编码的 `publish(..)` 子句（原始字节处理器的回复就是字节，错误信息会点明
 `publish_raw` 才是该用的写法）；在同一个处理器上同时使用两种回复子句，宏也一样拒绝。
