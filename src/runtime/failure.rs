@@ -94,7 +94,7 @@ pub struct FailurePolicies {
     /// What to do when the handler panics. Defaults to [`FailurePolicy::FailFast`].
     pub panic: FailurePolicy,
     /// What to do when a delivery's typed view cannot be materialized: the codec fails to decode
-    /// the payload, or a [`FromHeaders`](super::FromHeaders) contract fails to parse. One policy
+    /// the payload, or a [`Headers`](super::Headers) contract fails to parse. One policy
     /// covers both - a header contract violation is the same class of bad external input as a
     /// payload that does not decode. Defaults to [`FailurePolicy::Drop`].
     pub decode: FailurePolicy,

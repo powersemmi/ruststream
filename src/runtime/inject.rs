@@ -267,7 +267,7 @@ pub trait InjectDef: Send + Sync {
     }
 
     /// The serialized JSON Schema of the handler's typed header contract (its
-    /// [`FromHeaders<T>`](super::FromHeaders) parameter), when available.
+    /// [`Headers<T>`](super::Headers) parameter), when available.
     fn headers_schema(&self) -> Option<String> {
         None
     }

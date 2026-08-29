@@ -65,7 +65,7 @@ impl<K: Serialize> Serialize for KeyedMap<K> {
 }
 
 fn field<T: Serialize>(value: T) -> Result<Option<String>, SerializeHeadersError> {
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert_typed(&One { field: value })?;
     Ok(headers.get_str("field").map(str::to_owned))
 }
@@ -75,14 +75,14 @@ fn field_err<T: Serialize>(value: T) -> SerializeHeadersError {
 }
 
 fn top_level_err<T: Serialize>(value: T) -> SerializeHeadersError {
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers
         .insert_typed(&value)
         .expect_err("value should not serialize into a header map")
 }
 
 fn key_err<K: Serialize>(key: K) -> SerializeHeadersError {
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers
         .insert_typed(&KeyedMap(key))
         .expect_err("key should not serialize into a header name")
@@ -190,28 +190,28 @@ fn top_level_wrappers_unwrap_to_the_struct_they_carry() {
     #[derive(Serialize)]
     struct Wrapper(Nested);
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert_typed(&Wrapper(Nested { inner: 1 })).unwrap();
     assert_eq!(headers.get_str("inner"), Some("1"));
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert_typed(&Some(Nested { inner: 2 })).unwrap();
     assert_eq!(headers.get_str("inner"), Some("2"));
 
     // A `None` contract writes nothing rather than failing: there is no shape to reject.
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert_typed(&Option::<Nested>::None).unwrap();
     assert!(headers.is_empty());
 
     // An externally tagged newtype variant stays flat, like the untagged form.
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers
         .insert_typed(&TaggedNewtype::Meta(Nested { inner: 3 }))
         .unwrap();
     assert_eq!(headers.get_str("inner"), Some("3"));
 
     // A struct variant is a flat field list too.
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers
         .insert_typed(&TaggedFields::Meta { inner: 4 })
         .unwrap();
@@ -251,15 +251,15 @@ fn map_keys_must_serialize_as_strings() {
 
 #[test]
 fn textual_map_keys_become_header_names() {
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert_typed(&KeyedMap("name")).unwrap();
     assert_eq!(headers.get_str("name"), Some("value"));
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert_typed(&KeyedMap('c')).unwrap();
     assert_eq!(headers.get_str("c"), Some("value"));
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert_typed(&KeyedMap(Shape::Bare)).unwrap();
     assert_eq!(headers.get_str("Bare"), Some("value"));
 }

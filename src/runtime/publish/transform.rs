@@ -3,7 +3,7 @@
 use std::fmt;
 
 use super::Outgoing;
-use crate::Headers;
+use crate::HeaderMap;
 
 /// A read-only view of the originating delivery, handed to a [`PublishTransform`].
 ///
@@ -16,13 +16,13 @@ use crate::Headers;
 /// handler's context type (`()` when it names none).
 pub struct PublishContext<'a, C = ()> {
     name: &'a str,
-    headers: &'a Headers,
+    headers: &'a HeaderMap,
     cx: &'a C,
 }
 
 impl<'a, C> PublishContext<'a, C> {
     /// Builds the view from the parts the runtime already holds at publish time.
-    pub(crate) fn new(name: &'a str, headers: &'a Headers, cx: &'a C) -> Self {
+    pub(crate) fn new(name: &'a str, headers: &'a HeaderMap, cx: &'a C) -> Self {
         Self { name, headers, cx }
     }
 
@@ -34,7 +34,7 @@ impl<'a, C> PublishContext<'a, C> {
 
     /// The originating message's headers (the working copy the handler saw).
     #[must_use]
-    pub fn headers(&self) -> &Headers {
+    pub fn headers(&self) -> &HeaderMap {
         self.headers
     }
 

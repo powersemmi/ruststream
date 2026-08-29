@@ -163,7 +163,7 @@ mod tests {
     use super::super::context::Context;
     use super::super::handler::{Handler, HandlerResult};
     use super::{BoxFut, DynMiddleware, DynStack, Next};
-    use crate::Headers;
+    use crate::HeaderMap;
 
     struct Input;
 
@@ -205,7 +205,7 @@ mod tests {
         assert!(format!("{handler:?}").contains("DynStackHandler"));
         let state = ();
         let delivery = crate::runtime::dispatch::Delivery::empty();
-        let headers = Headers::new();
+        let headers = HeaderMap::new();
         let mut ctx = Context::new("test", &headers, &state, (), &delivery);
         assert_eq!(
             handler.handle(&Input, &mut ctx).await.outcome(),

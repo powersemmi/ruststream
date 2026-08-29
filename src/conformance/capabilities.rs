@@ -14,7 +14,7 @@ use tokio::time::timeout;
 
 use super::harness::{expect_next, expect_no_more};
 use crate::{
-    AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, Headers, IncomingMessage,
+    AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage,
     OutgoingMessage, OwnedTransactions, Positioned, Publisher, RequestReply, Seekable, Seeker,
     Subscriber, SubscriptionSource, Transaction, TransactionalPublisher,
 };
@@ -95,7 +95,7 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
 
         // Echo the correlation id when the requester set one; replies must at minimum go to
         // the reply-to destination.
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         if let Some(correlation_id) = msg.headers().correlation_id() {
             headers.insert("correlation-id", correlation_id.to_owned());
         }

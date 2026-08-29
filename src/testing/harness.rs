@@ -898,8 +898,8 @@ impl BrokerHandle<'_> {
 
     /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
     /// contract serialized into the header map (see
-    /// [`Headers::insert_typed`](crate::Headers::insert_typed)) - the input a
-    /// [`FromHeaders`](crate::runtime::FromHeaders) handler parses.
+    /// [`HeaderMap::insert_typed`](crate::HeaderMap::insert_typed)) - the input a
+    /// [`Headers`](crate::runtime::Headers) handler parses.
     ///
     /// Same reach as [`publish`](Self::publish): the builder's
     /// `message(&value).with_headers(&meta)` needs the value's type to declare a destination.

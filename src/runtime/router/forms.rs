@@ -44,7 +44,7 @@ pub struct Batch;
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
 /// A batch subscriber reading a typed header contract per element
-/// (`#[subscriber(batch("in"))]` with a `FromHeaders<Vec<H>>` parameter).
+/// (`#[subscriber(batch("in"))]` with a `Headers<Vec<H>>` parameter).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchWithHeaders;
 /// A batch reply-publishing subscriber (`#[subscriber(batch("in"), publish("out"))]`).

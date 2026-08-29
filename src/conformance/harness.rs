@@ -22,7 +22,7 @@
 use std::{fmt, time::Duration};
 
 use crate::{
-    AckError, Broker, Connected, ConnectedBroker, Headers, IncomingMessage, OutgoingMessage,
+    AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
     Publisher, Subscribe, Subscriber, SubscriptionSource, testing::TestableBroker,
 };
 use bytes::Bytes;
@@ -278,7 +278,7 @@ async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) {
         .await
         .expect("subscribe failed");
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("Content-Type", "application/json");
     headers.insert("X-Tenant", Bytes::from_static(b"acme"));
 

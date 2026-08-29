@@ -219,9 +219,9 @@ mod tests {
             &self.0
         }
 
-        fn headers(&self) -> &crate::Headers {
-            static EMPTY: std::sync::LazyLock<crate::Headers> =
-                std::sync::LazyLock::new(crate::Headers::new);
+        fn headers(&self) -> &crate::HeaderMap {
+            static EMPTY: std::sync::LazyLock<crate::HeaderMap> =
+                std::sync::LazyLock::new(crate::HeaderMap::new);
             &EMPTY
         }
 

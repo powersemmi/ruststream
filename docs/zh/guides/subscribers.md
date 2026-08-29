@@ -37,7 +37,7 @@ use ruststream::subscriber;
 
 - `State<T>`，应用状态中的一个字段（在状态类型上派生 `FromRef`）。
 - `Ctx<K>`，Broker 的某个每次投递字段，按它的键读取。
-- `FromHeaders<T>`，把这次投递的消息头解析成一个类型化的契约；违反契约时按
+- `Headers<T>`，把这次投递的消息头解析成一个类型化的契约；违反契约时按
   `on_failure(decode = ..)` 策略结算（见[类型化消息头](headers.md)）。
 - 任何实现了 `FromContext` 的类型，也就是自定义提取器（鉴权守卫、请求作用域的解析器）。
 
@@ -361,7 +361,7 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 ```
 
 在这两种形态上写 `on_failure(decode = ..)` 策略都是编译错误：这里没有会失败的解码步骤，除非处理器
-声明了 `FromHeaders` 契约，那种情况这条策略确实管得着。提取器、`&mut Context`、`workers(..)`、
+声明了 `Headers` 契约，那种情况这条策略确实管得着。提取器、`&mut Context`、`workers(..)`、
 `on_failure(panic = ..)`，以及注入的 `Out` / `Seek` 参数，在单次投递的形态上照常可用（批量载荷
 形态目前还不接受 `Out` / `Seek`）；原始字节订阅者也和其他任何定义一样，用同一个 `include` 挂载，
 而作用域上即便设了编解码器，对它也单纯不生效。原始字节订阅者也是在一个编解码器 feature 都没启用时

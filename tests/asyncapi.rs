@@ -423,13 +423,13 @@ fn server_security_lands_in_components_and_refs() {
     assert!(!bare.to_json().unwrap().contains("security"));
 }
 
-/// Typed headers and declared outgoing messages: the macro lifts a `FromHeaders` contract into
+/// Typed headers and declared outgoing messages: the macro lifts a `Headers` contract into
 /// the receive message's headers schema, and `publish(..)` / `#[publishes(..)]` declarations
 /// become `send` operations with payload and headers schemas.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod typed_headers_spec {
     use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
+    use ruststream::runtime::{AppInfo, HandlerResult, Headers, Out, RustStream};
     use ruststream::schemars::JsonSchema;
     use ruststream::{Message, OutSlot, Outgoing, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
@@ -484,7 +484,7 @@ mod typed_headers_spec {
     #[subscriber("chunks.raw")]
     async fn convert(
         _chunk: &Chunk,
-        FromHeaders(_meta): FromHeaders<ChunkMeta>,
+        Headers(_meta): Headers<ChunkMeta>,
         Out(_events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
     ) -> HandlerResult {
         HandlerResult::Ack
@@ -506,7 +506,7 @@ mod typed_headers_spec {
         );
         let spec = build_spec(&app);
 
-        // The FromHeaders contract lands as the receive message's headers schema.
+        // The Headers contract lands as the receive message's headers schema.
         let chunk = &spec.components.messages["Chunk"];
         let headers = chunk.headers.as_ref().expect("headers schema");
         assert!(

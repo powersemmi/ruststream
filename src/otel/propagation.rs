@@ -46,7 +46,7 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{IdGenerator, RandomIdGenerator};
 use tracing::Instrument;
 
-use crate::Headers;
+use crate::HeaderMap;
 use crate::runtime::{
     BlanketLayer, Context, Handler, Layer, Outgoing, PublishContext, PublishTransform, Settle,
 };
@@ -56,8 +56,8 @@ const TRACEPARENT: &str = "traceparent";
 /// The HTTP header carrying vendor-specific trace state, propagated verbatim.
 const TRACESTATE: &str = "tracestate";
 
-/// Reads the W3C context headers off crate [`Headers`] for the SDK propagator.
-struct HeaderExtractor<'a>(&'a Headers);
+/// Reads the W3C context headers off crate [`HeaderMap`] for the SDK propagator.
+struct HeaderExtractor<'a>(&'a HeaderMap);
 
 impl Extractor for HeaderExtractor<'_> {
     fn get(&self, key: &str) -> Option<&str> {
@@ -71,8 +71,8 @@ impl Extractor for HeaderExtractor<'_> {
     }
 }
 
-/// Writes the W3C context headers the SDK propagator produces onto crate [`Headers`].
-struct HeaderInjector<'a>(&'a mut Headers);
+/// Writes the W3C context headers the SDK propagator produces onto crate [`HeaderMap`].
+struct HeaderInjector<'a>(&'a mut HeaderMap);
 
 impl Injector for HeaderInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
@@ -264,13 +264,13 @@ mod tests {
 
     #[test]
     fn context_round_trips_through_headers() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert(TRACEPARENT, HEADER);
         let propagator = TraceContextPropagator::new();
         let cx = propagator.extract_with_context(&OtelContext::new(), &HeaderExtractor(&headers));
         assert!(cx.span().span_context().is_valid());
 
-        let mut out = Headers::new();
+        let mut out = HeaderMap::new();
         propagator.inject_context(&cx, &mut HeaderInjector(&mut out));
         assert_eq!(out.get_str(TRACEPARENT), Some(HEADER));
         assert!(
@@ -281,20 +281,20 @@ mod tests {
 
     #[test]
     fn tracestate_rides_extraction_and_injection() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert(TRACEPARENT, HEADER);
         headers.insert(TRACESTATE, "vendor=opaque");
         let propagator = TraceContextPropagator::new();
         let cx = propagator.extract_with_context(&OtelContext::new(), &HeaderExtractor(&headers));
 
-        let mut out = Headers::new();
+        let mut out = HeaderMap::new();
         propagator.inject_context(&cx, &mut HeaderInjector(&mut out));
         assert_eq!(out.get_str(TRACESTATE), Some("vendor=opaque"));
     }
 
     #[test]
     fn extractor_lists_the_header_names() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert(TRACEPARENT, HEADER);
         assert_eq!(HeaderExtractor(&headers).keys(), vec![TRACEPARENT]);
     }
@@ -303,7 +303,7 @@ mod tests {
     fn the_publish_transform_carries_the_incoming_trace_onto_the_reply() {
         use crate::runtime::{Outgoing, PublishContext};
 
-        let mut incoming = Headers::new();
+        let mut incoming = HeaderMap::new();
         incoming.insert(TRACEPARENT, HEADER);
         incoming.insert(TRACESTATE, "vendor=opaque");
         let cx = PublishContext::new("orders", &incoming, &());
@@ -320,7 +320,7 @@ mod tests {
     fn a_delivery_without_a_trace_leaves_the_reply_untouched() {
         use crate::runtime::{Outgoing, PublishContext};
 
-        let incoming = Headers::new();
+        let incoming = HeaderMap::new();
         let cx = PublishContext::new("orders", &incoming, &());
 
         let mut out = Outgoing::new("replies", b"body".as_slice());

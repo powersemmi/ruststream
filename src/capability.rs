@@ -9,7 +9,7 @@ use std::{error::Error as StdError, future::Future, time::Duration};
 use futures::Stream;
 
 use crate::{
-    Broker, ConnectedBroker, Headers, IncomingMessage, OutgoingMessage, Publisher, Subscriber,
+    Broker, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, Subscriber,
 };
 
 /// A subscriber that natively delivers messages in batches.
@@ -272,9 +272,9 @@ pub trait Transaction: Send {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{Headers, OutgoingMessage, Transaction};
+    /// use ruststream::{HeaderMap, OutgoingMessage, Transaction};
     ///
-    /// struct Tagged<T>(T, Headers);
+    /// struct Tagged<T>(T, HeaderMap);
     ///
     /// impl<T: Transaction> Transaction for Tagged<T> {
     ///     type Error = T::Error;
@@ -291,7 +291,7 @@ pub trait Transaction: Send {
     ///         self.0.abort().await
     ///     }
     ///
-    ///     fn base_headers(&self) -> Option<&Headers> {
+    ///     fn base_headers(&self) -> Option<&HeaderMap> {
     ///         Some(&self.1)
     ///     }
     /// }
@@ -303,7 +303,7 @@ pub trait Transaction: Send {
     /// ```
     ///
     /// [`Publisher::base_headers`]: crate::Publisher::base_headers
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         None
     }
 }

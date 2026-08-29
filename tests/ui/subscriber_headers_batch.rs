@@ -1,4 +1,4 @@
-use ruststream::runtime::{FromHeaders, HandlerResult};
+use ruststream::runtime::{Headers, HandlerResult};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -14,7 +14,7 @@ struct Meta {
 
 // Headers are per-delivery; a batch spans many deliveries with as many header maps.
 #[subscriber(batch("orders"))]
-async fn bill(_orders: &[Order], FromHeaders(_meta): FromHeaders<Meta>) -> HandlerResult {
+async fn bill(_orders: &[Order], Headers(_meta): Headers<Meta>) -> HandlerResult {
     HandlerResult::Ack
 }
 

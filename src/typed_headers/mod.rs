@@ -1,11 +1,11 @@
-//! Typed views over [`Headers`]: serialize a flat struct into the header map and parse it back.
+//! Typed views over [`HeaderMap`]: serialize a flat struct into the header map and parse it back.
 //!
 //! Header values travel as bytes and are string-encoded by convention, while the Rust side keeps
 //! a typed contract: a plain struct whose fields are scalars (numbers, booleans, strings, raw
-//! bytes, unit-only enums) or `Option`s of those. [`Headers::insert_typed`] flattens such a
-//! struct into `field name -> string value` entries, and [`Headers::to_typed`] parses them back,
+//! bytes, unit-only enums) or `Option`s of those. [`HeaderMap::insert_typed`] flattens such a
+//! struct into `field name -> string value` entries, and [`HeaderMap::to_typed`] parses them back,
 //! converting each value by what the target field expects. The same machinery backs the
-//! [`FromHeaders`](crate::runtime::FromHeaders) extractor.
+//! [`Headers`](crate::runtime::Headers) extractor.
 
 mod de;
 mod ser;
@@ -14,9 +14,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
-use crate::headers::Headers;
+use crate::headers::HeaderMap;
 
-/// Error of [`Headers::to_typed`]: the header map does not satisfy the typed contract.
+/// Error of [`HeaderMap::to_typed`]: the header map does not satisfy the typed contract.
 ///
 /// Every variant names the offending header, so a failed extraction can be diagnosed from the
 /// error alone.
@@ -66,7 +66,7 @@ impl serde::de::Error for DeserializeHeadersError {
     }
 }
 
-/// Error of [`Headers::insert_typed`]: the value does not fit the flat header-map shape.
+/// Error of [`HeaderMap::insert_typed`]: the value does not fit the flat header-map shape.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum SerializeHeadersError {
@@ -96,7 +96,7 @@ impl serde::ser::Error for SerializeHeadersError {
     }
 }
 
-impl Headers {
+impl HeaderMap {
     /// Parses the header map into a typed contract `T`.
     ///
     /// `T` is a flat struct (or string-keyed map): each field reads the header of the same name,
@@ -104,7 +104,7 @@ impl Headers {
     /// their string form, booleans from `true` / `false`, unit-only enums from the variant name,
     /// byte fields (`serde_bytes`-style) from the raw value. An `Option` field is `None` when the
     /// header is absent; a missing non-`Option` field is an error. Lookups are case-insensitive
-    /// like every [`Headers`] read; use `#[serde(rename = "...")]` for wire names that are not
+    /// like every [`HeaderMap`] read; use `#[serde(rename = "...")]` for wire names that are not
     /// Rust identifiers. `#[serde(flatten)]` is not supported (the flattened shape cannot be
     /// parsed back); a map's keys come back in the header map's normalized lowercase form.
     ///
@@ -117,7 +117,7 @@ impl Headers {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::Headers;
+    /// use ruststream::HeaderMap;
     /// use serde::Deserialize;
     ///
     /// #[derive(Deserialize)]
@@ -127,7 +127,7 @@ impl Headers {
     ///     trace: Option<String>,
     /// }
     ///
-    /// let mut headers = Headers::new();
+    /// let mut headers = HeaderMap::new();
     /// headers.insert("task_id", "7");
     /// headers.insert("chunk_no", "3");
     ///
@@ -159,7 +159,7 @@ impl Headers {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::Headers;
+    /// use ruststream::HeaderMap;
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
@@ -168,7 +168,7 @@ impl Headers {
     ///     done: bool,
     /// }
     ///
-    /// let mut headers = Headers::new();
+    /// let mut headers = HeaderMap::new();
     /// headers.insert_typed(&ChunkMeta { task_id: 7, done: true })?;
     ///
     /// assert_eq!(headers.get_str("task_id"), Some("7"));
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn round_trips_every_scalar_kind() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert_typed(&sample()).expect("flat struct");
 
         assert_eq!(headers.get_str("task_id"), Some("7"));
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn missing_required_header_is_an_error_naming_the_field() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("task_id", "7");
         let err = headers.to_typed::<Meta>().expect_err("ratio missing");
         assert!(err.to_string().contains("ratio"), "got: {err}");
@@ -301,7 +301,7 @@ mod tests {
             #[allow(dead_code)]
             task_id: u64,
         }
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("task_id", "not-a-number");
         let err = headers.to_typed::<OnlyId>().expect_err("parse failure");
         let msg = err.to_string();
@@ -315,7 +315,7 @@ mod tests {
             #[allow(dead_code)]
             label: String,
         }
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("label", Bytes::from_static(&[0xff, 0xfe]));
         let err = headers.to_typed::<OnlyLabel>().expect_err("not utf-8");
         assert!(
@@ -334,7 +334,7 @@ mod tests {
         struct Nested {
             inner: Inner,
         }
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         let err = headers
             .insert_typed(&Nested {
                 inner: Inner { x: 1 },
@@ -358,7 +358,7 @@ mod tests {
             #[serde(flatten)]
             rest: Inner,
         }
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         let err = headers
             .insert_typed(&Flat {
                 top: 1,
@@ -381,7 +381,7 @@ mod tests {
             }
         }
 
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         let err = headers
             .insert_typed(&Refuses)
             .expect_err("the custom failure must surface");
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn top_level_scalar_is_rejected_both_ways() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         assert!(matches!(
             headers.insert_typed(&7_u64),
             Err(SerializeHeadersError::TopLevel { .. })
@@ -410,7 +410,7 @@ mod tests {
         source.insert("a".to_owned(), "1".to_owned());
         source.insert("b".to_owned(), "two".to_owned());
 
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert_typed(&source).expect("string map");
         let back: BTreeMap<String, String> = headers.to_typed().expect("map back");
         assert_eq!(back, source);
@@ -424,7 +424,7 @@ mod tests {
             #[allow(dead_code)]
             Upload { size: u64 },
         }
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers
             .insert_typed(&Either::Upload { size: 9 })
             .expect("untagged");
@@ -438,7 +438,7 @@ mod tests {
             #[serde(rename = "event-class")]
             event_class: String,
         }
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers
             .insert_typed(&Renamed {
                 event_class: "upload".to_owned(),

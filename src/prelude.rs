@@ -21,14 +21,14 @@
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, Context, Ctx, FromHeaders, FromRef, HandlerResult, Out, PublishExt, Router,
+    App, AppInfo, Context, Ctx, FromRef, HandlerResult, Headers, Out, PublishExt, Router,
     RunningApp, RustStream, Seek, State, SubscriberSettings, TypedPublisher,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
 // broker crate used on its own without this one - names it explicitly.
 pub use crate::{
-    Broker, Headers, IncomingMessage, Message, Name, OutSlot, PublishPolicy, Publisher,
+    Broker, HeaderMap, IncomingMessage, Message, Name, OutSlot, PublishPolicy, Publisher,
 };
 
 // The derives sharing a name with their trait (`Message`, `OutSlot`, `FromRef`) come in with the

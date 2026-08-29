@@ -8,14 +8,14 @@ use bytes::Bytes;
 ///
 /// Keys are normalized to ASCII lowercase on insertion. Values are stored as `Bytes` to support
 /// arbitrary binary metadata. Typed accessors are provided for well-known fields commonly carried
-/// by message brokers; unknown headers are read through [`Headers::get`].
+/// by message brokers; unknown headers are read through [`HeaderMap::get`].
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::Headers;
+/// use ruststream::HeaderMap;
 ///
-/// let mut h = Headers::new();
+/// let mut h = HeaderMap::new();
 /// h.insert("Content-Type", "application/json");
 /// h.insert("X-Tenant-Id", "acme");
 ///
@@ -23,11 +23,11 @@ use bytes::Bytes;
 /// assert_eq!(h.get("x-tenant-id"), Some(b"acme".as_slice()));
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Headers {
+pub struct HeaderMap {
     inner: HashMap<String, Bytes>,
 }
 
-impl Headers {
+impl HeaderMap {
     /// Returns an empty header map.
     #[must_use]
     pub fn new() -> Self {
@@ -132,7 +132,7 @@ impl Headers {
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for Headers
+impl<K, V> FromIterator<(K, V)> for HeaderMap
 where
     K: Into<String>,
     V: Into<Bytes>,
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn insert_and_get_case_insensitive() {
-        let mut h = Headers::new();
+        let mut h = HeaderMap::new();
         h.insert("Content-Type", "application/json");
         assert_eq!(h.get("content-type"), Some(b"application/json".as_slice()));
         assert_eq!(h.get("CONTENT-TYPE"), Some(b"application/json".as_slice()));
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn typed_accessors_return_values() {
-        let mut h = Headers::new();
+        let mut h = HeaderMap::new();
         h.insert("Content-Type", "application/json");
         h.insert("Correlation-Id", "abc-123");
         h.insert("Reply-To", "responses.inbox");
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn typed_accessor_returns_none_for_non_utf8() {
-        let mut h = Headers::new();
+        let mut h = HeaderMap::new();
         h.insert("Content-Type", Bytes::from_static(&[0xff, 0xfe]));
         assert_eq!(h.content_type(), None);
         assert_eq!(h.get("content-type"), Some([0xff, 0xfe].as_slice()));
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn remove_and_contains() {
-        let mut h = Headers::new();
+        let mut h = HeaderMap::new();
         h.insert("X-Tenant", "acme");
         assert!(h.contains("x-tenant"));
         assert_eq!(h.remove("X-TENANT"), Some(Bytes::from_static(b"acme")));
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn collect_via_from_iterator() {
-        let h: Headers = [("Foo", "1"), ("Bar", "2")].into_iter().collect();
+        let h: HeaderMap = [("Foo", "1"), ("Bar", "2")].into_iter().collect();
         assert_eq!(h.len(), 2);
         assert_eq!(h.get_str("foo"), Some("1"));
         assert_eq!(h.get_str("bar"), Some("2"));
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn overwrite_with_upserts_key_by_key() {
-        let mut base: Headers = [("tenant", "acme"), ("x-trace", "handle")]
+        let mut base: HeaderMap = [("tenant", "acme"), ("x-trace", "handle")]
             .into_iter()
             .collect();
         base.overwrite_with(
@@ -234,21 +234,21 @@ mod tests {
 
     #[test]
     fn overwrite_with_moves_the_whole_map_over_an_empty_one() {
-        let mut call = Headers::new();
+        let mut call = HeaderMap::new();
         call.insert("x-trace", "call");
-        let mut base = Headers::new();
+        let mut base = HeaderMap::new();
         base.overwrite_with(call);
         assert_eq!(base.get_str("x-trace"), Some("call"));
 
-        let mut kept = Headers::new();
+        let mut kept = HeaderMap::new();
         kept.insert("tenant", "acme");
-        kept.overwrite_with(Headers::new());
+        kept.overwrite_with(HeaderMap::new());
         assert_eq!(kept.get_str("tenant"), Some("acme"));
     }
 
     #[test]
     fn iter_yields_normalized_keys() {
-        let mut h = Headers::new();
+        let mut h = HeaderMap::new();
         h.insert("Foo", "1");
         let pairs: Vec<_> = h.iter().collect();
         assert_eq!(pairs, vec![("foo", b"1".as_slice())]);

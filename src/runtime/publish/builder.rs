@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::codec::{Codec, CodecError};
 use crate::{
-    CallerName, FixedName, Headers, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
+    CallerName, FixedName, HeaderMap, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
     OutgoingDestination, OutgoingMessage, SerializeHeadersError, WithHeaders,
 };
 
@@ -71,9 +71,9 @@ pub struct HeadersUnset;
 #[derive(Debug, Clone, Copy)]
 pub struct TypedHeaders<'a, H: ?Sized>(&'a H);
 
-/// The headers position filled with an already-built [`Headers`] map, sent as it is.
+/// The headers position filled with an already-built [`HeaderMap`], sent as it is.
 #[derive(Debug, Clone, Default)]
-pub struct MapHeaders(Headers);
+pub struct MapHeaders(HeaderMap);
 
 /// A destination named at the call site, the resolved form of [`CallerName`].
 #[derive(Debug, Clone)]
@@ -121,23 +121,23 @@ pub trait PublishHeaders {
     ///
     /// Returns [`SerializeHeadersError`] when a typed contract value is not a flat struct or
     /// string-keyed map.
-    fn write(self, headers: &mut Headers) -> Result<(), SerializeHeadersError>;
+    fn write(self, headers: &mut HeaderMap) -> Result<(), SerializeHeadersError>;
 }
 
 impl PublishHeaders for HeadersUnset {
-    fn write(self, _headers: &mut Headers) -> Result<(), SerializeHeadersError> {
+    fn write(self, _headers: &mut HeaderMap) -> Result<(), SerializeHeadersError> {
         Ok(())
     }
 }
 
 impl<H: Serialize + ?Sized> PublishHeaders for TypedHeaders<'_, H> {
-    fn write(self, headers: &mut Headers) -> Result<(), SerializeHeadersError> {
+    fn write(self, headers: &mut HeaderMap) -> Result<(), SerializeHeadersError> {
         headers.insert_typed(self.0)
     }
 }
 
 impl PublishHeaders for MapHeaders {
-    fn write(self, headers: &mut Headers) -> Result<(), SerializeHeadersError> {
+    fn write(self, headers: &mut HeaderMap) -> Result<(), SerializeHeadersError> {
         headers.overwrite_with(self.0);
         Ok(())
     }
@@ -250,7 +250,7 @@ impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, 
 }
 
 /// What may fill the headers position of a publish: a borrowed contract value, or an
-/// already-built [`Headers`] map.
+/// already-built [`HeaderMap`].
 ///
 /// The two differ in what they say about the message, not in how they are written: a borrowed
 /// value is the message's declared contract, serialized one entry per field, while a map is the
@@ -259,7 +259,7 @@ impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, 
 /// [`with_headers`](Publish::with_headers) is one method and the contract check stays a compile
 /// error either way.
 ///
-/// You never implement it: [`Headers`] and `&H` of every serializable `H` already do.
+/// You never implement it: [`HeaderMap`] and `&H` of every serializable `H` already do.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot fill the headers of a publish",
     note = "pass the message's declared contract by reference (`.with_headers(&meta)`), or an \
@@ -284,7 +284,7 @@ impl<'a, H: ?Sized> HeaderSource for &'a H {
     }
 }
 
-impl HeaderSource for Headers {
+impl HeaderSource for HeaderMap {
     type Position = MapHeaders;
 
     fn into_position(self) -> Self::Position {
@@ -294,7 +294,7 @@ impl HeaderSource for Headers {
 
 impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
     /// Supplies the headers of this publish: the message's declared contract by reference, or an
-    /// already-built [`Headers`] map by value.
+    /// already-built [`HeaderMap`] by value.
     ///
     /// A contract value is checked against the message's declaration, so a missing, extra or
     /// mismatched one is a compile error; a map carries whatever the caller put in it and stands

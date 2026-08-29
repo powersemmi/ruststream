@@ -1,8 +1,8 @@
 # 类型化消息头
 
-消息头在传输时是一个无类型的 `name -> bytes` 映射。当应用确实在其中承载了一份真正的契约时（各种
-id、序号、总数），一个结构体就能声明这份契约，并同时驱动三个面：消费侧的运行时提取、生产侧的发布
-构建器，以及生成的 AsyncAPI 文档里的消息头 schema。
+消息头在传输时是一个无类型的 `name -> bytes` 映射，也就是 `HeaderMap`。当应用确实在其中承载了一份
+真正的契约时（各种 id、序号、总数），一个结构体就能声明这份契约，并同时驱动三个面：消费侧的运行时
+提取、生产侧的发布构建器，以及生成的 AsyncAPI 文档里的消息头 schema。
 
 ## 契约
 
@@ -15,21 +15,21 @@ id、序号、总数），一个结构体就能声明这份契约，并同时驱
 字段名就是线路上的名字；对于不是 Rust 标识符的名字，用 `#[serde(rename = "x-task-id")]`。消息头缺失
 时，`Option` 字段取 `None`；而缺失一个非 `Option` 的消息头就是违反契约。
 
-## 接收侧：`FromHeaders` 提取器
+## 接收侧：`Headers` 提取器
 
-`FromHeaders<T>` 是一个提取器参数：在函数体运行之前，运行时就把这次投递的消息头解析成 `T`，因此
+`Headers<T>` 是一个提取器参数：在函数体运行之前，运行时就把这次投递的消息头解析成 `T`，因此
 处理器从一开始拿到的就是经过校验的类型化值。违反契约的情况（消息头缺失、值无法解析）绝不会到达
 函数体，框架会先打出一条点名该订阅与契约类型的 `WARN`，然后按订阅者的 `on_failure(decode = ..)`
 策略结算这次投递，也就是载荷解码失败时所用的同一套策略（默认丢弃）。
 
 --8<-- "examples/typed_headers.rs:handler"
 
-`FromHeaders` 既能与字节形式的函数体（`&[u8]` 配类型化消息头）组合，也能与其他任何提取器组合。
+`Headers` 既能与字节形式的函数体（`&[u8]` 配类型化消息头）组合，也能与其他任何提取器组合。
 
-在批量处理器上，消息头仍然是按投递存在的，所以该参数是每个元素一份契约：`FromHeaders<Vec<T>>`。
+在批量处理器上，消息头仍然是按投递存在的，所以该参数是每个元素一份契约：`Headers<Vec<T>>`。
 `meta[i]` 属于 `chunks[i]`，两者在构造上就是对齐的；载荷或消息头无法成形的元素，会由同一套
 `on_failure(decode = ..)` 策略结算，绝不会到达处理器，与单条消息的路径完全一致。编译器会拒绝在
-这里直接写裸的 `FromHeaders<T>`，并提示改用向量形式。
+这里直接写裸的 `Headers<T>`，并提示改用向量形式。
 
 --8<-- "examples/typed_headers.rs:batch"
 
@@ -37,12 +37,12 @@ id、序号、总数），一个结构体就能声明这份契约，并同时驱
 路径上写 `Router::include`。契约类型随路由一起传递，而挑中这条路由的，是定义自带的形式 token。
 
 如果同一个通道承载的消息，其消息头按事件种类各不相同，那就别让标准提取器插手，自己写一个
-[`FromContext`] 提取器：先读出用于判别的消息头，再用 [`Headers::to_typed`] 解析出与之匹配的
-契约，这正是 `FromHeaders` 内部使用的同一套机制。把各种形状的并集声明在输入类型上（见下一节），
+[`FromContext`] 提取器：先读出用于判别的消息头，再用 [`HeaderMap::to_typed`] 解析出与之匹配的
+契约，这正是 `Headers` 内部使用的同一套机制。把各种形状的并集声明在输入类型上（见下一节），
 文档就仍然能展示出完整的契约。
 
 [`FromContext`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.FromContext.html
-[`Headers::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.to_typed
+[`HeaderMap::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.to_typed
 
 ## 在消息类型上声明契约
 
@@ -94,15 +94,15 @@ id、序号、总数），一个结构体就能声明这份契约，并同时驱
 --8<-- "examples/typed_headers.rs:reply"
 
 在运行时，回复的消息头依旧沿用原来的做法：由回复发布者上的一个 `PublishTransform` 来设置，而
-[`Headers::insert_typed`] 负责在变换内部把一个契约值序列化进该映射。
+[`HeaderMap::insert_typed`] 负责在变换内部把一个契约值序列化进该映射。
 
-[`Headers::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.insert_typed
+[`HeaderMap::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.insert_typed
 
 ## 文档里会呈现什么
 
 启用 `asyncapi` feature 后，`build_spec` 会渲染出：
 
-- 每条接收消息的消息头 schema，它来自处理器的 `FromHeaders<T>` 参数；当处理器手工提取时，则来自
+- 每条接收消息的消息头 schema，它来自处理器的 `Headers<T>` 参数；当处理器手工提取时，则来自
   输入类型的 `#[message(headers(..))]` 契约；
 - 每条已声明的出站消息对应一个 `send` 操作，也就是每种 `publish(..)` 形式的回复，以及某个槽位声明
   的每种消息类型，各自带上自己的载荷 schema 与消息头 schema。

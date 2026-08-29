@@ -1,9 +1,9 @@
 # Typed headers
 
-Message headers travel as an untyped `name -> bytes` map. When an application carries a real
-contract in them (ids, sequence numbers, totals), one struct can declare that contract and
-drive all three surfaces at once: runtime extraction on the consume side, the publish builder
-on the produce side, and the headers schema in the generated AsyncAPI document.
+Message headers travel as an untyped `name -> bytes` map, `HeaderMap`. When an application
+carries a real contract in them (ids, sequence numbers, totals), one struct can declare that
+contract and drive all three surfaces at once: runtime extraction on the consume side, the
+publish builder on the produce side, and the headers schema in the generated AsyncAPI document.
 
 ## The contract
 
@@ -18,9 +18,9 @@ Field names are the wire names; use `#[serde(rename = "x-task-id")]` for names t
 Rust identifiers. An `Option` field is `None` when the header is absent; a missing non-`Option`
 header is a contract violation.
 
-## Receiving: the `FromHeaders` extractor
+## Receiving: the `Headers` extractor
 
-`FromHeaders<T>` is an extractor parameter: the runtime parses the delivery headers into `T`
+`Headers<T>` is an extractor parameter: the runtime parses the delivery headers into `T`
 before the body runs, so the handler starts from validated, typed values. A violation (missing
 header, unparsable value) never reaches the body - the delivery settles by the subscriber's
 `on_failure(decode = ..)` policy, the same one that covers a payload that does not decode
@@ -28,13 +28,13 @@ header, unparsable value) never reaches the body - the delivery settles by the s
 
 --8<-- "examples/typed_headers.rs:handler"
 
-`FromHeaders` composes with a byte body (`&[u8]`, typed headers) and with every other extractor.
+`Headers` composes with a byte body (`&[u8]`, typed headers) and with every other extractor.
 
 On a batch handler the headers stay per-delivery, so the parameter takes one contract per
-element: `FromHeaders<Vec<T>>`. `meta[i]` belongs to `chunks[i]`, and the two line up by
+element: `Headers<Vec<T>>`. `meta[i]` belongs to `chunks[i]`, and the two line up by
 construction - an element whose payload or headers fail to materialize is settled by the same
 `on_failure(decode = ..)` policy and never reaches the handler, exactly as on the single-message
-path. The bare `FromHeaders<T>` is rejected there, naming the vector form.
+path. The bare `Headers<T>` is rejected there, naming the vector form.
 
 --8<-- "examples/typed_headers.rs:batch"
 
@@ -44,12 +44,12 @@ definition's own form token is what picks that route.
 
 When one channel carries messages whose headers differ per event kind, keep the standard
 extractor out of it and write your own [`FromContext`] extractor: read the discriminator
-header, then parse the matching contract with [`Headers::to_typed`] - the same machinery
-`FromHeaders` uses. Declare the union of shapes on the input type (see the next section) so
+header, then parse the matching contract with [`HeaderMap::to_typed`] - the same machinery
+`Headers` uses. Declare the union of shapes on the input type (see the next section) so
 the document still shows the full contract.
 
 [`FromContext`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.FromContext.html
-[`Headers::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.to_typed
+[`HeaderMap::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.to_typed
 
 ## Declaring a contract on a message type
 
@@ -108,16 +108,16 @@ the document, and the destination is already in the attribute.
 --8<-- "examples/typed_headers.rs:reply"
 
 At runtime, reply headers stay where they were: a `PublishTransform` on the reply publisher
-sets them, and [`Headers::insert_typed`] serializes a contract value into the map from inside
+sets them, and [`HeaderMap::insert_typed`] serializes a contract value into the map from inside
 a transform.
 
-[`Headers::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.Headers.html#method.insert_typed
+[`HeaderMap::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.insert_typed
 
 ## What the document shows
 
 With the `asyncapi` feature, `build_spec` renders:
 
-- the headers schema of every receive message - from the handler's `FromHeaders<T>` parameter,
+- the headers schema of every receive message - from the handler's `Headers<T>` parameter,
   or from the input type's `#[message(headers(..))]` contract when the handler extracts by
   hand;
 - a `send` operation per declared outgoing message - the reply of every `publish(..)` form and

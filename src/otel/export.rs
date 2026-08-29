@@ -70,7 +70,7 @@ use thiserror::Error;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::Headers;
+use crate::HeaderMap;
 use crate::runtime::{
     BlanketLayer, Context, Handler, HandlerResult, HealthProbe, HealthState, Layer, Outgoing,
     PublishLayer, PublishNext, PublishPipeline, Settle,
@@ -435,7 +435,7 @@ const fn outcome_attr(result: HandlerResult) -> &'static str {
 }
 
 /// Parses the publish timestamp header into the queue time relative to now, if present and sane.
-fn queue_time_seconds(headers: &Headers) -> Option<f64> {
+fn queue_time_seconds(headers: &HeaderMap) -> Option<f64> {
     let stamped: u128 = headers.get_str(PUBLISH_TIME_HEADER)?.parse().ok()?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -668,7 +668,7 @@ mod tests {
 
         let pipeline = PublishStack::new(otel.publish_layer(), PublishIdentity);
         let publisher = TypedPublisher::with_codec(Failing, JsonCodec);
-        let headers = Headers::new();
+        let headers = HeaderMap::new();
         let cx = PublishContext::new("orders", &headers, &());
         let result = publisher.publish("orders", &7_u32, &pipeline, &cx).await;
         assert!(
@@ -695,19 +695,19 @@ mod tests {
 
     #[test]
     fn queue_time_ignores_absent_garbage_and_future_stamps() {
-        let empty = Headers::new();
+        let empty = HeaderMap::new();
         assert_eq!(queue_time_seconds(&empty), None);
 
-        let mut garbage = Headers::new();
+        let mut garbage = HeaderMap::new();
         garbage.insert(PUBLISH_TIME_HEADER, "not-a-number");
         assert_eq!(queue_time_seconds(&garbage), None);
 
         // A stamp from the future would need a negative duration; it is dropped instead.
-        let mut future = Headers::new();
+        let mut future = HeaderMap::new();
         future.insert(PUBLISH_TIME_HEADER, u128::MAX.to_string());
         assert_eq!(queue_time_seconds(&future), None);
 
-        let mut sane = Headers::new();
+        let mut sane = HeaderMap::new();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

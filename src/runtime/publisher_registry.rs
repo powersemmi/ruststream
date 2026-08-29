@@ -11,7 +11,7 @@ use std::future::Future;
 
 use thiserror::Error;
 
-use crate::{Headers, OutgoingMessage, Publisher};
+use crate::{HeaderMap, OutgoingMessage, Publisher};
 
 use super::lifecycle::{BoxError, BoxFuture};
 use super::publish::PublishSink;
@@ -38,7 +38,7 @@ pub trait ErasedPublisher: sealed::Sealed + Send + Sync {
     ///
     /// See [`Publisher::base_headers`]: a publisher handed to the redelivery fallback keeps its
     /// base here, so a republish through the erased path carries what a direct publish would.
-    fn base_headers_erased(&self) -> Option<&Headers>;
+    fn base_headers_erased(&self) -> Option<&HeaderMap>;
 }
 
 mod sealed {
@@ -58,7 +58,7 @@ impl<P: Publisher> ErasedPublisher for P {
         Box::pin(async move { self.publish(msg).await.map_err(|e| Box::new(e) as BoxError) })
     }
 
-    fn base_headers_erased(&self) -> Option<&Headers> {
+    fn base_headers_erased(&self) -> Option<&HeaderMap> {
         self.base_headers()
     }
 }
@@ -86,7 +86,7 @@ impl PublishSink for ErasedSink<'_> {
         }
     }
 
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         self.0.base_headers_erased()
     }
 }
@@ -109,7 +109,7 @@ mod tests {
     use super::*;
     use crate::memory::MemoryBroker;
     use crate::runtime::publish::raw_of;
-    use crate::{Headers, IncomingMessage, Subscriber};
+    use crate::{HeaderMap, IncomingMessage, Subscriber};
 
     /// The erased sink reaches the publish builder, which is how the deferred-retry fallback
     /// republishes: one message, headers included, through the same positions as everywhere.
@@ -120,7 +120,7 @@ mod tests {
         let publisher = broker.publisher();
         let erased: &dyn ErasedPublisher = &publisher;
 
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("k", "v");
         raw_of(ErasedSink(erased), b"deferred")
             .with_headers(headers)

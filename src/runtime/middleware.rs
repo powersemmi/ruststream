@@ -229,7 +229,7 @@ pub mod layers {
         use std::time::Duration;
 
         use super::*;
-        use crate::Headers;
+        use crate::HeaderMap;
         use crate::runtime::dispatch::Delivery;
 
         struct Fixed(HandlerResult);
@@ -248,7 +248,7 @@ pub mod layers {
         async fn traced(layer: &TracingLayer, outcome: HandlerResult) -> HandlerResult {
             let state = ();
             let delivery = Delivery::empty();
-            let headers = Headers::new();
+            let headers = HeaderMap::new();
             let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
             layer
                 .layer(Fixed(outcome))

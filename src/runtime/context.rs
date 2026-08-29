@@ -12,7 +12,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::{Field, FieldMut, Headers};
+use crate::{Field, FieldMut, HeaderMap};
 
 use super::dispatch::Delivery;
 use super::failure::{ErrorShutdown, FailurePolicy};
@@ -66,15 +66,15 @@ struct AfterHook {
 /// publishes start from fresh headers, shaped by the publish pipeline.
 pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
-    original: &'a Headers,
-    modified: Option<Headers>,
+    original: &'a HeaderMap,
+    modified: Option<HeaderMap>,
     state: &'a S,
     cx: C,
     delivery: &'a Delivery,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
     /// The subscriber's materialization policy, set by the dispatcher from the definition's
-    /// failure policies. It reaches the handler body because a `FromHeaders` contract is parsed
+    /// failure policies. It reaches the handler body because a `Headers` contract is parsed
     /// there rather than in the decode adapter.
     decode: FailurePolicy,
     /// Set by the [`Typed`](super::typed::Typed) decode adapter when the payload fails to decode,
@@ -100,7 +100,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// [`BuildContext`](crate::BuildContext) from the broker message).
     pub(crate) fn new(
         name: &'a str,
-        headers: &'a Headers,
+        headers: &'a HeaderMap,
         state: &'a S,
         cx: C,
         delivery: &'a Delivery,
@@ -151,7 +151,7 @@ impl<'a, C, S> Context<'a, C, S> {
     }
 
     /// Attaches the subscriber's effective materialization policy, so a handler-side contract
-    /// (a [`FromHeaders`](super::FromHeaders) parameter) settles by the same policy as the
+    /// (a [`Headers`](super::Headers) parameter) settles by the same policy as the
     /// payload codec no matter where the policy was named - in the attribute, or on the builder
     /// at the mount site.
     pub(crate) fn with_decode_policy(mut self, decode: FailurePolicy) -> Self {
@@ -163,7 +163,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// does not decode, or a header contract that does not parse.
     ///
     /// The `#[subscriber]` expansion reads it to settle a failed
-    /// [`FromHeaders`](super::FromHeaders) extraction; a hand-written handler can read it for the
+    /// [`Headers`](super::Headers) extraction; a hand-written handler can read it for the
     /// same reason.
     ///
     /// # Examples
@@ -197,13 +197,13 @@ impl<'a, C, S> Context<'a, C, S> {
 
     /// The working copy of the message headers.
     #[must_use]
-    pub fn headers(&self) -> &Headers {
+    pub fn headers(&self) -> &HeaderMap {
         self.modified.as_ref().unwrap_or(self.original)
     }
 
     /// The working copy of the message headers, mutably. The first call clones the message
     /// headers; later calls return the same copy.
-    pub fn headers_mut(&mut self) -> &mut Headers {
+    pub fn headers_mut(&mut self) -> &mut HeaderMap {
         self.modified.get_or_insert_with(|| self.original.clone())
     }
 

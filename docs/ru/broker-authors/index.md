@@ -98,7 +98,7 @@ ack, либо отклоняют через nack. Ack поглощает `self`,
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
-    fn headers(&self) -> &Headers;
+    fn headers(&self) -> &HeaderMap;
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
@@ -126,7 +126,7 @@ pub trait Publisher: Send + Sync {
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
 
     /// С реализацией по умолчанию: заголовки, которые этот издатель кладёт под каждую публикацию.
-    fn base_headers(&self) -> Option<&Headers> { None }
+    fn base_headers(&self) -> Option<&HeaderMap> { None }
 }
 ```
 

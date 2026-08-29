@@ -1,4 +1,4 @@
-//! Typed message headers end to end: the `FromHeaders` extractor parses the delivery headers
+//! Typed message headers end to end: the `Headers` extractor parses the delivery headers
 //! before the body runs (failing by the subscriber's decode policy), and a handler publishing
 //! through an `Out` slot fills the headers position from the message's declared contract.
 //!
@@ -14,7 +14,7 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, Router, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, Headers, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
     Buffered, Name, OutMessages, OutSlot, Outgoing, Publisher, TransactionalPublisher, nonzero,
@@ -84,7 +84,7 @@ enum ConvertSends {
 #[subscriber("chunks.raw")]
 async fn convert(
     chunk: &Chunk,
-    FromHeaders(meta): FromHeaders<ChunkMeta>,
+    Headers(meta): Headers<ChunkMeta>,
     Out(events): Out<impl Publisher, Events, ConvertSends>,
 ) -> HandlerResult {
     // No headers contract on Progress: publish directly.
@@ -248,13 +248,13 @@ async fn typed_out_composes_with_transactional_capability() {
 // --- failure policy: a header contract violation follows on_failure(decode = ..) ---
 
 #[subscriber("audit")]
-async fn strict(_chunk: &Chunk, FromHeaders(meta): FromHeaders<ChunkMeta>) -> HandlerResult {
+async fn strict(_chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
     let _ = meta;
     HandlerResult::Ack
 }
 
 #[subscriber("lenient", on_failure(decode = skip))]
-async fn lenient(_chunk: &Chunk, FromHeaders(meta): FromHeaders<ChunkMeta>) -> HandlerResult {
+async fn lenient(_chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
     let _ = meta;
     HandlerResult::retry()
 }
@@ -296,10 +296,10 @@ async fn header_contract_violation_follows_decode_policy() {
         .settled(HandlerResult::Ack);
 }
 
-// --- raw input composes with FromHeaders: bytes body, typed header contract ---
+// --- raw input composes with Headers: bytes body, typed header contract ---
 
 #[subscriber("frames", raw, on_failure(decode = skip))]
-async fn frame(payload: &[u8], FromHeaders(meta): FromHeaders<ChunkMeta>) -> HandlerResult {
+async fn frame(payload: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
     assert!(!payload.is_empty());
     assert_eq!(meta.chunk_no, 3);
     HandlerResult::Ack
@@ -427,7 +427,7 @@ static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec
 // per-element alignment is actually exercised across more than one element. The wait bound stays
 // at its 10 ms default: a longer one would only make the suite wait for the tail batch.
 #[subscriber(batch(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2))))]
-async fn bulk(chunks: &[Chunk], FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>) -> HandlerResult {
+async fn bulk(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerResult {
     let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
     seen.push((
         chunks.iter().map(|chunk| chunk.seq).collect(),
@@ -506,7 +506,7 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
 static ROUTED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
 
 #[subscriber(batch("chunks.routed"))]
-async fn routed(chunks: &[Chunk], FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>) -> HandlerResult {
+async fn routed(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerResult {
     let mut seen = ROUTED_SEEN.lock().expect("the test holds no poisoned lock");
     for (chunk, meta) in chunks.iter().zip(&meta) {
         seen.push((chunk.seq, meta.chunk_no));
