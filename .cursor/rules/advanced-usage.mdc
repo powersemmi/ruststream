@@ -9,18 +9,26 @@ alwaysApply: false
   service without it loses no capability that does not come *from* a declaration.
 - What the attribute emits for `async fn handle(order: &Order) -> HandlerResult` is, in order: a
   unit struct named after the function, an `impl Handler` whose `async fn handle` carries the body,
-  and the `Declared` + `SubscriberDef` impls that let `include` mount it. **Write the first two by
-  hand and stop**: the last two exist to feed `include`, and the macro-free path registers with
-  `subscribe` / `handle` instead.
+  and the `Declared` + `SubscriberDef` impls that let `include` mount it. Every one of those traits
+  is public, so **how far you write it out is a choice, not a limit**.
 - So a handler is a named type implementing `Handler<M, C, S>`, whose `async fn handle(&self, msg:
   &M, ctx: &mut Context<'_, C, S>) -> Settle` is an ordinary async method. What a closure would
   capture becomes a field on that type.
-- What disappears with the feature off: `#[subscriber]`, `#[ruststream::app]`, and the
-  `Message` / `Outgoing` / `OutSlot` / `OutMessages` / `FromRef` derives. Everything those expand
-  into - extractor parameters (`State`, `Ctx`, `Headers`, `Out`, `Seek`), the reply clauses
-  (`publish(..)`, `publish_raw(..)`), the mount-site settings builder (`.name`, `.workers`,
-  `.on_failure`, `.buffered`) and `include` itself - goes with them, because all of it is carried
-  by the definition the attribute mints.
+- **Level one** - stop at `Handler` and register with `b.subscribe(source, handler, metadata)` or
+  `b.handle(subscriber, handler, metadata)`. Nothing else to implement; you give up only what the
+  definition carries.
+- **Level two** - implement `SubscriberDef` (and `IncludeDef` to name the mount form, which gets
+  you `Declared` through its blanket impl) and `b.include(def)` works on your own type, with the
+  whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`, `.buffered`),
+  `.publisher(..)`, `.out(marker, ..)` and `.mount()`. `SubscriberBuilder::new(def, source)` is
+  public for exactly this, and `SubscriberSettings` is blanket-implemented for every `Declared`.
+- The derives are equally reproducible, and reading their expansion is the fastest way to get one
+  right: `#[derive(Outgoing)]` writes `OutgoingDestination` plus a `MessageHeaders` contract
+  (`NoHeaders` or `WithHeaders<H>`), `#[derive(OutSlot)]` writes `OutSlot` plus the
+  `ContainsMessage` memberships, `#[derive(OutMessages)]` writes `OutMessages` over an enum's
+  variants, and `#[derive(FromRef)]` writes one `FromRef` impl per field.
+- The one thing genuinely lost with the feature off is the attribute surface itself: nothing reads
+  a clause for you, so what the attribute would have declared you write as a trait impl.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
   feature-gated, so the rest of it (builder, `Context`, `HandlerResult`, `Name`, `Publisher`,
   `PublishExt`, `TypedPublisher`) comes in unchanged.
@@ -250,18 +258,45 @@ where
 }
 ```
 
-## What has no macro-free equivalent
+## Reaching the rest: write the definition out
 
-These are declarations, not behaviour, so there is nothing to hand-write:
+`b.subscribe` / `b.handle` register with the default failure policies and no settings, because they
+take a handler, not a definition. Everything else the attribute offers rides on the definition, so
+implement one and the whole mount surface opens up on your own type.
 
-- The AsyncAPI payload and headers schemas the derives contribute. `HandlerMetadata` still records
-  the subscription name and the input type name, and `with_description` and the other builder
-  setters fill in the rest by hand.
-- The `Out` slot dictionary (`#[publishes(..)]`) and the message-set enums: they exist to be
-  checked at compile time against a declaration site the manual path does not have.
-- The mount-site settings builder. `b.subscribe` / `b.handle` register with the default failure
-  policies; the decode policy is set on the `typed` wrapper instead.
+```rust
+use ruststream::runtime::{IncludeDef, SubscriberDef, forms};
 
-If a service wants any of that, enable `macros` - it is additive, and the two styles compose in one
-application: a macro-free registration and an `include(def)` can sit in the same `with_broker`
-scope.
+impl SubscriberDef for Handle {
+    type Input = /* the decode kind */;
+    type Context = ();
+    type Handler = Self;
+    type Source = Name;
+
+    fn source(&self) -> Self::Source { Name::new("orders") }
+    fn into_handler(self) -> Self { self }
+}
+
+// Naming the mount form is what gives `Declared` (blanket) and with it `SubscriberSettings`.
+impl IncludeDef for Handle {
+    type Form = /* the matching marker from runtime::forms */;
+}
+
+// Now the definition mounts like any macro-generated one:
+b.include(Handle.name("orders").workers(nonzero!(4)));
+```
+
+Read the expansion in `crates/ruststream-macros/src/expand.rs` before writing one of these: it
+names the exact `Input` kind, `Context` and form marker per handler shape, and it is the only place
+the whole mapping is written down. A definition that wants the attribute's own settings surface
+instead of the blanket can implement `Declared` directly and return
+`SubscriberBuilder::new(self, source)` with the chain applied, which is literally what the macro
+emits.
+
+The same holds for the derives: implement `OutgoingDestination` + `MessageHeaders` for a declared
+message, `OutSlot` + `ContainsMessage` for a slot marker, `OutMessages` for a set, `FromRef` per
+state field. The schema hooks on `SubscriberDef` are what feed the generated AsyncAPI document, so
+a hand-written definition contributes the same schemas.
+
+Enabling `macros` remains the shorter road, and the two styles compose in one application: a
+macro-free registration and an `include(def)` sit in the same `with_broker` scope.
