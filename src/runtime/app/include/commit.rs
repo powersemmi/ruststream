@@ -14,10 +14,10 @@ use crate::runtime::middleware::Layer;
 use crate::runtime::publish::PublishPipeline;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
-use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
+use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
+use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
 
-use super::InputCodec;
 use super::{DefaultBareReply, PublishMount};
 // The typed default reply exists only with a default codec to encode it, like the impl below.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
@@ -90,13 +90,12 @@ where
     B: Broker + 'static,
     // Resolved against the input kind rather than the surface: a byte-input handler decodes
     // with `()`, so this mount carries no demand for a default codec the build may not have.
-    C: InputCodec<Def::Input>,
-    Def: PublishingCall<State> + 'static,
+    Def: PublishingCall<State> + MountsWith<<Def as PublishingDef>::Input, C> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
-    Def::Input: DecodeWith<<C as InputCodec<Def::Input>>::Codec>,
+    Def::Input: DecodeWith<DefMountCodec<Def, <Def as PublishingDef>::Input, C>>,
     Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ((),)>
         + Send
         + Sync
@@ -111,8 +110,14 @@ where
     Source::Live: ReplySink<Def::Reply, Def::Context, Pipeline> + 'static,
     Pipeline: PublishPipeline + Clone + Send + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<PublishingHandler<Def, <C as InputCodec<Def::Input>>::Codec, Source::Live, Pipeline>>
-        + Clone
+    Layers: Layer<
+            PublishingHandler<
+                Def,
+                DefMountCodec<Def, <Def as PublishingDef>::Input, C>,
+                Source::Live,
+                Pipeline,
+            >,
+        > + Clone
         + Send
         + 'static,
     Layers::Handler: Handler<
@@ -122,7 +127,8 @@ where
         > + 'static,
 {
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let codec = def.mounted_codec(&scope.codec);
         let source = def.source();
-        scope.mount_publishing_source(source, def, self.into_source(), ((),));
+        scope.mount_publishing_source(source, def, codec, self.into_source(), ((),));
     }
 }

@@ -5,39 +5,38 @@ use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
 
-use serde::de::DeserializeOwned;
-
 use crate::{ConnectedBroker, PublishPolicy};
 use crate::{Name, Unnamed};
 
 use crate::runtime::context::Context;
 use crate::runtime::handler::Settle;
 use crate::runtime::inject::{InjectCall, InjectDef, Out};
-use crate::runtime::input::Decoded;
+use crate::runtime::input::InputKind;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::router::{IncludeDef, forms};
-use crate::runtime::settings::{AllOpen, SubscriberBuilder};
+use crate::runtime::settings::SubscriberBuilder;
 use crate::runtime::slot::{BindSlots, HasSlots, OutSlot, SlotPublisher};
 
-use super::IntoSource;
-use super::subscribing::Docs;
+use super::subscribing::{Docs, DocumentedValue, docs_metadata};
+use super::{HandledInput, IntoSource};
 
-/// A handler body over startup-injected publisher slots: the value-path counterpart of a
-/// `#[subscriber]` body with `Out(..)` parameters.
+/// A handler body over startup-injected parameters: the value-path counterpart of a
+/// `#[subscriber]` body with `Out(..)` (or `Seek(..)`) parameters.
 ///
-/// `Slots` is the tuple of [`Out`] parameters in marker order; the include site binds each
-/// marker to a policy (`.out(marker, policy)`, or `.publisher(policy)` for a single
-/// [`DefaultSlot`](crate::runtime::DefaultSlot)). The publisher types are resolved from those
-/// policies, so an implementation is generic over them - it states the capability it needs
+/// `Slots` is the tuple of injected parameters, in marker order for the `Out` forms; the
+/// include site binds each marker to a policy (`.out(marker, policy)`, or `.publisher(policy)`
+/// for a single [`DefaultSlot`](crate::runtime::DefaultSlot)), while a `Seek` injection
+/// resolves off the subscription itself. The publisher types are resolved from those policies,
+/// so an implementation is generic over them - it states the capability it needs
 /// (`P: Publisher`, ...) and mounts on a production broker and its test transport unchanged.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not handle `{T}` with the slot tuple `{Slots}`",
+    message = "`{Self}` does not handle `{T}` with the injection tuple `{Slots}`",
     note = "implement `SlotsHandler` generically over each slot's publisher and codec \
             (`impl<P, E, S> SlotsHandler<{T}, (Out<P, Marker, (), E>,), (), S> for ..`); the \
-            tuple must list the markers in the order `with_slots` names them"
+            tuple must list the markers in the order the constructor names them"
 )]
-pub trait SlotsHandler<T, Slots, C = (), S = ()>: Send + Sync {
-    /// Handles one decoded input with the live slots.
+pub trait SlotsHandler<T: ?Sized, Slots, C = (), S = ()>: Send + Sync {
+    /// Handles one input with the live injections.
     fn handle(
         &self,
         msg: &T,
@@ -50,37 +49,48 @@ pub trait SlotsHandler<T, Slots, C = (), S = ()>: Send + Sync {
 type Carried<T> = PhantomData<fn() -> T>;
 
 /// A slot-carrying definition built from a value: what `with_slots(source, handler)` returns,
-/// wrapped in the settings builder. The include site's slot bindings instantiate it into
-/// [`BoundSlotsValue`].
-pub struct SlotsValue<T, H, Markers> {
+/// wrapped in the settings builder.
+///
+/// `In` is the input kind the constructor resolved off the body's parameter type. The include
+/// site's slot bindings instantiate it into [`BoundSlotsValue`].
+pub struct SlotsValue<In, H, Markers, C = ()> {
     pub(crate) handler: H,
     pub(crate) docs: Docs,
-    pub(crate) _types: Carried<(T, Markers)>,
+    pub(crate) _types: Carried<(In, Markers, C)>,
 }
 
-impl<T, H, Markers> fmt::Debug for SlotsValue<T, H, Markers> {
+impl<In, H, Markers, C> fmt::Debug for SlotsValue<In, H, Markers, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SlotsValue").finish_non_exhaustive()
     }
 }
 
-impl<T, H, Markers> IncludeDef for SlotsValue<T, H, Markers> {
+impl<In, H, Markers, C> IncludeDef for SlotsValue<In, H, Markers, C> {
     type Form = forms::Out;
 }
 
-impl<T, H, Markers> HasSlots for SlotsValue<T, H, Markers> {
+impl<In, H, Markers, C> HasSlots for SlotsValue<In, H, Markers, C> {
     type Markers = Markers;
+}
+
+impl<In: InputKind, H, Markers, C> DocumentedValue for SlotsValue<In, H, Markers, C> {
+    type Payload = In::Target;
+    type Reply = ();
+
+    fn docs_mut(&mut self) -> &mut Docs {
+        &mut self.docs
+    }
 }
 
 /// The publisher-applied form of a [`SlotsValue`]: what its [`BindSlots`] impl instantiates
 /// once the include site bound every marker. You never name this type.
-pub struct BoundSlotsValue<T, H, Slots, Markers> {
+pub struct BoundSlotsValue<In, H, Slots, Markers, C = ()> {
     pub(crate) handler: H,
     pub(crate) docs: Docs,
-    pub(crate) _types: Carried<(T, Slots, Markers)>,
+    pub(crate) _types: Carried<(In, Slots, Markers, C)>,
 }
 
-impl<T, H, Slots, Markers> fmt::Debug for BoundSlotsValue<T, H, Slots, Markers> {
+impl<In, H, Slots, Markers, C> fmt::Debug for BoundSlotsValue<In, H, Slots, Markers, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BoundSlotsValue").finish_non_exhaustive()
     }
@@ -103,8 +113,8 @@ macro_rules! impl_value_slots {
             }
         }
 
-        impl<Conn, T, H, $($marker, $policy, $codec),+> BindSlots<Conn, ($(($policy, $codec),)+)>
-            for SlotsValue<T, H, ($($marker,)+)>
+        impl<Conn, T, H, C, $($marker, $policy, $codec),+> BindSlots<Conn, ($(($policy, $codec),)+)>
+            for SlotsValue<T, H, ($($marker,)+), C>
         where
             Conn: ConnectedBroker,
             $(
@@ -117,6 +127,7 @@ macro_rules! impl_value_slots {
                 H,
                 ($(Out<SlotPublisher<<$policy as PublishPolicy<Conn>>::Live, $marker>, $marker, (), $codec>,)+),
                 ($($marker,)+),
+                C,
             >;
             type Extra = ($(($policy, $codec),)+);
 
@@ -140,15 +151,16 @@ impl_value_slots! {
     ((M0, P0, E0), (M1, P1, E1), (M2, P2, E2))
 }
 
-impl<T, H, Slots, Markers> InjectDef for BoundSlotsValue<T, H, Slots, Markers>
+impl<In, H, Slots, Markers, C> InjectDef for BoundSlotsValue<In, H, Slots, Markers, C>
 where
-    T: Send + Sync + 'static,
+    In: InputKind,
     H: Send + Sync,
     Slots: Send + Sync,
     Markers: SlotSetOutgoing,
+    C: Send + Sync,
 {
-    type Input = Decoded<T>;
-    type Context = ();
+    type Input = In;
+    type Context = C;
     // The stored value never builds a source: the settings builder wrapping it carries the real
     // one (see `SubscriberValue::Source`).
     type Source = Unnamed<Name>;
@@ -158,60 +170,29 @@ where
         Unnamed::new()
     }
 
-    fn description(&self) -> Option<&str> {
-        self.docs.description()
-    }
-
-    fn input_schema(&self) -> Option<String> {
-        self.docs.schema()
-    }
+    docs_metadata!();
 
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         Markers::outgoing()
     }
 }
 
-impl<T, H, Slots, Markers, S> InjectCall<S> for BoundSlotsValue<T, H, Slots, Markers>
+impl<In, H, Slots, Markers, C, S> InjectCall<S> for BoundSlotsValue<In, H, Slots, Markers, C>
 where
-    T: Send + Sync + 'static,
-    H: SlotsHandler<T, Slots, (), S>,
+    In: InputKind,
+    H: SlotsHandler<In::Target, Slots, C, S>,
     Slots: Send + Sync,
     Markers: SlotSetOutgoing,
+    C: Send + Sync,
     S: Send + Sync,
 {
     fn call(
         &self,
-        input: &T,
+        input: &In::Target,
         injections: &Slots,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Settle> + Send {
         self.handler.handle(input, injections, ctx)
-    }
-}
-
-impl<T, H, Markers, Src, State> SubscriberBuilder<SlotsValue<T, H, Markers>, Src, State> {
-    /// Sets the handler's human description for the generated `AsyncAPI` document, the
-    /// value-path counterpart of the attribute reading the handler's doc comment.
-    #[must_use]
-    pub fn describe(self, text: impl Into<std::borrow::Cow<'static, str>>) -> Self {
-        self.map_def(|mut def| {
-            def.docs.description = Some(text.into());
-            def
-        })
-    }
-
-    /// Reports the input type's JSON Schema in the generated `AsyncAPI` document. See
-    /// [`documented`](SubscriberBuilder::documented) on the plain form.
-    #[cfg(feature = "asyncapi")]
-    #[must_use]
-    pub fn documented(self) -> Self
-    where
-        T: schemars::JsonSchema,
-    {
-        self.map_def(|mut def| {
-            def.docs.schema = Some(super::schema_json_of::<T>);
-            def
-        })
     }
 }
 
@@ -219,10 +200,13 @@ impl<T, H, Markers, Src, State> SubscriberBuilder<SlotsValue<T, H, Markers>, Src
 /// a `#[subscriber]` handler with `Out(..)` parameters.
 ///
 /// Mount it with `include`, binding each marker with `.out(marker, policy)` (or
-/// `.publisher(policy)` for a single [`DefaultSlot`](crate::runtime::DefaultSlot)).
+/// `.publisher(policy)` for a single [`DefaultSlot`](crate::runtime::DefaultSlot)) and
+/// committing with `.mount()`.
 ///
 /// The message and marker types are named explicitly (`with_slots::<Event, (Primary, Shadow)>`):
-/// the body is generic over the publishers the bindings resolve, so nothing else pins them.
+/// the body is generic over the publishers the bindings resolve, so nothing else pins them. The
+/// state axis needs no `_in` variant here - the body's bound is checked at the mount, where the
+/// app's state type is known.
 ///
 /// # Examples
 ///
@@ -281,10 +265,10 @@ impl<T, H, Markers, Src, State> SubscriberBuilder<SlotsValue<T, H, Markers>, Src
 pub fn with_slots<T, Markers, Src, H>(
     source: Src,
     handler: H,
-) -> SubscriberBuilder<SlotsValue<T, H, Markers>, Src::Source, AllOpen>
+) -> super::ValueBuilder<SlotsValue<T::Kind, H, Markers>, Src>
 where
     Src: IntoSource,
-    T: DeserializeOwned + Send + Sync + 'static,
+    T: ?Sized + HandledInput,
 {
     SubscriberBuilder::new(
         SlotsValue {

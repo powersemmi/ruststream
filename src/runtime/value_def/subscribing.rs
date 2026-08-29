@@ -7,7 +7,9 @@ use std::marker::PhantomData;
 use serde::de::DeserializeOwned;
 
 use crate::Unnamed;
-use crate::runtime::batch::{BatchDef, RawSliceHandler, SliceHandler};
+use crate::runtime::batch::{
+    BatchDef, BatchWithHeadersDef, RawSliceHandler, SliceHandler, SliceHandlerWithHeaders,
+};
 use crate::runtime::handler::Handler;
 use crate::runtime::input::{Decoded, RawBytes};
 use crate::runtime::router::{IncludeDef, forms};
@@ -16,13 +18,19 @@ use crate::runtime::subscriber_def::SubscriberDef;
 
 use super::IntoSource;
 
-/// The documentation a value definition carries: what `describe` and `documented` collected,
-/// read back by the definition traits' metadata methods.
-pub(crate) struct Docs {
+/// The documentation a value definition carries: what the builder's opt-ins (`describe`,
+/// `documented`, `documented_headers`, `message`) collected, read back by the definition
+/// traits' metadata methods. Machinery; you never name it.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct Docs {
     pub(crate) description: Option<Cow<'static, str>>,
     pub(crate) schema: Option<fn() -> Option<String>>,
-    /// The reply type's schema; captured only by the publishing form's `documented`.
+    /// The reply type's schema; captured only by the publishing forms' `documented`.
     pub(crate) reply_schema: Option<fn() -> Option<String>>,
+    pub(crate) headers_schema: Option<fn() -> Option<String>>,
+    pub(crate) message_name: Option<&'static str>,
+    pub(crate) message_description: Option<&'static str>,
 }
 
 impl Docs {
@@ -31,6 +39,9 @@ impl Docs {
             description: None,
             schema: None,
             reply_schema: None,
+            headers_schema: None,
+            message_name: None,
+            message_description: None,
         }
     }
 
@@ -41,51 +52,153 @@ impl Docs {
     pub(crate) fn schema(&self) -> Option<String> {
         self.schema.and_then(|capture| capture())
     }
+
+    pub(crate) fn reply_schema(&self) -> Option<String> {
+        self.reply_schema.and_then(|capture| capture())
+    }
+
+    pub(crate) fn headers_schema(&self) -> Option<String> {
+        self.headers_schema.and_then(|capture| capture())
+    }
 }
 
-/// Implements the `describe` opt-in on the builder over one value definition type.
-macro_rules! impl_describe {
-    ($value:ident $(< $($param:ident),+ >)?) => {
-        impl<$($($param,)+)? Src, State> SubscriberBuilder<$value$(<$($param),+>)?, Src, State> {
-            /// Sets the handler's human description for the generated `AsyncAPI` document, the
-            /// value-path counterpart of the attribute reading the handler's doc comment.
-            #[must_use]
-            pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
-                self.map_def(|mut def| {
-                    def.docs.description = Some(text.into());
-                    def
-                })
-            }
+/// A value definition carrying the documentation opt-ins: what the builder's `describe`,
+/// `documented`, `documented_headers` and `message` methods write to. Machinery; implemented by
+/// every value definition, never named by a user.
+#[doc(hidden)]
+pub trait DocumentedValue {
+    /// The payload type the definition decodes (`[u8]` on a raw input).
+    type Payload: ?Sized;
+
+    /// The reply type the definition publishes (`()` on a form with no reply).
+    type Reply;
+
+    fn docs_mut(&mut self) -> &mut Docs;
+}
+
+/// Forwards the shared metadata reads from a value definition's stored [`Docs`].
+macro_rules! docs_metadata {
+    () => {
+        fn description(&self) -> Option<&str> {
+            self.docs.description()
+        }
+
+        fn input_schema(&self) -> Option<String> {
+            self.docs.schema()
+        }
+
+        fn headers_schema(&self) -> Option<String> {
+            self.docs.headers_schema()
+        }
+
+        fn message_name(&self) -> Option<&'static str> {
+            self.docs.message_name
+        }
+
+        fn message_description(&self) -> Option<&'static str> {
+            self.docs.message_description
         }
     };
 }
+pub(super) use docs_metadata;
 
-/// A plain subscriber definition built from a value: what `subscriber(source, handler)` returns,
-/// wrapped in the settings builder.
-///
-/// You rarely name this type: construct it with [`subscriber`] and mount it with `include`.
-pub struct SubscriberValue<T, H> {
-    pub(crate) handler: H,
-    pub(crate) docs: Docs,
-    pub(crate) _input: PhantomData<fn() -> T>,
+impl<D: DocumentedValue, Src, State, DC> SubscriberBuilder<D, Src, State, DC> {
+    /// Sets the handler's human description for the generated `AsyncAPI` document, the
+    /// value-path counterpart of the attribute reading the handler's doc comment.
+    #[must_use]
+    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
+        self.map_def(|mut def| {
+            def.docs_mut().description = Some(text.into());
+            def
+        })
+    }
+
+    /// Reports the payload schemas (the input's, and the reply's on a publishing form) in the
+    /// generated `AsyncAPI` document.
+    ///
+    /// The attribute path captures schemas automatically by probing the concrete type; a
+    /// generic constructor cannot probe, so the value path opts in where the bound is provable.
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    pub fn documented(self) -> Self
+    where
+        D::Payload: schemars::JsonSchema,
+        D::Reply: schemars::JsonSchema,
+    {
+        self.map_def(|mut def| {
+            let docs = def.docs_mut();
+            docs.schema = Some(super::schema_json_of::<D::Payload>);
+            docs.reply_schema = Some(super::schema_json_of::<D::Reply>);
+            def
+        })
+    }
+
+    /// Reports `Hdr` as this subscriber's typed header contract in the generated `AsyncAPI`
+    /// document, the value-path counterpart of the schema the attribute lifts off a
+    /// `Headers<Hdr>` parameter.
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    pub fn documented_headers<Hdr: schemars::JsonSchema>(self) -> Self {
+        self.map_def(|mut def| {
+            def.docs_mut().headers_schema = Some(super::schema_json_of::<Hdr>);
+            def
+        })
+    }
+
+    /// Reports the input type's [`Message`](crate::Message) name and description in the
+    /// generated `AsyncAPI` document, the value-path counterpart of the attribute probing the
+    /// impl.
+    #[must_use]
+    pub fn message(self) -> Self
+    where
+        D::Payload: crate::Message,
+    {
+        self.map_def(|mut def| {
+            let docs = def.docs_mut();
+            docs.message_name = Some(<D::Payload as crate::Message>::NAME);
+            docs.message_description = <D::Payload as crate::Message>::DESCRIPTION;
+            def
+        })
+    }
 }
 
-impl<T, H> fmt::Debug for SubscriberValue<T, H> {
+/// A plain subscriber definition built from a value: what `subscriber(source, handler)`
+/// returns, wrapped in the settings builder.
+///
+/// `C` is the broker's typed per-delivery context the handler reads (`()` unless its impl
+/// names one). You rarely name this type: construct it with [`subscriber`] and mount it with
+/// `include`.
+pub struct SubscriberValue<T, H, C = ()> {
+    pub(crate) handler: H,
+    pub(crate) docs: Docs,
+    pub(crate) _types: PhantomData<fn() -> (T, C)>,
+}
+
+impl<T, H, C> fmt::Debug for SubscriberValue<T, H, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubscriberValue").finish_non_exhaustive()
     }
 }
 
-impl<T, H> IncludeDef for SubscriberValue<T, H> {
+impl<T, H, C> IncludeDef for SubscriberValue<T, H, C> {
     type Form = forms::Subscribing;
 }
 
-impl<T, H> SubscriberDef for SubscriberValue<T, H>
+impl<T, H, C> DocumentedValue for SubscriberValue<T, H, C> {
+    type Payload = T;
+    type Reply = ();
+
+    fn docs_mut(&mut self) -> &mut Docs {
+        &mut self.docs
+    }
+}
+
+impl<T, H, C> SubscriberDef for SubscriberValue<T, H, C>
 where
     T: Send + Sync + 'static,
 {
     type Input = Decoded<T>;
-    type Context = ();
+    type Context = C;
     type Handler = H;
     // The stored value never builds a source: the settings builder wrapping it carries the real
     // one, and this placeholder is no `SubscriptionSource` at all, exactly like an unnamed
@@ -96,51 +209,26 @@ where
         Unnamed::new()
     }
 
-    fn description(&self) -> Option<&str> {
-        self.docs.description()
-    }
-
-    fn input_schema(&self) -> Option<String> {
-        self.docs.schema()
-    }
+    docs_metadata!();
 
     fn into_handler(self) -> H {
         self.handler
     }
 }
 
-impl_describe!(SubscriberValue<T, H>);
-
-#[cfg(feature = "asyncapi")]
-impl<T, H, Src, State> SubscriberBuilder<SubscriberValue<T, H>, Src, State> {
-    /// Reports the input type's JSON Schema in the generated `AsyncAPI` document.
-    ///
-    /// The attribute path captures schemas automatically by probing the concrete type; a generic
-    /// constructor cannot probe, so the value path opts in where the bound is provable.
-    #[must_use]
-    pub fn documented(self) -> Self
-    where
-        T: schemars::JsonSchema,
-    {
-        self.map_def(|mut def| {
-            def.docs.schema = Some(super::schema_json_of::<T>);
-            def
-        })
-    }
-}
-
 /// Binds `handler` to the subscription `source` as a plain (single-delivery, decoded)
 /// definition; mount it with `include`.
 ///
-/// The message type comes from the handler's [`Handler<T>`] impl; decoding follows the mount
-/// surface's codec ladder. Chain the declarative settings
-/// ([`workers`](crate::runtime::SubscriberSettings::workers),
+/// The message type (and the broker context, when the impl names one) comes from the handler's
+/// [`Handler`] impl; decoding follows the mount surface's codec ladder, with
+/// [`codec`](SubscriberBuilder::codec) as the per-definition override. Chain the declarative
+/// settings ([`workers`](crate::runtime::SubscriberSettings::workers),
 /// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
 /// [`start_at`](crate::runtime::SubscriberSettings::start_at), ...) on the result.
 ///
 /// The handler bound here is over the unit app state, which every state-generic handler (and
-/// closure) satisfies; a handler implemented for one concrete state type keeps the explicit
-/// route of implementing [`SubscriberDef`] itself.
+/// closure) satisfies; a handler implemented for one concrete state type takes
+/// [`subscriber_in`] instead.
 ///
 /// # Examples
 ///
@@ -171,20 +259,47 @@ impl<T, H, Src, State> SubscriberBuilder<SubscriberValue<T, H>, Src, State> {
 /// # }
 /// ```
 #[must_use]
-pub fn subscriber<Src, T, H>(
+pub fn subscriber<Src, T, C, H>(
     source: Src,
     handler: H,
-) -> SubscriberBuilder<SubscriberValue<T, H>, Src::Source, AllOpen>
+) -> SubscriberBuilder<SubscriberValue<T, H, C>, Src::Source, AllOpen>
 where
     Src: IntoSource,
     T: DeserializeOwned + Send + Sync + 'static,
-    H: Handler<T>,
+    H: Handler<T, C>,
 {
     SubscriberBuilder::new(
         SubscriberValue {
             handler,
             docs: Docs::none(),
-            _input: PhantomData,
+            _types: PhantomData,
+        },
+        source.into_source(),
+    )
+}
+
+/// [`subscriber`] for a handler implemented for one concrete app state type: the state is read
+/// off that impl (`impl Handler<Order, (), AppState> for ..`), and the mount checks it against
+/// the app's.
+///
+/// The plain constructor anchors its bound on the unit state so state-generic handlers infer;
+/// this one leaves the state to the impl, which a state-generic handler cannot pin - each
+/// constructor serves its own shape.
+#[must_use]
+pub fn subscriber_in<Src, T, C, St, H>(
+    source: Src,
+    handler: H,
+) -> SubscriberBuilder<SubscriberValue<T, H, C>, Src::Source, AllOpen>
+where
+    Src: IntoSource,
+    T: DeserializeOwned + Send + Sync + 'static,
+    H: Handler<T, C, St>,
+{
+    SubscriberBuilder::new(
+        SubscriberValue {
+            handler,
+            docs: Docs::none(),
+            _types: PhantomData,
         },
         source.into_source(),
     )
@@ -194,7 +309,7 @@ where
 pub struct BatchValue<T, H> {
     pub(crate) handler: H,
     pub(crate) docs: Docs,
-    pub(crate) _input: PhantomData<fn() -> T>,
+    pub(crate) _types: PhantomData<fn() -> T>,
 }
 
 impl<T, H> fmt::Debug for BatchValue<T, H> {
@@ -205,6 +320,15 @@ impl<T, H> fmt::Debug for BatchValue<T, H> {
 
 impl<T, H> IncludeDef for BatchValue<T, H> {
     type Form = forms::Batch;
+}
+
+impl<T, H> DocumentedValue for BatchValue<T, H> {
+    type Payload = T;
+    type Reply = ();
+
+    fn docs_mut(&mut self) -> &mut Docs {
+        &mut self.docs
+    }
 }
 
 impl<T, H> BatchDef for BatchValue<T, H>
@@ -219,34 +343,10 @@ where
         Unnamed::new()
     }
 
-    fn description(&self) -> Option<&str> {
-        self.docs.description()
-    }
-
-    fn input_schema(&self) -> Option<String> {
-        self.docs.schema()
-    }
+    docs_metadata!();
 
     fn into_handler(self) -> H {
         self.handler
-    }
-}
-
-impl_describe!(BatchValue<T, H>);
-
-#[cfg(feature = "asyncapi")]
-impl<T, H, Src, State> SubscriberBuilder<BatchValue<T, H>, Src, State> {
-    /// Reports the element type's JSON Schema in the generated `AsyncAPI` document. See
-    /// [`documented`](SubscriberBuilder::documented) on the plain form.
-    #[must_use]
-    pub fn documented(self) -> Self
-    where
-        T: schemars::JsonSchema,
-    {
-        self.map_def(|mut def| {
-            def.docs.schema = Some(super::schema_json_of::<T>);
-            def
-        })
     }
 }
 
@@ -254,7 +354,8 @@ impl<T, H, Src, State> SubscriberBuilder<BatchValue<T, H>, Src, State> {
 /// (`&[T]`).
 ///
 /// The source's subscriber must batch - natively, or through
-/// [`buffered`](crate::runtime::SubscriberSettings::buffered). Mount it with `include`.
+/// [`buffered`](crate::runtime::SubscriberSettings::buffered). Mount it with `include`. A
+/// handler implemented for one concrete app state type takes [`batch_in`] instead.
 ///
 /// # Examples
 ///
@@ -303,32 +404,68 @@ where
         BatchValue {
             handler,
             docs: Docs::none(),
-            _input: PhantomData,
+            _types: PhantomData,
         },
         source.into_source(),
     )
 }
 
-/// A raw subscriber definition built from a value: what `raw(source, handler)` returns. No
-/// decode, no codec - the handler borrows the payload bytes as delivered.
-pub struct RawValue<H> {
-    pub(crate) handler: H,
-    pub(crate) docs: Docs,
+/// [`batch`] for a slice handler implemented for one concrete app state type. See
+/// [`subscriber_in`] for the split.
+#[must_use]
+pub fn batch_in<Src, T, St, H>(
+    source: Src,
+    handler: H,
+) -> SubscriberBuilder<BatchValue<T, H>, Src::Source, AllOpen>
+where
+    Src: IntoSource,
+    T: DeserializeOwned + Send + Sync + 'static,
+    H: SliceHandler<T, St>,
+{
+    SubscriberBuilder::new(
+        BatchValue {
+            handler,
+            docs: Docs::none(),
+            _types: PhantomData,
+        },
+        source.into_source(),
+    )
 }
 
-impl<H> fmt::Debug for RawValue<H> {
+/// A batch definition whose handler also reads a typed header contract per element: what
+/// `batch_with_headers(source, handler)` returns.
+pub struct BatchWithHeadersValue<T, Hdr, H> {
+    pub(crate) handler: H,
+    pub(crate) docs: Docs,
+    pub(crate) _types: PhantomData<fn() -> (T, Hdr)>,
+}
+
+impl<T, Hdr, H> fmt::Debug for BatchWithHeadersValue<T, Hdr, H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RawValue").finish_non_exhaustive()
+        f.debug_struct("BatchWithHeadersValue")
+            .finish_non_exhaustive()
     }
 }
 
-impl<H> IncludeDef for RawValue<H> {
-    type Form = forms::RawSubscribing;
+impl<T, Hdr, H> IncludeDef for BatchWithHeadersValue<T, Hdr, H> {
+    type Form = forms::BatchWithHeaders;
 }
 
-impl<H> SubscriberDef for RawValue<H> {
-    type Input = RawBytes;
-    type Context = ();
+impl<T, Hdr, H> DocumentedValue for BatchWithHeadersValue<T, Hdr, H> {
+    type Payload = T;
+    type Reply = ();
+
+    fn docs_mut(&mut self) -> &mut Docs {
+        &mut self.docs
+    }
+}
+
+impl<T, Hdr, H> BatchDef for BatchWithHeadersValue<T, Hdr, H>
+where
+    T: Send + Sync + 'static,
+    Hdr: DeserializeOwned + Send + Sync + 'static,
+{
+    type Input = Decoded<T>;
     type Handler = H;
     type Source = Unnamed<crate::Name>;
 
@@ -336,19 +473,124 @@ impl<H> SubscriberDef for RawValue<H> {
         Unnamed::new()
     }
 
-    fn description(&self) -> Option<&str> {
-        self.docs.description()
-    }
+    docs_metadata!();
 
     fn into_handler(self) -> H {
         self.handler
     }
 }
 
-impl_describe!(RawValue<H>);
+impl<T, Hdr, H> BatchWithHeadersDef for BatchWithHeadersValue<T, Hdr, H>
+where
+    T: Send + Sync + 'static,
+    Hdr: DeserializeOwned + Send + Sync + 'static,
+{
+    type Headers = Hdr;
+}
+
+/// Binds a header-reading slice `handler` to the batch subscription `source`: each element
+/// arrives with its parsed header contract.
+///
+/// The two slices are aligned by construction (an element whose payload or headers fail to
+/// materialize is settled by the decode policy and never reaches the handler). The value-path
+/// counterpart of a `batch(..)` attribute with a `Headers<Vec<H>>` parameter; chain
+/// [`documented_headers`](SubscriberBuilder::documented_headers) to report the contract's
+/// schema.
+#[must_use]
+pub fn batch_with_headers<Src, T, Hdr, H>(
+    source: Src,
+    handler: H,
+) -> SubscriberBuilder<BatchWithHeadersValue<T, Hdr, H>, Src::Source, AllOpen>
+where
+    Src: IntoSource,
+    T: DeserializeOwned + Send + Sync + 'static,
+    Hdr: DeserializeOwned + Send + Sync + 'static,
+    H: SliceHandlerWithHeaders<T, Hdr>,
+{
+    SubscriberBuilder::new(
+        BatchWithHeadersValue {
+            handler,
+            docs: Docs::none(),
+            _types: PhantomData,
+        },
+        source.into_source(),
+    )
+}
+
+/// [`batch_with_headers`] for a handler implemented for one concrete app state type. See
+/// [`subscriber_in`] for the split.
+#[must_use]
+pub fn batch_with_headers_in<Src, T, Hdr, St, H>(
+    source: Src,
+    handler: H,
+) -> SubscriberBuilder<BatchWithHeadersValue<T, Hdr, H>, Src::Source, AllOpen>
+where
+    Src: IntoSource,
+    T: DeserializeOwned + Send + Sync + 'static,
+    Hdr: DeserializeOwned + Send + Sync + 'static,
+    H: SliceHandlerWithHeaders<T, Hdr, St>,
+{
+    SubscriberBuilder::new(
+        BatchWithHeadersValue {
+            handler,
+            docs: Docs::none(),
+            _types: PhantomData,
+        },
+        source.into_source(),
+    )
+}
+
+/// A raw subscriber definition built from a value: what `raw(source, handler)` returns.
+///
+/// No decode, no codec - the handler borrows the payload bytes as delivered. `C` is the
+/// broker's typed per-delivery context (`()` unless the impl names one).
+pub struct RawValue<H, C = ()> {
+    pub(crate) handler: H,
+    pub(crate) docs: Docs,
+    pub(crate) _types: PhantomData<fn() -> C>,
+}
+
+impl<H, C> fmt::Debug for RawValue<H, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RawValue").finish_non_exhaustive()
+    }
+}
+
+impl<H, C> IncludeDef for RawValue<H, C> {
+    type Form = forms::RawSubscribing;
+}
+
+impl<H, C> DocumentedValue for RawValue<H, C> {
+    type Payload = [u8];
+    type Reply = ();
+
+    fn docs_mut(&mut self) -> &mut Docs {
+        &mut self.docs
+    }
+}
+
+impl<H, C> SubscriberDef for RawValue<H, C> {
+    type Input = RawBytes;
+    type Context = C;
+    type Handler = H;
+    type Source = Unnamed<crate::Name>;
+
+    fn source(&self) -> Self::Source {
+        Unnamed::new()
+    }
+
+    docs_metadata!();
+
+    fn into_handler(self) -> H {
+        self.handler
+    }
+}
 
 /// Binds a byte-level `handler` to the subscription `source`: the payload reaches it as
-/// `&[u8]`, undecoded. Mount it with `include`.
+/// `&[u8]`, undecoded.
+///
+/// Mount it with `include`. A handler implemented for one concrete app state type takes
+/// [`raw_in`] instead.
 ///
 /// # Examples
 ///
@@ -377,15 +619,40 @@ impl_describe!(RawValue<H>);
 /// # }
 /// ```
 #[must_use]
-pub fn raw<Src, H>(source: Src, handler: H) -> SubscriberBuilder<RawValue<H>, Src::Source, AllOpen>
+pub fn raw<Src, C, H>(
+    source: Src,
+    handler: H,
+) -> SubscriberBuilder<RawValue<H, C>, Src::Source, AllOpen>
 where
     Src: IntoSource,
-    H: Handler<[u8]>,
+    H: Handler<[u8], C>,
 {
     SubscriberBuilder::new(
         RawValue {
             handler,
             docs: Docs::none(),
+            _types: PhantomData,
+        },
+        source.into_source(),
+    )
+}
+
+/// [`raw`] for a byte-level handler implemented for one concrete app state type. See
+/// [`subscriber_in`] for the split.
+#[must_use]
+pub fn raw_in<Src, C, St, H>(
+    source: Src,
+    handler: H,
+) -> SubscriberBuilder<RawValue<H, C>, Src::Source, AllOpen>
+where
+    Src: IntoSource,
+    H: Handler<[u8], C, St>,
+{
+    SubscriberBuilder::new(
+        RawValue {
+            handler,
+            docs: Docs::none(),
+            _types: PhantomData,
         },
         source.into_source(),
     )
@@ -408,6 +675,15 @@ impl<H> IncludeDef for RawBatchValue<H> {
     type Form = forms::RawBatch;
 }
 
+impl<H> DocumentedValue for RawBatchValue<H> {
+    type Payload = [u8];
+    type Reply = ();
+
+    fn docs_mut(&mut self) -> &mut Docs {
+        &mut self.docs
+    }
+}
+
 impl<H> BatchDef for RawBatchValue<H> {
     type Input = RawBytes;
     type Handler = H;
@@ -417,19 +693,18 @@ impl<H> BatchDef for RawBatchValue<H> {
         Unnamed::new()
     }
 
-    fn description(&self) -> Option<&str> {
-        self.docs.description()
-    }
+    docs_metadata!();
 
     fn into_handler(self) -> H {
         self.handler
     }
 }
 
-impl_describe!(RawBatchValue<H>);
-
 /// Binds a raw slice `handler` to the batch subscription `source`: a whole page of payloads,
-/// no decode step anywhere. Mount it with `include`.
+/// no decode step anywhere.
+///
+/// Mount it with `include`. A handler implemented for one concrete app state type takes
+/// [`raw_batch_in`] instead.
 ///
 /// # Examples
 ///
@@ -469,6 +744,26 @@ pub fn raw_batch<Src, H>(
 where
     Src: IntoSource,
     H: RawSliceHandler,
+{
+    SubscriberBuilder::new(
+        RawBatchValue {
+            handler,
+            docs: Docs::none(),
+        },
+        source.into_source(),
+    )
+}
+
+/// [`raw_batch`] for a raw slice handler implemented for one concrete app state type. See
+/// [`subscriber_in`] for the split.
+#[must_use]
+pub fn raw_batch_in<Src, St, H>(
+    source: Src,
+    handler: H,
+) -> SubscriberBuilder<RawBatchValue<H>, Src::Source, AllOpen>
+where
+    Src: IntoSource,
+    H: RawSliceHandler<St>,
 {
     SubscriberBuilder::new(
         RawBatchValue {

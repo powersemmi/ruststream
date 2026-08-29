@@ -12,14 +12,15 @@ use crate::runtime::middleware::Layer;
 use crate::runtime::publish::PublishPipeline;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
-use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
+use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
+use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::{
     CommitVia, DefaultBareReply, DefaultReply, IncludeMount, IncludePublishing,
-    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, InputCodec, MountCodec,
-    PublishInjectMount, PublishMount, SlotCommit, forms,
+    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, MountCodec, PublishInjectMount,
+    PublishMount, SlotCommit, forms,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -122,19 +123,20 @@ macro_rules! impl_publishing_out_commit {
             B: Broker + 'static,
             // Two codec questions, and they are not the same one: the slots encode what leaves
             // through them (`MountCodec`), while the input decodes with whatever its kind asks
-            // for - nothing, on the byte path.
-            C: MountCodec + InputCodec<Bound::Input>,
+            // for - nothing, on the byte path - under the definition's own override.
+            C: MountCodec,
             Def: BindSlots<
                 Connected<B>,
                 ($(($attach, <C as MountCodec>::Codec),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
+            Def: MountsWith<<Bound as PublishingDef>::Input, C>,
             Bound: PublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Sync + Send + 'static,
             SourceMessage<B, Bound::Source>: Send + Sync + 'static,
-            Bound::Input: DecodeWith<<C as InputCodec<Bound::Input>>::Codec>,
+            Bound::Input: DecodeWith<DefMountCodec<Def, <Bound as PublishingDef>::Input, C>>,
             Bound::Injections: FromStartup<B, SourceSubscriber<B, Bound::Source>, Extra>
                 + Send
                 + Sync
@@ -149,7 +151,7 @@ macro_rules! impl_publishing_out_commit {
             Layers: Layer<
                 PublishingHandler<
                     Bound,
-                    <C as InputCodec<Bound::Input>>::Codec,
+                    DefMountCodec<Def, <Bound as PublishingDef>::Input, C>,
                     Source::Live,
                     Pipeline,
                 >,
@@ -164,10 +166,12 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
+                // Surface codec for the slots, override-aware codec for the decode.
                 let codec = scope.codec.mount_codec();
+                let decode = def.mounted_codec(&scope.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
-                scope.mount_publishing_source(source, def, reply.into_source(), extra);
+                scope.mount_publishing_source(source, def, decode, reply.into_source(), extra);
             }
         }
     )+};

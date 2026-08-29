@@ -9,7 +9,6 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, SubscriptionSource};
 
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler};
@@ -91,7 +90,9 @@ where
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    DecodeCodec: Codec + Send + 'static,
+    // Not `Codec`: `DecodeWith` already carries what the input asks of it, and a byte input
+    // asks for nothing - its route is built with `()` there.
+    DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
     fn mount_one<G, PP>(self, global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)

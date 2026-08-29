@@ -99,6 +99,8 @@ pub use settings::{
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
+pub use settings::{DefinitionInputCodec, MountsWith};
+#[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
@@ -106,11 +108,17 @@ pub use slot::{
 };
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};
-#[doc(hidden)]
-pub use value_def::SplitCodec;
+pub use value_def::ValueBuilder;
 pub use value_def::{
-    BatchValue, BoundReplyingSlots, BoundSlotsValue, CodecValue, DeclaredName, IntoSource,
-    RawBatchValue, RawValue, Reply, ReplyingBuilder, ReplyingSlotsValue, ReplyingValue,
-    SlotsHandler, SlotsReply, SlotsValue, SubscriberValue, To, batch, raw, raw_batch, replying,
-    replying_with_slots, subscriber, with_slots,
+    BatchReply, BatchReplyingValue, BatchSeekValue, BatchSlotsValue, BatchValue,
+    BatchWithHeadersValue, BoundBatchSlots, BoundReplyingSlots, BoundSlotsValue, DeclaredName,
+    HandledInput, IntoSource, RawBatchValue, RawValue, Reply, ReplyingBuilder, ReplyingSlotsValue,
+    ReplyingValue, SeekValue, SlotsBatchReply, SlotsHandler, SlotsReply, SlotsSliceHandler,
+    SlotsValue, SubscriberValue, To, batch, batch_in, batch_replying, batch_replying_in,
+    batch_replying_with_slots, batch_with_headers, batch_with_headers_in, batch_with_seek,
+    batch_with_slots, raw, raw_batch, raw_batch_in, raw_in, raw_replying, raw_replying_in,
+    raw_replying_with_slots, replying, replying_in, replying_with_slots, subscriber, subscriber_in,
+    with_seek, with_slots,
 };
+#[doc(hidden)]
+pub use value_def::{Docs, DocumentedValue};

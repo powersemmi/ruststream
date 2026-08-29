@@ -21,11 +21,15 @@
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, BatchResult, Context, Ctx, DefaultSlot, FailurePolicies, FailurePolicy, FromRef,
-    Handler, HandlerResult, Headers, Out, PublishExt, RawSliceHandler, Reply, Router, RouterDef,
-    RunningApp, RustStream, Seek, Settle, SliceHandler, SlotsHandler, SlotsReply, State,
-    SubscriberSettings, TypedPublisher, Workers, batch, raw, raw_batch, replying,
-    replying_with_slots, subscriber, with_slots,
+    App, AppInfo, BatchReply, BatchResult, Context, Ctx, DefaultSlot, FailurePolicies,
+    FailurePolicy, FromRef, Handler, HandlerResult, Headers, Out, PublishExt, RawSliceHandler,
+    Reply, Router, RouterDef, RunningApp, RustStream, Seek, Settle, SliceHandler,
+    SliceHandlerWithHeaders, SlotsBatchReply, SlotsHandler, SlotsReply, SlotsSliceHandler, State,
+    SubscriberSettings, TypedPublisher, Workers, batch, batch_in, batch_replying,
+    batch_replying_in, batch_replying_with_slots, batch_with_headers, batch_with_headers_in,
+    batch_with_seek, batch_with_slots, raw, raw_batch, raw_batch_in, raw_in, raw_replying,
+    raw_replying_in, raw_replying_with_slots, replying, replying_in, replying_with_slots,
+    subscriber, subscriber_in, with_seek, with_slots,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a

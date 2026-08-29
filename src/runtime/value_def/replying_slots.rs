@@ -18,28 +18,28 @@ use crate::runtime::input::Decoded;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publishing::{PublishingCall, PublishingDef};
 use crate::runtime::router::{IncludeDef, forms};
-use crate::runtime::settings::{AllOpen, SubscriberBuilder};
+use crate::runtime::settings::SubscriberBuilder;
 use crate::runtime::slot::{BindSlots, HasSlots, OutSlot, SlotPublisher};
 
 use super::IntoSource;
 use super::replying::{DeclaredName, To};
 use super::slots::SlotSetOutgoing;
-use super::subscribing::Docs;
+use super::subscribing::{Docs, DocumentedValue, docs_metadata};
 
 /// A reply-producing handler body over startup-injected publisher slots: the value-path
 /// counterpart of a `#[subscriber(.., publish(..))]` body with `Out(..)` parameters.
 ///
 /// The combination of [`Reply`](super::Reply) and [`SlotsHandler`](super::SlotsHandler):
-/// `Ok(reply)` is encoded and published to the definition's destination, the slots publish
-/// whatever the body sends on the side, and `Err(result)` skips the reply.
+/// `Ok(reply)` is published to the definition's destination, the slots publish whatever the
+/// body sends on the side, and `Err(result)` skips the reply.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not produce a reply for `{T}` with the slot tuple `{Slots}`",
+    message = "`{Self}` does not produce a reply for `{T}` with the injection tuple `{Slots}`",
     note = "implement `SlotsReply` generically over each slot's publisher and codec \
             (`impl<P, E, S> SlotsReply<{T}, (Out<P, Marker, (), E>,), (), S> for ..`), with \
             `type Out` naming the reply"
 )]
 pub trait SlotsReply<T, Slots, C = (), S = ()>: Send + Sync {
-    /// The reply type, encoded and published.
+    /// The reply type, published to the destination.
     type Out;
 
     /// Produces the reply for one decoded input, with the live slots.
@@ -51,41 +51,53 @@ pub trait SlotsReply<T, Slots, C = (), S = ()>: Send + Sync {
     ) -> impl Future<Output = Result<Self::Out, HandlerResult>> + Send;
 }
 
+/// The variance-neutral marker of the definition's carried type parameters.
+type Carried<T> = PhantomData<fn() -> T>;
+
 /// A slot-carrying reply definition built from a value: what
-/// `replying_with_slots(source, handler)` returns, wrapped in the settings builder.
-pub struct ReplyingSlotsValue<T, H, Markers, Dest> {
+/// `replying_with_slots(source, handler)` (or `raw_replying_with_slots`) returns, wrapped in
+/// the settings builder.
+pub struct ReplyingSlotsValue<T, H, Markers, Dest, C = (), F = forms::PublishingOut> {
     pub(crate) handler: H,
     pub(crate) dest: Dest,
     pub(crate) docs: Docs,
-    pub(crate) _types: PhantomData<fn() -> (T, Markers)>,
+    pub(crate) _types: Carried<(T, Markers, C, F)>,
 }
 
-impl<T, H, Markers, Dest> fmt::Debug for ReplyingSlotsValue<T, H, Markers, Dest> {
+impl<T, H, Markers, Dest, C, F> fmt::Debug for ReplyingSlotsValue<T, H, Markers, Dest, C, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReplyingSlotsValue").finish_non_exhaustive()
     }
 }
 
-impl<T, H, Markers, Dest> IncludeDef for ReplyingSlotsValue<T, H, Markers, Dest> {
-    type Form = forms::PublishingOut;
+impl<T, H, Markers, Dest, C, F> IncludeDef for ReplyingSlotsValue<T, H, Markers, Dest, C, F> {
+    type Form = F;
 }
 
-impl<T, H, Markers, Dest> HasSlots for ReplyingSlotsValue<T, H, Markers, Dest> {
+impl<T, H, Markers, Dest, C, F> HasSlots for ReplyingSlotsValue<T, H, Markers, Dest, C, F> {
     type Markers = Markers;
 }
 
-/// The variance-neutral marker of the definition's carried type parameters.
-type Carried<T> = PhantomData<fn() -> T>;
+impl<T, H, Markers, Dest, C, F> DocumentedValue for ReplyingSlotsValue<T, H, Markers, Dest, C, F> {
+    type Payload = T;
+    type Reply = ();
+
+    fn docs_mut(&mut self) -> &mut Docs {
+        &mut self.docs
+    }
+}
 
 /// The publisher-applied form of a [`ReplyingSlotsValue`]. You never name this type.
-pub struct BoundReplyingSlots<T, H, Slots, Markers, Dest> {
+pub struct BoundReplyingSlots<T, H, Slots, Markers, Dest, C = ()> {
     handler: H,
     dest: Dest,
     docs: Docs,
-    _types: Carried<(T, Slots, Markers)>,
+    _types: Carried<(T, Slots, Markers, C)>,
 }
 
-impl<T, H, Slots, Markers, Dest> fmt::Debug for BoundReplyingSlots<T, H, Slots, Markers, Dest> {
+impl<T, H, Slots, Markers, Dest, C> fmt::Debug
+    for BoundReplyingSlots<T, H, Slots, Markers, Dest, C>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BoundReplyingSlots").finish_non_exhaustive()
     }
@@ -94,9 +106,9 @@ impl<T, H, Slots, Markers, Dest> fmt::Debug for BoundReplyingSlots<T, H, Slots, 
 /// Implements [`BindSlots`] for each marker-tuple arity, mirroring `SlotsValue`.
 macro_rules! impl_replying_slots_bind {
     ($(($(($marker:ident, $policy:ident, $codec:ident)),+))+) => {$(
-        impl<Conn, T, H, Dest, $($marker, $policy, $codec),+>
+        impl<Conn, T, H, Dest, C, F, $($marker, $policy, $codec),+>
             BindSlots<Conn, ($(($policy, $codec),)+)>
-            for ReplyingSlotsValue<T, H, ($($marker,)+), Dest>
+            for ReplyingSlotsValue<T, H, ($($marker,)+), Dest, C, F>
         where
             Conn: ConnectedBroker,
             $(
@@ -110,6 +122,7 @@ macro_rules! impl_replying_slots_bind {
                 ($(Out<SlotPublisher<<$policy as PublishPolicy<Conn>>::Live, $marker>, $marker, (), $codec>,)+),
                 ($($marker,)+),
                 Dest,
+                C,
             >;
             type Extra = ($(($policy, $codec),)+);
 
@@ -136,15 +149,15 @@ impl_replying_slots_bind! {
 
 /// The reply type the body produces over the unit state, which every state-generic body pins for
 /// all states alike.
-type ReplyOf<H, T, Slots> = <H as SlotsReply<T, Slots, (), ()>>::Out;
+type ReplyOf<H, T, Slots, C> = <H as SlotsReply<T, Slots, C>>::Out;
 
 /// The metadata methods shared by the two destination states.
 macro_rules! replying_slots_def_common {
     () => {
         type Input = Decoded<T>;
         type Injections = Slots;
-        type Reply = ReplyOf<H, T, Slots>;
-        type Context = ();
+        type Reply = ReplyOf<H, T, Slots, C>;
+        type Context = C;
         // The stored value never builds a source: the settings builder wrapping it carries the
         // real one (see `SubscriberValue::Source`).
         type Source = Unnamed<Name>;
@@ -153,21 +166,15 @@ macro_rules! replying_slots_def_common {
             Unnamed::new()
         }
 
-        fn description(&self) -> Option<&str> {
-            self.docs.description()
-        }
-
-        fn input_schema(&self) -> Option<String> {
-            self.docs.schema()
-        }
+        docs_metadata!();
 
         fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
             let mut declared = vec![
                 OutgoingMessageMetadata::new(
                     self.reply_name().to_owned(),
-                    type_name::<ReplyOf<H, T, Slots>>(),
+                    type_name::<ReplyOf<H, T, Slots, C>>(),
                 )
-                .with_payload_schema(self.docs.reply_schema.and_then(|capture| capture())),
+                .with_payload_schema(self.docs.reply_schema()),
             ];
             declared.extend(Markers::outgoing());
             declared
@@ -175,12 +182,13 @@ macro_rules! replying_slots_def_common {
     };
 }
 
-impl<T, H, Slots, Markers> PublishingDef for BoundReplyingSlots<T, H, Slots, Markers, To>
+impl<T, H, Slots, Markers, C> PublishingDef for BoundReplyingSlots<T, H, Slots, Markers, To, C>
 where
     T: Send + Sync + 'static,
-    H: SlotsReply<T, Slots, (), ()>,
+    H: SlotsReply<T, Slots, C>,
     Slots: Send + Sync,
     Markers: SlotSetOutgoing,
+    C: Send + Sync,
 {
     replying_slots_def_common!();
 
@@ -189,46 +197,58 @@ where
     }
 }
 
-impl<T, H, Slots, Markers> PublishingDef for BoundReplyingSlots<T, H, Slots, Markers, DeclaredName>
+impl<T, H, Slots, Markers, C> PublishingDef
+    for BoundReplyingSlots<T, H, Slots, Markers, DeclaredName, C>
 where
     T: Send + Sync + 'static,
-    H: SlotsReply<T, Slots, (), ()>,
-    ReplyOf<H, T, Slots>: OutgoingDestination<Form = FixedName>,
+    H: SlotsReply<T, Slots, C>,
+    ReplyOf<H, T, Slots, C>: OutgoingDestination<Form = FixedName>,
     Slots: Send + Sync,
     Markers: SlotSetOutgoing,
+    C: Send + Sync,
 {
     replying_slots_def_common!();
 
     fn reply_name(&self) -> &str {
-        ReplyOf::<H, T, Slots>::ADDRESS
+        ReplyOf::<H, T, Slots, C>::ADDRESS
     }
 }
 
-impl<T, H, Slots, Markers, Dest, S> PublishingCall<S>
-    for BoundReplyingSlots<T, H, Slots, Markers, Dest>
+impl<T, H, Slots, Markers, Dest, C, S> PublishingCall<S>
+    for BoundReplyingSlots<T, H, Slots, Markers, Dest, C>
 where
     Self: PublishingDef<
             Input = Decoded<T>,
             Injections = Slots,
-            Reply = ReplyOf<H, T, Slots>,
-            Context = (),
+            Reply = ReplyOf<H, T, Slots, C>,
+            Context = C,
         >,
     T: Send + Sync + 'static,
-    H: SlotsReply<T, Slots, (), ()> + SlotsReply<T, Slots, (), S, Out = ReplyOf<H, T, Slots>>,
+    H: SlotsReply<T, Slots, C> + SlotsReply<T, Slots, C, S, Out = ReplyOf<H, T, Slots, C>>,
+    C: Send + Sync,
     S: Send + Sync,
 {
     fn call(
         &self,
         input: &T,
         injections: &Slots,
-        ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<ReplyOf<H, T, Slots>, HandlerResult>> + Send {
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<ReplyOf<H, T, Slots, C>, HandlerResult>> + Send {
         self.handler.reply(input, injections, ctx)
     }
 }
 
-impl<T, H, Markers, Src, State>
-    SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, DeclaredName>, Src, State>
+/// The chain over a caller-named destination: what [`to`](SubscriberBuilder::to) hands back.
+type Renamed<T, H, Markers, C, F, Src, State, DC> =
+    SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, To, C, F>, Src, State, DC>;
+
+/// The chain over a renamed broker context: what
+/// [`context`](SubscriberBuilder::context) hands back.
+type Recontexted<T, H, Markers, Dest, C2, F, Src, State, DC> =
+    SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, Dest, C2, F>, Src, State, DC>;
+
+impl<T, H, Markers, C, F, Src, State, DC>
+    SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, DeclaredName, C, F>, Src, State, DC>
 {
     /// Names the subject the reply is published to. See
     /// [`to`](SubscriberBuilder::to) on the plain reply form.
@@ -236,7 +256,7 @@ impl<T, H, Markers, Src, State>
     pub fn to(
         self,
         name: impl Into<Cow<'static, str>>,
-    ) -> SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, To>, Src, State> {
+    ) -> Renamed<T, H, Markers, C, F, Src, State, DC> {
         self.map_def(|def| ReplyingSlotsValue {
             handler: def.handler,
             dest: To(name.into()),
@@ -246,32 +266,38 @@ impl<T, H, Markers, Src, State>
     }
 }
 
-impl<T, H, Markers, Dest, Src, State>
-    SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, Dest>, Src, State>
+impl<T, H, Markers, Dest, C, F, Src, State, DC>
+    SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, Dest, C, F>, Src, State, DC>
 {
-    /// Sets the handler's human description for the generated `AsyncAPI` document, the
-    /// value-path counterpart of the attribute reading the handler's doc comment.
+    /// Names the broker's typed per-delivery context the body reads, replacing the unit
+    /// default. The body's bound is checked at the mount.
     #[must_use]
-    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
-        self.map_def(|mut def| {
-            def.docs.description = Some(text.into());
-            def
+    pub fn context<C2>(self) -> Recontexted<T, H, Markers, Dest, C2, F, Src, State, DC> {
+        self.map_def(|def| ReplyingSlotsValue {
+            handler: def.handler,
+            dest: def.dest,
+            docs: def.docs,
+            _types: PhantomData,
         })
     }
+}
 
-    /// Reports the input type's JSON Schema in the generated `AsyncAPI` document. See
-    /// [`documented`](SubscriberBuilder::documented) on the plain form.
-    #[cfg(feature = "asyncapi")]
-    #[must_use]
-    pub fn documented(self) -> Self
-    where
-        T: schemars::JsonSchema,
-    {
-        self.map_def(|mut def| {
-            def.docs.schema = Some(super::schema_json_of::<T>);
-            def
-        })
-    }
+fn build_replying_slots<T, Markers, Src, H, F>(
+    source: Src,
+    handler: H,
+) -> super::ValueBuilder<ReplyingSlotsValue<T, H, Markers, DeclaredName, (), F>, Src>
+where
+    Src: IntoSource,
+{
+    SubscriberBuilder::new(
+        ReplyingSlotsValue {
+            handler,
+            dest: DeclaredName,
+            docs: Docs::none(),
+            _types: PhantomData,
+        },
+        source.into_source(),
+    )
 }
 
 /// Binds a slot-carrying, reply-producing `handler` to the subscription `source`: the
@@ -344,18 +370,26 @@ impl<T, H, Markers, Dest, Src, State>
 pub fn replying_with_slots<T, Markers, Src, H>(
     source: Src,
     handler: H,
-) -> SubscriberBuilder<ReplyingSlotsValue<T, H, Markers, DeclaredName>, Src::Source, AllOpen>
+) -> super::ValueBuilder<ReplyingSlotsValue<T, H, Markers, DeclaredName>, Src>
 where
     Src: IntoSource,
     T: DeserializeOwned + Send + Sync + 'static,
 {
-    SubscriberBuilder::new(
-        ReplyingSlotsValue {
-            handler,
-            dest: DeclaredName,
-            docs: Docs::none(),
-            _types: PhantomData,
-        },
-        source.into_source(),
-    )
+    build_replying_slots(source, handler)
+}
+
+/// [`replying_with_slots`] whose reply travels a bare publisher, byte for byte: the value-path
+/// counterpart of `publish_raw(..)` next to `Out(..)` parameters.
+///
+/// The body's `Out` must be byte-shaped (`AsRef<[u8]>`), which the mount checks.
+#[must_use]
+pub fn raw_replying_with_slots<T, Markers, Src, H>(
+    source: Src,
+    handler: H,
+) -> super::ValueBuilder<ReplyingSlotsValue<T, H, Markers, DeclaredName, (), forms::RawReplyOut>, Src>
+where
+    Src: IntoSource,
+    T: DeserializeOwned + Send + Sync + 'static,
+{
+    build_replying_slots(source, handler)
 }

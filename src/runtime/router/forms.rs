@@ -63,9 +63,3 @@ pub struct BatchSeek;
 /// `.publisher(..)`.
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishingOut;
-
-/// A definition of the wrapped form whose chain named its own decode codec
-/// ([`codec`](crate::runtime::SubscriberBuilder::codec) on a value definition), overriding the
-/// surface's.
-#[derive(Debug, Clone, Copy)]
-pub struct WithCodec<Inner>(core::marker::PhantomData<fn() -> Inner>);

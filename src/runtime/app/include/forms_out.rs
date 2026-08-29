@@ -3,9 +3,10 @@
 use crate::{Broker, BuildContext, Connected, SubscriptionSource};
 
 use crate::runtime::handler::Handler;
-use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler};
+use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
 use crate::runtime::input::DecodeWith;
 use crate::runtime::middleware::Layer;
+use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
@@ -30,11 +31,12 @@ macro_rules! impl_inject_out_commit {
             B: Broker + 'static,
             C: MountCodec,
             Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
+            Def: MountsWith<<Bound as InjectDef>::Input, C>,
             Bound: InjectCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Sync + Send + 'static,
             SourceMessage<B, Bound::Source>: Send + Sync + 'static,
-            Bound::Input: DecodeWith<C::Codec>,
+            Bound::Input: DecodeWith<DefMountCodec<Def, <Bound as InjectDef>::Input, C>>,
             Bound::Context: BuildContext<SourceMessage<B, Bound::Source>> + Send + Sync + 'static,
             Bound::Injections: FromStartup<B, SourceSubscriber<B, Bound::Source>, Extra>
                 + Send
@@ -42,17 +44,22 @@ macro_rules! impl_inject_out_commit {
                 + 'static,
             Extra: Send + Sync + 'static,
             State: Send + Sync + 'static,
-            Layers: Layer<InjectHandler<Bound, C::Codec>> + Clone + Send + 'static,
+            Layers: Layer<InjectHandler<Bound, DefMountCodec<Def, <Bound as InjectDef>::Input, C>>>
+                + Clone
+                + Send
+                + 'static,
             Layers::Handler:
                 Handler<SourceMessage<B, Bound::Source>, Bound::Context, State> + 'static,
         {
             fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
+                // Surface codec for the slots, override-aware codec for the decode.
                 let codec = scope.codec.mount_codec();
+                let decode = def.mounted_codec(&scope.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
-                scope.mount_inject(source, def, extra);
+                scope.mount_inject(source, def, decode, extra);
             }
         }
     )+};
