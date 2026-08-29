@@ -92,6 +92,14 @@ The method returns `Settle`, not `HandlerResult`: the attribute inserts the `Int
 around the body, so a hand-written impl does it itself - `.into()` on any outcome, or
 `HandlerResult::ack().and_after(..)` when there is post-settle work.
 
+A body with nothing to await returns the future directly (`fn handle(..) -> impl Future<Output =
+Settle> + Send` with `ready(..)`), because `clippy::unused_async_trait_impl` is denied and a
+handler that awaits nothing is not async. **Keep anything that can panic inside the future**: the
+dispatcher calls `handler.handle(..)` and only then wraps the result in `catch_unwind`, so a panic
+raised in the synchronous part escapes the guard and kills the task instead of settling by
+`on_failure(panic = ..)`. Where the body can panic, write `fn handle(..) -> impl Future { async
+move { .. } }` rather than computing before `ready(..)`.
+
 `run()` runs until `SIGINT` / `SIGTERM`; `run_until(future)` drives shutdown from a future you own
 (a test signal, a timeout), and `start()` hands back a `RunningApp` for hosting the service beside
 another foreground server.
