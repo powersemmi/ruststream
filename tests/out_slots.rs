@@ -18,7 +18,7 @@ use ruststream::runtime::{
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, Headers, OutSlot, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
+    Broker, HeaderMap, OutSlot, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
     Publisher, Transaction, subscriber,
 };
 
@@ -35,7 +35,7 @@ async fn transcode(
     Out(encoded): Out<impl Publisher, Encoded>,
     Out(audit): Out<impl Publisher, Audit>,
 ) -> HandlerResult {
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("source", "slots.in");
     if encoded
         .raw(chunk)

@@ -94,7 +94,7 @@ double-ack is a compile error.
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
-    fn headers(&self) -> &Headers;
+    fn headers(&self) -> &HeaderMap;
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
@@ -121,7 +121,7 @@ pub trait Publisher: Send + Sync {
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
 
     /// Defaulted: headers this handle contributes under every publish.
-    fn base_headers(&self) -> Option<&Headers> { None }
+    fn base_headers(&self) -> Option<&HeaderMap> { None }
 }
 ```
 

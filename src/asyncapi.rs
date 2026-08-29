@@ -191,7 +191,7 @@ pub struct MessageObject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
     /// The JSON Schema of the application headers, when the handler declares a typed header
-    /// contract (a `FromHeaders<T>` parameter). The schema describes the logical contract; on
+    /// contract (a `Headers<T>` parameter). The schema describes the logical contract; on
     /// the wire, header values are string-encoded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<Value>,
@@ -534,7 +534,7 @@ fn add_receive(
 /// headers schema fills in from a later contributor (component identity is the message name,
 /// and several handlers may carry different slices of its metadata), while a conflicting
 /// headers schema keeps the first one with a WARN - one component cannot carry two contracts,
-/// and the conflict usually means two handlers read the same type with different `FromHeaders`
+/// and the conflict usually means two handlers read the same type with different `Headers`
 /// declarations.
 fn merge_message(
     messages: &mut BTreeMap<String, MessageObject>,

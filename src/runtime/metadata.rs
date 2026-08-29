@@ -103,7 +103,7 @@ pub struct HandlerMetadata {
     /// message payload schema.
     pub payload_schema: Option<String>,
     /// The typed header contract's JSON Schema, serialized, when the handler declares one (a
-    /// `FromHeaders<T>` parameter, captured under the `asyncapi` feature). Feeds the `AsyncAPI`
+    /// `Headers<T>` parameter, captured under the `asyncapi` feature). Feeds the `AsyncAPI`
     /// message headers schema.
     pub headers_schema: Option<String>,
     /// The input type's [`Message`](crate::Message) name, when it implements that trait. Overrides

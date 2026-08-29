@@ -1,4 +1,4 @@
-//! The serde serializer behind [`Headers::insert_typed`](crate::Headers::insert_typed): each
+//! The serde serializer behind [`HeaderMap::insert_typed`](crate::HeaderMap::insert_typed): each
 //! field of a flat struct (or string-keyed map) becomes one header entry with a string-encoded
 //! value.
 
@@ -8,15 +8,15 @@ use serde::ser::{
 };
 
 use super::SerializeHeadersError;
-use crate::headers::Headers;
+use crate::headers::HeaderMap;
 
 /// Top-level serializer writing into a header map.
 pub(super) struct HeadersSerializer<'a> {
-    headers: &'a mut Headers,
+    headers: &'a mut HeaderMap,
 }
 
 impl<'a> HeadersSerializer<'a> {
-    pub(super) fn new(headers: &'a mut Headers) -> Self {
+    pub(super) fn new(headers: &'a mut HeaderMap) -> Self {
         Self { headers }
     }
 }
@@ -176,7 +176,7 @@ impl<'a> ser::Serializer for HeadersSerializer<'a> {
 
 /// Struct fields: one header per field, skipped when the value serializer yields nothing.
 pub(super) struct FieldSink<'a> {
-    headers: &'a mut Headers,
+    headers: &'a mut HeaderMap,
 }
 
 impl SerializeStruct for FieldSink<'_> {
@@ -218,7 +218,7 @@ impl SerializeStructVariant for FieldSink<'_> {
 
 /// Map entries: string keys become header names.
 pub(super) struct EntrySink<'a> {
-    headers: &'a mut Headers,
+    headers: &'a mut HeaderMap,
     key: Option<String>,
 }
 

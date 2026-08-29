@@ -16,7 +16,7 @@ use ruststream::runtime::{
     PublishExt, PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream,
     TypedPublisher, for_batch,
 };
-use ruststream::{Broker, BuildContext, Field, Headers, IncomingMessage, Publisher, subscriber};
+use ruststream::{Broker, BuildContext, Field, HeaderMap, IncomingMessage, Publisher, subscriber};
 use tokio::sync::Notify;
 
 /// A broker context built from the incoming message: it lifts the correlation id off the headers so
@@ -92,7 +92,7 @@ async fn delivery_context_propagates_to_the_reply() {
     let running = app.start().await.expect("startup failed");
 
     let payload = serde_json::to_vec(&Req { n: 7 }).expect("encode");
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("correlation-id", "trace-abc");
     ingress_pub
         .raw(&payload)

@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
-use crate::{AckError, BatchSubscriber, Headers, IncomingMessage, Subscriber};
+use crate::{AckError, BatchSubscriber, HeaderMap, IncomingMessage, Subscriber};
 
 use super::batch::BatchHandler;
 use super::context::Context;
@@ -37,22 +37,22 @@ use crate::testing::coordinator::{Record, TestHooks, in_slot_scope};
 /// # Examples
 ///
 /// ```
-/// use ruststream::Headers;
+/// use ruststream::HeaderMap;
 /// use ruststream::runtime::RETRY_COUNT_HEADER;
 ///
-/// fn over_limit(headers: &Headers, limit: u64) -> bool {
+/// fn over_limit(headers: &HeaderMap, limit: u64) -> bool {
 ///     let count: u64 = headers.get_str(RETRY_COUNT_HEADER).and_then(|v| v.parse().ok()).unwrap_or(0);
 ///     count >= limit
 /// }
 ///
-/// let mut headers = Headers::new();
+/// let mut headers = HeaderMap::new();
 /// headers.insert(RETRY_COUNT_HEADER, "3");
 /// assert!(over_limit(&headers, 3));
 /// ```
 pub const RETRY_COUNT_HEADER: &str = "x-ruststream-retry-count";
 
 /// Parses the current [`RETRY_COUNT_HEADER`] value, defaulting to zero when absent or malformed.
-fn current_retry_count(headers: &Headers) -> u64 {
+fn current_retry_count(headers: &HeaderMap) -> u64 {
     headers
         .get_str(RETRY_COUNT_HEADER)
         .and_then(|v| v.parse().ok())
@@ -683,7 +683,7 @@ async fn run_batch<H, M, St>(
     M: IncomingMessage,
     St: Send + Sync,
 {
-    let empty = Headers::new();
+    let empty = HeaderMap::new();
     // A batch has no single broker message, so its per-delivery context is unit (`C = ()`); the
     // shared app state is threaded the same way as on the single-message path.
     let mut ctx = Context::new(name, &empty, state, (), delivery)

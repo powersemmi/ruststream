@@ -218,7 +218,7 @@ where
 
 /// Extractor that parses the delivery headers into a typed contract before the body runs.
 ///
-/// `FromHeaders<T>` reads the header map through [`Headers::to_typed`](crate::Headers::to_typed):
+/// `Headers<T>` reads the header map through [`HeaderMap::to_typed`](crate::HeaderMap::to_typed):
 /// `T` is a flat struct whose fields name headers, with string-encoded values parsed into what
 /// each field expects. The handler body only runs when the whole contract parsed; a missing or
 /// unparsable header settles the delivery by the subscriber's `on_failure(decode = ..)` policy
@@ -233,7 +233,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{FromHeaders, HandlerResult};
+/// use ruststream::runtime::{Headers, HandlerResult};
 /// use serde::Deserialize;
 ///
 /// #[derive(Deserialize)]
@@ -243,14 +243,14 @@ where
 /// }
 ///
 /// // In a handler:
-/// // async fn handle(chunk: &[u8], FromHeaders(meta): FromHeaders<ChunkMeta>) -> HandlerResult
-/// let FromHeaders(meta) = FromHeaders(ChunkMeta { task_id: 7, chunk_no: 3 });
+/// // async fn handle(chunk: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerResult
+/// let Headers(meta) = Headers(ChunkMeta { task_id: 7, chunk_no: 3 });
 /// assert_eq!(meta.chunk_no, 3);
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct FromHeaders<T>(pub T);
+pub struct Headers<T>(pub T);
 
-impl<T: DeserializeOwned> FromHeaders<T> {
+impl<T: DeserializeOwned> Headers<T> {
     /// Parses the delivery headers under the given failure policy. The `#[subscriber]` macro
     /// routes generated handlers through here so `on_failure(decode = ..)` applies; the plain
     /// [`FromContext`] impl uses the [`Drop`](FailurePolicy::Drop) default.
@@ -283,7 +283,7 @@ impl<T: DeserializeOwned> FromHeaders<T> {
     }
 }
 
-impl<C, S, T> FromContext<C, S> for FromHeaders<T>
+impl<C, S, T> FromContext<C, S> for Headers<T>
 where
     T: DeserializeOwned + Send,
     C: Send,
@@ -303,7 +303,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::Headers;
+    use crate::HeaderMap;
     use crate::runtime::dispatch::Delivery;
 
     #[derive(Debug, Deserialize)]
@@ -323,8 +323,8 @@ mod tests {
         }
     }
 
-    fn headers_with(task_id: &'static str) -> Headers {
-        let mut headers = Headers::new();
+    fn headers_with(task_id: &'static str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
         headers.insert("task_id", task_id);
         headers
     }
@@ -336,8 +336,8 @@ mod tests {
         let headers = headers_with("7");
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
 
-        let FromHeaders(meta) =
-            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::Drop).expect("contract holds");
+        let Headers(meta) =
+            Headers::<Meta>::extract(&mut ctx, FailurePolicy::Drop).expect("contract holds");
         assert_eq!(meta.task_id, 7);
     }
 
@@ -350,21 +350,21 @@ mod tests {
         // Drop is the default: the delivery is settled away rather than requeued forever.
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
         assert_eq!(
-            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::Drop).map(|_| ()),
+            Headers::<Meta>::extract(&mut ctx, FailurePolicy::Drop).map(|_| ()),
             Err(HandlerResult::drop()),
         );
 
         // Retry keeps the delivery in play, in case the contract violation is transient wiring.
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
         assert_eq!(
-            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::Retry).map(|_| ()),
+            Headers::<Meta>::extract(&mut ctx, FailurePolicy::Retry).map(|_| ()),
             Err(HandlerResult::retry()),
         );
 
         // Fail-fast still settles the delivery; the service teardown is signalled separately.
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
         assert_eq!(
-            FromHeaders::<Meta>::extract(&mut ctx, FailurePolicy::FailFast).map(|_| ()),
+            Headers::<Meta>::extract(&mut ctx, FailurePolicy::FailFast).map(|_| ()),
             Err(HandlerResult::drop()),
         );
     }
@@ -376,7 +376,7 @@ mod tests {
         let headers = headers_with("not a number");
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
 
-        let outcome = <FromHeaders<Meta> as FromContext<(), ()>>::from_context(&mut ctx).await;
+        let outcome = <Headers<Meta> as FromContext<(), ()>>::from_context(&mut ctx).await;
         assert_eq!(outcome.map(|_| ()), Err(HandlerResult::drop()));
     }
 

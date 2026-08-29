@@ -13,7 +13,7 @@ use crate::runtime::Decoded;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
-use crate::{Headers, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource};
+use crate::{HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource};
 
 struct Confirm {
     reply_to: &'static str,
@@ -91,7 +91,7 @@ async fn transactional_replies_publish_atomically_then_ack() {
     publish_numbers(&broker, "orders", &[1, 2]).await;
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     handler.handle_batch(batch, &mut ctx).await;
@@ -127,7 +127,7 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
     publish_numbers(&broker, "orders", &[1, 2]).await;
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     handler.handle_batch(batch, &mut ctx).await;
@@ -199,7 +199,7 @@ async fn a_fully_undecodable_batch_never_reaches_the_handler() {
     publish_payloads(&broker, "orders", &[b"not json", b"also not json"]).await;
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     assert_eq!(batch.len(), 2);
@@ -266,7 +266,7 @@ async fn a_failed_reply_publish_retries_the_whole_batch() {
     publish_numbers(&broker, "orders", &[1, 2]).await;
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     handler.handle_batch(batch, &mut ctx).await;
@@ -308,7 +308,7 @@ async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
     publish_numbers(&broker, "orders", &[1]).await;
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
 

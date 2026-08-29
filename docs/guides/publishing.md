@@ -76,7 +76,7 @@ use ruststream::runtime::Out;
 `message(&value)` encodes with the scope's codec (name another one for a single call with
 `.with_codec(..)`), `raw(&bytes)` sends a payload the service already holds encoded and has no
 codec position at all. Both fill the headers position with `.with_headers(..)` - the message's
-declared contract by reference (`&meta`), or an already-built `Headers` map by value - and both
+declared contract by reference (`&meta`), or an already-built `HeaderMap` by value - and both
 end in `publish()`.
 
 The include site names the source; for the scope's own broker it is the publish policy:
@@ -207,7 +207,7 @@ publishing example's seeding rides it.
 ## Where the headers come from
 
 A publish takes its headers from two places. The call site names them with `.with_headers(..)` -
-the message's declared contract by reference, or an already-built `Headers` map by value - and
+the message's declared contract by reference, or an already-built `HeaderMap` by value - and
 the handle sending them may contribute a base of its own. A publisher that carries an argument
 for a run of messages (a tenant, a partition hint, a delivery option the broker expresses as a
 header) exposes it through `base_headers`, and so does a transaction opened from it.

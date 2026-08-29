@@ -42,7 +42,7 @@ ruststream asyncapi gen --yaml
 以及是什么类型；刻意不带 schema 的原始字节消息不在此列）。`Spec::messages_without_schema()` 会列出
 受影响的消息组件；在测试里断言它为空，就能在 CI 里卡住 schema 覆盖率。
 
-除了载荷之外，文档还会带上**消息头的 schema**（来自处理器的 `FromHeaders<T>` 参数，或者某个类型
+除了载荷之外，文档还会带上**消息头的 schema**（来自处理器的 `Headers<T>` 参数，或者某个类型
 声明的 `headers = ..` 契约），以及为每一条已声明的出站消息生成的 **`send` 操作**，包括 `publish(..)`
 形式的回复，以及 `Out` 槽位声明的每一种消息类型。参见[类型化消息头](headers.md)。
 

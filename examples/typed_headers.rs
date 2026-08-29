@@ -1,5 +1,5 @@
 //! Typed message headers: one struct declares the header contract, and it drives all three
-//! surfaces at once - runtime extraction (`FromHeaders`), the outgoing typed publish path (the
+//! surfaces at once - runtime extraction (`Headers`), the outgoing typed publish path (the
 //! `Out` slot dictionary and the reply form), and the generated `AsyncAPI` document (headers
 //! schemas next to the payloads). Driven through the real dispatch path with the in-process
 //! `TestApp` harness.
@@ -9,7 +9,7 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, FromHeaders, HandlerResult, Out, RustStream};
+use ruststream::runtime::{AppInfo, HandlerResult, Headers, Out, RustStream};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
@@ -56,7 +56,7 @@ struct Progress {
 struct Events;
 // --8<-- [end:dictionary]
 
-// FromHeaders parses the delivery headers into the contract before the body runs; a missing or
+// Headers parses the delivery headers into the contract before the body runs; a missing or
 // unparsable header settles the delivery by `on_failure(decode = ..)` (drop by default). The
 // Out parameter's optional third position declares the message types this handler publishes:
 // destinations come from each type's declaration, headers from its contract - `Progress`
@@ -65,7 +65,7 @@ struct Events;
 #[subscriber("chunks.raw", raw)]
 async fn convert(
     chunk: &[u8],
-    FromHeaders(meta): FromHeaders<ChunkMeta>,
+    Headers(meta): Headers<ChunkMeta>,
     Out(events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
 ) -> HandlerResult {
     let percent = u8::try_from(meta.chunk_no * 100 / meta.chunks_total.max(1)).unwrap_or(100);
@@ -129,10 +129,7 @@ async fn status(req: &StatusRequest) -> StatusReply {
 // contract is settled by the decode policy instead of reaching the handler.
 // --8<-- [start:batch]
 #[subscriber(batch("chunks.bulk"))]
-async fn bulk(
-    reports: &[Progress],
-    FromHeaders(meta): FromHeaders<Vec<ChunkMeta>>,
-) -> HandlerResult {
+async fn bulk(reports: &[Progress], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerResult {
     for (report, meta) in reports.iter().zip(&meta) {
         println!(
             "task {}: chunk {} of {} at {}%",

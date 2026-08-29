@@ -40,7 +40,7 @@ the delivery without running the body. Four kinds can appear:
 
 - `State<T>` - a field of the application state (derive `FromRef` on the state type).
 - `Ctx<K>` - a broker per-delivery field, read by its key.
-- `FromHeaders<T>` - the delivery headers parsed into a typed contract; a violation settles by
+- `Headers<T>` - the delivery headers parsed into a typed contract; a violation settles by
   the `on_failure(decode = ..)` policy (see [typed headers](headers.md)).
 - any type implementing `FromContext` - a custom extractor (an auth guard, a request-scoped
   resolver).
@@ -402,7 +402,7 @@ call. Nothing is copied, and the settlement rules are the batch path's.
 ```
 
 An `on_failure(decode = ..)` policy on either shape is a compile error - there is no decode step
-to fail, unless the handler declares a `FromHeaders` contract, which that policy does cover.
+to fail, unless the handler declares a `Headers` contract, which that policy does cover.
 Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
 the injected `Out` / `Seek` parameters work unchanged on the single-delivery shape (the batch of
 payloads does not take `Out` / `Seek` yet), and a raw subscriber mounts with the

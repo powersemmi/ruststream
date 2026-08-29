@@ -87,7 +87,7 @@ pub trait Subscriber: Send {
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
-    fn headers(&self) -> &Headers;
+    fn headers(&self) -> &HeaderMap;
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
@@ -114,7 +114,7 @@ pub trait Publisher: Send + Sync {
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
 
     /// 带默认实现：这个发布者垫在每次发布下面的消息头。
-    fn base_headers(&self) -> Option<&Headers> { None }
+    fn base_headers(&self) -> Option<&HeaderMap> { None }
 }
 ```
 

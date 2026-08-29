@@ -78,8 +78,8 @@ Broker 的发布者、一个客户端连接池：
 | 方法 | 返回 | 用途 |
 |---|---|---|
 | `name()` | `&str` | 消息到达时所在的通道 / subject |
-| `headers()` | `&Headers` | 消息头的工作副本 |
-| `headers_mut()` | `&mut Headers` | 同一份副本，供中间件写入 |
+| `headers()` | `&HeaderMap` | 消息头的工作副本 |
+| `headers_mut()` | `&mut HeaderMap` | 同一份副本，供中间件写入 |
 | `state()` | `&S` | 类型化的共享应用状态，直接借用 |
 | `context(KEY)` | `KEY::Value` | 按编译期 key 读取的 [Broker 字段](#per-delivery-context) |
 | `set(KEY, v)` | `()` | 写入按投递的[临时值](#per-delivery-context)（供中间件使用） |

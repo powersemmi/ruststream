@@ -11,14 +11,14 @@ use crate::memory::MemoryBroker;
 use crate::runtime::PublishExt;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::IntoSettle;
-use crate::{AckError, Headers, IncomingMessage, OutgoingMessage, Publisher};
+use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher};
 
 /// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
 /// default (`false`), and the default `nack_after` would error. It records how it was settled
 /// so a test can assert the fallback dropped it rather than calling `nack(true)`.
 struct PlainMessage {
     payload: Bytes,
-    headers: Headers,
+    headers: HeaderMap,
     // 0 = unset, 1 = nack(false) (dropped), 2 = nack(true) (requeued).
     settled: Arc<AtomicU8>,
 }
@@ -28,7 +28,7 @@ impl IncomingMessage for PlainMessage {
         &self.payload
     }
 
-    fn headers(&self) -> &Headers {
+    fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
@@ -51,8 +51,8 @@ impl IncomingMessage for UnsettleableMessage {
         b"body"
     }
 
-    fn headers(&self) -> &Headers {
-        static EMPTY: std::sync::LazyLock<Headers> = std::sync::LazyLock::new(Headers::new);
+    fn headers(&self) -> &HeaderMap {
+        static EMPTY: std::sync::LazyLock<HeaderMap> = std::sync::LazyLock::new(HeaderMap::new);
         &EMPTY
     }
 
@@ -122,7 +122,7 @@ fn scripted(payloads: &[&'static str]) -> ScriptedSubscriber {
     items.extend(payloads.iter().map(|payload| {
         Ok(PlainMessage {
             payload: Bytes::from_static(payload.as_bytes()),
-            headers: Headers::new(),
+            headers: HeaderMap::new(),
             settled: Arc::new(AtomicU8::new(0)),
         })
     }));
@@ -161,7 +161,7 @@ async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<By
 }
 
 fn plain(name_headers: &[(&str, &str)], settled: &Arc<AtomicU8>) -> PlainMessage {
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     for (k, v) in name_headers {
         headers.insert((*k).to_owned(), Bytes::copy_from_slice(v.as_bytes()));
     }

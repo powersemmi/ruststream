@@ -4,7 +4,7 @@ use std::{error::Error as StdError, future::Future};
 
 use thiserror::Error;
 
-use crate::{ConnectedBroker, Headers, OutgoingMessage};
+use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 
 /// A producer that sends messages into the broker.
 ///
@@ -80,10 +80,10 @@ pub trait Publisher: Send + Sync {
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::PublishExt;
-    /// use ruststream::{Headers, OutgoingMessage, Publisher};
+    /// use ruststream::{HeaderMap, OutgoingMessage, Publisher};
     ///
     /// // A handle that tags every message it sends, without touching the message itself.
-    /// struct Tenanted<P>(P, Headers);
+    /// struct Tenanted<P>(P, HeaderMap);
     ///
     /// impl<P: Publisher> Publisher for Tenanted<P> {
     ///     type Error = P::Error;
@@ -92,7 +92,7 @@ pub trait Publisher: Send + Sync {
     ///         self.0.publish(msg).await
     ///     }
     ///
-    ///     fn base_headers(&self) -> Option<&Headers> {
+    ///     fn base_headers(&self) -> Option<&HeaderMap> {
     ///         Some(&self.1)
     ///     }
     /// }
@@ -104,7 +104,7 @@ pub trait Publisher: Send + Sync {
     /// # Ok(())
     /// # }
     /// ```
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         None
     }
 }

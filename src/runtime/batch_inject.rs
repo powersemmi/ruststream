@@ -167,7 +167,7 @@ mod tests {
     use crate::codec::JsonCodec;
     use crate::memory::{ConnectedMemoryBroker, MemoryBroker};
     use crate::testkit::batch::{publish_payloads, pull_batch};
-    use crate::{Headers, Name, Subscriber, SubscriptionSource};
+    use crate::{HeaderMap, Name, Subscriber, SubscriptionSource};
 
     /// A definition whose "injection" is a plain multiplier: the real ones are `Out` / `Seek`
     /// values, but the handler side only cares that the resolved tuple is handed to every call.
@@ -262,7 +262,7 @@ mod tests {
 
         let state = ();
         let delivery = Delivery::empty();
-        let headers = Headers::new();
+        let headers = HeaderMap::new();
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
@@ -293,7 +293,7 @@ mod tests {
 
         let state = ();
         let delivery = Delivery::empty();
-        let headers = Headers::new();
+        let headers = HeaderMap::new();
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);

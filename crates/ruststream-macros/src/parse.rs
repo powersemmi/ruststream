@@ -79,7 +79,7 @@ pub(crate) struct WorkersArg {
 
 /// The `on_failure(panic = .., decode = ..)` clause. Each key is optional; an omitted key keeps
 /// the runtime default (a panic fails fast, a decode failure drops). The `decode` policy covers
-/// both the payload codec and a `FromHeaders` contract - one materialization policy.
+/// both the payload codec and a `Headers` contract - one materialization policy.
 pub(crate) struct FailureArg {
     pub(crate) panic: Option<FailurePolicyArg>,
     pub(crate) decode: Option<FailurePolicyArg>,

@@ -54,7 +54,7 @@ pub trait SubscriberDef: Sized {
     }
 
     /// The serialized JSON Schema of the handler's typed header contract (its
-    /// [`FromHeaders<T>`](super::FromHeaders) parameter), when `T` implements
+    /// [`Headers<T>`](super::Headers) parameter), when `T` implements
     /// [`schemars::JsonSchema`] and the `asyncapi` feature is on. The macro fills this in; the
     /// default omits it.
     fn headers_schema(&self) -> Option<String> {
@@ -108,7 +108,7 @@ mod tests {
     use std::future::ready;
 
     use super::{SubscriberDef, subscriber_metadata};
-    use crate::Headers;
+    use crate::HeaderMap;
     use crate::Name;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
@@ -186,7 +186,7 @@ mod tests {
         let handler = def.into_handler();
         let state = ();
         let delivery = Delivery::empty();
-        let headers = Headers::new();
+        let headers = HeaderMap::new();
         let mut ctx = Context::new("manual", &headers, &state, (), &delivery);
         assert_eq!(
             handler.handle(&7u32, &mut ctx).await.outcome(),

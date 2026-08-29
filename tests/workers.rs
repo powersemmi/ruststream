@@ -22,7 +22,7 @@ use ruststream::runtime::{
     AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RustStream, Workers,
     typed,
 };
-use ruststream::{Headers, Name, nonzero, subscriber};
+use ruststream::{HeaderMap, Name, nonzero, subscriber};
 use tokio::sync::Barrier;
 
 static CRUNCHED: AtomicU32 = AtomicU32::new(0);
@@ -98,7 +98,7 @@ async fn by_key_lanes_preserve_per_key_order() {
     let keyed_publish = |key: &'static str, id: u32| {
         let publisher = publisher.clone();
         async move {
-            let mut headers = Headers::new();
+            let mut headers = HeaderMap::new();
             headers.insert("partition-key", key);
             publisher
                 .raw(&order_bytes(id))

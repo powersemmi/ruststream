@@ -71,7 +71,7 @@ pub use capability::{
 };
 pub use error::AckError;
 pub use field::{BuildContext, ContextField, Field, FieldMut};
-pub use headers::Headers;
+pub use headers::HeaderMap;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::{

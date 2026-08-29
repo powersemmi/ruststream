@@ -7,7 +7,7 @@ use crate::Subscribe;
 use crate::runtime::PublishExt;
 #[cfg(feature = "testing")]
 use crate::testing::{TestableBroker, coordinator::Coordinator};
-use crate::{Broker, ConnectedBroker, Headers, StartAt, SubscriptionSource};
+use crate::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource};
 
 #[tokio::test]
 async fn batches_drain_buffered_deliveries() {
@@ -744,7 +744,7 @@ async fn partition_key_reads_well_known_header() {
     let mut sub = broker.subscribe("keyed");
     let publisher = broker.publisher();
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert(PARTITION_KEY_HEADER, b"user-42".as_slice());
     publisher
         .raw(b"a")

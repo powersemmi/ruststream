@@ -5,7 +5,7 @@ use std::error::Error as StdError;
 use std::future::Future;
 
 use crate::codec::Codec;
-use crate::{Headers, OutgoingMessage, Publisher, Transaction};
+use crate::{HeaderMap, OutgoingMessage, Publisher, Transaction};
 
 /// The byte sink a publish builder resolves down to.
 ///
@@ -62,7 +62,7 @@ pub trait PublishSink: Send {
     /// publisher behind deferred redelivery, the test harness's injection point) forwards
     /// whatever it wraps. The builder starts the outgoing header map from this and writes the
     /// publish's headers over it key by key, so the call site has the last word.
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         None
     }
 }
@@ -79,7 +79,7 @@ impl<P: Publisher + ?Sized> PublishSink for &P {
         (**self).publish(msg)
     }
 
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         (**self).base_headers()
     }
 }
@@ -96,7 +96,7 @@ impl<T: Transaction> PublishSink for &mut T {
         (**self).publish(msg)
     }
 
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         (**self).base_headers()
     }
 }

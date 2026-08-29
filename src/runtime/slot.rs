@@ -26,8 +26,8 @@ use crate::runtime::publish::{HeadersUnset, MessageBody, Publish, RawBody, messa
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
-    CallerName, ConnectedBroker, Headers, OutgoingDestination, OutgoingMessage, OwnedTransactions,
-    Publisher, RequestReply, TransactionalPublisher,
+    CallerName, ConnectedBroker, HeaderMap, OutgoingDestination, OutgoingMessage,
+    OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -201,7 +201,7 @@ impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
 
     // The slot is attribution, not policy: whatever the broker's publisher contributes to every
     // message it sends has to reach the builder through the wrapper unchanged.
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         self.inner.base_headers()
     }
 }
@@ -450,7 +450,7 @@ where
         self.slot.publish(msg).await
     }
 
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         self.slot.base_headers()
     }
 }

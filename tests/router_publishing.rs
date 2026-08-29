@@ -20,7 +20,7 @@ use ruststream::runtime::{
     AppInfo, HandlerResult, Outgoing, PublishContext, PublishExt, PublishTransform, Router,
     RustStream, TypedPublisher,
 };
-use ruststream::{BuildContext, Field, Headers, IncomingMessage, Publisher, subscriber};
+use ruststream::{BuildContext, Field, HeaderMap, IncomingMessage, Publisher, subscriber};
 use tokio::sync::Notify;
 
 /// Publishes an order once to each ingress topic (the app is already started, so the
@@ -458,7 +458,7 @@ async fn router_publishing_threads_typed_delivery_context() {
     let running = app.start().await.expect("startup failed");
 
     let payload = order_bytes(1);
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("correlation-id", "trace-xyz");
     publisher
         .raw(&payload)

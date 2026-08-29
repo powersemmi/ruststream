@@ -10,7 +10,7 @@ use std::{borrow::Cow, future::Future, pin::Pin};
 
 use bytes::BytesMut;
 
-use crate::Headers;
+use crate::HeaderMap;
 use crate::runtime::lifecycle::BoxError;
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
@@ -30,7 +30,7 @@ pub(super) type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError
 pub struct Outgoing<'a> {
     name: Cow<'a, str>,
     payload: BytesMut,
-    headers: Headers,
+    headers: HeaderMap,
 }
 
 impl<'a> Outgoing<'a> {
@@ -44,7 +44,7 @@ impl<'a> Outgoing<'a> {
         Self {
             name: name.into(),
             payload: payload.into(),
-            headers: Headers::new(),
+            headers: HeaderMap::new(),
         }
     }
 
@@ -77,12 +77,12 @@ impl<'a> Outgoing<'a> {
 
     /// The outgoing headers.
     #[must_use]
-    pub fn headers(&self) -> &Headers {
+    pub fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
     /// The outgoing headers, mutably.
-    pub fn headers_mut(&mut self) -> &mut Headers {
+    pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.headers
     }
 }

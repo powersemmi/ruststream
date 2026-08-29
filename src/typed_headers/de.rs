@@ -1,4 +1,4 @@
-//! The serde deserializer behind [`Headers::to_typed`](crate::Headers::to_typed): a flat struct
+//! The serde deserializer behind [`HeaderMap::to_typed`](crate::HeaderMap::to_typed): a flat struct
 //! (or string-keyed map) reads one header per field, parsing the string-encoded value into
 //! whatever scalar the field expects.
 
@@ -9,15 +9,15 @@ use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, Visitor};
 use serde::forward_to_deserialize_any;
 
 use super::DeserializeHeadersError;
-use crate::headers::Headers;
+use crate::headers::HeaderMap;
 
 /// Top-level deserializer over a borrowed header map.
 pub(super) struct HeadersDeserializer<'de> {
-    headers: &'de Headers,
+    headers: &'de HeaderMap,
 }
 
 impl<'de> HeadersDeserializer<'de> {
-    pub(super) fn new(headers: &'de Headers) -> Self {
+    pub(super) fn new(headers: &'de HeaderMap) -> Self {
         Self { headers }
     }
 
@@ -74,7 +74,7 @@ impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
 /// Struct fields: walks the declared field list and yields only the headers that are present, so
 /// `Option` fields default to `None` and serde reports missing required fields by name.
 struct FieldAccess<'de> {
-    headers: &'de Headers,
+    headers: &'de HeaderMap,
     fields: std::slice::Iter<'static, &'static str>,
     pending: Option<(&'static str, &'de [u8])>,
 }
@@ -401,8 +401,8 @@ mod tests {
         }
     }
 
-    fn headers_with(value: impl Into<Bytes>) -> Headers {
-        let mut headers = Headers::new();
+    fn headers_with(value: impl Into<Bytes>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
         headers.insert("field", value);
         headers
     }
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn unknown_headers_are_ignored_rather_than_read() {
         // `IgnoredAny` is what serde uses for a field it decided to skip, at either level.
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("field", "value");
         headers.to_typed::<IgnoredAny>().unwrap();
 
@@ -509,7 +509,7 @@ mod tests {
         #[derive(Debug, Deserialize)]
         struct Wrapper(Nested);
 
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("inner", "3");
         let wrapper: Wrapper = headers.to_typed().unwrap();
         assert_eq!(wrapper.0.inner, 3);
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn a_map_contract_reads_every_header_as_an_entry() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("first", "1");
         headers.insert("second", "2");
 

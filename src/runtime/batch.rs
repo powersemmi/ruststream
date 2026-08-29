@@ -144,7 +144,7 @@ impl IntoBatchResult for Vec<HandlerResult> {
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a batch handler over `{T}`",
-    note = "a batch handler declaring FromHeaders<Vec<_>> implements SliceHandlerWithHeaders \
+    note = "a batch handler declaring Headers<Vec<_>> implements SliceHandlerWithHeaders \
             instead: mount it with include(..), which picks that form from the definition"
 )]
 pub trait SliceHandler<T, S = ()>: Send + Sync {
@@ -159,7 +159,7 @@ pub trait SliceHandler<T, S = ()>: Send + Sync {
 /// A handler invoked with one whole decoded batch and the typed headers of its elements.
 ///
 /// The counterpart of [`SliceHandler`] for a batch handler that declares
-/// `FromHeaders(meta): FromHeaders<Vec<H>>`. Headers are per-delivery, so the batch gets one
+/// `Headers(meta): Headers<Vec<H>>`. Headers are per-delivery, so the batch gets one
 /// contract per element: `headers[i]` belongs to `batch[i]`. The two slices are aligned by
 /// construction, because an element whose payload or headers fail to materialize is settled by
 /// the decode policy and never reaches the handler.
@@ -287,7 +287,7 @@ pub trait BatchDef: Sized {
 ///
 /// Adds the contract type to [`BatchDef`]; everything else (source, workers, failure policies,
 /// schemas) is inherited. Implemented by `#[subscriber(batch(..))]` for a handler that declares
-/// `FromHeaders(meta): FromHeaders<Vec<H>>`.
+/// `Headers(meta): Headers<Vec<H>>`.
 pub trait BatchWithHeadersDef: BatchDef {
     /// The header contract parsed from each element's headers.
     type Headers: DeserializeOwned + Send + Sync + 'static;
@@ -402,7 +402,7 @@ where
 
 /// The decode adapter for batch handlers that also read a typed header contract per element.
 ///
-/// The [`TypedBatch`] counterpart for the `FromHeaders(meta): FromHeaders<Vec<H>>` form: each
+/// The [`TypedBatch`] counterpart for the `Headers(meta): Headers<Vec<H>>` form: each
 /// element must both decode and satisfy the header contract to reach the handler, so the payload
 /// slice and the header slice stay index-aligned.
 pub struct TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner> {

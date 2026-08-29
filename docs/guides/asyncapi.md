@@ -45,7 +45,7 @@ raw-bytes messages are not reported), and `Spec::messages_without_schema()` list
 message components - assert it empty in a test to gate schema coverage in CI.
 
 Beyond payloads, the document also carries **headers schemas** (from a handler's
-`FromHeaders<T>` parameter or a type's declared `headers = ..` contract) and **`send`
+`Headers<T>` parameter or a type's declared `headers = ..` contract) and **`send`
 operations** for every declared outgoing message - the reply of a `publish(..)` form and every
 message type an `Out` slot declares. See [typed headers](headers.md).
 

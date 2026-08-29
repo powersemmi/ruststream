@@ -381,7 +381,7 @@ when it does not.
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
 use async_nats::jetstream::AckKind;
-use ruststream::{AckError, Headers, IncomingMessage};
+use ruststream::{AckError, HeaderMap, IncomingMessage};
 
 pub enum NatsMessage {
     Core(Box<CoreMessage>),
@@ -396,7 +396,7 @@ impl IncomingMessage for NatsMessage {
         }
     }
 
-    fn headers(&self) -> &Headers {
+    fn headers(&self) -> &HeaderMap {
         match self {
             Self::Core(m) => &m.headers,
             Self::JetStream(m) => &m.headers,
@@ -430,8 +430,8 @@ tracks the `async-nats` version:
 ```rust
 use bytes::Bytes;
 
-fn headers_from_nats(map: Option<&async_nats::HeaderMap>) -> Headers {
-    let mut headers = Headers::new();
+fn headers_from_nats(map: Option<&async_nats::HeaderMap>) -> HeaderMap {
+    let mut headers = HeaderMap::new();
     if let Some(map) = map {
         for (name, values) in map.iter() {
             if let Some(first) = values.iter().next() {
@@ -442,7 +442,7 @@ fn headers_from_nats(map: Option<&async_nats::HeaderMap>) -> Headers {
     headers
 }
 
-fn headers_to_nats(headers: &Headers) -> Option<async_nats::HeaderMap> {
+fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
     if headers.is_empty() {
         return None;
     }

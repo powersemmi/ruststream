@@ -93,7 +93,7 @@ fn reject_shape_combinations(
             ));
         }
     }
-    // With a FromHeaders parameter the decode policy still has a job on a raw handler: it
+    // With a Headers parameter the decode policy still has a job on a raw handler: it
     // settles a header contract that fails to parse.
     let has_from_headers = func
         .sig
@@ -108,7 +108,7 @@ fn reject_shape_combinations(
         return Err(Error::new_spanned(
             func.sig.inputs.first(),
             "on_failure(decode = ..) does not apply to an undecoded payload: this handler takes \
-             the bytes as delivered and declares no FromHeaders parameter; keep only \
+             the bytes as delivered and declares no Headers parameter; keep only \
              on_failure(panic = ..)",
         ));
     }
@@ -144,7 +144,7 @@ struct HandlerParts<'a> {
     /// Which settings the attribute fixed, as the builder's `(workers, failures, position)`
     /// state tuple.
     settings_state_ty: TokenStream2,
-    /// The `headers_schema()` def-method override lifted from the first `FromHeaders<T>`
+    /// The `headers_schema()` def-method override lifted from the first `Headers<T>`
     /// parameter's contract type, or empty when the handler takes none.
     headers_schema: TokenStream2,
 }
@@ -301,15 +301,15 @@ fn seek_param_type(ty: &Type) -> Option<&Type> {
     Some(seeker)
 }
 
-/// The contract type `T` of a `FromHeaders<T>`-shaped parameter type, when the type has that
-/// shape. Purely syntactic (the last path segment `FromHeaders` with exactly one type argument),
+/// The contract type `T` of a `Headers<T>`-shaped parameter type, when the type has that
+/// shape. Purely syntactic (the last path segment `Headers` with exactly one type argument),
 /// like the `Ctx<K>` probe below.
 fn from_headers_ty(ty: &Type) -> Option<&Type> {
     let Type::Path(path) = ty else {
         return None;
     };
     let segment = path.path.segments.last()?;
-    if segment.ident != "FromHeaders" {
+    if segment.ident != "Headers" {
         return None;
     }
     let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
@@ -327,7 +327,7 @@ fn from_headers_ty(ty: &Type) -> Option<&Type> {
 }
 
 /// The element type of a `Vec<T>`-shaped type, when the type has that shape. A batch handler's
-/// header contract arrives as one per element, so its parameter is spelled `FromHeaders<Vec<T>>`.
+/// header contract arrives as one per element, so its parameter is spelled `Headers<Vec<T>>`.
 fn vec_inner_ty(ty: &Type) -> Option<&Type> {
     let Type::Path(path) = ty else {
         return None;
@@ -350,7 +350,7 @@ fn vec_inner_ty(ty: &Type) -> Option<&Type> {
     Some(element)
 }
 
-/// The per-element header contract of a batch handler: the `H` of a `FromHeaders<Vec<H>>`
+/// The per-element header contract of a batch handler: the `H` of a `Headers<Vec<H>>`
 /// parameter, with the parameter's pattern so the expansion can rebind it.
 fn batch_headers_param<'a>(
     extractors: &[(&'a Pat, &'a Type)],
@@ -491,7 +491,7 @@ fn extractor_where(
 /// The `let` bindings that resolve each extractor from the context before the body runs. A failed
 /// extraction runs `reject` (a `return` settling the delivery by the rejection's `HandlerResult`).
 ///
-/// A `FromHeaders<T>` parameter takes the policy-aware path instead of the generic
+/// A `Headers<T>` parameter takes the policy-aware path instead of the generic
 /// [`FromContext`] call, and reads the policy off the delivery context rather than off the
 /// attribute: the effective materialization policy is the one the mount resolved, whether it was
 /// named in `on_failure(..)` or on the builder.
@@ -551,13 +551,13 @@ fn failure_step(args: &SubscriberArgs) -> TokenStream2 {
     }
 }
 
-/// Renders the def's `headers_schema()` override, rejecting `FromHeaders` on batch forms (a
+/// Renders the def's `headers_schema()` override, rejecting `Headers` on batch forms (a
 /// header contract is per-delivery; a batch spans many deliveries with as many header maps).
 ///
-/// The schema source: a `FromHeaders<T>` parameter wins (its contract is what the runtime
+/// The schema source: a `Headers<T>` parameter wins (its contract is what the runtime
 /// actually enforces); otherwise the input type's `#[message(headers(..))]` contract, when it
 /// declares one. Both use the same autoref-specialization probes as the payload schema. A raw
-/// handler has no typed input to carry a contract, so without a `FromHeaders` parameter it
+/// handler has no typed input to carry a contract, so without a `Headers` parameter it
 /// emits nothing.
 fn headers_schema_method(
     shape: Shape,
@@ -574,7 +574,7 @@ fn headers_schema_method(
         return Err(Error::new_spanned(
             ty,
             "headers are per-delivery and a batch spans many deliveries: take the per-element \
-             contracts as a vector, FromHeaders<Vec<_>>",
+             contracts as a vector, Headers<Vec<_>>",
         ));
     }
     // On a batch form the contract is declared per element, so the schema describes the element.
@@ -1339,7 +1339,7 @@ fn batch_handler_shape(
                 #state_in_ctx,
             >),
             quote!(__rs_headers: ::std::vec::Vec<#element_ty>,),
-            quote!(let #headers_pat: #headers_ty = ::ruststream::runtime::FromHeaders(__rs_headers);),
+            quote!(let #headers_pat: #headers_ty = ::ruststream::runtime::Headers(__rs_headers);),
             quote!(::ruststream::runtime::forms::BatchWithHeaders),
             quote! {
                 impl ::ruststream::runtime::BatchWithHeadersDef for #name {
@@ -1396,7 +1396,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
             quote!(__RsState),
         ),
     };
-    // The batch context is always `()`; extractors resolve against it. A `FromHeaders<Vec<H>>`
+    // The batch context is always `()`; extractors resolve against it. A `Headers<Vec<H>>`
     // parameter is the exception: the decode adapter parses one contract per element next to the
     // payload, so it is bound from the handler's own argument instead of through `FromContext`.
     let unit_ctx = quote!(());

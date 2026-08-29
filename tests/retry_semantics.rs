@@ -192,7 +192,7 @@ async fn retry_completes_inside_keyed_lanes() {
     let keyed_publish = |key: &'static str, id: u32| {
         let publisher = publisher.clone();
         async move {
-            let mut headers = ruststream::Headers::new();
+            let mut headers = ruststream::HeaderMap::new();
             headers.insert("partition-key", key);
             publisher
                 .raw(&order_bytes(id))

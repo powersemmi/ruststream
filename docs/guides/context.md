@@ -84,8 +84,8 @@ What the context exposes:
 | Method | Returns | Purpose |
 |---|---|---|
 | `name()` | `&str` | the channel / subject the message arrived on |
-| `headers()` | `&Headers` | the working copy of the message headers |
-| `headers_mut()` | `&mut Headers` | the same copy, for middleware to enrich |
+| `headers()` | `&HeaderMap` | the working copy of the message headers |
+| `headers_mut()` | `&mut HeaderMap` | the same copy, for middleware to enrich |
 | `state()` | `&S` | the typed shared application state, borrowed directly |
 | `context(KEY)` | `KEY::Value` | a [broker field](#per-delivery-context) read by compile-time key |
 | `set(KEY, v)` | `()` | write a per-delivery [scratch value](#per-delivery-context) (middleware) |

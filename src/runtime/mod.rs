@@ -51,7 +51,7 @@ pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublish
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
-pub use extract::{Ctx, FromContext, FromHeaders, FromRef, State};
+pub use extract::{Ctx, FromContext, FromRef, Headers, State};
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};

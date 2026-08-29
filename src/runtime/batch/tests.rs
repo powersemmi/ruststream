@@ -14,7 +14,7 @@ use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage};
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
-use crate::{AckError, Headers, Name, Subscriber, SubscriptionSource};
+use crate::{AckError, HeaderMap, Name, Subscriber, SubscriptionSource};
 
 #[tokio::test]
 async fn per_element_outcomes_settle_individually() {
@@ -37,7 +37,7 @@ async fn per_element_outcomes_settle_individually() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("selective", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
@@ -83,7 +83,7 @@ async fn per_element_continuations_run_after_settle() {
     let tasks = TaskTracker::new();
     let state = ();
     let delivery = Delivery::with_tasks(tasks.clone());
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("after-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handler.handle_batch(batch, &mut ctx).await;
@@ -115,7 +115,7 @@ async fn unmatched_remainder_is_retried() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("short", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
@@ -150,7 +150,7 @@ async fn per_element_outcomes_carry_delays() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("delayed", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handler.handle_batch(batch, &mut ctx).await;
@@ -177,7 +177,7 @@ async fn uniform_outcome_settles_the_whole_batch() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("uniform", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 2);
@@ -313,7 +313,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     let shutdown = ErrorShutdown::new(token.clone());
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx =
         Context::new("ff-batch", &headers, &state, (), &delivery).with_failfast(&shutdown);
     let batch = pull_batch(&mut sub).await;
@@ -340,9 +340,9 @@ impl IncomingMessage for UnsettleableMessage {
         b"0"
     }
 
-    fn headers(&self) -> &Headers {
-        static EMPTY: OnceLock<Headers> = OnceLock::new();
-        EMPTY.get_or_init(Headers::new)
+    fn headers(&self) -> &HeaderMap {
+        static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
+        EMPTY.get_or_init(HeaderMap::new)
     }
 
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
@@ -427,7 +427,7 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     });
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("diag-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handler.handle_batch(batch, &mut ctx).await;
@@ -488,7 +488,7 @@ async fn a_raw_batch_lends_the_payloads_and_settles_the_deliveries() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handler.handle_batch(batch, &mut ctx).await;
@@ -506,7 +506,7 @@ async fn an_empty_raw_batch_reaches_no_handler() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     handler
         .handle_batch(Vec::<MemoryMessage>::new(), &mut ctx)

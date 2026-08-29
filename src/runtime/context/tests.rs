@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures::future::join_all;
 
 use super::Context;
-use crate::Headers;
+use crate::HeaderMap;
 use crate::runtime::dispatch::Delivery;
 use crate::runtime::handler::HandlerResult;
 
@@ -45,7 +45,7 @@ fn outcome_kind_distinguishes_drop_retry_and_retry_after() {
 fn the_debug_forms_report_the_subscription_and_pending_work() {
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
 
     let rendered = format!("{ctx:?}");
@@ -65,7 +65,7 @@ fn the_debug_forms_report_the_subscription_and_pending_work() {
 fn take_hooks_runs_only_the_matching_gate() {
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("t", &headers, &state, (), &delivery);
 
     let acked = Arc::new(AtomicU32::new(0));
@@ -108,7 +108,7 @@ fn take_hooks_runs_only_the_matching_gate() {
 fn take_settle_hooks_drops_outcome_gated_ones() {
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("t", &headers, &state, (), &delivery);
 
     let gated = Arc::new(AtomicU32::new(0));
@@ -147,7 +147,7 @@ fn context_reads_typed_field_by_key() {
 
     let state = String::from("app");
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let ctx = Context::new("test", &headers, &state, Meta { offset: 42 }, &delivery);
 
     // The typed broker field is read by key, straight off the context.
@@ -181,7 +181,7 @@ fn set_writes_scratch_and_reads_it_back() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = Headers::new();
+    let headers = HeaderMap::new();
     let mut ctx = Context::new("test", &headers, &state, Scratch::default(), &delivery);
 
     assert_eq!(ctx.context(User), None);
@@ -191,7 +191,7 @@ fn set_writes_scratch_and_reads_it_back() {
 
 #[test]
 fn headers_clone_only_on_first_mutation() {
-    let mut original = Headers::new();
+    let mut original = HeaderMap::new();
     original.insert("k", "v");
     let state = ();
     let delivery = Delivery::empty();

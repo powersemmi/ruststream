@@ -38,7 +38,7 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName, Headers,
+    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName, HeaderMap,
     IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec,
     Subscribe, Subscriber, SubscriptionSource,
 };
@@ -59,7 +59,7 @@ type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 struct MemoryOutbound {
     name: String,
     payload: Bytes,
-    headers: Headers,
+    headers: HeaderMap,
 }
 
 /// A stamped message on its way to subscribers. The name and headers are shared, not owned:
@@ -69,7 +69,7 @@ struct MemoryOutbound {
 struct MemoryDelivery {
     name: Arc<str>,
     payload: Bytes,
-    headers: Arc<Headers>,
+    headers: Arc<HeaderMap>,
     /// Zero-based index of this message in its name's publish log. Stable across requeues, so
     /// a redelivered message reports the same [`MemoryPosition`].
     seq: usize,
@@ -798,11 +798,11 @@ impl IncomingMessage for MemoryMessage {
         crate::Partitioned::partition_key(self)
     }
 
-    fn headers(&self) -> &Headers {
-        static EMPTY: OnceLock<Headers> = OnceLock::new();
+    fn headers(&self) -> &HeaderMap {
+        static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
         self.delivery
             .as_ref()
-            .map_or_else(|| EMPTY.get_or_init(Headers::new), |d| &d.headers)
+            .map_or_else(|| EMPTY.get_or_init(HeaderMap::new), |d| &d.headers)
     }
 
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {

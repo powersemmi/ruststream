@@ -155,7 +155,7 @@ pub trait PublishingDef: Send + Sync {
     }
 
     /// The serialized JSON Schema of the handler's typed header contract (its
-    /// [`FromHeaders<T>`](super::FromHeaders) parameter), when `T` implements
+    /// [`Headers<T>`](super::Headers) parameter), when `T` implements
     /// [`schemars::JsonSchema`] and the `asyncapi` feature is on. The macro fills this in; the
     /// default omits it.
     fn headers_schema(&self) -> Option<String> {
@@ -317,7 +317,7 @@ mod tests {
     use std::future::ready;
 
     use super::{PublishingCall, PublishingDef, publishing_metadata};
-    use crate::Headers;
+    use crate::HeaderMap;
     use crate::Name;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
@@ -374,7 +374,7 @@ mod tests {
 
         let state = ();
         let delivery = Delivery::empty();
-        let headers = Headers::new();
+        let headers = HeaderMap::new();
         let mut ctx = Context::new("in", &headers, &state, (), &delivery);
         assert_eq!(def.call(&5, &(), &mut ctx).await.unwrap(), 5);
     }
@@ -398,7 +398,7 @@ mod tests {
         use crate::runtime::publish::{PublishIdentity, TypedPublisher};
         use crate::runtime::publishing::PublishingHandler;
         use crate::testkit::log_capture::{find, start};
-        use crate::{Headers, OutgoingMessage, Publisher, Subscriber};
+        use crate::{HeaderMap, OutgoingMessage, Publisher, Subscriber};
 
         /// Publishes `payload` to `name` and pulls the delivery back off the bus.
         async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
@@ -448,7 +448,7 @@ mod tests {
 
             let state = ();
             let delivery = Delivery::empty();
-            let headers = Headers::new();
+            let headers = HeaderMap::new();
             let mut ctx = Context::new("in", &headers, &state, (), &delivery);
 
             let (events, guard) = start();
@@ -482,7 +482,7 @@ mod tests {
 
             let state = ();
             let delivery = Delivery::empty();
-            let headers = Headers::new();
+            let headers = HeaderMap::new();
             let mut ctx = Context::new("in", &headers, &state, (), &delivery);
 
             let (events, guard) = start();

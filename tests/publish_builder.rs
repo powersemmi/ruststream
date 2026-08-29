@@ -12,8 +12,8 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::{TestApp, TestableBroker};
 use ruststream::{
-    Broker, Headers, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, Publisher, Transaction,
-    subscriber,
+    Broker, HeaderMap, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, Publisher,
+    Transaction, subscriber,
 };
 use serde::{Deserialize, Serialize};
 
@@ -110,7 +110,7 @@ async fn convert(
         return HandlerResult::retry();
     }
     // Bytes: the same shape without a codec position.
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("source", "jobs.in");
     if out
         .raw(b"frame")
@@ -327,7 +327,7 @@ async fn a_contract_less_message_still_carries_a_header_map() {
     let broker = MemoryBroker::new();
     let connected = broker.clone().connect().await.expect("connect");
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("x-trace", "abc");
     connected
         .publisher()
@@ -343,7 +343,7 @@ async fn a_contract_less_message_still_carries_a_header_map() {
 
 /// A publisher handle carrying an argument for every message it sends: the shape a broker
 /// adapter takes when the base reaches the builder.
-struct Tenanted<P>(P, Headers);
+struct Tenanted<P>(P, HeaderMap);
 
 impl<P: Publisher> Publisher for Tenanted<P> {
     type Error = P::Error;
@@ -352,7 +352,7 @@ impl<P: Publisher> Publisher for Tenanted<P> {
         self.0.publish(msg).await
     }
 
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         Some(&self.1)
     }
 }
@@ -366,7 +366,7 @@ impl<P: OwnedTransactions> OwnedTransactions for Tenanted<P> {
 }
 
 /// The transaction the tenanted handle opens: the same argument, on the buffered path.
-struct Tagged<T>(T, Headers);
+struct Tagged<T>(T, HeaderMap);
 
 impl<T: Transaction> Transaction for Tagged<T> {
     type Error = T::Error;
@@ -383,13 +383,13 @@ impl<T: Transaction> Transaction for Tagged<T> {
         self.0.abort().await
     }
 
-    fn base_headers(&self) -> Option<&Headers> {
+    fn base_headers(&self) -> Option<&HeaderMap> {
         Some(&self.1)
     }
 }
 
 /// The base a tenanted handle contributes to every publish.
-fn tenant_base() -> Headers {
+fn tenant_base() -> HeaderMap {
     [("tenant", "acme"), ("x-trace", "handle")]
         .into_iter()
         .collect()
@@ -402,7 +402,7 @@ async fn a_publisher_without_a_base_sends_only_the_call_sites_headers() {
     let broker = MemoryBroker::new();
     let connected = broker.clone().connect().await.expect("connect");
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("x-trace", "call");
     connected
         .publisher()
@@ -444,7 +444,7 @@ async fn the_call_site_wins_over_the_handles_base_key_by_key() {
         .await
         .expect("the base alone");
 
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("x-trace", "call");
     headers.insert("x-request-id", "r-1");
     publisher
@@ -516,7 +516,7 @@ async fn a_transaction_carries_its_own_base_under_the_call_site() {
         .publish()
         .await
         .expect("the base alone, buffered");
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     headers.insert("x-trace", "call");
     txn.raw(b"ledger")
         .to("audit.ledger")
