@@ -17,10 +17,10 @@ use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    BatchDef, BatchResult, BatchWithHeadersDef, BindSlots, ContainsMessage, Decoded, HasSlots,
-    IncludeDef, InjectCall, InjectDef, IntoBatchResult, OutMessages, OutgoingMessageMetadata,
-    PublishedThrough, PublishingCall, PublishingDef, RawBytes, Settle, SliceHandlerWithHeaders,
-    SlotPos, SlotPublisher, forms,
+    BatchDef, BatchWithHeadersDef, BindSlots, ContainsMessage, Decoded, HasSlots, IncludeDef,
+    InjectCall, InjectDef, IntoBatchResult, OutMessages, OutgoingMessageMetadata, PublishedThrough,
+    PublishingCall, PublishingDef, RawBytes, SliceHandlerWithHeaders, SlotPos, SlotPublisher,
+    forms,
 };
 use ruststream::schemars::{JsonSchema, schema_for};
 use ruststream::testing::TestApp;
@@ -152,6 +152,9 @@ impl PublishedThrough<Events> for Progress {}
 // mount site attaches, and the declared message set rides in the injection type - destinations come
 // from each type's declaration, headers from its contract, so `Progress` publishes bare and
 // `ChunkDone` does not compile without `.with_headers(&meta)`.
+//
+// `with_slots(source, body)` covers the decoded slot form; this handler borrows the payload
+// undecoded and declares the headers schema itself, so it writes the definition traits out.
 // --8<-- [start:handler]
 #[derive(Clone, Copy)]
 struct Convert;
@@ -260,6 +263,9 @@ where
 // attribute's `publish("jobs.status")` clause names the destination, the definition names it in
 // `reply_name` and lists the send operation in `outgoing`. At runtime reply headers stay with
 // `PublishTransform`, which can serialize a contract with `headers_mut().insert_typed(&meta)`.
+//
+// `replying(source, body).to(..)` covers the reply form itself, but its `documented` opt-in reports
+// payload schemas only; a send operation carrying a headers schema is declared by the definition.
 // --8<-- [start:reply]
 #[derive(Deserialize, JsonSchema)]
 struct StatusRequest {
@@ -338,7 +344,8 @@ impl<State: Send + Sync> PublishingCall<State> for Status {
 // Headers stay per-delivery on a batch too, so the contracts arrive as one per element: the batch
 // handler trait takes them as a second argument (this is what a `Headers<Vec<ChunkMeta>>` parameter
 // selects), the two slices line up index for index, and an element failing either the payload decode
-// or the contract is settled by the decode policy instead of reaching the handler.
+// or the contract is settled by the decode policy instead of reaching the handler. The batch form
+// with a headers contract has no value constructor, so it stays on the definition traits.
 // --8<-- [start:batch]
 struct Bulk;
 

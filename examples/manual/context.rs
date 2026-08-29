@@ -12,10 +12,9 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, Identity, Layer, Settle, Stack, typed};
+use ruststream::runtime::{Decoded, Identity, IncludeDef, Layer, Stack, SubscriberDef, forms};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +73,29 @@ impl Handler<Order, (), AppConfig> for Handle {
         ready(HandlerResult::Ack.into())
     }
 }
+
+// The `subscriber(source, handler)` constructor binds a handler over the unit state, so a handler
+// that reads a typed state through `ctx.state()` names its own definition instead: `SubscriberDef`
+// says what to run and on which source, `IncludeDef` names the mounting machinery, and `include`
+// reads both exactly as it reads a generated definition.
+impl SubscriberDef for Handle {
+    type Input = Decoded<Order>;
+    type Context = ();
+    type Handler = Self;
+    type Source = Name;
+
+    fn source(&self) -> Name {
+        Name::new("orders")
+    }
+
+    fn into_handler(self) -> Self {
+        self
+    }
+}
+
+impl IncludeDef for Handle {
+    type Form = forms::Subscribing;
+}
 // --8<-- [end:handler]
 
 // --8<-- [start:enrich]
@@ -110,9 +132,8 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 
 // --8<-- [start:app]
 // `on_startup` fixes the app's state type to `AppConfig`; `.layer` then grows the global stack.
-// `subscribe` mounts the handler: the source resolves at startup, `typed` names the codec the
-// declaration site would have carried, and the metadata records what the attribute would have
-// captured from the signature.
+// `include` mounts the definition: the source resolves at startup, and the scope codec (here the
+// default) decodes.
 fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
     RustStream::new(AppInfo::new("context", "0.1.0"))
         .on_startup(async move |()| {
@@ -122,11 +143,7 @@ fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
         })
         .layer(RequestId)
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(Handle);
         })
 }
 

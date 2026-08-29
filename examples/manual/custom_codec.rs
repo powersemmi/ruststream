@@ -1,6 +1,6 @@
 //! A wrapper codec without the `macros` feature: the envelope itself is plain trait work, and the
-//! levels it mounts at collapse into the two the hand-written path has - the `typed` call on the
-//! decode side, the handler's own encoder on the publish side.
+//! levels it mounts at collapse into the two the hand-written path has - the `codec(..)` step on
+//! the decode side, the handler's own encoder on the publish side.
 //!
 //! ```text
 //! cargo run --example manual_custom_codec --no-default-features --features memory,json,cbor
@@ -13,7 +13,6 @@ use bytes::BytesMut;
 use ruststream::codec::{CborCodec, Codec, CodecError, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, Settle, typed};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -145,33 +144,24 @@ fn app() -> RustStream {
     let info = AppInfo::new("custom-codec", "0.1.0");
     // --8<-- [start:mount]
     RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
-        // per subscription: the codec is an argument, so two handlers on one broker frame their
-        // payloads differently without a scope or a router to separate them
-        b.subscribe(
-            Name::new("orders"),
-            typed(Envelope::new(JsonCodec), Handle),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
-        b.subscribe(
-            Name::new("audit"),
-            typed(Envelope::new(CborCodec), Audit),
-            HandlerMetadata::typed::<Order>("audit"),
-        );
+        // per subscription: the codec is a step on the definition, so two handlers on one broker
+        // frame their payloads differently without a scope or a router to separate them
+        b.include(subscriber("orders", Handle).codec(Envelope::new(JsonCodec)));
+        b.include(subscriber("audit", Audit).codec(Envelope::new(CborCodec)));
         // per publisher: the reply leaves under the envelope, the request still arrives under the
         // subscription's own codec. The in-memory broker hands out a live publisher synchronously;
         // a networked broker resolves one at startup instead, and the handler reads it off the
         // application state.
         let receipts = b.broker().publisher();
-        b.subscribe(
-            Name::new("billing"),
-            typed(
-                Envelope::new(JsonCodec),
+        b.include(
+            subscriber(
+                "billing",
                 Bill {
                     receipts,
                     codec: Envelope::new(JsonCodec),
                 },
-            ),
-            HandlerMetadata::typed::<Order>("billing"),
+            )
+            .codec(Envelope::new(JsonCodec)),
         );
     })
     // --8<-- [end:mount]

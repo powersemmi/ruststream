@@ -8,10 +8,9 @@
 //! cargo run --example manual_ctx_extractor --no-default-features --features testing,memory,json
 //! ```
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::prelude::*;
-use ruststream::runtime::{FromContext, Handler, HandlerMetadata, Settle, typed};
+use ruststream::runtime::{Decoded, FromContext, IncludeDef, SubscriberDef, forms};
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, ContextField};
 use serde::{Deserialize, Serialize};
@@ -70,17 +69,35 @@ impl Handler<Order, DeliveryMeta> for Audit {
         HandlerResult::Ack.into()
     }
 }
+
+// The value constructors fix the broker context to `()`, so a handler reading a real one names its
+// own definition: `Context` is where the attribute's projection from the key ends up, and `include`
+// builds that context per delivery.
+impl SubscriberDef for Audit {
+    type Input = Decoded<Order>;
+    type Context = DeliveryMeta;
+    type Handler = Self;
+    type Source = Name;
+
+    fn source(&self) -> Name {
+        Name::new("orders")
+    }
+
+    fn into_handler(self) -> Self {
+        self
+    }
+}
+
+impl IncludeDef for Audit {
+    type Form = forms::Subscribing;
+}
 // --8<-- [end:handler]
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app =
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Audit),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(Audit);
         });
 
     let tb = TestApp::start(app).await?;

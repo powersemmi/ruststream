@@ -11,12 +11,9 @@ use common::wait_for;
 
 use std::time::Duration;
 
-use ruststream::Name;
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RustStream,
-};
+use ruststream::prelude::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consume_metrics_are_recorded() {
@@ -27,11 +24,9 @@ async fn consume_metrics_are_recorded() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(metrics.consume_layer())
         .with_broker(broker, |b| {
-            b.subscribe(
-                Name::new("pings"),
-                |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-                HandlerMetadata::raw("pings"),
-            );
+            b.include(raw("pings", |_msg: &[u8], _ctx: &mut Context| async {
+                HandlerResult::Ack
+            }));
         });
 
     let running = app.start().await.expect("startup failed");
@@ -69,11 +64,13 @@ async fn consume_metrics_are_recorded_through_a_router() {
     // router-mounted handler, whose concrete type the router hides. That works only because
     // `MetricsLayer` implements `BlanketLayer`.
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_router(Router::new().layer(metrics.consume_layer()).subscribe(
-            Name::new("pings"),
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-            HandlerMetadata::raw("pings"),
-        ));
+        b.include_router(
+            Router::new()
+                .layer(metrics.consume_layer())
+                .include(raw("pings", |_msg: &[u8], _ctx: &mut Context| async {
+                    HandlerResult::Ack
+                })),
+        );
     });
 
     let running = app.start().await.expect("startup failed");
@@ -106,8 +103,7 @@ mod publish {
     use super::{Duration, wait_for};
     use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::metrics::Metrics;
-    use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
-    use ruststream::{Broker, subscriber};
+    use ruststream::prelude::*;
 
     #[subscriber("requests", publish("responses"))]
     async fn reply(req: &Req) -> Resp {

@@ -9,24 +9,18 @@ mod orders;
 
 use std::error::Error;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{HandlerMetadata, typed};
 
 // --8<-- [start:reply]
-use crate::orders::{Confirm, Handle, Order};
+use crate::orders::{Confirm, Handle};
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Handle),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
-        // The reply definition carries its own subject, and with no `.publisher(..)` chained the
-        // reply leaves through the broker's default publisher.
-        b.include(Confirm);
+        b.include(subscriber("orders", Handle));
+        // The reply names its destination on the chain, and with no `.publisher(..)` chained
+        // the reply leaves through the broker's default publisher.
+        b.include(replying("orders", Confirm).to("confirmations"));
     })
 }
 

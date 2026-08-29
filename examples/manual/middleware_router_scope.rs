@@ -6,7 +6,7 @@
 //! `middleware_app_scope.rs` for the other side).
 //!
 //! `Router` and its `layer` are plain runtime API, so the layer below is the same one the macro
-//! version uses; a router groups hand-written registrations through the same `subscribe` method a
+//! version uses; a router groups hand-written definitions through the same `include` method a
 //! broker scope has.
 //!
 //! ```text
@@ -16,12 +16,9 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    BlanketLayer, Handler, HandlerMetadata, Layer, RouterDef, Settle, typed,
-};
+use ruststream::runtime::{BlanketLayer, Layer};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -97,28 +94,16 @@ fn routes() -> impl RouterDef<MemoryBroker> {
     Router::new()
         .layer(LogLayer)
         // wrapped by LogLayer
-        .subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Orders),
-            HandlerMetadata::typed::<Order>("orders"),
-        )
+        .include(subscriber("orders", Orders))
         // wrapped by LogLayer
-        .subscribe(
-            Name::new("shipments"),
-            typed(JsonCodec, Shipments),
-            HandlerMetadata::typed::<Order>("shipments"),
-        )
+        .include(subscriber("shipments", Shipments))
 }
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("router-scope", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(routes());
         // directly on the scope: outside the router's stack
-        b.subscribe(
-            Name::new("audit"),
-            typed(JsonCodec, Audit),
-            HandlerMetadata::typed::<Order>("audit"),
-        );
+        b.include(subscriber("audit", Audit));
     })
 }
 // --8<-- [end:router_scope]

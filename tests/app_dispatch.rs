@@ -13,11 +13,8 @@ use std::{
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerResult, Layer, PublishExt,
-    Router, RustStream, Settle,
-};
-use ruststream::{Name, Publisher};
+use ruststream::prelude::*;
+use ruststream::runtime::{BlanketLayer, HandlerMetadata, Layer};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -239,17 +236,13 @@ async fn app_subscribes_via_descriptor_after_connect() {
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0")).with_broker(broker, |b| {
-        b.subscribe(
-            Name::new("events"),
-            move |_msg: &_, _ctx: &mut Context| {
-                let seen = Arc::clone(&seen_clone);
-                async move {
-                    seen.fetch_add(1, Ordering::SeqCst);
-                    HandlerResult::Ack
-                }
-            },
-            HandlerMetadata::raw("events"),
-        );
+        b.include(raw("events", move |_msg: &[u8], _ctx: &mut Context| {
+            let seen = Arc::clone(&seen_clone);
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                HandlerResult::Ack
+            }
+        }));
     });
 
     let run = BackgroundRun::spawn(app);
@@ -269,17 +262,16 @@ async fn included_router_handlers_dispatch() {
     let seen_clone = Arc::clone(&seen);
 
     // Router defined independently of any live broker, then mounted. Consuming builder.
-    let router = Router::<MemoryBroker>::new().subscribe(
-        Name::new("events"),
-        move |_msg: &_, _ctx: &mut Context| {
+    let router = Router::<MemoryBroker>::new().include(raw(
+        "events",
+        move |_msg: &[u8], _ctx: &mut Context| {
             let seen = Arc::clone(&seen_clone);
             async move {
                 seen.fetch_add(1, Ordering::SeqCst);
                 HandlerResult::Ack
             }
         },
-        HandlerMetadata::raw("events"),
-    );
+    ));
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -301,17 +293,16 @@ async fn global_layer_reaches_router_handlers() {
     let handler_hits_clone = Arc::clone(&handler_hits);
 
     // The app-global stack must reach handlers mounted through include_router.
-    let router = Router::<MemoryBroker>::new().subscribe(
-        Name::new("events"),
-        move |_msg: &_, _ctx: &mut Context| {
+    let router = Router::<MemoryBroker>::new().include(raw(
+        "events",
+        move |_msg: &[u8], _ctx: &mut Context| {
             let handler_hits = Arc::clone(&handler_hits_clone);
             async move {
                 handler_hits.fetch_add(1, Ordering::SeqCst);
                 HandlerResult::Ack
             }
         },
-        HandlerMetadata::raw("events"),
-    );
+    ));
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .layer(CountLayer(Arc::clone(&layer_hits)))
@@ -383,17 +374,13 @@ async fn cross_broker_publish_via_captured_publisher() {
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
         .with_broker(ingress, |b| {
             let out = egress_pub.clone();
-            b.subscribe(
-                Name::new("orders"),
-                move |_msg: &_, _ctx: &mut Context| {
-                    let out = out.clone();
-                    async move {
-                        let _ = out.raw(b"reply").to("responses").publish().await;
-                        HandlerResult::Ack
-                    }
-                },
-                HandlerMetadata::raw("orders"),
-            );
+            b.include(raw("orders", move |_msg: &[u8], _ctx: &mut Context| {
+                let out = out.clone();
+                async move {
+                    let _ = out.raw(b"reply").to("responses").publish().await;
+                    HandlerResult::Ack
+                }
+            }));
         })
         .with_broker(egress, |b| {
             let subscriber = b.broker().subscribe("responses");

@@ -19,11 +19,10 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 use ruststream::runtime::layers::TracingLayer;
-use ruststream::runtime::{Handler, HandlerMetadata, Identity, RouterDef, Settle, Stack, typed};
+use ruststream::runtime::{Identity, Stack};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -63,16 +62,8 @@ impl Handler<Order> for Reject {
 // --8<-- [start:layered_router]
 fn routes() -> impl RouterDef<MemoryBroker> {
     Router::new()
-        .subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Confirm),
-            HandlerMetadata::typed::<Order>("orders"),
-        )
-        .subscribe(
-            Name::new("returns"),
-            typed(JsonCodec, Reject),
-            HandlerMetadata::typed::<Order>("returns"),
-        )
+        .include(subscriber("orders", Confirm))
+        .include(subscriber("returns", Reject))
 }
 // --8<-- [end:layered_router]
 

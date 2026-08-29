@@ -1,7 +1,7 @@
-//! Repositioning live subscriptions without the `macros` feature: the definitions the attribute
-//! would generate, written out. The `Seek` parameter is a startup injection the runtime resolves
-//! off the subscription, and `start_at(..)` is a builder step on the declaration, so both are
-//! trait impls on a named type here.
+//! Repositioning live subscriptions without the `macros` feature: `start_at(..)` is a settings
+//! step chained on the mount, and the `Seek` parameter is a startup injection the runtime resolves
+//! off the subscription - the one form with no value constructor, so it stays on the definition
+//! traits.
 //!
 //! ```text
 //! cargo run --example manual_seek --no-default-features --features memory,json
@@ -11,13 +11,10 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
+use ruststream::Seeker;
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    Declared, Decoded, Fixed, Handler, IncludeDef, InjectCall, InjectDef, Open, Settle,
-    SubscriberBuilder, SubscriberDef, SubscriberSettings, forms,
-};
-use ruststream::{Seeker, StartAt};
+use ruststream::runtime::{Decoded, IncludeDef, InjectCall, InjectDef, forms};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
@@ -28,7 +25,8 @@ struct Job {
 
 // --8<-- [start:start_at]
 /// The audit trail: its subscription opens at the start of the log, so entries published
-/// before the service started are replayed into it.
+/// before the service started are replayed into it. The position itself is a settings step, so
+/// it is named where the handler is mounted, exactly as `workers` or `on_failure` would be.
 struct Record;
 
 impl Handler<Job> for Record {
@@ -37,36 +35,6 @@ impl Handler<Job> for Record {
     fn handle(&self, entry: &Job, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
         println!("audit: entry {}", entry.id);
         ready(HandlerResult::ack().into())
-    }
-}
-
-impl SubscriberDef for Record {
-    type Input = Decoded<Job>;
-    type Context = ();
-    type Handler = Self;
-    type Source = MemorySource;
-
-    fn source(&self) -> MemorySource {
-        MemorySource::new("audit")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-/// The start position is a settings step over the definition, and `start_at(..)` in the
-/// attribute is this chain: it decorates the source with [`StartAt`], which is what the state
-/// tuple records as `Fixed`. A definition declaring no settings implements
-/// [`IncludeDef`](ruststream::runtime::IncludeDef) instead and gets `Declared` for free, the way
-/// `Work` below does.
-impl Declared for Record {
-    type Form = forms::Subscribing;
-    type Settings =
-        SubscriberBuilder<Self, StartAt<MemorySource, MemoryPosition>, (Open, Open, Fixed)>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, MemorySource::new("audit")).start_at(MemoryPosition::start())
     }
 }
 // --8<-- [end:start_at]
@@ -82,7 +50,8 @@ impl IncludeDef for Work {
 
 /// A handler taking injected parameters is an `InjectDef` rather than a plain `SubscriberDef`:
 /// the injection tuple names what the runtime prepares once the subscription opens, and
-/// `Seek<MemorySeeker>` resolves off the subscriber itself, so the body holds a live seeker.
+/// `Seek<MemorySeeker>` resolves off the subscriber itself, so the body holds a live seeker. No
+/// value constructor covers this form, so it is one of the few written out in full.
 impl InjectDef for Work {
     type Input = Decoded<Job>;
     type Context = ();
@@ -129,12 +98,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --8<-- [start:mount]
-    // Both mount plainly: the runtime mints the seek handler's seeker off its subscription
-    // right after it opens, and the declaration's start position seeks the audit one before its
-    // first delivery.
+    // The runtime mints the seek handler's seeker off its subscription right after it opens, and
+    // the chained start position seeks the audit one before its first delivery.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
         b.include(Work);
-        b.include(Record);
+        b.include(subscriber(MemorySource::new("audit"), Record).start_at(MemoryPosition::start()));
     });
     // --8<-- [end:mount]
     let running = app.start().await?;

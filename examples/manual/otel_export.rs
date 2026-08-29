@@ -17,14 +17,11 @@ use std::process::ExitCode;
 use opentelemetry::KeyValue;
 use opentelemetry::global;
 use opentelemetry::metrics::Counter;
-use ruststream::Name;
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::Otel;
+use ruststream::prelude::*;
 use ruststream::runtime::cli::run_main;
-use ruststream::runtime::{
-    App, AppInfo, Context, Handler, HandlerMetadata, HandlerResult, RustStream, Settle, typed,
-};
+use ruststream::runtime::{Decoded, IncludeDef, SubscriberDef, forms};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +65,27 @@ impl Handler<Order, (), AppState> for Accept {
         ready(HandlerResult::ack().into())
     }
 }
+
+// The `subscriber(source, handler)` constructor binds a handler over the unit state, so one reading
+// the typed `AppState` names its own definition instead; `include` mounts it the same way.
+impl SubscriberDef for Accept {
+    type Input = Decoded<Order>;
+    type Context = ();
+    type Handler = Self;
+    type Source = Name;
+
+    fn source(&self) -> Name {
+        Name::new("orders")
+    }
+
+    fn into_handler(self) -> Self {
+        self
+    }
+}
+
+impl IncludeDef for Accept {
+    type Form = forms::Subscribing;
+}
 // --8<-- [end:business_metric]
 
 // --8<-- [start:init]
@@ -90,11 +108,7 @@ fn app(otel: &Otel) -> impl App + use<> {
             })
         })
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Accept),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(Accept);
         })
 }
 

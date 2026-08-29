@@ -1,9 +1,9 @@
 //! The publishing forms from the Publishing guide, written without the `macros` feature. The
-//! attribute and the derives are sugar over public traits, so every declaration they mint is
-//! written out here: the reply definitions, the slot markers and their dictionaries, the
-//! injected `Out` parameters, and what a message type says about being sent. The mount site
-//! then reads exactly as it does with the attribute - `include`, `.publisher(..)`,
-//! `.out(marker, ..)`, `.mount()`.
+//! attribute and the derives are sugar over public value constructors and traits, so every
+//! declaration they mint is written out here: the reply bodies, the slot markers and their
+//! dictionaries, and what a message type says about being sent. The mount site then reads
+//! exactly as it does with the attribute - `include`, `.publisher(..)`, `.out(marker, ..)`,
+//! `.mount()`.
 //!
 //! ```text
 //! cargo run --example manual_publishing --no-default-features --features memory,json
@@ -12,36 +12,24 @@
 use std::error::Error;
 use std::fmt::Display;
 use std::future::{Future, ready};
-use std::marker::PhantomData;
 
-use ruststream::codec::{Codec, JsonCodec};
+use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    AllOpen, BatchPublishingCall, BatchPublishingDef, BindSlots, BoundSegment, Declared, Decoded,
-    DefaultSlot, HasSlots, InjectCall, InjectDef, MissingSegment, OutMessages,
-    OutgoingMessageMetadata, PublishAt, PublishContext, PublishError, PublishLayer, PublishNext,
-    PublishPipeline, PublishTransform, PublishedThrough, PublishingCall, PublishingDef, Settle,
-    SlotPublisher, SubscriberBuilder, TemplateAddress, Transactional, forms,
+    BoundSegment, MissingSegment, OutMessages, OutgoingMessageMetadata, PublishAt, PublishContext,
+    PublishError, PublishLayer, PublishNext, PublishPipeline, PublishTransform, PublishedThrough,
+    TemplateAddress, Transactional,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::Outgoing;
 use ruststream::{
-    CallerName, ConnectedBroker, FixedName, MessageHeaders, NameTemplate, NoHeaders,
-    OutgoingDestination, TransactionalPublisher,
+    CallerName, FixedName, MessageHeaders, NameTemplate, NoHeaders, OutgoingDestination,
+    TransactionalPublisher,
 };
 use serde::{Deserialize, Serialize};
-
-// What the definition traits are not asked for here: the description a doc comment would carry,
-// the payload and header schemas the `asyncapi` probes lift off the types, and the `Message`
-// name. Every one of them defaults to "not declared", so a hand-written definition fills in only
-// what it actually declares - below, that is `outgoing()`: the messages that leave.
-
-/// The whole content of a definition generic over its slot publishers: the inferred types and
-/// nothing else, so the definition stays a zero-sized value the mount site builds for free.
-type SlotTypes<T> = PhantomData<fn() -> T>;
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -76,57 +64,20 @@ impl<M: OutSlot> OutMessages<M> for Event {
 }
 
 // --8<-- [start:reply]
-// A `publish(..)` handler is a definition, not a function: the subscription source, the reply
-// destination and the reply type live on `PublishingDef`, and the body moves to `PublishingCall`.
-// The call stays generic over the state, so it mounts on an app with any state type.
+// A `publish(..)` handler is a body producing a reply: `impl Reply` carries it, and the mount
+// site names the subscription, the destination and the publisher the reply leaves through. The
+// impl stays generic over the state, so it mounts on an app with any state type.
 struct Respond;
 
-// What the attribute puts between the definition and `include`: the mount form it dispatches on,
-// and the settings builder the mount actually drives. Everything the attribute would have named
-// (`workers(..)`, `on_failure(..)`) is a call on that builder, so leaving them out here is what
-// keeps them open at the mount site. The source is written twice, exactly as the attribute writes
-// it: the builder carries the one the mount reads, and the definition keeps its own so it stands
-// alone.
-impl Declared for Respond {
-    type Form = forms::Publishing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+impl Reply<Request> for Respond {
+    type Out = Response;
 
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("requests"))
-    }
-}
-
-impl PublishingDef for Respond {
-    type Input = Decoded<Request>;
-    type Injections = ();
-    type Reply = Response;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("requests")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "responses"
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        vec![OutgoingMessageMetadata::new(
-            "responses",
-            std::any::type_name::<Response>(),
-        )]
-    }
-}
-
-impl<State: Send + Sync> PublishingCall<State> for Respond {
-    // The body awaits nothing, so it is a future-returning method rather than an `async fn`: the
-    // attribute picks the same shape from the body it wraps.
-    fn call(
+    // The body awaits nothing, so it is a future-returning method rather than an `async fn`: a
+    // body that awaits writes `async fn reply` instead.
+    fn reply(
         &self,
         req: &Request,
-        _injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Response, HandlerResult>> + Send {
         println!("responding to request {}", req.id);
         ready(Ok(Response { ok: true }))
@@ -136,49 +87,16 @@ impl<State: Send + Sync> PublishingCall<State> for Respond {
 
 // --8<-- [start:reply_result]
 // `Ok` publishes the reply and acks; `Err` publishes nothing and the dispatcher acts on the
-// returned HandlerResult (here: drop the malformed request instead of replying). The two arms are
-// the call's return type, so the attribute's `Result<Response, HandlerResult>` is what the trait
-// already asks for.
+// returned HandlerResult (here: drop the malformed request instead of replying).
 struct Validate;
 
-impl Declared for Validate {
-    type Form = forms::Publishing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+impl Reply<Request> for Validate {
+    type Out = Response;
 
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("validated-requests"))
-    }
-}
-
-impl PublishingDef for Validate {
-    type Input = Decoded<Request>;
-    type Injections = ();
-    type Reply = Response;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("validated-requests")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "responses"
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        vec![OutgoingMessageMetadata::new(
-            "responses",
-            std::any::type_name::<Response>(),
-        )]
-    }
-}
-
-impl<State: Send + Sync> PublishingCall<State> for Validate {
-    fn call(
+    fn reply(
         &self,
         req: &Request,
-        _injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Response, HandlerResult>> + Send {
         ready(if req.id == 0 {
             Err(HandlerResult::drop())
@@ -190,78 +108,27 @@ impl<State: Send + Sync> PublishingCall<State> for Validate {
 // --8<-- [end:reply_result]
 
 // --8<-- [start:forward]
-// The publisher arrives as an injection: the source is attached at the include site, the runtime
-// pairs it with the connected broker at startup, and the handler always holds a live publisher -
-// no registry, no erased lookup, no state plumbing. The publisher type is not named, so the value
-// the include site attaches decides it; that is why the definition lives on a second, generic
-// type, and the unit struct passed to `include` only carries the slot list and the instantiation.
-// `Event` declares no destination of its own, so the call site names one.
+// The publisher arrives as an injection: the policy is attached at the include site, the runtime
+// pairs it with the connected broker at startup, and the body always holds a live publisher - no
+// registry, no erased lookup, no state plumbing. The publisher type is not named: the body is
+// generic over it (and over the scope codec the slot carries), stating just the capability it
+// needs, so the same body mounts on a production broker and its in-process test transport
+// unchanged. `Event` declares no destination of its own, so the call site names one.
 struct Forward;
 
-impl Declared for Forward {
-    type Form = forms::Out;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("ingress"))
-    }
-}
-
-impl HasSlots for Forward {
-    type Markers = (DefaultSlot,);
-}
-
-impl<Conn, Enc, Policy> BindSlots<Conn, ((Policy, Enc),)> for Forward
+impl<P, E, S> SlotsHandler<Event, (Out<P, DefaultSlot, (), E>,), (), S> for Forward
 where
-    Conn: ConnectedBroker,
-    Policy: PublishPolicy<Conn>,
+    P: Publisher,
+    E: ruststream::codec::Codec + Send + Sync,
+    S: Send + Sync,
 {
-    type Bound = ForwardDef<SlotPublisher<Policy::Live, DefaultSlot>, Enc>;
-    type Extra = ((Policy, Enc),);
-
-    fn bind(self, sources: ((Policy, Enc),)) -> (Self::Bound, Self::Extra) {
-        (ForwardDef(PhantomData), sources)
-    }
-}
-
-/// The definition the slot publisher and the scope codec are threaded into. It is never
-/// constructed with a value in it: the injected publisher reaches the body through the
-/// injections tuple, and the generics only pin its type.
-struct ForwardDef<Egress, Enc>(SlotTypes<(Egress, Enc)>);
-
-impl<Egress, Enc> InjectDef for ForwardDef<Egress, Enc>
-where
-    Egress: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    type Input = Decoded<Event>;
-    type Context = ();
-    type Source = Name;
-    type Injections = (Out<Egress, DefaultSlot, (), Enc>,);
-
-    fn source(&self) -> Self::Source {
-        Name::new("ingress")
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        // An unrestricted slot declares its marker's whole dictionary; the implicit one has none.
-        <DefaultSlot as OutSlot>::outgoing()
-    }
-}
-
-impl<State, Egress, Enc> InjectCall<State> for ForwardDef<Egress, Enc>
-where
-    State: Send + Sync,
-    Egress: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    async fn call(
+    async fn handle(
         &self,
         event: &Event,
-        injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        slots: &(Out<P, DefaultSlot, (), E>,),
+        _ctx: &mut Context<'_, (), S>,
     ) -> Settle {
-        let Out(out) = &injections.0;
+        let Out(out) = &slots.0;
         if out.message(event).to("egress").publish().await.is_err() {
             return HandlerResult::retry().into();
         }
@@ -271,11 +138,9 @@ where
 // --8<-- [end:forward]
 
 // --8<-- [start:slots]
-// A handler with several injected publishers names a slot marker per parameter; the include
-// site binds each marker to its own policy, in any order. No broker publisher type appears in
-// the definition, so the same handler mounts on a production broker and on its in-process test
-// transport unchanged. Each marker lists what may leave through it, which is both what the
-// generated document reports and what the publish builder admits.
+// A body with several injected publishers names a slot marker per parameter; the include site
+// binds each marker to its own policy, in any order. Each marker lists what may leave through
+// it, which is both what the generated document reports and what the publish builder admits.
 struct Primary;
 
 impl OutSlot for Primary {
@@ -302,83 +167,22 @@ impl PublishedThrough<Shadow> for Event {}
 
 struct Mirror;
 
-impl Declared for Mirror {
-    type Form = forms::Out;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("mirror"))
-    }
-}
-
-impl HasSlots for Mirror {
-    type Markers = (Primary, Shadow);
-}
-
-impl<Conn, Enc, PrimaryPolicy, ShadowPolicy>
-    BindSlots<Conn, ((PrimaryPolicy, Enc), (ShadowPolicy, Enc))> for Mirror
+impl<P1, P2, E, S> SlotsHandler<Event, (Out<P1, Primary, (), E>, Out<P2, Shadow, (), E>), (), S>
+    for Mirror
 where
-    Conn: ConnectedBroker,
-    PrimaryPolicy: PublishPolicy<Conn>,
-    ShadowPolicy: PublishPolicy<Conn>,
+    P1: Publisher,
+    P2: Publisher,
+    E: ruststream::codec::Codec + Send + Sync,
+    S: Send + Sync,
 {
-    type Bound = MirrorDef<
-        SlotPublisher<PrimaryPolicy::Live, Primary>,
-        SlotPublisher<ShadowPolicy::Live, Shadow>,
-        Enc,
-    >;
-    type Extra = ((PrimaryPolicy, Enc), (ShadowPolicy, Enc));
-
-    fn bind(
-        self,
-        sources: ((PrimaryPolicy, Enc), (ShadowPolicy, Enc)),
-    ) -> (Self::Bound, Self::Extra) {
-        (MirrorDef(PhantomData), sources)
-    }
-}
-
-struct MirrorDef<PrimaryPub, ShadowPub, Enc>(SlotTypes<(PrimaryPub, ShadowPub, Enc)>);
-
-impl<PrimaryPub, ShadowPub, Enc> InjectDef for MirrorDef<PrimaryPub, ShadowPub, Enc>
-where
-    PrimaryPub: Publisher + Send + Sync + 'static,
-    ShadowPub: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    type Input = Decoded<Event>;
-    type Context = ();
-    type Source = Name;
-    type Injections = (
-        Out<PrimaryPub, Primary, (), Enc>,
-        Out<ShadowPub, Shadow, (), Enc>,
-    );
-
-    fn source(&self) -> Self::Source {
-        Name::new("mirror")
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        let mut declared = <Primary as OutSlot>::outgoing();
-        declared.extend(<Shadow as OutSlot>::outgoing());
-        declared
-    }
-}
-
-impl<State, PrimaryPub, ShadowPub, Enc> InjectCall<State> for MirrorDef<PrimaryPub, ShadowPub, Enc>
-where
-    State: Send + Sync,
-    PrimaryPub: Publisher + Send + Sync + 'static,
-    ShadowPub: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    async fn call(
+    async fn handle(
         &self,
         event: &Event,
-        injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        slots: &(Out<P1, Primary, (), E>, Out<P2, Shadow, (), E>),
+        _ctx: &mut Context<'_, (), S>,
     ) -> Settle {
-        let Out(primary) = &injections.0;
-        let Out(shadow) = &injections.1;
+        let Out(primary) = &slots.0;
+        let Out(shadow) = &slots.1;
         if primary
             .message(event)
             .to("mirror-primary")
@@ -400,82 +204,27 @@ where
 // --8<-- [end:slots]
 
 // --8<-- [start:publish_out]
-// A reply form and an injected publisher in one definition: the reply answers on the fixed
-// destination while an audit copy fans out through the slot. Both axes live on the same
-// definition, which is why the form token names both and the mount site fills both.
+// A reply and an injected publisher in one body: the reply answers on the mount site's
+// destination while an audit copy fans out through the slot. `SlotsReply` is `Reply` with the
+// slot tuple in the middle, and the mount site fills both axes.
 struct Gateway;
 
-impl Declared for Gateway {
-    type Form = forms::PublishingOut;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("gateway-requests"))
-    }
-}
-
-impl HasSlots for Gateway {
-    type Markers = (DefaultSlot,);
-}
-
-impl<Conn, Enc, Policy> BindSlots<Conn, ((Policy, Enc),)> for Gateway
+impl<P, E, S> SlotsReply<Request, (Out<P, DefaultSlot, (), E>,), (), S> for Gateway
 where
-    Conn: ConnectedBroker,
-    Policy: PublishPolicy<Conn>,
+    P: Publisher,
+    E: ruststream::codec::Codec + Send + Sync,
+    S: Send + Sync,
 {
-    type Bound = GatewayDef<SlotPublisher<Policy::Live, DefaultSlot>, Enc>;
-    type Extra = ((Policy, Enc),);
+    type Out = Response;
 
-    fn bind(self, sources: ((Policy, Enc),)) -> (Self::Bound, Self::Extra) {
-        (GatewayDef(PhantomData), sources)
-    }
-}
-
-struct GatewayDef<Audit, Enc>(SlotTypes<(Audit, Enc)>);
-
-impl<Audit, Enc> PublishingDef for GatewayDef<Audit, Enc>
-where
-    Audit: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    type Input = Decoded<Request>;
-    type Injections = (Out<Audit, DefaultSlot, (), Enc>,);
-    type Reply = Response;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("gateway-requests")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "gateway-responses"
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        let mut declared = vec![OutgoingMessageMetadata::new(
-            "gateway-responses",
-            std::any::type_name::<Response>(),
-        )];
-        declared.extend(<DefaultSlot as OutSlot>::outgoing());
-        declared
-    }
-}
-
-impl<State, Audit, Enc> PublishingCall<State> for GatewayDef<Audit, Enc>
-where
-    State: Send + Sync,
-    Audit: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    async fn call(
+    async fn reply(
         &self,
         req: &Request,
-        injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        slots: &(Out<P, DefaultSlot, (), E>,),
+        _ctx: &mut Context<'_, (), S>,
     ) -> Result<Response, HandlerResult> {
-        let Out(out) = &injections.0;
-        if out
+        let Out(audit) = &slots.0;
+        if audit
             .message(&Event { id: req.id })
             .to("gateway-audit")
             .publish()
@@ -612,70 +361,19 @@ impl PublishedThrough<Orders> for OrderPlaced {}
 
 struct Route;
 
-impl Declared for Route {
-    type Form = forms::Out;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("orders.incoming"))
-    }
-}
-
-impl HasSlots for Route {
-    type Markers = (Orders,);
-}
-
-impl<Conn, Enc, Policy> BindSlots<Conn, ((Policy, Enc),)> for Route
+impl<P, E, S> SlotsHandler<Event, (Out<P, Orders, (), E>,), (), S> for Route
 where
-    Conn: ConnectedBroker,
-    Policy: PublishPolicy<Conn>,
+    P: Publisher,
+    E: ruststream::codec::Codec + Send + Sync,
+    S: Send + Sync,
 {
-    type Bound = RouteDef<SlotPublisher<Policy::Live, Orders>, Enc>;
-    type Extra = ((Policy, Enc),);
-
-    fn bind(self, sources: ((Policy, Enc),)) -> (Self::Bound, Self::Extra) {
-        (RouteDef(PhantomData), sources)
-    }
-}
-
-struct RouteDef<OrdersPub, Enc>(SlotTypes<(OrdersPub, Enc)>);
-
-impl<OrdersPub, Enc> InjectDef for RouteDef<OrdersPub, Enc>
-where
-    OrdersPub: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    type Input = Decoded<Event>;
-    type Context = ();
-    type Source = Name;
-    // The third position of the slot is the declared message set: a list, checked against the
-    // marker's dictionary at every publish.
-    type Injections = (Out<OrdersPub, Orders, (OrderConfirmed, OrderPlaced), Enc>,);
-
-    fn source(&self) -> Self::Source {
-        Name::new("orders.incoming")
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        let mut declared = <OrderConfirmed as OutMessages<Orders>>::outgoing();
-        declared.extend(<OrderPlaced as OutMessages<Orders>>::outgoing());
-        declared
-    }
-}
-
-impl<State, OrdersPub, Enc> InjectCall<State> for RouteDef<OrdersPub, Enc>
-where
-    State: Send + Sync,
-    OrdersPub: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    async fn call(
+    async fn handle(
         &self,
         event: &Event,
-        injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        slots: &(Out<P, Orders, (), E>,),
+        _ctx: &mut Context<'_, (), S>,
     ) -> Settle {
-        let Out(orders) = &injections.0;
+        let Out(orders) = &slots.0;
         // Bound to one name: the destination is already resolved.
         if orders
             .message(&OrderConfirmed { id: event.id })
@@ -732,21 +430,23 @@ impl PublishLayer for AuditPublish {
 
 // --8<-- [start:batch_publishing]
 /// Confirms a whole page of orders; the replies become visible atomically on commit. The batch
-/// definition differs from the single-message one only in what the call consumes and returns: a
-/// slice in, the page's replies out.
+/// reply form has no value constructor, so it is the one place the definition traits are still
+/// written out: `Declared` names the mount form and the settings builder, `BatchPublishingDef`
+/// carries the structure, and `BatchPublishingCall` the body.
 struct Confirm;
 
-impl Declared for Confirm {
-    type Form = forms::BatchPublishing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+impl ruststream::runtime::Declared for Confirm {
+    type Form = ruststream::runtime::forms::BatchPublishing;
+    type Settings =
+        ruststream::runtime::SubscriberBuilder<Self, Name, ruststream::runtime::AllOpen>;
 
     fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("orders"))
+        ruststream::runtime::SubscriberBuilder::new(self, Name::new("orders"))
     }
 }
 
-impl BatchPublishingDef for Confirm {
-    type Input = Decoded<Event>;
+impl ruststream::runtime::BatchPublishingDef for Confirm {
+    type Input = ruststream::runtime::Decoded<Event>;
     type Injections = ();
     type Reply = Event;
     type Source = Name;
@@ -767,7 +467,7 @@ impl BatchPublishingDef for Confirm {
     }
 }
 
-impl<State: Send + Sync> BatchPublishingCall<State> for Confirm {
+impl<State: Send + Sync> ruststream::runtime::BatchPublishingCall<State> for Confirm {
     fn call(
         &self,
         orders: &[Event],
@@ -830,29 +530,44 @@ fn app() -> impl App {
             // --8<-- [start:reply_mount]
             // static, per-publisher: a policy stack, composed at compile time and paired with
             // the connected broker at startup
-            b.include(Respond)
+            b.include(replying("requests", Respond).to("responses"))
                 .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform));
             // the default reply wiring: the broker's default policy under the default codec
-            b.include(Validate);
+            b.include(replying("validated-requests", Validate).to("responses"));
             // --8<-- [end:reply_mount]
             // --8<-- [start:forward_mount]
-            b.include(Forward).publisher(MemoryPublish);
+            b.include(with_slots::<Event, (DefaultSlot,), _, _>(
+                "ingress", Forward,
+            ))
+            .publisher(MemoryPublish);
             // --8<-- [end:forward_mount]
             // --8<-- [start:slots_mount]
             // each named slot binds by marker; the call order does not matter
-            b.include(Mirror)
-                .out(Shadow, MemoryPublish)
-                .out(Primary, MemoryPublish)
-                .mount();
+            b.include(with_slots::<Event, (Primary, Shadow), _, _>(
+                "mirror", Mirror,
+            ))
+            .out(Shadow, MemoryPublish)
+            .out(Primary, MemoryPublish)
+            .mount();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
             // the reply keeps .publisher(..) (or its default); the Out slot attaches
             // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
-            b.include(Gateway).out(DefaultSlot, MemoryPublish).mount();
+            b.include(
+                replying_with_slots::<Request, (DefaultSlot,), _, _>("gateway-requests", Gateway)
+                    .to("gateway-responses"),
+            )
+            .out(DefaultSlot, MemoryPublish)
+            .mount();
             // --8<-- [end:publish_out_mount]
             // --8<-- [start:declared_mount]
             // the slot lists what it may publish; where each message goes is its own declaration
-            b.include(Route).out(Orders, MemoryPublish).mount();
+            b.include(with_slots::<Event, (Orders,), _, _>(
+                "orders.incoming",
+                Route,
+            ))
+            .out(Orders, MemoryPublish)
+            .mount();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live

@@ -1,6 +1,6 @@
-//! The Prometheus example written without the `macros` feature: the reply-publishing subscriber
-//! is a hand-written definition, mounted with `include` and given its reply publisher at the
-//! mount site.
+//! The Prometheus example written without the `macros` feature: the reply body is a named type
+//! with an `impl Reply`, bound to its subject and its destination by the `replying` constructor
+//! and given its reply publisher at the mount site.
 //!
 //! ```text
 //! cargo run --example manual_metrics_http --no-default-features --features memory,metrics,json
@@ -23,12 +23,10 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::routing::{get, post};
-use ruststream::Name;
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{
-    AppInfo, Context, Decoded, HandlerResult, IncludeDef, PublishExt, PublishingCall,
-    PublishingDef, RustStream, TypedPublisher, forms,
+    AppInfo, Context, HandlerResult, PublishExt, Reply, RustStream, TypedPublisher, replying,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,52 +42,26 @@ struct Confirmation {
     accepted: bool,
 }
 
-/// The definition `#[subscriber("orders", publish("confirmations"))]` generates: what it
-/// subscribes to, where the reply goes, and the body. A reply-publishing handler returns the
-/// value rather than publishing it, so the runtime encodes and sends it - which is what puts it
-/// through the app's publish pipeline.
+/// The body `#[subscriber("orders", publish("confirmations"))]` generates. A reply-publishing
+/// handler returns the value rather than publishing it, so the runtime encodes and sends it -
+/// which is what puts it through the app's publish pipeline.
 struct Confirm;
 
-impl PublishingDef for Confirm {
-    type Input = Decoded<Order>;
-    type Injections = ();
-    type Reply = Confirmation;
-    type Context = ();
-    type Source = Name;
+impl Reply<Order> for Confirm {
+    type Out = Confirmation;
 
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    // The trait ties the borrow to `&self`; a destination fixed at compile time outlives it, and
-    // saying so is what keeps the literal from reading as borrowed state.
-    fn reply_name(&self) -> &'static str {
-        "confirmations"
-    }
-}
-
-// Generic over the app state: this handler reads none, so it mounts on any app. Pinning a
-// concrete state type here is what a handler reaching for `ctx.state()` would do instead.
-impl<S: Send + Sync> PublishingCall<S> for Confirm {
     // `Err(result)` skips the publish and settles by the returned outcome; `Ok(reply)` publishes
-    // and acks.
-    fn call(
+    // and acks. The body awaits nothing, so it returns the future directly.
+    fn reply(
         &self,
         order: &Order,
-        _injections: &(),
-        _ctx: &mut Context<'_, (), S>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Confirmation, HandlerResult>> + Send {
         ready(Ok(Confirmation {
             id: order.id,
             accepted: order.quantity > 0,
         }))
     }
-}
-
-/// The form token tells `include` which mounting machinery this definition needs; a
-/// reply-publishing subscriber names `forms::Publishing`.
-impl IncludeDef for Confirm {
-    type Form = forms::Publishing;
 }
 
 struct AppState {
@@ -118,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_broker(broker, |b| {
             // The attribute reads the reply publisher off the broker's default publish policy;
             // naming it at the mount site is the same step written out.
-            b.include(Confirm)
+            b.include(replying("orders", Confirm).to("confirmations"))
                 .publisher(TypedPublisher::new(MemoryPublish));
         });
     // --8<-- [end:wiring]

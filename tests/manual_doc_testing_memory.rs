@@ -8,10 +8,6 @@
 use std::future::{Future, ready};
 
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, Declared, Decoded, OutgoingMessageMetadata, PublishingCall, PublishingDef,
-    SubscriberBuilder, forms,
-};
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 
@@ -37,48 +33,17 @@ struct Confirmation {
     accepted: bool,
 }
 
-/// The subscription source, the reply destination and the reply type live on `PublishingDef`;
-/// the body moves to `PublishingCall`, which stays generic over the state so it mounts on an app
-/// with any state type.
+/// The reply body without the attribute: `Reply` produces the message that gets published, and
+/// the subscription source and the reply destination are named where the definition is built.
+/// The impl stays generic over the state so it mounts on an app with any state type.
 struct Confirm;
 
-impl Declared for Confirm {
-    type Form = forms::Publishing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+impl<State: Send + Sync> Reply<Order, (), State> for Confirm {
+    type Out = Confirmation;
 
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("orders"))
-    }
-}
-
-impl PublishingDef for Confirm {
-    type Input = Decoded<Order>;
-    type Injections = ();
-    type Reply = Confirmation;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("orders")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "confirmations"
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        vec![OutgoingMessageMetadata::new(
-            "confirmations",
-            std::any::type_name::<Confirmation>(),
-        )]
-    }
-}
-
-impl<State: Send + Sync> PublishingCall<State> for Confirm {
-    fn call(
+    fn reply(
         &self,
         order: &Order,
-        _injections: &Self::Injections,
         _ctx: &mut Context<'_, (), State>,
     ) -> impl Future<Output = Result<Confirmation, HandlerResult>> + Send {
         ready(Ok(Confirmation {
@@ -100,7 +65,8 @@ async fn confirms_valid_orders() {
         MemoryBroker::new(),
         |b| {
             let replies = TypedPublisher::new(MemoryPublish);
-            b.include(Confirm).publisher(replies);
+            b.include(replying("orders", Confirm).to("confirmations"))
+                .publisher(replies);
         },
     );
 

@@ -13,8 +13,7 @@ use std::time::Duration;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    AllOpen, Declared, Decoded, Handler, PublishError, Settle, SubscriberBuilder, SubscriberDef,
-    forms,
+    AllOpen, Declared, Decoded, PublishError, SubscriberBuilder, SubscriberDef, forms,
 };
 use ruststream::testing::{TestApp, TestError};
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
@@ -54,34 +53,11 @@ impl<State: Send + Sync> Handler<Order, (), State> for HandleOrders {
     }
 }
 
-impl Declared for HandleOrders {
-    type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("orders"))
-    }
-}
-
-impl SubscriberDef for HandleOrders {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("orders")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(HandleOrders));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(subscriber("orders", HandleOrders));
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     // --8<-- [start:panic]
@@ -123,7 +99,8 @@ struct Counter {
 
 // --8<-- [start:retry_after]
 /// A handler bound to one state type: naming `Counter` in the `Handler` impl is what the
-/// attribute's `ctx: &mut Context<'_, (), Counter>` parameter declares.
+/// attribute's `ctx: &mut Context<'_, (), Counter>` parameter declares. The value constructors
+/// bind the handler over the unit state, so this one keeps the written-out definition.
 struct DelayedRetry;
 
 impl Handler<Order, (), Counter> for DelayedRetry {

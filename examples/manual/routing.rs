@@ -1,6 +1,6 @@
 //! Router composition from the Routing guide, written without the `macros` feature: each group
-//! builder registers a named handler type with `subscribe`, and merging and mounting are the same
-//! router calls the macro form makes.
+//! builder mounts a named handler type with the `subscriber` constructor, and merging and mounting
+//! are the same router calls the macro form makes.
 //!
 //! ```text
 //! cargo run --example manual_routing --no-default-features --features memory,json
@@ -9,10 +9,8 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, RouterDef, Settle, typed};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -53,19 +51,11 @@ impl Handler<Shipment> for Dispatch {
 
 // --8<-- [start:builders]
 fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    Router::new().subscribe(
-        Name::new("orders"),
-        typed(JsonCodec, Accept),
-        HandlerMetadata::typed::<Order>("orders"),
-    )
+    Router::new().include(subscriber("orders", Accept))
 }
 
 fn shipping() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    Router::new().subscribe(
-        Name::new("shipments"),
-        typed(JsonCodec, Dispatch),
-        HandlerMetadata::typed::<Shipment>("shipments"),
-    )
+    Router::new().include(subscriber("shipments", Dispatch))
 }
 // --8<-- [end:builders]
 

@@ -16,12 +16,9 @@ use std::future::{Future, ready};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    DynMiddleware, DynStack, Handler, HandlerMetadata, Identity, Layer, Next, Settle, Stack, typed,
-};
+use ruststream::runtime::{DynMiddleware, DynStack, Identity, Layer, Next, Stack};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -113,16 +110,8 @@ fn app() -> RustStream<Stack<DynStack<MemoryMessage>, Stack<LogLayer, Identity>>
         .layer(LogLayer)
         .layer(stack)
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
-            b.subscribe(
-                Name::new("returns"),
-                typed(JsonCodec, Returns),
-                HandlerMetadata::typed::<Order>("returns"),
-            );
+            b.include(subscriber("orders", Handle));
+            b.include(subscriber("returns", Returns));
         })
     // --8<-- [end:dyn_stack]
 }

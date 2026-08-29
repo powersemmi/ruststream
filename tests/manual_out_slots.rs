@@ -2,8 +2,10 @@
 //! as definitions - multi-slot binding by marker, the harness's per-slot capture, and the
 //! broker-defined capability extension through [`SlotPublisher::inner`].
 //!
-//! Slot markers, the slot list and the publisher-generic definition are all ordinary trait impls,
-//! so a handler with several injected publishers is reachable with the attribute off.
+//! Slot markers, the slot list and the publisher-generic body are all ordinary trait impls, so a
+//! handler with several injected publishers is reachable with the attribute off. `with_slots`
+//! covers the decoded input; the raw-input slot handler below has no value constructor, so it
+//! stays written out as `HasSlots` + `BindSlots` + `InjectDef` + `InjectCall`.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 use std::marker::PhantomData;
@@ -12,8 +14,8 @@ use ruststream::codec::Codec;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    AllOpen, BindSlots, Declared, Decoded, DefaultSlot, HasSlots, InjectCall, InjectDef,
-    OutgoingMessageMetadata, PublishExt, RawBytes, Settle, SlotPublisher, SubscriberBuilder, forms,
+    AllOpen, BindSlots, Declared, HasSlots, InjectCall, InjectDef, OutgoingMessageMetadata,
+    RawBytes, SlotPublisher, SubscriberBuilder, forms,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
@@ -245,66 +247,24 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
     }
 }
 
-/// The definition bounds its slot with the broker-defined capability, not a core one: the
-/// publisher generic carries `ShardLanes` where a plain slot would carry `Publisher`.
+/// The body bounds its slot with the broker-defined capability, not a core one: the publisher
+/// generic carries `ShardLanes` where a plain slot would carry `Publisher`.
 struct RouteShard;
 
-impl Declared for RouteShard {
-    type Form = forms::Out;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("slots.sharded"))
-    }
-}
-
-impl HasSlots for RouteShard {
-    type Markers = (DefaultSlot,);
-}
-
-impl<Conn, Enc, Policy> BindSlots<Conn, ((Policy, Enc),)> for RouteShard
+impl<Lanes, Enc, State> SlotsHandler<Event, (Out<Lanes, DefaultSlot, (), Enc>,), (), State>
+    for RouteShard
 where
-    Conn: ConnectedBroker,
-    Policy: PublishPolicy<Conn>,
-{
-    type Bound = RouteShardDef<SlotPublisher<Policy::Live, DefaultSlot>, Enc>;
-    type Extra = ((Policy, Enc),);
-
-    fn bind(self, sources: ((Policy, Enc),)) -> (Self::Bound, Self::Extra) {
-        (RouteShardDef(PhantomData), sources)
-    }
-}
-
-struct RouteShardDef<Lanes, Enc>(SlotTypes<(Lanes, Enc)>);
-
-impl<Lanes, Enc> InjectDef for RouteShardDef<Lanes, Enc>
-where
-    Lanes: ShardLanes + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    type Input = Decoded<Event>;
-    type Context = ();
-    type Source = Name;
-    type Injections = (Out<Lanes, DefaultSlot, (), Enc>,);
-
-    fn source(&self) -> Self::Source {
-        Name::new("slots.sharded")
-    }
-}
-
-impl<State, Lanes, Enc> InjectCall<State> for RouteShardDef<Lanes, Enc>
-where
+    Lanes: ShardLanes + Send + Sync,
+    Enc: Send + Sync,
     State: Send + Sync,
-    Lanes: ShardLanes + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
 {
-    async fn call(
+    async fn handle(
         &self,
         event: &Event,
-        injections: &Self::Injections,
+        slots: &(Out<Lanes, DefaultSlot, (), Enc>,),
         _ctx: &mut Context<'_, (), State>,
     ) -> Settle {
-        let Out(lanes) = &injections.0;
+        let Out(lanes) = &slots.0;
         let (publisher, dest) = lanes.lane(event.id);
         let payload = serde_json::to_vec(event).expect("serializable");
         if publisher.raw(&payload).to(dest).publish().await.is_err() {
@@ -323,7 +283,11 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
     let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(RouteShard).publisher(LanePolicy);
+            b.include(with_slots::<Event, (DefaultSlot,), _, _>(
+                "slots.sharded",
+                RouteShard,
+            ))
+            .publisher(LanePolicy);
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

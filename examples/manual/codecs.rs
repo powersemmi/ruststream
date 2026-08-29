@@ -1,5 +1,6 @@
-//! Codec selection without the `macros` feature: `typed(codec, handler)` carries the codec, so
-//! every registration names one, and the decode-failure policy rides on the same wrapper.
+//! Codec selection without the `macros` feature: the ladder is the same, and every rung is a call
+//! on the mount - the scope codec, the per-definition `codec(..)` override, and the
+//! decode-failure policy next to it.
 //!
 //! ```text
 //! cargo run --example manual_codecs --no-default-features --features memory,json,cbor
@@ -11,7 +12,6 @@ use std::future::{Future, ready};
 use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{FailurePolicy, Handler, HandlerMetadata, Settle, typed};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -53,44 +53,29 @@ impl Handler<Order> for Strict {
 
 fn app() -> RustStream {
     let info = AppInfo::new("codecs", "0.1.0");
+    // --8<-- [start:scope]
+    // Every subscription in the scope decodes with CBOR: the scope codec is the default the
+    // `include` family reads off the mount site, so no registration repeats it.
     RustStream::new(info)
-        .with_broker(MemoryBroker::new(), |b| {
-            // --8<-- [start:scope]
-            // Every subscription in the scope decodes with CBOR, and says so itself. A scope codec
-            // (`with_broker_codec`) is the default the `include` family reads off the mount site;
-            // `subscribe` takes the handler already wrapped, so there is no mount site left to
-            // reach for it - the codec travels in the `typed` call instead.
-            b.subscribe(
-                Name::new("orders"),
-                typed(CborCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
-            b.subscribe(
-                Name::new("audit"),
-                typed(CborCodec, Audit),
-                HandlerMetadata::typed::<Order>("audit"),
-            );
-            // --8<-- [end:scope]
+        .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
+            b.include(subscriber("orders", Handle));
+            b.include(subscriber("audit", Audit));
         })
+        // --8<-- [end:scope]
         .with_broker(MemoryBroker::new(), |b| {
             // --8<-- [start:per_handler]
-            // one handler on a codec of its own is the same call with a different codec in it: no
+            // one handler on a codec of its own: the override sits on the definition, so no
             // router is needed to keep the choice from reaching the neighbours
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Handle).codec(JsonCodec));
             // --8<-- [end:per_handler]
 
             // --8<-- [start:decode_failure]
-            // A payload that fails to decode is redelivered instead of dropped. The policy sits on
-            // the wrapper that owns the decode, which is the counterpart of `on_failure(decode =
-            // retry)` on the declaration.
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Strict).on_decode_failure(FailurePolicy::Retry),
-                HandlerMetadata::typed::<Order>("orders"),
+            // A payload that fails to decode is redelivered instead of dropped. The policy is a
+            // setting on the same chain, the counterpart of `on_failure(decode = retry)` on the
+            // declaration.
+            b.include(
+                subscriber("orders", Strict)
+                    .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry)),
             );
             // --8<-- [end:decode_failure]
         })

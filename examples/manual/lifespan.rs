@@ -17,10 +17,9 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, Identity, Settle, typed};
+use ruststream::runtime::{Decoded, Identity, IncludeDef, SubscriberDef, forms};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +69,27 @@ impl Handler<Order, (), Database> for Handle {
         HandlerResult::ack().into()
     }
 }
+
+// The `subscriber(source, handler)` constructor binds a handler over the unit state, so one reading
+// the typed `Database` names its own definition instead; `include` mounts it the same way.
+impl SubscriberDef for Handle {
+    type Input = Decoded<Order>;
+    type Context = ();
+    type Handler = Self;
+    type Source = Name;
+
+    fn source(&self) -> Name {
+        Name::new("orders")
+    }
+
+    fn into_handler(self) -> Self {
+        self
+    }
+}
+
+impl IncludeDef for Handle {
+    type Form = forms::Subscribing;
+}
 // --8<-- [end:handler]
 
 // --8<-- [start:hooks]
@@ -86,11 +106,7 @@ fn app() -> RustStream<Identity, Database> {
         // bound the post-shutdown drain of in-flight handlers
         .shutdown_timeout(Duration::from_secs(10))
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(Handle);
         })
 }
 // --8<-- [end:hooks]

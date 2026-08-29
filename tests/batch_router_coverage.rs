@@ -17,9 +17,9 @@ use ruststream::memory::{
 };
 use ruststream::runtime::{
     AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RouterHandlers,
-    RustStream, RustStreamError, TypedPublisher,
+    RustStream, RustStreamError, TypedPublisher, batch,
 };
-use ruststream::{IncomingMessage, Name, PairError, PublishPolicy, SubscriptionSource, subscriber};
+use ruststream::{IncomingMessage, PairError, PublishPolicy, SubscriptionSource, subscriber};
 
 #[subscriber("brc-in", publish("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {
@@ -87,11 +87,10 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
             |_msg: &MemoryMessage, _ctx: &mut Context| async { HandlerResult::Ack },
             HandlerMetadata::raw("brc-meta-handle"),
         )
-        .subscribe_batch(
-            Name::new("brc-meta-batch"),
+        .include(batch(
+            "brc-meta-batch",
             |_batch: &[Order], _ctx: &mut Context| async { HandlerResult::Ack },
-            HandlerMetadata::raw("brc-meta-batch"),
-        )
+        ))
         .include(brc_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
         .include(brc_batch_relay)

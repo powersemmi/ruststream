@@ -9,12 +9,8 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    BatchResult, Handler, HandlerMetadata, RouterDef, Settle, SliceHandler, typed,
-};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -72,26 +68,11 @@ impl SliceHandler<Order> for HandlePage {
 }
 // --8<-- [end:batch]
 
-/// Batches dispatch per page, so they register through `subscribe_batch` on a router; a
-/// `BrokerScope` attaches single-delivery handlers only.
-fn batch_routes() -> impl RouterDef<MemoryBroker> {
-    Router::<MemoryBroker>::new()
-        .with_codec(JsonCodec)
-        .subscribe_batch(
-            Name::new("orders"),
-            HandlePage,
-            HandlerMetadata::typed::<Order>("orders"),
-        )
-}
-
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("post_settle", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Handle),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
-        b.include_router(batch_routes());
+        b.include(subscriber("orders", Handle));
+        // Batches dispatch per page rather than per delivery, so the constructor is `batch`.
+        b.include(batch("orders", HandlePage));
     })
 }
 

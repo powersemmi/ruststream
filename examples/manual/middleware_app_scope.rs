@@ -4,8 +4,8 @@
 //! `middleware_router_scope.rs` for that side).
 //!
 //! `layer` and `include_router` are plain runtime API, so the layer below is the same one the
-//! macro version uses; what changes is that each handler is a named type registered with
-//! `subscribe`.
+//! macro version uses; what changes is that each handler is a named type bound to its source by
+//! the `subscriber` constructor.
 //!
 //! ```text
 //! cargo run --example manual_middleware_app_scope --no-default-features --features memory,json
@@ -14,12 +14,9 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    BlanketLayer, Handler, HandlerMetadata, Identity, Layer, Settle, Stack, typed,
-};
+use ruststream::runtime::{BlanketLayer, Identity, Layer, Stack};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -97,24 +94,12 @@ fn app() -> RustStream<Stack<LogLayer, Identity>> {
         .layer(LogLayer)
         .with_broker(MemoryBroker::new(), |b| {
             // wrapped by LogLayer
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Orders),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Orders));
             // wrapped by LogLayer
-            b.subscribe(
-                Name::new("shipments"),
-                typed(JsonCodec, Shipments),
-                HandlerMetadata::typed::<Order>("shipments"),
-            );
+            b.include(subscriber("shipments", Shipments));
 
             // Mounted through a router: also wrapped by the app stack.
-            b.include_router(Router::new().subscribe(
-                Name::new("audit"),
-                typed(JsonCodec, Audit),
-                HandlerMetadata::typed::<Order>("audit"),
-            ));
+            b.include_router(Router::new().include(subscriber("audit", Audit)));
         })
 }
 // --8<-- [end:app_scope]

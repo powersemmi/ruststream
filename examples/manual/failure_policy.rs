@@ -1,9 +1,6 @@
 //! The unified failure policy without the `macros` feature: `on_failure(panic = .., decode = ..)`
-//! is a settings step on the definition's own builder, so a hand-written definition names the same
-//! policies by writing that step out.
-//!
-//! A definition is two impls: `SubscriberDef` (what to run, on which source) and `Declared` (which
-//! settings the declaration fixes). `include` reads both, exactly as it does for a generated one.
+//! is a settings step on the mount chain, so a definition built with `subscriber(..)` names the
+//! same policies by chaining that step.
 //!
 //! ```text
 //! cargo run --example manual_failure_policy --no-default-features --features memory,json
@@ -14,10 +11,6 @@ use std::future::{Future, ready};
 
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, Declared, Decoded, FailurePolicies, FailurePolicy, Fixed, Handler, Open, Settle,
-    SubscriberBuilder, SubscriberDef, forms,
-};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -40,29 +33,8 @@ impl Handler<Order> for Process {
     }
 }
 
-impl SubscriberDef for Process {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl Declared for Process {
-    type Form = forms::Subscribing;
-    // Every setting still open: nothing is fixed here, so the mount site could still name them.
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("orders"))
-    }
+fn process_routes() -> impl RouterDef<MemoryBroker> {
+    Router::<MemoryBroker>::new().include(subscriber("orders", Process))
 }
 // --8<-- [end:defaults]
 
@@ -78,34 +50,14 @@ impl Handler<Order> for Ingest {
     }
 }
 
-impl SubscriberDef for Ingest {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("ingest")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl Declared for Ingest {
-    type Form = forms::Subscribing;
-    // The middle slot is `Fixed`: the policies are named here, so naming them again at the mount
-    // site does not compile.
-    type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open)>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("ingest")).on_failure(
+fn ingest_routes() -> impl RouterDef<MemoryBroker> {
+    Router::<MemoryBroker>::new().include(
+        subscriber("ingest", Ingest).on_failure(
             FailurePolicies::default()
                 .with_panic(FailurePolicy::FailFast)
                 .with_decode(FailurePolicy::Retry),
-        )
-    }
+        ),
+    )
 }
 // --8<-- [end:tuned]
 
@@ -121,40 +73,22 @@ impl Handler<Order> for Audit {
     }
 }
 
-impl SubscriberDef for Audit {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("audit")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl Declared for Audit {
-    type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open)>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("audit")).on_failure(
+fn audit_routes() -> impl RouterDef<MemoryBroker> {
+    Router::<MemoryBroker>::new().include(
+        subscriber("audit", Audit).on_failure(
             FailurePolicies::default()
                 .with_panic(FailurePolicy::Skip)
                 .with_decode(FailurePolicy::Skip),
-        )
-    }
+        ),
+    )
 }
 // --8<-- [end:skip]
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("failure-policy", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(Process);
-        b.include(Ingest);
-        b.include(Audit);
+        b.include_router(process_routes());
+        b.include_router(ingest_routes());
+        b.include_router(audit_routes());
     })
 }
 

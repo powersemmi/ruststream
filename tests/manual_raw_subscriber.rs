@@ -1,6 +1,7 @@
 //! The macro-free counterpart of `tests/raw_subscriber.rs`: the raw handler forms written out as
-//! named types, with the trait impls `#[subscriber(.., raw)]` and `publish_raw(..)` would have
-//! emitted.
+//! named types. The plain form binds through the `raw` constructor; the byte-reply form has no
+//! value constructor, so it keeps the `PublishingDef` + `PublishingCall` pair the
+//! `publish_raw(..)` clause would have emitted.
 //!
 //! The codec-free path is what the plain and the byte-reply sections pin: `RawBytes` on the input
 //! side means no `Codec` bound reaches the mount, so this file also builds with every codec
@@ -13,8 +14,7 @@ use std::sync::Mutex;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    AllOpen, Declared, Handler, PublishingCall, PublishingDef, RawBytes, Settle, SubscriberBuilder,
-    SubscriberDef, forms,
+    AllOpen, Declared, PublishingCall, PublishingDef, RawBytes, SubscriberBuilder, forms,
 };
 use ruststream::testing::TestApp;
 
@@ -28,7 +28,7 @@ static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 // --8<-- [start:raw]
 /// The raw form by hand. `Handler<[u8]>` is what the attribute implements for a `&[u8]`
 /// parameter: the mount adapter lends the delivery's payload itself, so nothing decodes. The
-/// input kind on the definition, `RawBytes`, is what tells the mount that.
+/// `raw` constructor is what binds it to its subscription and tells the mount to skip the codec.
 struct OnFrame;
 
 impl Handler<[u8]> for OnFrame {
@@ -38,36 +38,12 @@ impl Handler<[u8]> for OnFrame {
         ready(HandlerResult::Ack.into())
     }
 }
-
-impl Declared for OnFrame {
-    type Form = forms::RawSubscribing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("frames"))
-    }
-}
-
-impl SubscriberDef for OnFrame {
-    type Input = RawBytes;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("frames")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
 // --8<-- [end:raw]
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_handler_receives_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(OnFrame));
+        .with_broker(MemoryBroker::new(), |b| b.include(raw("frames", OnFrame)));
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -147,35 +123,11 @@ impl Handler<[u8]> for RelayCapture {
     }
 }
 
-impl Declared for RelayCapture {
-    type Form = forms::RawSubscribing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("relay-out"))
-    }
-}
-
-impl SubscriberDef for RelayCapture {
-    type Input = RawBytes;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("relay-out")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_round_trips_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(Relay).publisher(MemoryPublish);
-        b.include(RelayCapture);
+        b.include(raw("relay-out", RelayCapture));
     });
 
     let tb = TestApp::start(app).await.expect("start");
@@ -209,8 +161,7 @@ mod typed_in {
     use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::prelude::*;
     use ruststream::runtime::{
-        AllOpen, Declared, Decoded, Handler, PublishingCall, PublishingDef, RawBytes, Settle,
-        SubscriberBuilder, SubscriberDef, forms,
+        AllOpen, Declared, Decoded, PublishingCall, PublishingDef, SubscriberBuilder, forms,
     };
     use ruststream::testing::TestApp;
     use serde::Deserialize;
@@ -282,37 +233,13 @@ mod typed_in {
         }
     }
 
-    impl Declared for GatewayCapture {
-        type Form = forms::RawSubscribing;
-        type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-        fn declare(self) -> Self::Settings {
-            SubscriberBuilder::new(self, Name::new("gateway-out"))
-        }
-    }
-
-    impl SubscriberDef for GatewayCapture {
-        type Input = RawBytes;
-        type Context = ();
-        type Handler = Self;
-        type Source = Name;
-
-        fn source(&self) -> Self::Source {
-            Name::new("gateway-out")
-        }
-
-        fn into_handler(self) -> Self {
-            self
-        }
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn typed_input_replies_raw_bytes() {
         let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
                 b.include(Gateway).publisher(MemoryPublish);
-                b.include(GatewayCapture);
+                b.include(raw("gateway-out", GatewayCapture));
             },
         );
 

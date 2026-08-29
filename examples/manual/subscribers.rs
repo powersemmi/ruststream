@@ -1,11 +1,10 @@
 //! The handler forms from the Subscribers guide, written without the `macros` feature.
 //!
-//! Two levels appear here, and each section takes the one it needs. A handler is a named type with
-//! an `impl Handler` (an `impl SliceHandler` for a batch, an `impl RawSliceHandler` for a raw one),
-//! which `subscribe` / `subscribe_batch` mounts as it is. A *definition* adds the two impls
-//! `include` reads - `Declared`, which is one `SubscriberBuilder::new(self, source)` plus the
-//! settings chain, and `SubscriberDef` / `BatchDef` - and that is what carries the mount-site
-//! settings builder (`.name`, `.workers`, `.on_failure`, `.buffered`).
+//! A handler is a named type with an `impl Handler` (an `impl SliceHandler` for a batch, an
+//! `impl RawSliceHandler` for a raw one). The value constructors - `subscriber`, `batch`,
+//! `raw_batch` - bind it to its subscription source, and the result mounts with `include`,
+//! chaining the declarative settings (`.name`, `.workers`, `.on_failure`, `.buffered`) the
+//! attribute would otherwise fix.
 //!
 //! ```text
 //! cargo run --example manual_subscribers --no-default-features --features memory,json
@@ -15,16 +14,8 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::Unnamed;
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySource};
-use ruststream::nonzero;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, BatchDef, BatchResult, Declared, Decoded, FailurePolicies, FailurePolicy, Handler,
-    HandlerMetadata, RawBytes, RawSliceHandler, RouterDef, Settle, SliceHandler, SubscriberBuilder,
-    SubscriberDef, Workers, forms, typed,
-};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -38,8 +29,8 @@ struct Order {
 struct Handle;
 
 impl Handler<Order> for Handle {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
+    // A body with nothing to await returns the future directly; a body that awaits writes
+    // `async fn handle` instead, the shape the attribute generates.
     fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
         println!("got order {}", order.id);
         ready(HandlerResult::ack().into())
@@ -106,33 +97,19 @@ impl SliceHandler<Order> for Reconcile {
 // --8<-- [end:batch_selective]
 
 // --8<-- [start:batch_mount]
-/// Batches dispatch per page rather than per delivery, so the registration is `subscribe_batch` on
-/// a router: a `BrokerScope` attaches single-delivery handlers only. The codec is named on the
-/// chain, there being no declaration site for one to be read from.
+/// Batches dispatch per page rather than per delivery, so the constructor is `batch`: it demands
+/// a batching subscriber of the source, exactly as a `batch(..)` attribute would.
 fn batch_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
-        .with_codec(JsonCodec)
-        .subscribe_batch(
-            Name::new("orders"),
-            SettlePage,
-            HandlerMetadata::typed::<Order>("orders"),
-        )
-        .subscribe_batch(
-            Name::new("orders"),
-            Reconcile,
-            HandlerMetadata::typed::<Order>("orders"),
-        )
+        .include(batch("orders", SettlePage))
+        .include(batch("orders", Reconcile))
 }
 // --8<-- [end:batch_mount]
 
 // --8<-- [start:raw_batch]
 /// A batch of payloads: the batch shape without the decode step. `RawSliceHandler` borrows the
-/// payloads straight out of the deliveries, so no codec takes part anywhere on this path.
-///
-/// This is the one form with no `subscribe` spelling - the raw batch adapter is reached through a
-/// definition - so it is also the first place the two `include` impls appear. `Declared` is what
-/// `include` dispatches on: its form token picks the mounting machinery and `declare` hands over
-/// the settings builder; `BatchDef` is the definition proper (input kind, handler, source).
+/// payloads straight out of the deliveries, so no codec takes part anywhere on this path; the
+/// `raw_batch` constructor mounts it as-is.
 struct Ingest;
 
 impl RawSliceHandler for Ingest {
@@ -145,35 +122,11 @@ impl RawSliceHandler for Ingest {
         ready(BatchResult::Uniform(HandlerResult::ack()))
     }
 }
-
-impl Declared for Ingest {
-    type Form = forms::RawBatch;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("frames"))
-    }
-}
-
-impl BatchDef for Ingest {
-    type Input = RawBytes;
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("frames")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
 // --8<-- [end:raw_batch]
 
 // --8<-- [start:workers]
 /// Up to 16 orders processed concurrently; global order is lost by design. Concurrency belongs to
-/// the registration, so it is named where the handler is mounted: `Router::workers` applies to the
-/// subscription just added.
+/// the registration, so it is chained where the handler is mounted.
 struct FanOut;
 
 impl Handler<Order> for FanOut {
@@ -184,13 +137,7 @@ impl Handler<Order> for FanOut {
 }
 
 fn fan_out_routes() -> impl RouterDef<MemoryBroker> {
-    Router::<MemoryBroker>::new()
-        .subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, FanOut),
-            HandlerMetadata::typed::<Order>("orders"),
-        )
-        .workers(Workers::pool(nonzero!(16)))
+    Router::<MemoryBroker>::new().include(subscriber("orders", FanOut).workers(nonzero!(16)))
 }
 // --8<-- [end:workers]
 
@@ -208,20 +155,14 @@ impl Handler<Order> for PerCustomer {
 
 fn per_customer_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
-        .subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, PerCustomer),
-            HandlerMetadata::typed::<Order>("orders"),
-        )
-        .workers(Workers::keyed(nonzero!(16)))
+        .include(subscriber("orders", PerCustomer).workers_by_key(nonzero!(16)))
 }
 // --8<-- [end:workers_by_key]
 
 // --8<-- [start:deferred_name]
-/// The by-name source with its value left out: the mount site names the subscription.
-///
-/// `Unnamed<Name>` is no `SubscriptionSource` at all, so a mount that never calls `.name(..)` does
-/// not compile. Naming it is what builds the source.
+/// A subscription named at the mount site: constructing over `Unnamed` leaves the source
+/// unbuilt, and `Unnamed<Name>` is no `SubscriptionSource` at all, so a mount that never calls
+/// `.name(..)` does not compile. Naming it is what builds the source.
 struct Audit;
 
 impl Handler<Order> for Audit {
@@ -230,36 +171,11 @@ impl Handler<Order> for Audit {
         ready(HandlerResult::ack().into())
     }
 }
-
-impl Declared for Audit {
-    type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Unnamed<Name>, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Unnamed::new())
-    }
-}
-
-impl SubscriberDef for Audit {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Unnamed<Name>;
-
-    fn source(&self) -> Self::Source {
-        Unnamed::new()
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
 // --8<-- [end:deferred_name]
 
-// --8<-- [start:named_kind]
-/// A named kind carrying only what it needs to exist; the value arrives at the mount site. The only
-/// difference from the by-name form is which kind `Unnamed` stands in for, so `.name(..)` builds
-/// the broker's own source instead of the generic one.
+/// A named kind carrying only what it needs to exist; the value arrives at the mount site. The
+/// only difference from the by-name form is which kind `Unnamed` stands in for, so `.name(..)`
+/// builds the broker's own source instead of the generic one.
 struct Archive;
 
 impl Handler<Order> for Archive {
@@ -269,33 +185,8 @@ impl Handler<Order> for Archive {
     }
 }
 
-impl Declared for Archive {
-    type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Unnamed<MemorySource>, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Unnamed::new())
-    }
-}
-
-impl SubscriberDef for Archive {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Unnamed<MemorySource>;
-
-    fn source(&self) -> Self::Source {
-        Unnamed::new()
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-// --8<-- [end:named_kind]
-
-/// Whether batches arrive at all is a property of the broker, so it is settled at the mount: this
-/// batch definition leaves its source unnamed.
+/// Whether batches arrive at all is a property of the broker, so it is settled at the mount:
+/// this handler's subscription buffers client-side.
 struct Drain;
 
 impl SliceHandler<Order> for Drain {
@@ -309,31 +200,7 @@ impl SliceHandler<Order> for Drain {
     }
 }
 
-impl Declared for Drain {
-    type Form = forms::Batch;
-    type Settings = SubscriberBuilder<Self, Unnamed<Name>, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Unnamed::new())
-    }
-}
-
-impl BatchDef for Drain {
-    type Input = Decoded<Order>;
-    type Handler = Self;
-    type Source = Unnamed<Name>;
-
-    fn source(&self) -> Self::Source {
-        Unnamed::new()
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-/// A definition whose declarative settings are all left to the mount site: `declare` adds nothing
-/// to the builder, so every step is still open there.
+/// A handler whose declarative settings are all named at the mount site.
 struct Bill;
 
 impl Handler<Order> for Bill {
@@ -343,62 +210,26 @@ impl Handler<Order> for Bill {
     }
 }
 
-impl Declared for Bill {
-    type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Unnamed<Name>, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Unnamed::new())
-    }
-}
-
-impl SubscriberDef for Bill {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Unnamed<Name>;
-
-    fn source(&self) -> Self::Source {
-        Unnamed::new()
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
 fn app() -> RustStream {
     let shard = 7;
     RustStream::new(AppInfo::new("subscribers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        // A plain handler registers directly: the source, the decoding and the metadata are the
-        // three arguments `include` would have read off a definition.
-        b.subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Handle),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
-        b.subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, WithContext),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
+        b.include(subscriber("orders", Handle));
+        b.include(subscriber("orders", WithContext));
         // --8<-- [start:name_mount]
-        b.include(Audit.name(format!("audit-{shard}")));
+        b.include(subscriber(Unnamed::<Name>::new(), Audit).name(format!("audit-{shard}")));
         // --8<-- [end:name_mount]
-        b.include(Archive.name("archive"));
-        b.include(Ingest);
+        // --8<-- [start:named_kind]
+        b.include(subscriber(Unnamed::<MemorySource>::new(), Archive).name("archive"));
+        // --8<-- [end:named_kind]
+        b.include(raw_batch("frames", Ingest));
         // --8<-- [start:batch_buffered]
         // Client-side batching for subscriptions without native batches: close a batch at 128
         // deliveries, or 20 ms after its first one.
-        b.include(
-            Drain
-                .name("orders")
-                .buffered(nonzero!(128), Duration::from_millis(20)),
-        );
+        b.include(batch("orders", Drain).buffered(nonzero!(128), Duration::from_millis(20)));
         // --8<-- [end:batch_buffered]
         // --8<-- [start:builder_settings]
         b.include(
-            Bill.name("orders")
+            subscriber("orders", Bill)
                 .workers(nonzero!(4))
                 .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
         );

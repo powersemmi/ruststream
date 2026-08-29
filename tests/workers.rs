@@ -16,13 +16,8 @@ use std::{
 };
 
 use common::{Order, order_bytes, wait_for};
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RustStream, Workers,
-    typed,
-};
-use ruststream::{HeaderMap, Name, nonzero, subscriber};
+use ruststream::prelude::*;
 use tokio::sync::Barrier;
 
 static CRUNCHED: AtomicU32 = AtomicU32::new(0);
@@ -168,9 +163,9 @@ async fn batch_pool_dispatches_batches() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// The functional-path pool: a `Router::subscribe` closure with `.workers(Workers::pool(nonzero!(3)))`.
-/// Three deliveries must be in flight at once to pass the barrier; the default sequential loop
-/// would deadlock on the first one.
+/// The functional-path pool: a `subscriber(..)` closure with `.workers(Workers::pool(nonzero!(3)))`
+/// named on the router. Three deliveries must be in flight at once to pass the barrier; the
+/// default sequential loop would deadlock on the first one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closure_subscription_pool_runs_concurrently() {
     let broker = MemoryBroker::new();
@@ -182,7 +177,7 @@ async fn closure_subscription_pool_runs_concurrently() {
     let handler = {
         let crunched = Arc::clone(&crunched);
         let gate = Arc::clone(&gate);
-        typed(JsonCodec, move |_order: &Order, _ctx: &mut Context| {
+        move |_order: &Order, _ctx: &mut Context| {
             let crunched = Arc::clone(&crunched);
             let gate = Arc::clone(&gate);
             async move {
@@ -190,15 +185,11 @@ async fn closure_subscription_pool_runs_concurrently() {
                 crunched.fetch_add(1, Ordering::SeqCst);
                 HandlerResult::Ack
             }
-        })
+        }
     };
 
     let router = Router::<MemoryBroker>::new()
-        .subscribe(
-            Name::new("fn-jobs"),
-            handler,
-            HandlerMetadata::raw("fn-jobs"),
-        )
+        .include(subscriber("fn-jobs", handler))
         .workers(Workers::pool(nonzero!(3)));
 
     let app = RustStream::new(AppInfo::new("fn-jobs", "0.1.0"))
@@ -226,8 +217,8 @@ async fn closure_subscription_pool_runs_concurrently() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// The functional batch path: a `Router::subscribe_batch` slice closure receives whole decoded
-/// batches without a macro definition.
+/// The functional batch path: a `batch(..)` slice closure receives whole decoded batches without
+/// a macro definition.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closure_batch_subscription_receives_batches() {
     let broker = MemoryBroker::new();
@@ -248,11 +239,7 @@ async fn closure_batch_subscription_receives_batches() {
     };
 
     let router = Router::<MemoryBroker>::new()
-        .subscribe_batch(
-            Name::new("fn-pages"),
-            handler,
-            HandlerMetadata::raw("fn-pages"),
-        )
+        .include(batch("fn-pages", handler))
         .workers(Workers::pool(nonzero!(2)));
 
     let app = RustStream::new(AppInfo::new("fn-pages", "0.1.0"))

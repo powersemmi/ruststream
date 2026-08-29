@@ -7,14 +7,10 @@
 
 use std::time::Duration;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySource};
-use ruststream::runtime::{
-    AppInfo, Context, FailurePolicies, FailurePolicy, HandlerMetadata, HandlerResult, RustStream,
-    SubscriberSettings, typed,
-};
-use ruststream::subscriber;
-use ruststream::{Name, nonzero};
+// The attribute and the value constructor share the name in different namespaces, so the one glob
+// brings both into scope.
+use ruststream::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -159,13 +155,10 @@ fn app() -> RustStream {
         b.include(fan_out);
         b.include(per_customer);
         // --8<-- [start:manual]
-        b.subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, |_order: &Order, _ctx: &mut Context| async {
-                HandlerResult::Ack
-            }),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
+        b.include(subscriber(
+            "orders",
+            |_order: &Order, _ctx: &mut Context| async { HandlerResult::Ack },
+        ));
         // --8<-- [end:manual]
     })
 }

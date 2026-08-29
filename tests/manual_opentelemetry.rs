@@ -19,52 +19,18 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::otel::OpenTelemetry;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, Declared, Decoded, Handler, OutgoingMessageMetadata, PublishingCall, PublishingDef,
-    Settle, SubscriberBuilder, SubscriberDef, forms,
-};
 use tokio::sync::Notify;
 
-/// The request half: a reply definition whose destination is fixed by the definition itself.
+/// The request half: a reply body, bound to its subscription and its reply destination where the
+/// definition is built.
 struct Echo;
 
-impl Declared for Echo {
-    type Form = forms::Publishing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+impl<State: Send + Sync> Reply<Req, (), State> for Echo {
+    type Out = Resp;
 
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("in"))
-    }
-}
-
-impl PublishingDef for Echo {
-    type Input = Decoded<Req>;
-    type Injections = ();
-    type Reply = Resp;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("in")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "out"
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        vec![OutgoingMessageMetadata::new(
-            "out",
-            std::any::type_name::<Resp>(),
-        )]
-    }
-}
-
-impl<State: Send + Sync> PublishingCall<State> for Echo {
-    fn call(
+    fn reply(
         &self,
         req: &Req,
-        _injections: &Self::Injections,
         _ctx: &mut Context<'_, (), State>,
     ) -> impl Future<Output = Result<Resp, HandlerResult>> + Send {
         ready(Ok(Resp { n: req.n }))
@@ -87,30 +53,6 @@ impl<State: Send + Sync> Handler<Resp, (), State> for Capture {
             ctx.headers().get_str("traceparent").map(str::to_owned);
         GOT.notify_one();
         ready(HandlerResult::Ack.into())
-    }
-}
-
-impl Declared for Capture {
-    type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("out"))
-    }
-}
-
-impl SubscriberDef for Capture {
-    type Input = Decoded<Resp>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("out")
-    }
-
-    fn into_handler(self) -> Self {
-        self
     }
 }
 
@@ -153,8 +95,9 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
         // The consume layer opens a span per delivery and records the consumer's trace context.
         .layer(otel.consume_layer())
         .with_broker(broker, |b| {
-            b.include(Echo).publisher(reply_pub);
-            b.include(Capture);
+            b.include(replying("in", Echo).to("out"))
+                .publisher(reply_pub);
+            b.include(subscriber("out", Capture));
         });
     // --8<-- [end:wiring]
 

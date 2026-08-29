@@ -26,9 +26,9 @@ use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
 };
 use ruststream::runtime::{
-    AppInfo, Context, DefaultSlot, HandlerMetadata, HandlerResult, HealthState, Out, Outgoing,
+    AppInfo, Context, DefaultSlot, HandlerResult, HealthState, IntoSource, Out, Outgoing,
     PublishContext, PublishError, PublishExt, PublishTransform, RustStream, RustStreamError,
-    TypedPublisher,
+    TypedPublisher, raw,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
@@ -264,6 +264,7 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
 // Startup and teardown failures.
 
 /// A subscription descriptor the broker refuses to open, for the startup unwind.
+#[derive(Clone)]
 struct RefusedSubscription;
 
 impl SubscriptionSource<ConnectedMemoryBroker> for RefusedSubscription {
@@ -283,6 +284,15 @@ impl SubscriptionSource<ConnectedMemoryBroker> for RefusedSubscription {
     }
 }
 
+// What a broker crate writes next to its own descriptor, so the value constructors accept it.
+impl IntoSource for RefusedSubscription {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
+}
+
 /// A subscription that cannot be opened aborts startup instead of running a service that is
 /// silently deaf, and the brokers connected so far are torn down on the way out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -294,11 +304,10 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
         "cov-refused-ingress",
         broker,
         |b| {
-            b.subscribe(
+            b.include(raw(
                 RefusedSubscription,
-                |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-                HandlerMetadata::raw("cov.refused"),
-            );
+                |_msg: &[u8], _ctx: &mut Context| async { HandlerResult::Ack },
+            ));
         },
     );
 

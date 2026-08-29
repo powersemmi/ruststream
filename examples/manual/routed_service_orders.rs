@@ -5,6 +5,9 @@
 //! return is the `PublishingCall` method's own signature. `include` mounts it exactly as it mounts
 //! a generated one, because a hand-written definition names its own mount form.
 //!
+//! The `replying(source, body)` constructor binds a body over the unit application state; this one
+//! reads a `Repository` off the context, so it writes the definition traits out instead.
+//!
 //! ```text
 //! cargo run --example manual_routed_service_orders --no-default-features --features memory,json
 //! ```
