@@ -633,9 +633,7 @@ RustStream::new(info).with_broker(broker, |b| {
 === "Вручную"
 
     ```rust
-    use ruststream::Name;
-    use ruststream::codec::JsonCodec;
-    use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
+    use ruststream::prelude::*;
 
     // inside with_broker(...):
     --8<-- "examples/subscribers.rs:manual"

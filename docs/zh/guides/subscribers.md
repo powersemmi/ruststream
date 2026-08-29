@@ -577,9 +577,7 @@ Broker 的默认发布策略）；两端都不经过编解码器，而回复发�
 === "手写"
 
     ```rust
-    use ruststream::Name;
-    use ruststream::codec::JsonCodec;
-    use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
+    use ruststream::prelude::*;
 
     // inside with_broker(...):
     --8<-- "examples/subscribers.rs:manual"

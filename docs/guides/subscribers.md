@@ -621,9 +621,7 @@ struct handler, and `HandlerMetadata`. Both forms below register the same handle
 === "Manual"
 
     ```rust
-    use ruststream::Name;
-    use ruststream::codec::JsonCodec;
-    use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
+    use ruststream::prelude::*;
 
     // inside with_broker(...):
     --8<-- "examples/subscribers.rs:manual"

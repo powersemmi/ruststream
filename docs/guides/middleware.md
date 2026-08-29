@@ -130,9 +130,9 @@ hand-written one. The rest of the dispatch chain stays static; only the stack it
     ```rust
     use std::sync::Arc;
 
-    use ruststream::codec::JsonCodec;
-    use ruststream::memory::MemoryMessage;
-    use ruststream::runtime::{DynStack, HandlerMetadata, typed};
+    use ruststream::memory::{MemoryBroker, MemoryMessage};
+    use ruststream::prelude::*;
+    use ruststream::runtime::{DynMiddleware, DynStack};
 
     --8<-- "examples/manual/middleware.rs:dyn_stack"
     ```

@@ -41,10 +41,8 @@ crate。
 === "手写"
 
     ```rust
-    use ruststream::codec::JsonCodec;
     use ruststream::memory::MemoryBroker;
     use ruststream::prelude::*;
-    use ruststream::runtime::{HandlerMetadata, typed};
 
     --8<-- "examples/manual/quickstart.rs:app"
     ```

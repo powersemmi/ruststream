@@ -14,9 +14,10 @@ alwaysApply: false
 - So a handler is a named type implementing `Handler<M, C, S>`, whose `async fn handle(&self, msg:
   &M, ctx: &mut Context<'_, C, S>) -> Settle` is an ordinary async method. What a closure would
   capture becomes a field on that type.
-- **Level one** - stop at `Handler` and register with `b.subscribe(source, handler, metadata)` or
-  `b.handle(subscriber, handler, metadata)`. Nothing else to implement; you give up only what the
-  definition carries.
+- **Level one** - stop at `Handler` and mount with `b.include(subscriber(source, handler))` (one
+  constructor per form: `subscriber`, `batch`, `raw`, `raw_batch`, `replying(..).to(..)`,
+  `with_slots`, `replying_with_slots(..).to(..)`). Nothing else to implement; the registration
+  metadata is derived from the source and the handler's input type.
 - **Level two** - implement `SubscriberDef` plus `Declared`, and `b.include(def)` works on your own
   type with the whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`,
   `.buffered`), `.publisher(..)`, `.out(marker, ..)` and `.mount()`. The settings live on
@@ -33,11 +34,15 @@ alwaysApply: false
 - The one thing genuinely lost with the feature off is the attribute surface itself: nothing reads
   a clause for you, so what the attribute would have declared you write as a trait impl.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
-  feature-gated, so the rest of it (builder, `Context`, `HandlerResult`, `Name`, `Publisher`,
-  `PublishExt`, `TypedPublisher`) comes in unchanged.
-- Register with `b.subscribe(source, handler, metadata)` (the portable form: the source resolves at
-  startup) or `b.handle(subscriber, handler, metadata)` when you already hold an open subscriber.
-  Routers have the same `subscribe` method, so grouping still works.
+  feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerResult`,
+  `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (the constructors
+  `subscriber` / `batch` / `raw` / `raw_batch` / `replying` / `with_slots` /
+  `replying_with_slots`, the body traits `Handler` / `SliceHandler` / `RawSliceHandler` / `Reply` /
+  `SlotsHandler` / `SlotsReply`, plus `Settle`, `BatchResult`, `FailurePolicies` / `FailurePolicy`,
+  `Workers`, `Unnamed`, `DefaultSlot`, `RouterDef` and `nonzero!`).
+- Mount with `b.include(subscriber(source, handler))` (the portable form: the source resolves at
+  startup), or `b.handle(subscriber, handler, metadata)` when you already hold an open subscriber.
+  Routers have the same `include` method, so grouping still works.
 - Write `main` yourself: `#[tokio::main]` plus `app.run().await`. The attribute's CLI (`run`,
   `asyncapi gen`) is what you give up; `run_until(..)` and `start()` are plain methods.
 - State is reached through `ctx.state()`, headers through `ctx.headers()`, and publishing through a
@@ -49,10 +54,8 @@ alwaysApply: false
 ```rust
 use std::error::Error;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, Settle, typed}; // outside the prelude
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +63,7 @@ struct Order {
     id: u64,
 }
 
-/// The definition value. The attribute would have generated exactly this struct, named after
+/// The handler body. The attribute would have generated exactly this struct, named after
 /// the function it decorates.
 struct Handle;
 
@@ -73,11 +76,7 @@ impl Handler<Order> for Handle {
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Handle),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
+        b.include(subscriber("orders", Handle));
     })
 }
 
@@ -106,37 +105,44 @@ another foreground server.
 
 ## Decoding
 
-`typed(codec, handler)` is what the attribute wraps a typed handler in: it decodes the delivery
-with `codec` and calls the inner handler with `&T`, so the inner type implements `Handler<Order>`
-while the wrapper implements `Handler<BrokerMessage>`. Name the codec explicitly - there is no
-declaration site for a scope codec to reach.
+A constructor resolves the decode codec off the mount surface, the same ladder the attribute path
+uses: the scope's (`with_broker_codec`), the router chain's (`Router::with_codec`), else
+`DefaultCodec`. `.codec(..)` overrides it for one registration, and `.on_failure(..)` carries the
+decode-failure policy. (`typed(codec, handler)` is the wrapper underneath - it decodes the delivery
+and calls the inner handler with `&T` - and the one you build yourself for the `handle` SPI below,
+which reads no scope codec.)
 
 ```rust
-use ruststream::runtime::{FailurePolicy, typed};
+use ruststream::codec::CborCodec;
 
 // the decode-failure policy, the manual counterpart of `on_failure(decode = ..)`
-let handler = typed(JsonCodec, Handle).on_decode_failure(FailurePolicy::Retry);
+b.include(
+    subscriber("orders", Handle)
+        .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry)),
+);
+
+// this registration's own decode codec, overriding the scope's
+b.include(subscriber("audit", Handle).codec(CborCodec));
 ```
 
 ## Raw bytes
 
-Without `typed`, the handler is called with the broker's own message, so the payload comes off it
-directly and no codec is involved. This is the shape `#[subscriber(.., raw)]` produces, and the
-only subscriber form available with no codec feature at all.
+The `raw` constructor takes a `Handler<[u8]>`, so the payload arrives undecoded and no codec is
+involved. This is the shape `#[subscriber(.., raw)]` produces, and the only subscriber form
+available with no codec feature at all (`raw_batch` is its batch counterpart, over
+`RawSliceHandler`).
 
 ```rust
-use ruststream::memory::MemoryMessage;
-
 struct Ingest;
 
-impl Handler<MemoryMessage> for Ingest {
-    async fn handle(&self, msg: &MemoryMessage, _ctx: &mut Context<'_>) -> Settle {
-        parse(msg.payload());
+impl Handler<[u8]> for Ingest {
+    async fn handle(&self, payload: &[u8], _ctx: &mut Context<'_>) -> Settle {
+        parse(payload);
         HandlerResult::ack().into()
     }
 }
 
-b.subscribe(Name::new("frames"), Ingest, HandlerMetadata::raw("frames"));
+b.include(raw("frames", Ingest));
 ```
 
 Use `b.handle(subscriber, handler, meta)` instead when the broker hands you an open subscriber
@@ -144,8 +150,21 @@ before registration (how you obtain one is broker-specific; the in-memory broker
 a plain synchronous call):
 
 ```rust
+use ruststream::memory::MemoryMessage;
+use ruststream::runtime::HandlerMetadata;
+
+// The SPI takes a handler over the broker's own message, not over `[u8]`.
+struct Frames;
+
+impl Handler<MemoryMessage> for Frames {
+    async fn handle(&self, msg: &MemoryMessage, _ctx: &mut Context<'_>) -> Settle {
+        parse(msg.payload());
+        HandlerResult::ack().into()
+    }
+}
+
 let subscriber = b.broker().subscribe("orders");
-b.handle(subscriber, Ingest, HandlerMetadata::raw("orders"));
+b.handle(subscriber, Frames, HandlerMetadata::raw("orders"));
 ```
 
 ## Dependencies and state
@@ -159,6 +178,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::codec::Codec; // the trait, for `encode`
+use ruststream::runtime::{Decoded, IncludeDef, SubscriberDef, forms};
 
 /// Held: fixed at registration. Read off the context: owned by the runtime.
 struct Confirm {
@@ -191,14 +211,31 @@ impl Handler<Order, (), AppState> for Confirm {
     }
 }
 
+// `subscriber(source, body)` binds a body over the unit application state, so a body pinned to
+// `AppState` names its own definition instead - the escape hatch below, in its shortest form.
+impl SubscriberDef for Confirm {
+    type Input = Decoded<Order>;
+    type Context = ();
+    type Handler = Self;
+    type Source = Name;
+
+    fn source(&self) -> Name {
+        Name::new("orders")
+    }
+
+    fn into_handler(self) -> Self {
+        self
+    }
+}
+
+impl IncludeDef for Confirm {
+    type Form = forms::Subscribing;
+}
+
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .on_startup(async move |()| Ok::<_, std::convert::Infallible>(AppState { receipts }))
     .with_broker(MemoryBroker::new(), |b| {
-        b.subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Confirm { seen }),
-            HandlerMetadata::typed::<Order>("orders"),
-        );
+        b.include(Confirm { seen });
     });
 ```
 
@@ -240,8 +277,11 @@ publisher
 ```
 
 `TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
-work unchanged; only the `Out` slot *parameter* and the reply clauses are gone, so a handler that
-publishes holds its publisher as a field or reads it from the state.
+work unchanged. The reply clause becomes `replying(source, body).to(dest)` over an `impl Reply<T>`
+with `type Out`, and the `Out` slot parameter becomes
+`with_slots::<T, (Marker,), _, _>(source, body)` over an `impl SlotsHandler<T, Slots>` (both at
+once: `replying_with_slots(..).to(..)` over `SlotsReply`); the include site still binds each slot
+with `.out(marker, policy)` or `.publisher(policy)` and commits with `.mount()`.
 
 ## Middleware
 
@@ -271,19 +311,20 @@ where
 
 ## Reaching the rest: write the definition out
 
-`b.subscribe` / `b.handle` register with the default failure policies and no settings, because they
-take a handler, not a definition. They also never read the scope codec, so `with_broker_codec` and
-`Router::with_codec` are inert on a `subscribe` registration - the codec is the one you named at
+`b.handle` registers with the default failure policies and no settings, because it takes a handler,
+not a definition. It also never reads the scope codec, so `with_broker_codec` and
+`Router::with_codec` are inert on a `handle` registration - the codec is the one you named at
 `typed(..)`.
 
 A `Router` reaches a little further without a definition: `Router::workers(Workers::pool(n))` /
 `Workers::keyed(n)` is the functional counterpart of the `workers(..)` clause (`BrokerScope` has no
-worker control at all), and `Router::subscribe_batch` is the macro-free path for a typed batch - it
-does resolve the chain's codec, unlike `subscribe`. A raw batch has no such path, so it needs the
-definition written out.
+worker control at all). Beyond that, `batch(source, body)` and `raw_batch(source, body)` are the
+macro-free paths for the batch shapes, and both resolve the chain's codec.
 
-Everything else the attribute offers rides on the definition, so implement one and the whole mount
-surface opens up on your own type.
+What no constructor covers - a body pinned to a concrete application state or broker context, the
+injection forms (`Seek<..>` included), batch publishing, raw replies, a batch carrying a headers
+contract, a header-schema declaration - rides on the definition, so implement one and the whole
+mount surface opens up on your own type.
 
 ```rust
 use ruststream::runtime::{
@@ -291,6 +332,8 @@ use ruststream::runtime::{
     SubscriberSettings, forms,
 };
 
+// This exact case is shorter as `subscriber("orders", Handle).on_failure(..)`; the shape below is
+// what the forms with no constructor need.
 impl SubscriberDef for Handle {
     type Input = /* the decode kind */;
     type Context = ();

@@ -43,10 +43,8 @@ ruststream asyncapi gen --yaml         # YAML вместо JSON
 === "Вручную"
 
     ```rust
-    use ruststream::codec::JsonCodec;
     use ruststream::memory::MemoryBroker;
     use ruststream::prelude::*;
-    use ruststream::runtime::{HandlerMetadata, typed};
 
     --8<-- "examples/manual/quickstart.rs:app"
     ```

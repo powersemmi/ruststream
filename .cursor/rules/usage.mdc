@@ -13,8 +13,9 @@ alwaysApply: false
   globbed side by side - the core items they share resolve to the same types.
 - Only what a given service actually reaches for stays an explicit import: the in-core broker
   (`ruststream::memory`), codecs (`ruststream::codec`), and the optional feature modules
-  (`ruststream::testing`, `asyncapi`, `metrics`, `logging`, `otel`), plus the few runtime items
-  outside the prelude (`RouterDef`, `DefaultSlot`, `FailurePolicies`, `nonzero!`).
+  (`ruststream::testing`, `asyncapi`, `metrics`, `logging`, `otel`). `RouterDef`, `DefaultSlot`,
+  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `nonzero!` and the value constructors
+  are all in the prelude.
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
   payload: `&T` (`T: serde::Deserialize`) decodes, `&[T]` is a batch, `&[u8]` under the `raw`
   clause takes the codec out of the path entirely, and `&[&[u8]]` is that batch shape (the type
