@@ -21,13 +21,12 @@ use tokio_util::task::TaskTracker;
 use tracing::{error, warn};
 
 use crate::IncomingMessage;
-use crate::codec::Codec;
 
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{HandlerResult, Settle};
-use super::input::{DecodeWith, Decoded, InputKind};
+use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
 
 /// The settlement of one dispatched batch.
@@ -318,12 +317,17 @@ pub(crate) trait BatchHandler<M, S = ()>: Send + Sync {
 }
 
 /// Build a [`TypedBatch`] that decodes each element with `codec` into `T` and forwards the batch
-/// as `&[T]` to `inner`.
-pub(crate) fn typed_batch<M, T, C, H>(codec: C, inner: H) -> TypedBatch<M, Decoded<T>, C, H>
+/// as `&[T]` to `inner`. The adapter tests' constructor; the mounts name the input kind
+/// explicitly instead.
+#[cfg(test)]
+pub(crate) fn typed_batch<M, T, C, H>(
+    codec: C,
+    inner: H,
+) -> TypedBatch<M, super::input::Decoded<T>, C, H>
 where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync + 'static,
-    C: Codec,
+    C: crate::codec::Codec,
 {
     TypedBatch {
         codec,

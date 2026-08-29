@@ -264,6 +264,12 @@ impl<E> IntoSettle for Result<Settle, E> {
 ///     assert_handler::<M, _>(|_msg: &M, _ctx: &mut Context| async { HandlerResult::Ack });
 /// }
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot handle `{M}`",
+    note = "a handler is a named type with an `impl Handler<{M}>` whose `handle` method returns \
+            the settlement, or a closure `|msg: &{M}, ctx: &mut Context| async {{ .. }}` whose \
+            future does not borrow its arguments"
+)]
 pub trait Handler<M: ?Sized, C = (), S = ()>: Send + Sync {
     /// Handle one input, with the per-delivery [`Context`] (carrying the broker's typed context
     /// `C` and the shared application state `S`). The returned [`Settle`] carries the outcome the

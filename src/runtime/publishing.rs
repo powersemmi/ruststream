@@ -100,6 +100,12 @@ where
 /// The generated type carries the subscribe name, the reply name, and the reply type. *How* the
 /// reply is encoded (codec) and *through which* connection it is sent come from the
 /// [`TypedPublisher`] passed at wiring time.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a mountable reply definition",
+    note = "a `replying(..)` chain needs a destination before it mounts: chain `.to(\"subject\")`, \
+            or declare a fixed name on the reply type (`#[derive(Outgoing)]` with \
+            `#[outgoing(name = \"..\")]`)"
+)]
 pub trait PublishingDef: Send + Sync {
     /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`
     /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).

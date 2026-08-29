@@ -143,6 +143,37 @@ impl<Def, Src, State> SubscriberBuilder<Def, Src, State> {
             _state: PhantomData,
         }
     }
+
+    /// Replaces the wrapped definition, keeping the source and the collected settings: the hook
+    /// the value-definition methods (`describe`, `documented`, `to`, `codec`) grow their
+    /// definitions through.
+    pub(crate) fn map_def<NewDef>(
+        self,
+        f: impl FnOnce(Def) -> NewDef,
+    ) -> SubscriberBuilder<NewDef, Src, State> {
+        let (builder, ()) = self.split_def(|def| (f(def), ()));
+        builder
+    }
+
+    /// [`map_def`](Self::map_def) with a passenger: the mapping hands back a second value the
+    /// caller keeps (a codec split off a wrapped definition).
+    pub(crate) fn split_def<NewDef, Extra>(
+        self,
+        f: impl FnOnce(Def) -> (NewDef, Extra),
+    ) -> (SubscriberBuilder<NewDef, Src, State>, Extra) {
+        let (def, source, workers, failures) = self.into_parts();
+        let (def, extra) = f(def);
+        (
+            SubscriberBuilder {
+                def,
+                source,
+                workers,
+                failures,
+                _state: PhantomData,
+            },
+            extra,
+        )
+    }
 }
 
 impl<Def, Src, State> Declared for SubscriberBuilder<Def, Src, State>

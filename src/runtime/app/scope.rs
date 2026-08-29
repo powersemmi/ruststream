@@ -150,7 +150,8 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
 
     /// Attaches `handler` (wrapped with the global stack) to an already-created `subscriber`.
     ///
-    /// See [`Router::handle`](crate::runtime::Router::handle).
+    /// Machinery, not the user path - see [`Router::handle`](crate::runtime::Router::handle);
+    /// a service mounts definitions with [`include`](Self::include) and the value constructors.
     pub fn handle<S, H, Cx>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
     where
         S: Subscriber + Send + 'static,
@@ -163,24 +164,6 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         let handler = self.global.layer(handler);
         self.sink
             .push_handle(subscriber, handler, meta, FailurePolicies::default());
-    }
-
-    /// Attaches `handler` (wrapped with the global stack) to a subscription described by `source`.
-    ///
-    /// See [`Router::subscribe`](crate::runtime::Router::subscribe).
-    pub fn subscribe<S, H, Cx>(&mut self, source: S, handler: H, meta: HandlerMetadata)
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        State: Send + Sync + 'static,
-        Cx: crate::BuildContext<<S::Subscriber as Subscriber>::Message> + Send + 'static,
-        H: Handler<<S::Subscriber as Subscriber>::Message, Cx, State> + 'static,
-        Layers: Layer<H>,
-        Layers::Handler: Handler<<S::Subscriber as Subscriber>::Message, Cx, State> + 'static,
-    {
-        let handler = self.global.layer(handler);
-        self.sink
-            .push_subscribe(source, handler, meta, FailurePolicies::default());
     }
 
     /// Mounts every registration from `router` onto this broker, wrapping each handler with the
@@ -204,7 +187,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
 impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC, State, Pipeline> {
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the plain and
     /// raw `include` forms.
-    pub(super) fn mount_subscriber<Source, Def, DecodeCodec>(
+    pub(crate) fn mount_subscriber<Source, Def, DecodeCodec>(
         &mut self,
         source: Source,
         def: Def,
@@ -244,7 +227,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     /// Mounts a batch definition on `source`, decoding each element with `codec`. The shared
     /// tail of the batch `include` forms. Batch handlers are not wrapped by the global stack:
     /// per-message layers cannot wrap a whole-batch handler.
-    pub(super) fn mount_batch<Source, Def, DecodeCodec>(
+    pub(crate) fn mount_batch<Source, Def, DecodeCodec>(
         &mut self,
         source: Source,
         def: Def,

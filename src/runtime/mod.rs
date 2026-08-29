@@ -25,6 +25,7 @@ mod settings;
 mod slot;
 mod subscriber_def;
 mod typed;
+mod value_def;
 
 /// The subscriber a source opens, for broker `B` (the source resolves against the broker's
 /// connected form). Tames the long projection in bounds.
@@ -105,3 +106,11 @@ pub use slot::{
 };
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};
+#[doc(hidden)]
+pub use value_def::SplitCodec;
+pub use value_def::{
+    BatchValue, BoundReplyingSlots, BoundSlotsValue, CodecValue, DeclaredName, IntoSource,
+    RawBatchValue, RawValue, Reply, ReplyingBuilder, ReplyingSlotsValue, ReplyingValue,
+    SlotsHandler, SlotsReply, SlotsValue, SubscriberValue, To, batch, raw, raw_batch, replying,
+    replying_with_slots, subscriber, with_slots,
+};

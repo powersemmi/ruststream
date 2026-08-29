@@ -1,11 +1,11 @@
 //! The imports a service writes every time, in one glob.
 //!
 //! `use ruststream::prelude::*;` brings in the application object and its builder, the handler
-//! surface (the settlement enum, the per-delivery context, the extractor parameters), the
-//! subscriber settings a mount site fills in, the
-//! publishing types a handler reaches for, and - with the `macros` feature - the attribute
-//! macros and derives. What a handler publishes it publishes through the builder, so the
-//! outgoing message type is not here; see the note on the re-export below.
+//! surface on both paths - the attribute's (with the `macros` feature) and the value
+//! constructors with their body traits - the settlement types, the per-delivery context, the
+//! extractor parameters, the subscriber settings a mount site fills in, and the publishing
+//! types a handler reaches for. What a handler publishes it publishes through the builder, so
+//! the outgoing message type is not here; see the note on the re-export below.
 //! Brokers, codecs and the optional feature modules (`asyncapi`, `metrics`, `logging`, `otel`,
 //! `testing`) stay explicit imports.
 //!
@@ -21,15 +21,20 @@
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, Context, Ctx, FromRef, HandlerResult, Headers, Out, PublishExt, Router,
-    RunningApp, RustStream, Seek, State, SubscriberSettings, TypedPublisher,
+    App, AppInfo, BatchResult, Context, Ctx, DefaultSlot, FailurePolicies, FailurePolicy, FromRef,
+    Handler, HandlerResult, Headers, Out, PublishExt, RawSliceHandler, Reply, Router, RouterDef,
+    RunningApp, RustStream, Seek, Settle, SliceHandler, SlotsHandler, SlotsReply, State,
+    SubscriberSettings, TypedPublisher, Workers, batch, raw, raw_batch, replying,
+    replying_with_slots, subscriber, with_slots,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
 // broker crate used on its own without this one - names it explicitly.
 pub use crate::{
-    Broker, HeaderMap, IncomingMessage, Message, Name, OutSlot, PublishPolicy, Publisher,
+    Broker, HeaderMap, IncomingMessage, Message, Name, OutSlot, PublishPolicy, Publisher, Unnamed,
 };
+// The counting macro every `workers(..)` chain writes.
+pub use crate::nonzero;
 
 // The derives sharing a name with their trait (`Message`, `OutSlot`, `FromRef`) come in with the
 // re-exports above. `Outgoing` is the exception: the derive lives at the crate root while the

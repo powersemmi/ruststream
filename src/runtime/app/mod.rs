@@ -15,6 +15,8 @@ pub use include::{
     IncludePublishing, IncludePublishingOut, IncludeSlots, IncludeSlotsWithReply, IncludeWith,
     SlotCommit,
 };
+// The scope-side form dispatch, reachable for the value-definition codec form's mounts.
+pub(crate) use include::IncludeMount;
 pub use run::RunningApp;
 pub use scope::BrokerScope;
 #[cfg(feature = "testing")]
