@@ -4,6 +4,17 @@ globs: examples/**/*.rs
 alwaysApply: false
 ---
 
+- A service imports one glob: `use ruststream::prelude::*;`. It carries the application builder,
+  the handler surface (`HandlerResult`, `Context`), every extractor (`State`, `Ctx`, `Headers`,
+  `Out`), the mount-site settings, `TypedPublisher`, and the attribute macros and derives. On a
+  broker crate, glob that crate's prelude instead (`use ruststream_nats::prelude::*;`): it
+  re-exports the core prelude plus the broker, its subscription descriptor and its publish
+  policies, so importing it *is* the service's broker statement. Two broker preludes can be
+  globbed side by side - the core items they share resolve to the same types.
+- Only what a given service actually reaches for stays an explicit import: the in-core broker
+  (`ruststream::memory`), codecs (`ruststream::codec`), and the optional feature modules
+  (`ruststream::testing`, `asyncapi`, `metrics`, `logging`, `otel`), plus the few runtime items
+  outside the prelude (`RouterDef`, `DefaultSlot`, `FailurePolicies`, `nonzero!`).
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
   payload: `&T` (`T: serde::Deserialize`) decodes, `&[T]` is a batch, `&[u8]` takes the codec out
   of the path entirely, and `&[&[u8]]` is that batch shape. Further parameters are extractors:
@@ -35,8 +46,7 @@ The macro turns `handle` into a value named after the function; mount it with `i
 
 ```rust
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-use ruststream::subscriber;
+use ruststream::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -59,10 +69,10 @@ fn app() -> RustStream {
 }
 ```
 
-Swap the broker without touching the handlers (NATS connects at startup):
+Swapping the broker is swapping the glob; the handlers do not change (NATS connects at startup):
 
 ```rust
-use ruststream_nats::NatsBroker;
+use ruststream_nats::prelude::*; // brings NatsBroker + the core prelude
 
 .with_broker(NatsBroker::new("nats://localhost:4222"), |b| b.include(handle))
 ```
@@ -90,6 +100,7 @@ value carries a builder for the declarative settings, applied before `include` t
 use std::time::Duration;
 
 use ruststream::nonzero;
+use ruststream::prelude::*;
 use ruststream::runtime::{FailurePolicies, FailurePolicy};
 
 #[subscriber]
@@ -118,7 +129,7 @@ policy unless the mount names one with `.publisher(..)`.
 
 ```rust
 use ruststream::memory::MemoryPublish;
-use ruststream::runtime::TypedPublisher;
+use ruststream::prelude::*;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -152,8 +163,9 @@ runtime pairs it with the connected broker at startup, so the handler always hol
 publisher - no registry, no erased lookup, no state plumbing.
 
 ```rust
-use ruststream::runtime::{DefaultSlot, Out};
-use ruststream::{OutSlot, Outgoing, Publisher};
+use ruststream::memory::MemoryPublish;
+use ruststream::prelude::*;
+use serde::Serialize;
 
 #[derive(Debug, Serialize, Outgoing)]
 struct Event {
@@ -174,7 +186,8 @@ b.include(forward).publisher(MemoryPublish);
 
 Several publishers in one handler name a slot marker per parameter; each marker lists what may
 leave through it, which is both what the generated document reports and what the builder admits.
-`.out(..)` chains finish with `.mount()`.
+`.out(..)` chains finish with `.mount()`, and `DefaultSlot` (from `ruststream::runtime`) names the
+single unnamed slot when a handler also has a reply side.
 
 ```rust
 #[derive(OutSlot)]
@@ -212,14 +225,13 @@ Build the state once in `on_startup`; `#[derive(FromRef)]` makes every field inj
 ```rust
 use std::convert::Infallible;
 
-use ruststream::FromRef;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, State};
-use ruststream::subscriber;
+use ruststream::memory::MemoryBroker;
+use ruststream::prelude::*;
 
 #[derive(Clone)]
 struct Database; // connection pool, etc.
 
-#[derive(FromRef)]
+#[derive(Clone, FromRef)]
 struct AppState {
     db: Database,
 }
@@ -232,7 +244,7 @@ async fn handle(order: &Order, State(db): State<Database>) -> HandlerResult {
 }
 
 #[ruststream::app]
-fn app() -> impl ruststream::runtime::App {
+fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(AppState { db: Database }))
         .with_broker(MemoryBroker::new(), |b| b.include(handle))
@@ -256,8 +268,7 @@ state component. The key `K` is a broker-provided `ContextField` type; a handler
 extractors needs no `&mut Context` parameter at all.
 
 ```rust
-use ruststream::runtime::Ctx;
-// Keys come from the broker crate, e.g. ruststream_rdkafka::context::{Partition, Offset}.
+use ruststream_rdkafka::prelude::*; // the context keys ride the broker's prelude too
 
 #[subscriber("orders")]
 async fn handle(order: &Order, Ctx(partition): Ctx<Partition>) -> HandlerResult {
@@ -274,7 +285,7 @@ On a batch the contract arrives one per element: `Headers<Vec<T>>`. The untyped 
 map itself is `HeaderMap` (`ctx.headers()`), and `Headers` is only the extractor.
 
 ```rust
-use ruststream::runtime::Headers;
+use ruststream::prelude::*;
 
 #[subscriber("chunks")]
 async fn convert(chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
@@ -302,6 +313,7 @@ scope with `with_broker_codec`, or for a `Router` chain with `with_codec`.
 
 ```rust
 use ruststream::codec::{CborCodec, JsonCodec};
+use ruststream::prelude::*;
 
 // every handler in this scope decodes with CborCodec
 RustStream::new(info).with_broker_codec(broker, CborCodec, |b| {
@@ -323,7 +335,9 @@ middleware (tracing propagation, broker envelopes such as Kafka's Schema Registr
 added app-wide with `.publish_layer(..)` before `with_broker`.
 
 ```rust
-use ruststream::runtime::{Router, RouterDef};
+use ruststream::memory::MemoryBroker;
+use ruststream::prelude::*;
+use ruststream::runtime::RouterDef; // the only router item outside the prelude
 
 fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
     Router::new().include(accept)
@@ -340,11 +354,12 @@ b.include_router(orders().merge(shipping()));
 ## Broker-specific subscriptions
 
 For options the by-name form can't express (NATS JetStream, Kafka consumer groups / start offsets),
-name the broker's descriptor in the attribute. Broker crates layer their own extension trait over
-the mount builder for the rest, so the settings read in the broker's own vocabulary.
+name the broker's descriptor in the attribute - the broker's prelude already carries it. Broker
+crates layer their own extension trait over the mount builder for the rest, so the settings read in
+the broker's own vocabulary.
 
 ```rust
-use ruststream_nats::SubscribeOptions;
+use ruststream_nats::prelude::*; // brings SubscribeOptions
 
 #[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"))]
 async fn handle(order: &Order) -> HandlerResult {
@@ -355,7 +370,7 @@ async fn handle(order: &Order) -> HandlerResult {
 ## AsyncAPI metadata
 
 Decoding only needs `serde::Deserialize`. The extra derives are **documentation only** for the
-generated AsyncAPI spec and are optional: `ruststream::Message` names/describes the type, and
+generated AsyncAPI spec and are optional: `Message` (in the prelude) names/describes the type, and
 `JsonSchema` (feature `asyncapi`) emits its payload schema.
 
 Neither selects a wire codec - that stays the default (`json` > `cbor` > `msgpack`) or whatever
@@ -364,7 +379,7 @@ JSON Schema language (as in OpenAPI), independent of how bytes are encoded on th
 attach a codec to a type.
 
 ```rust
-use ruststream::Message;
+use ruststream::prelude::*;
 use ruststream::schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -383,6 +398,7 @@ is a real broker here, driven through the same dispatch path as production.
 
 ```rust
 use ruststream::memory::MemoryBroker;
+use ruststream::prelude::*;
 use ruststream::testing::TestApp;
 
 let tb = TestApp::start(service()).await?;
