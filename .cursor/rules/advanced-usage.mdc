@@ -1,0 +1,202 @@
+---
+description: Building a RustStream service without the `macros` feature (hand-written handlers, registration and main)
+globs:
+alwaysApply: false
+---
+
+- Everything the attribute macros produce can be written by hand. `macros` is a convenience
+  feature, not a layer: it expands to calls on the same public runtime API, so a service without it
+  loses no capability that does not come *from* a declaration.
+- What disappears with the feature off: `#[subscriber]`, `#[ruststream::app]`, and the
+  `Message` / `Outgoing` / `OutSlot` / `OutMessages` / `FromRef` derives. Everything those expand
+  into - extractor parameters (`State`, `Ctx`, `Headers`, `Out`, `Seek`), the reply clauses
+  (`publish(..)`, `publish_raw(..)`), the mount-site settings builder (`.name`, `.workers`,
+  `.on_failure`, `.buffered`) and `include` itself - goes with them, because all of it is carried
+  by the *definition* the attribute mints.
+- `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
+  feature-gated, so the rest of it (builder, `Context`, `HandlerResult`, `Name`, `Publisher`,
+  `PublishExt`, `TypedPublisher`) comes in unchanged.
+- A handler is any `Fn(&M, &mut Context<'_, C, S>) -> impl Future`, where the output is anything
+  `Into<Settle>` (`HandlerResult`, `()`, `Result<_, E>`, `Settle`). Closures qualify, so do plain
+  functions and any type implementing `Handler`.
+- Register with `b.subscribe(source, handler, metadata)` (the portable form: the source resolves at
+  startup) or `b.handle(subscriber, handler, metadata)` when you already hold an open subscriber.
+  Routers have the same `subscribe` method, so grouping still works.
+- Write `main` yourself: `#[tokio::main]` plus `app.run().await`. The attribute's CLI (`run`,
+  `asyncapi gen`) is what you give up; `run_until(..)` and `start()` are plain methods.
+- State is reached through `ctx.state()`, headers through `ctx.headers()`, and publishing through a
+  publisher the closure captured or that lives in the state - the same objects the extractors would
+  have handed over.
+
+## A whole service, macro-free
+
+```rust
+use std::error::Error;
+
+use ruststream::codec::JsonCodec;
+use ruststream::memory::MemoryBroker;
+use ruststream::prelude::*;
+use ruststream::runtime::{HandlerMetadata, typed}; // outside the prelude
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct Order {
+    id: u64,
+}
+
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.subscribe(
+            Name::new("orders"),
+            typed(JsonCodec, |order: &Order, _ctx: &mut Context| {
+                let id = order.id;
+                async move {
+                    tracing::info!(id, "processing order");
+                    HandlerResult::ack()
+                }
+            }),
+            HandlerMetadata::typed::<Order>("orders"),
+        );
+    })
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    app().run().await?;
+    Ok(())
+}
+```
+
+`run()` runs until `SIGINT` / `SIGTERM`; `run_until(future)` drives shutdown from a future you own
+(a test signal, a timeout), and `start()` hands back a `RunningApp` for hosting the service beside
+another foreground server.
+
+## Decoding
+
+`typed(codec, handler)` is what the attribute wraps a typed handler in: it decodes the delivery
+with `codec` and calls the inner handler with `&T`. Name the codec explicitly - there is no
+declaration site for a scope codec to reach.
+
+```rust
+use ruststream::runtime::{FailurePolicy, typed};
+
+// the decode-failure policy, the manual counterpart of `on_failure(decode = ..)`
+let handler = typed(JsonCodec, |order: &Order, _ctx: &mut Context| async move {
+    HandlerResult::ack()
+})
+.on_decode_failure(FailurePolicy::Retry);
+```
+
+## Raw bytes
+
+Without `typed`, the handler is called with the broker's own message, so the payload comes off it
+directly and no codec is involved. This is the shape `#[subscriber(.., raw)]` produces, and the
+only subscriber form available with no codec feature at all.
+
+```rust
+b.subscribe(
+    Name::new("frames"),
+    |msg: &MemoryMessage, _ctx: &mut Context| {
+        let frame = msg.payload().to_vec();
+        async move {
+            parse(&frame);
+            HandlerResult::ack()
+        }
+    },
+    HandlerMetadata::raw("frames"),
+);
+```
+
+Use `b.handle(subscriber, handler, meta)` instead when the broker hands you an open subscriber
+before registration (how you obtain one is broker-specific; the in-memory broker's `subscribe` is
+a plain synchronous call):
+
+```rust
+let subscriber = b.broker().subscribe("orders");
+b.handle(subscriber, handler, HandlerMetadata::raw("orders"));
+```
+
+## State
+
+There is no `State<T>` parameter and no `FromRef` derive to make one resolve. `on_startup` is
+unchanged, and the handler reads the state off the context:
+
+```rust
+struct AppState {
+    receipts: MemoryPublisher,
+}
+
+let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+    .on_startup(async move |()| Ok::<_, std::convert::Infallible>(AppState { receipts }))
+    .with_broker(MemoryBroker::new(), |b| {
+        b.subscribe(
+            Name::new("orders"),
+            typed(JsonCodec, |order: &Order, ctx: &mut Context<'_, (), AppState>| {
+                let payload = serde_json::to_vec(&Receipt { order_id: order.id }).expect("encode");
+                let publisher = ctx.state().receipts.clone();
+                async move {
+                    if publisher.raw(&payload).to("receipts").publish().await.is_err() {
+                        return HandlerResult::retry();
+                    }
+                    HandlerResult::ack()
+                }
+            }),
+            HandlerMetadata::typed::<Order>("orders"),
+        );
+    });
+```
+
+The context's type parameters are what the attribute would have inferred: `Context<'_, C, S>` with
+`C` the broker's per-delivery context and `S` the application state. Spell them out when the
+closure needs the state; `Context<'_>` is the stateless default.
+
+## Headers
+
+`Headers<T>` is an extractor, so the manual path parses the map itself. It is the same call the
+extractor makes, and it returns a `Result` you settle on yourself:
+
+```rust
+let Ok(meta) = ctx.headers().to_typed::<ChunkMeta>() else {
+    return HandlerResult::drop();
+};
+```
+
+`ctx.headers_mut()` is the working copy middleware enriches, and `HeaderMap::insert_typed(&value)`
+writes a contract back into it.
+
+## Publishing
+
+`message(&value)` needs `T: OutgoingDestination`, which is what `#[derive(Outgoing)]` implements -
+so without the derive the typed publish builder has nothing to resolve a destination from. Two
+routes remain, and both are the ones the builder itself ends in:
+
+```rust
+// encode with the codec, then send the bytes to a destination you name
+let bytes = JsonCodec.encode(&receipt)?;
+publisher.raw(&bytes).to("receipts").publish().await?;
+
+// or build the message and call the Publisher trait method directly
+publisher
+    .publish(OutgoingMessage::new("receipts", bytes.as_ref()).with_headers(headers))
+    .await?;
+```
+
+`TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
+work unchanged; only the `Out` slot *parameter* and the reply clauses are gone, so a handler that
+publishes captures its publisher or reads it from the state.
+
+## What has no macro-free equivalent
+
+These are declarations, not behaviour, so there is nothing to hand-write:
+
+- The AsyncAPI payload and headers schemas the derives contribute. `HandlerMetadata` still records
+  the subscription name and the input type name, and `with_description` and the other builder
+  setters fill in the rest by hand.
+- The `Out` slot dictionary (`#[publishes(..)]`) and the message-set enums: they exist to be
+  checked at compile time against a declaration site the manual path does not have.
+- The mount-site settings builder. `b.subscribe` / `b.handle` register with the default failure
+  policies; the decode policy is set on the `typed` wrapper instead.
+
+If a service wants any of that, enable `macros` - it is additive, and the two styles compose in one
+application: a macro-free registration and an `include(def)` can sit in the same `with_broker`
+scope.
