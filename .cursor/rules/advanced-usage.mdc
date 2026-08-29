@@ -309,6 +309,14 @@ impl Declared for Handle {
 b.include(Handle);
 ```
 
+The two routes are mutually exclusive: a direct `impl Declared` conflicts with the blanket
+`impl<T: IncludeDef> Declared for T`, so pick one per definition. The builder route is the one that
+scales - `SubscriberBuilder` forwards `SubscriberDef`, `InjectDef`/`InjectCall`,
+`PublishingDef`/`PublishingCall`, `BatchPublishingDef`/`BatchPublishingCall` and
+`HasSlots`/`BindSlots`, so the same shape carries every handler form, injected slots included.
+It does mean the source is written twice, in `declare()` and in the def's own `source()`, which is
+what the attribute writes too.
+
 The settings state rides in the `Settings` type (`AllOpen` when the declaration fixed none,
 `Fixed` in the slot for each one it did), which is what makes naming the same setting again at the
 mount site a compile error rather than a silent override. Put a setting in `declare` to keep it
