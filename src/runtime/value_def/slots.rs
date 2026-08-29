@@ -196,6 +196,21 @@ where
     }
 }
 
+impl<In, H, Markers, C, Src, State, DC>
+    SubscriberBuilder<SlotsValue<In, H, Markers, C>, Src, State, DC>
+{
+    /// Names the broker's typed per-delivery context the body reads, replacing the unit
+    /// default. The body's bound is checked at the mount.
+    #[must_use]
+    pub fn context<C2>(self) -> SubscriberBuilder<SlotsValue<In, H, Markers, C2>, Src, State, DC> {
+        self.map_def(|def| SlotsValue {
+            handler: def.handler,
+            docs: def.docs,
+            _types: PhantomData,
+        })
+    }
+}
+
 /// Binds a slot-carrying `handler` to the subscription `source`: the value-path counterpart of
 /// a `#[subscriber]` handler with `Out(..)` parameters.
 ///

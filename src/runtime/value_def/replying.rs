@@ -129,8 +129,8 @@ macro_rules! replying_def_common {
 
         fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
             vec![
-                OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R>())
-                    .with_payload_schema(self.docs.reply_schema()),
+                self.docs
+                    .reply_outgoing(self.reply_name().to_owned(), type_name::<R>()),
             ]
         }
     };

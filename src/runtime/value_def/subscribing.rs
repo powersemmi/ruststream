@@ -31,6 +31,11 @@ pub struct Docs {
     pub(crate) headers_schema: Option<fn() -> Option<String>>,
     pub(crate) message_name: Option<&'static str>,
     pub(crate) message_description: Option<&'static str>,
+    /// The reply side of the generated send operation; captured only by the publishing forms'
+    /// `reply_message` / `reply_headers` opt-ins.
+    pub(crate) reply_message_name: Option<&'static str>,
+    pub(crate) reply_message_description: Option<&'static str>,
+    pub(crate) reply_headers_schema: Option<fn() -> Option<String>>,
 }
 
 impl Docs {
@@ -42,7 +47,24 @@ impl Docs {
             headers_schema: None,
             message_name: None,
             message_description: None,
+            reply_message_name: None,
+            reply_message_description: None,
+            reply_headers_schema: None,
         }
+    }
+
+    /// The reply entry of the generated send operations, carrying everything the reply opt-ins
+    /// captured.
+    pub(crate) fn reply_outgoing(
+        &self,
+        channel: String,
+        message_type: &'static str,
+    ) -> crate::runtime::metadata::OutgoingMessageMetadata {
+        crate::runtime::metadata::OutgoingMessageMetadata::new(channel, message_type)
+            .with_payload_schema(self.reply_schema())
+            .with_message_name(self.reply_message_name)
+            .with_message_description(self.reply_message_description)
+            .with_headers_schema(self.reply_headers_schema.and_then(|capture| capture()))
     }
 
     pub(crate) fn description(&self) -> Option<&str> {
@@ -157,6 +179,40 @@ impl<D: DocumentedValue, Src, State, DC> SubscriberBuilder<D, Src, State, DC> {
             let docs = def.docs_mut();
             docs.message_name = Some(<D::Payload as crate::Message>::NAME);
             docs.message_description = <D::Payload as crate::Message>::DESCRIPTION;
+            def
+        })
+    }
+
+    /// Reports the reply type's [`Message`](crate::Message) name and description on the
+    /// generated send operation. Available on the publishing forms, whose reply type carries
+    /// the impl.
+    #[must_use]
+    pub fn reply_message(self) -> Self
+    where
+        D::Reply: crate::Message,
+    {
+        self.map_def(|mut def| {
+            let docs = def.docs_mut();
+            docs.reply_message_name = Some(<D::Reply as crate::Message>::NAME);
+            docs.reply_message_description = <D::Reply as crate::Message>::DESCRIPTION;
+            def
+        })
+    }
+
+    /// Reports the reply type's declared header contract
+    /// ([`MessageHeaders`](crate::MessageHeaders)) as the send operation's headers schema.
+    /// Available on the publishing forms.
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    pub fn reply_headers(self) -> Self
+    where
+        D::Reply: crate::MessageHeaders,
+        <D::Reply as crate::MessageHeaders>::Contract: crate::__private::ContractSchema,
+    {
+        self.map_def(|mut def| {
+            def.docs_mut().reply_headers_schema = Some(
+                <<D::Reply as crate::MessageHeaders>::Contract as crate::__private::ContractSchema>::schema_json,
+            );
             def
         })
     }

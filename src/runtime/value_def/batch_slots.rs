@@ -221,13 +221,10 @@ macro_rules! batch_replying_slots_common {
         docs_metadata!();
 
         fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-            let mut declared = vec![
-                OutgoingMessageMetadata::new(
-                    self.reply_name().to_owned(),
-                    type_name::<BatchReplyOf<H, T, Slots>>(),
-                )
-                .with_payload_schema(self.docs.reply_schema()),
-            ];
+            let mut declared = vec![self.docs.reply_outgoing(
+                self.reply_name().to_owned(),
+                type_name::<BatchReplyOf<H, T, Slots>>(),
+            )];
             declared.extend(Markers::outgoing());
             declared
         }

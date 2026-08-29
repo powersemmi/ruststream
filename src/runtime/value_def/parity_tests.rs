@@ -403,6 +403,70 @@ fn codec_axis() -> impl RouterDef<MemoryBroker> {
         .mount()
 }
 
+#[cfg(feature = "asyncapi")]
+mod docs_impls {
+    use super::{Confirmation, Meta, Order};
+    use crate::{MessageHeaders, NoHeaders};
+
+    impl schemars::JsonSchema for Confirmation {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            "Confirmation".into()
+        }
+
+        fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+            u64::json_schema(generator)
+        }
+    }
+
+    impl schemars::JsonSchema for Order {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            "Order".into()
+        }
+
+        fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+            u64::json_schema(generator)
+        }
+    }
+
+    impl schemars::JsonSchema for Meta {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            "Meta".into()
+        }
+
+        fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+            String::json_schema(generator)
+        }
+    }
+
+    impl crate::Message for Confirmation {
+        const NAME: &'static str = "Confirmation";
+    }
+
+    impl MessageHeaders for Confirmation {
+        type Contract = NoHeaders;
+    }
+}
+
+/// The documentation opt-ins, both sides of a send operation included.
+#[cfg(feature = "asyncapi")]
+fn docs_axis() -> impl RouterDef<MemoryBroker> {
+    Router::<MemoryBroker>::new()
+        .include(
+            subscriber("orders", Plain)
+                .describe("Inbound orders")
+                .documented()
+                .documented_headers::<Meta>(),
+        )
+        .include(
+            replying("orders", Confirm)
+                .to("confirmations")
+                .documented()
+                .reply_message()
+                .reply_headers(),
+        )
+        .publisher(crate::runtime::TypedPublisher::new(MemoryPublish))
+}
+
 /// The `_in` constructors mount bodies pinned to one concrete app state.
 fn state_axis() -> impl RouterDef<MemoryBroker, Ledger> {
     Router::<MemoryBroker>::new()
@@ -418,6 +482,8 @@ fn every_form_token_mounts_on_the_value_path() {
     let _ = every_form();
     let _ = codec_axis();
     let _ = state_axis();
+    #[cfg(feature = "asyncapi")]
+    let _ = docs_axis();
 }
 
 /// The scope surface mounts the same definitions: one representative per mount family.

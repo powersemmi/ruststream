@@ -34,8 +34,10 @@
 //! and named with `.context::<K>()` on the slot and seek forms. `AsyncAPI` schemas opt in with
 //! [`documented`](super::SubscriberBuilder::documented) /
 //! [`documented_headers`](super::SubscriberBuilder::documented_headers) (probing cannot happen
-//! inside a generic constructor body), and the input type's [`Message`](crate::Message)
-//! metadata with [`message`](super::SubscriberBuilder::message).
+//! inside a generic constructor body), the input type's [`Message`](crate::Message) metadata
+//! with [`message`](super::SubscriberBuilder::message), and the send operation's reply side
+//! with [`reply_message`](super::SubscriberBuilder::reply_message) /
+//! [`reply_headers`](super::SubscriberBuilder::reply_headers) on the reply constructors.
 //!
 //! ```
 //! # #[cfg(all(feature = "memory", feature = "json"))]

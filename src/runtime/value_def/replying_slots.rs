@@ -169,13 +169,10 @@ macro_rules! replying_slots_def_common {
         docs_metadata!();
 
         fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-            let mut declared = vec![
-                OutgoingMessageMetadata::new(
-                    self.reply_name().to_owned(),
-                    type_name::<ReplyOf<H, T, Slots, C>>(),
-                )
-                .with_payload_schema(self.docs.reply_schema()),
-            ];
+            let mut declared = vec![self.docs.reply_outgoing(
+                self.reply_name().to_owned(),
+                type_name::<ReplyOf<H, T, Slots, C>>(),
+            )];
             declared.extend(Markers::outgoing());
             declared
         }
