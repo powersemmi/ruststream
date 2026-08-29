@@ -19,9 +19,17 @@
 если сервису состояние не нужно). Его создаёт хук `on_startup`: возвращённое хуком значение и
 становится состоянием, фиксируя тип состояния приложения.
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 Тип состояния проверяется во время компиляции: обработчик `#[subscriber]`, который читает состояние,
 называет его третьим типовым параметром `Context` (`Context<'_, C, S>`), и рантайм даст смонтировать
@@ -56,15 +64,31 @@
 `State<T>` - реализацию экстрактора писать руками не нужно. `State<T>` разрешается для поля любого
 типа (`T: FromRef<S>`), включая типы из других крейтов - издатель брокера, пул клиентов:
 
-```rust
---8<-- "examples/from_context.rs:state"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/from_context.rs:state"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:state"
+    ```
 
 Обработчик принимает `State<FieldType>` и никуда не тянется через `ctx.state()`:
 
-```rust
---8<-- "examples/from_context.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/from_context.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:handler"
+    ```
 
 Поле, которое внедрять не нужно или тип которого уже занят другим полем, отказывается от внедрения
 через `#[from_ref(skip)]`; два поля не могут иметь один тип, иначе внедрение по типу стало бы
@@ -80,9 +104,17 @@ middleware, и вернуть `Rejection`, чтобы завершить дос�
 макрос, поэтому импортировать `Context` не требуется, пока он встречается только в сигнатурах
 обработчиков:
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 Что даёт контекст:
 
@@ -133,9 +165,17 @@ middleware, и вернуть `Rejection`, чтобы завершить дос�
 --8<-- "examples/ctx_extractor.rs:key"
 ```
 
-```rust
---8<-- "examples/ctx_extractor.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/ctx_extractor.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/ctx_extractor.rs:handler"
+    ```
 
 Три вещи, которые стоит знать:
 
@@ -162,9 +202,17 @@ middleware, и вернуть `Rejection`, чтобы завершить дос�
 Смонтированный глобально слой выполняется перед каждым обработчиком, поэтому `handle` выше всегда
 находит `x-request-id`:
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 Две границы, о которых стоит помнить:
 
@@ -192,9 +240,17 @@ middleware, и вернуть `Rejection`, чтобы завершить дос�
 этом не влияет ни на решение об ack, ни на повторную доставку. Зарегистрируйте такой эффект на
 контексте:
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 Обработчик выше заканчивается вызовом `ctx.after_ack(..)`: продолжение выполняется, только когда
 брокер сделал ack сообщения, и вне пути доставки, поэтому оно никогда не задерживает ни ack, ни

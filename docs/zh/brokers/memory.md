@@ -66,11 +66,22 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
 一致。下面取自
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service) 示例：
 
-```rust
-use ruststream::memory::MemorySource;
+=== "宏"
 
---8<-- "examples/routed_service/orders.rs:descriptor"
-```
+    ```rust
+    use ruststream::memory::MemorySource;
+
+    --8<-- "examples/routed_service/orders.rs:descriptor"
+    ```
+
+=== "手写"
+
+    ```rust
+    use ruststream::memory::MemorySource;
+    use ruststream::runtime::{Decoded, IncludeDef, PublishingCall, PublishingDef, forms};
+
+    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
+    ```
 
 ## 用于测试
 

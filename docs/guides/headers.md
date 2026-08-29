@@ -12,7 +12,9 @@ booleans, strings, raw bytes, unit-only enums) or `Option`s of them. On the wire
 string-encoded - the framework parses `"3"` into a `u32` field and writes it back the same way -
 while schemas keep describing the logical types.
 
+```rust
 --8<-- "examples/typed_headers.rs:contracts"
+```
 
 Field names are the wire names; use `#[serde(rename = "x-task-id")]` for names that are not
 Rust identifiers. An `Option` field is `None` when the header is absent; a missing non-`Option`
@@ -26,7 +28,17 @@ header, unparsable value) never reaches the body - the delivery settles by the s
 `on_failure(decode = ..)` policy, the same one that covers a payload that does not decode
 (drop by default), after a `WARN` naming the subscription and the contract type.
 
---8<-- "examples/typed_headers.rs:handler"
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:handler"
+    ```
 
 `Headers` composes with a byte body (`&[u8]`, typed headers) and with every other extractor.
 
@@ -36,7 +48,17 @@ construction - an element whose payload or headers fail to materialize is settle
 `on_failure(decode = ..)` policy and never reaches the handler, exactly as on the single-message
 path. The bare `Headers<T>` is rejected there, naming the vector form.
 
---8<-- "examples/typed_headers.rs:batch"
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:batch"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:batch"
+    ```
 
 Mounting reads the same as every other form and on both surfaces: `b.include(bulk)` on a broker
 scope, `Router::include` on the router path. The contract type travels in the route, and the
@@ -58,13 +80,33 @@ part of the type. The publish builder then demands exactly those headers, and th
 document renders the schema next to the payload wherever the type appears. See
 [publishing](publishing.md#declaring-where-a-message-goes) for the destination half.
 
---8<-- "examples/typed_headers.rs:messages"
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:messages"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:messages"
+    ```
 
 ## Publishing: the contract at the call site
 
 An `Out` slot's marker lists the message types the slot may publish:
 
---8<-- "examples/typed_headers.rs:dictionary"
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:dictionary"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:dictionary"
+    ```
 
 The `Out` parameter's optional third position declares the message set this handler publishes:
 
@@ -105,7 +147,17 @@ the contract's fields serialize over that base field by field - see
 A `publish("dest")` handler needs no extra declaration: the reply type's own contract feeds
 the document, and the destination is already in the attribute.
 
---8<-- "examples/typed_headers.rs:reply"
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:reply"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:reply"
+    ```
 
 At runtime, reply headers stay where they were: a `PublishTransform` on the reply publisher
 sets them, and [`HeaderMap::insert_typed`] serializes a contract value into the map from inside
@@ -132,4 +184,6 @@ The in-process harness drives the whole path: `with_headers(&meta)` on the injec
 a delivery carrying a typed contract, and the publish log shows the headers a typed publish
 produced.
 
+```rust
 --8<-- "examples/typed_headers.rs:drive"
+```

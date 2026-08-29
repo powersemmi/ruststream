@@ -34,9 +34,17 @@ ruststream asyncapi gen --yaml
 Тип полезной нагрузки обработчика попадает в документ схемой, если он выводит `JsonSchema`.
 RustStream реэкспортирует `schemars`, так что прямая зависимость не нужна:
 
-```rust
---8<-- "examples/asyncapi_http.rs:payload"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:payload"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:payload"
+    ```
 
 Тип без `JsonSchema` тоже работает как полезная нагрузка обработчика, просто не даёт документу схемы.
 При генерации на каждый такой пробел пишется `WARN` (по одному на обработчик или на исходящую
@@ -84,9 +92,17 @@ struct Order {
 Опишите серверы, к которым подключается сервис, чтобы они попали в раздел `servers` документа.
 `ServerSpec` строится напрямую:
 
-```rust
---8<-- "examples/asyncapi_http.rs:server"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:server"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:server"
+    ```
 
 Крейт брокера может реализовать и совместимость `DescribeServer` - тогда спецификацию отдаст
 `broker.describe_server()` (у всех поставляемых брокеров это так), а `with_broker_labeled` запишет её
@@ -137,6 +153,14 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 `cargo run --example asyncapi_http --features macros,memory,asyncapi`, а затем откройте
 <http://127.0.0.1:8080/>.
 
-```rust
---8<-- "examples/asyncapi_http.rs"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs"
+    ```

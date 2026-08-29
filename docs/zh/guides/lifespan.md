@@ -48,17 +48,33 @@ after_shutdown(Arc<S>)           # 最终清理
 任意异步资源的替身，`sqlx::PgPool` 或者一个 HTTP 客户端都能以同样的方式接进来，区别仅在于各自的
 `connect` / `close` 调用：
 
-```rust
---8<-- "examples/lifespan.rs:hooks"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/lifespan.rs:hooks"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/lifespan.rs:hooks"
+    ```
 
 钩子的错误类型由返回的 `Result` 推导得出，只要求它实现 `std::error::Error + Send + Sync`。该资源是
 `Send + Sync` 的，因此每个并发执行的处理器都通过 `ctx.state()` 借用同一个共享实例，无需为每条消息
 单独建立连接：
 
-```rust
---8<-- "examples/lifespan.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/lifespan.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/lifespan.rs:handler"
+    ```
 
 可直接运行的完整程序见
 [`examples/lifespan.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/lifespan.rs)。

@@ -11,9 +11,17 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 
 Create a `Metrics`, install its consume and publish layers, and keep the handle to export later:
 
-```rust
---8<-- "examples/metrics_http.rs:wiring"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/metrics_http.rs:wiring"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/metrics_http.rs:wiring"
+    ```
 
 `consume_layer` records every handled message; `publish_layer` records every published message. To
 collect into an existing registry instead of a fresh one, use `Metrics::with_registry(registry)`.
@@ -55,9 +63,17 @@ curl -X POST http://127.0.0.1:8080/orders -d '{"id":1,"quantity":3}'
 curl http://127.0.0.1:8080/metrics
 ```
 
-```rust
---8<-- "examples/metrics_http.rs"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/metrics_http.rs"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/metrics_http.rs"
+    ```
 
 For services exporting through the `otel` feature instead, a ready-made Grafana dashboard over
 the full metrics inventory lives in

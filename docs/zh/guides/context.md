@@ -16,9 +16,17 @@
 共享的应用状态是一个类型化的值 `S`（你自己定义的 struct；服务不需要状态时就是 `()`）。它由
 `on_startup` 钩子产出：钩子返回的值就是状态，应用的状态类型也就此确定：
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 编译期就会检查状态类型：读取状态的 `#[subscriber]` 处理器把它写成 `Context` 的第三个泛型参数
 （`Context<'_, C, S>`），运行时只允许这样的处理器挂载到状态类型与之匹配的应用上。没有写出状态类型
@@ -48,15 +56,31 @@
 提取器实现。`State<T>` 对任意字段类型都能解析（`T: FromRef<S>`），包括来自其他 crate 的类型 - 某个
 Broker 的发布者、一个客户端连接池：
 
-```rust
---8<-- "examples/from_context.rs:state"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/from_context.rs:state"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:state"
+    ```
 
 处理器直接接收 `State<FieldType>`，不必再通过 `ctx.state()` 绕一道：
 
-```rust
---8<-- "examples/from_context.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/from_context.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:handler"
+    ```
 
 如果某个字段不该参与注入，或者它的类型已由另一个字段占用，就用 `#[from_ref(skip)]` 退出注入；
 两个字段不得共用同一个类型，因为按类型注入会产生歧义。若要写一个不只是读状态的自定义提取器，比如
@@ -69,9 +93,17 @@ Broker 的发布者、一个客户端连接池：
 `#[subscriber]` 处理器通过在载荷之后声明第二个参数来显式启用它；处理器只需要消息本身时就省略该
 参数。类型由宏自己解析，因此只要 `Context` 仅出现在处理器签名里，就不需要 import：
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 上下文对外暴露的内容：
 
@@ -116,9 +148,17 @@ Broker 的发布者、一个客户端连接池：
 --8<-- "examples/ctx_extractor.rs:key"
 ```
 
-```rust
---8<-- "examples/ctx_extractor.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/ctx_extractor.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/ctx_extractor.rs:handler"
+    ```
 
 有三点需要知道：
 
@@ -141,9 +181,17 @@ Broker 的发布者、一个客户端连接池：
 
 全局挂载之后，这一层会在每个处理器之前运行，因此上面的 `handle` 总能找到 `x-request-id`：
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 有两条边界要记住：
 
@@ -164,9 +212,17 @@ Broker 的发布者、一个客户端连接池：
 有时处理器需要某个副作用在消息**结算之后**才触发，比如一条不关键的通知、一段耗时的后续工作、一次
 缓存预热，同时又不希望它左右 ack 的决定，也不希望它影响重新投递。这类副作用注册在上下文上：
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 上面的处理器以 `ctx.after_ack(..)` 结尾：这段后续任务只有在 Broker 对消息完成 ack 之后才会运行，并且
 运行在投递路径之外，因此它绝不会拖慢 ack，也绝不会拖慢下一次投递。

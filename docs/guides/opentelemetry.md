@@ -68,9 +68,17 @@ Assembling `tracing-opentelemetry` and an exporter yourself in the binary (the s
 providers as the process **globals**, and bridges `tracing` spans into them - so the spans the
 propagation layer already opens are exported with no further wiring:
 
-```rust
---8<-- "examples/otel_export.rs:init"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/otel_export.rs:init"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/otel_export.rs:init"
+    ```
 
 The two middleware carry the dispatch metrics, labeled per handler
 (`messaging.destination.name`), following the messaging semantic conventions plus a
@@ -101,9 +109,17 @@ Because `init()` installs the global providers, business metrics need no exporte
 build the instruments once at startup into one storage object, share it through the typed state
 (injectable with `State<..>` via `FromRef`), and everything in it rides the same OTLP pipeline:
 
-```rust
---8<-- "examples/otel_export.rs:business_metric"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/otel_export.rs:business_metric"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/otel_export.rs:business_metric"
+    ```
 
 A ready-made Grafana dashboard over exactly this inventory lives in
 [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana): import

@@ -14,11 +14,21 @@ subscription source always comes from the definition - `#[subscriber(..)]` takes
 source expression, builder chain included - so there is nothing to name at the mount site. Every
 call consumes the router and returns a new one, so registrations chain:
 
-```rust title="routes.rs"
-use ruststream::runtime::Router;
+=== "Macros"
 
---8<-- "examples/routing.rs:builders"
-```
+    ```rust title="routes.rs"
+    use ruststream::runtime::Router;
+
+    --8<-- "examples/routing.rs:builders"
+    ```
+
+=== "Manual"
+
+    ```rust title="routes.rs"
+    use ruststream::runtime::Router;
+
+    --8<-- "examples/manual/routing.rs:builders"
+    ```
 
 <!-- inline-rust: minimal mount fragment with placeholder routes module; the full compiled program is examples/routing.rs (merge form pulled in below) -->
 ```rust title="main.rs"
@@ -35,9 +45,17 @@ own default publish policy, and `.out(marker, policy)` binds one named slot befo
 forgotten terminal never becomes a router, so the chain fails to compile. The policies stay pure
 declaration, so the router still needs no broker:
 
-```rust title="routes.rs"
---8<-- "examples/tutorial/routes.rs:routes"
-```
+=== "Macros"
+
+    ```rust title="routes.rs"
+    --8<-- "examples/tutorial/routes.rs:routes"
+    ```
+
+=== "Manual"
+
+    ```rust title="routes.rs"
+    --8<-- "examples/manual/tutorial/routes.rs:routes"
+    ```
 
 ## Router middleware
 
@@ -45,9 +63,17 @@ A router can carry its own layer stack: `Router::layer` wraps every handler in t
 is mounted. The application's global stack (added with `RustStream::layer`) wraps around it at
 `include_router` - scopes nest, app outermost:
 
-```rust title="main.rs"
---8<-- "examples/logging_middleware.rs:layered_router"
-```
+=== "Macros"
+
+    ```rust title="main.rs"
+    --8<-- "examples/logging_middleware.rs:layered_router"
+    ```
+
+=== "Manual"
+
+    ```rust title="main.rs"
+    --8<-- "examples/manual/logging_middleware.rs:layered_router"
+    ```
 
 Because a router hides its handlers' concrete types, a layer reaching them must be a
 `BlanketLayer`. Both scopes, the `BlanketLayer` requirement, and writing your own layer are covered
@@ -69,9 +95,17 @@ RustStream::new(info).with_broker(broker, |b| {
 Or merge groups into one router before mounting (the whole program is
 [`examples/routing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/routing.rs)):
 
-```rust
---8<-- "examples/routing.rs:merge"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/routing.rs:merge"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/routing.rs:merge"
+    ```
 
 `merge` appends another router's registrations in order. Each router keeps its own codec and layer
 stack; when the result is mounted, the outer router's layers (and the app's global stack) wrap

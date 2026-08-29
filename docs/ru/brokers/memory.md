@@ -81,11 +81,22 @@ dead-letter, поэтому зелёный тест здесь не говори
 удерживает форму дескриптора единой для всех брокеров. Из примера
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service):
 
-```rust
-use ruststream::memory::MemorySource;
+=== "Макросы"
 
---8<-- "examples/routed_service/orders.rs:descriptor"
-```
+    ```rust
+    use ruststream::memory::MemorySource;
+
+    --8<-- "examples/routed_service/orders.rs:descriptor"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    use ruststream::memory::MemorySource;
+    use ruststream::runtime::{Decoded, IncludeDef, PublishingCall, PublishingDef, forms};
+
+    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
+    ```
 
 ## Для тестов
 

@@ -27,9 +27,17 @@ serde = { version = "1", features = ["derive"] }
 A handler is an `async fn` whose first parameter is the decoded payload. The `#[subscriber]` macro
 turns it into a mountable definition named after the function.
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:order"
-```
+=== "Macros"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/tutorial/orders.rs:order"
+    ```
+
+=== "Manual"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/manual/tutorial/orders.rs:order"
+    ```
 
 A handler returns a [`HandlerResult`](../guides/subscribers.md#acking): `Ack`, or a `nack` that drops
 or requeues the message. Returning `()` or `Result<(), E>` also works - they convert into a result
@@ -41,9 +49,17 @@ the type's doc comment becomes the message description. It needs no dependency o
 
 ## 3. Wire it into an app
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/first_app.rs:app"
-```
+=== "Macros"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/first_app.rs:app"
+    ```
+
+=== "Manual"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/first_app.rs:app"
+    ```
 
 The macro turns `handle` into a value named after the function, so you import and pass it directly.
 
@@ -63,16 +79,32 @@ cargo run -- run
 
 To publish a reply, return the reply value and name the destination with `publish(..)`:
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:confirm"
-```
+=== "Macros"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/tutorial/orders.rs:confirm"
+    ```
+
+=== "Manual"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/manual/tutorial/orders.rs:confirm"
+    ```
 
 Mount it next to `handle`, with the same plain `include`; the reply goes out through the broker's
 default publish policy under the default codec:
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/reply_app.rs:reply"
-```
+=== "Macros"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/reply_app.rs:reply"
+    ```
+
+=== "Manual"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/reply_app.rs:reply"
+    ```
 
 See [Publishing & replies](../guides/publishing.md) for the full picture, including publishing from
 inside a handler.
@@ -82,18 +114,34 @@ inside a handler.
 As handlers grow, keep them in their own module and collect them into a
 [`Router`](../guides/routing.md):
 
-```rust title="src/routes.rs"
---8<-- "examples/tutorial/routes.rs:routes"
-```
+=== "Macros"
+
+    ```rust title="src/routes.rs"
+    --8<-- "examples/tutorial/routes.rs:routes"
+    ```
+
+=== "Manual"
+
+    ```rust title="src/routes.rs"
+    --8<-- "examples/manual/tutorial/routes.rs:routes"
+    ```
 
 A registration on a router ends in an explicit terminal. `.publisher(..)` names the reply wiring -
 a publish policy is pure declaration, so the router still needs no broker - and `.mount()` takes
 the broker's own default publish policy, the explicit spelling of what step 4 got by default.
 [Routing](../guides/routing.md) covers the rest of the router surface.
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
-```
+=== "Macros"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/main.rs:main"
+    ```
+
+=== "Manual"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/main.rs:main"
+    ```
 
 ## 6. Inspect the AsyncAPI document
 

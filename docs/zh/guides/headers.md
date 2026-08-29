@@ -10,7 +10,9 @@
 只含单元变体的枚举）或它们的 `Option`。在传输线路上每个值都以字符串编码，框架会把 `"3"` 解析进一个
 `u32` 字段，写回时同样如此。schema 则依旧描述逻辑类型。
 
+```rust
 --8<-- "examples/typed_headers.rs:contracts"
+```
 
 字段名就是线路上的名字；对于不是 Rust 标识符的名字，用 `#[serde(rename = "x-task-id")]`。消息头缺失
 时，`Option` 字段取 `None`；而缺失一个非 `Option` 的消息头就是违反契约。
@@ -22,7 +24,17 @@
 函数体，框架会先打出一条点名该订阅与契约类型的 `WARN`，然后按订阅者的 `on_failure(decode = ..)`
 策略结算这次投递，也就是载荷解码失败时所用的同一套策略（默认丢弃）。
 
---8<-- "examples/typed_headers.rs:handler"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:handler"
+    ```
 
 `Headers` 既能与字节形式的函数体（`&[u8]` 配类型化消息头）组合，也能与其他任何提取器组合。
 
@@ -31,7 +43,17 @@
 `on_failure(decode = ..)` 策略结算，绝不会到达处理器，与单条消息的路径完全一致。编译器会拒绝在
 这里直接写裸的 `Headers<T>`，并提示改用向量形式。
 
---8<-- "examples/typed_headers.rs:batch"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:batch"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:batch"
+    ```
 
 挂载的写法与其他任何形式一样，在两个面上也一样：在 Broker 作用域上写 `b.include(bulk)`，在路由器
 路径上写 `Router::include`。契约类型随路由一起传递，而挑中这条路由的，是定义自带的形式 token。
@@ -50,13 +72,33 @@
 构建器会精确地要求这些消息头，而 AsyncAPI 文档在该类型出现的每一处，都会把 schema 渲染在载荷旁边。
 目的地那一半参见[发布](publishing.md#declaring-where-a-message-goes)。
 
---8<-- "examples/typed_headers.rs:messages"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:messages"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:messages"
+    ```
 
 ## 发布侧：调用点上的契约
 
 `Out` 槽位的标记列出了该槽位可以发布的消息类型：
 
---8<-- "examples/typed_headers.rs:dictionary"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:dictionary"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:dictionary"
+    ```
 
 `Out` 参数可选的第三个位置声明了该处理器所发布的消息集合：
 
@@ -91,7 +133,17 @@
 `publish("dest")` 形式的处理器不需要额外声明：回复类型自带的契约会喂给文档，而目的地已经写在属性
 里了。
 
---8<-- "examples/typed_headers.rs:reply"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:reply"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:reply"
+    ```
 
 在运行时，回复的消息头依旧沿用原来的做法：由回复发布者上的一个 `PublishTransform` 来设置，而
 [`HeaderMap::insert_typed`] 负责在变换内部把一个契约值序列化进该映射。
@@ -114,4 +166,6 @@ schema 描述的是逻辑字段类型（`task_id: integer`），而线路上的�
 进程内的测试工具能驱动整条路径：注入构建器上的 `with_headers(&meta)` 发出一次带类型化契约的投递，
 而发布日志会展示一次类型化发布所产生的消息头。
 
+```rust
 --8<-- "examples/typed_headers.rs:drive"
+```

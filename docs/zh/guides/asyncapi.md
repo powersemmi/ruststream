@@ -33,9 +33,17 @@ ruststream asyncapi gen --yaml
 处理器的载荷类型只要 derive 了 `JsonSchema`，就会作为一个 schema 出现。RustStream 重导出了 `schemars`，
 所以你不需要直接依赖它：
 
-```rust
---8<-- "examples/asyncapi_http.rs:payload"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:payload"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:payload"
+    ```
 
 没有 `JsonSchema` 的类型照样可以作为处理器的载荷，只是它不会给文档贡献 schema。生成文档时，每出现
 一处这样的缺口就会打一条 `WARN` 日志（每个处理器或每条出站声明只报一次，并写明是哪个订阅或哪个通道、
@@ -79,9 +87,17 @@ struct Order {
 
 把你的服务所连接的服务器记录下来，它们就会出现在文档的 `servers` 一节里。直接构建一个 `ServerSpec`：
 
-```rust
---8<-- "examples/asyncapi_http.rs:server"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:server"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:server"
+    ```
 
 Broker crate 也可以实现 `DescribeServer` 能力，这样 `broker.describe_server()` 就会替你产出这份 spec
 （随框架发布的那几个 Broker 都实现了），而 `with_broker_labeled` 会自动把它记在该 Broker 的标签之下。
@@ -130,6 +146,14 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 `cargo run --example asyncapi_http --features macros,memory,asyncapi` 运行它，然后打开
 <http://127.0.0.1:8080/>。
 
-```rust
---8<-- "examples/asyncapi_http.rs"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs"
+    ```

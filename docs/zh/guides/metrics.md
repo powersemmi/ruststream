@@ -11,9 +11,17 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 
 创建一个 `Metrics`，装上它的消费层和发布层，并留住句柄以便之后导出：
 
-```rust
---8<-- "examples/metrics_http.rs:wiring"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/metrics_http.rs:wiring"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/metrics_http.rs:wiring"
+    ```
 
 `consume_layer` 记录每一条处理过的消息，`publish_layer` 记录每一条发布出去的消息。如果想收集到已有的
 registry 而不是新建一个，用 `Metrics::with_registry(registry)`。
@@ -53,9 +61,17 @@ curl -X POST http://127.0.0.1:8080/orders -d '{"id":1,"quantity":3}'
 curl http://127.0.0.1:8080/metrics
 ```
 
-```rust
---8<-- "examples/metrics_http.rs"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/metrics_http.rs"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/metrics_http.rs"
+    ```
 
 如果你的服务改用 `otel` feature 导出，
 [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana) 里有一份覆盖全部指标清单的

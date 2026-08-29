@@ -18,9 +18,17 @@ The shared application state is one typed value `S` (a struct you define, or `()
 needs none). It is produced by an `on_startup` hook - the value the hook returns becomes the state,
 fixing the app's state type:
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
 the third `Context` generic (`Context<'_, C, S>`), and the runtime only lets that handler mount on
@@ -53,15 +61,31 @@ To inject a piece of the state, derive `FromRef` on the state and take `State<T>
 no extractor impl by hand. `State<T>` resolves for any field type (`T: FromRef<S>`), including types
 from other crates - a broker publisher, a client pool:
 
-```rust
---8<-- "examples/from_context.rs:state"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/from_context.rs:state"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:state"
+    ```
 
 The handler takes `State<FieldType>`, with no `ctx.state()` reach-through:
 
-```rust
---8<-- "examples/from_context.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/from_context.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:handler"
+    ```
 
 A field that should not be injectable, or whose type another field already claims, opts out with
 `#[from_ref(skip)]`; two fields may not share a type, since injection by type would be ambiguous. For
@@ -75,9 +99,17 @@ A `#[subscriber]` handler opts in by declaring a second parameter after the payl
 the handler needs nothing but the message. The macro resolves the type itself, so `Context` needs
 no import when it appears only in handler signatures:
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 What the context exposes:
 
@@ -128,9 +160,17 @@ first `Ctx` key in the signature.
 --8<-- "examples/ctx_extractor.rs:key"
 ```
 
-```rust
---8<-- "examples/ctx_extractor.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/ctx_extractor.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/ctx_extractor.rs:handler"
+    ```
 
 Three things to know:
 
@@ -155,9 +195,17 @@ reads the enriched result:
 Mounted globally, the layer runs before every handler, so `handle` above always finds
 `x-request-id`:
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 Two boundaries to keep in mind:
 
@@ -182,9 +230,17 @@ Sometimes a handler needs a side effect to fire *after* the message has been set
 non-critical notification, slow follow-up work, a cache warm-up - without it gating the ack
 decision or affecting redelivery. Register one on the context:
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 The handler above ends with `ctx.after_ack(..)`: the continuation runs only once the broker has
 acked the message, off the delivery path, so it never delays the ack or the next delivery.

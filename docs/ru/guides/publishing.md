@@ -17,11 +17,19 @@
 Назовите адресата ответа через `publish(..)` и верните значение ответа. Рантайм закодирует его и
 отправит:
 
-```rust
-use ruststream::subscriber;
+=== "Макросы"
 
---8<-- "examples/publishing.rs:reply"
-```
+    ```rust
+    use ruststream::subscriber;
+
+    --8<-- "examples/publishing.rs:reply"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply"
+    ```
 
 Монтируется он обычным `include`. Если больше ничего не сказано, ответ уходит через политику
 публикации брокера по умолчанию и кодеком по умолчанию; чтобы назвать кодек ответа или добавить
@@ -30,9 +38,17 @@ use ruststream::subscriber;
 `TypedPublisher::with_codec`). Стек - это объявление: рантайм связывает его с подключённым брокером
 на старте.
 
-```rust
---8<-- "examples/publishing.rs:reply_mount"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/publishing.rs:reply_mount"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_mount"
+    ```
 
 Декодирование входящего запроса следует области (кодек области, заданный через `with_broker_codec`,
 иначе кодек по умолчанию); кодек ответа задаётся прикреплённым стеком. См.
@@ -45,9 +61,17 @@ use ruststream::subscriber;
 а диспетчер действует по возвращённому `HandlerResult` (`HandlerResult::drop()` - отправить в
 dead-letter, `HandlerResult::retry()` - запросить повторную доставку):
 
-```rust
---8<-- "examples/publishing.rs:reply_result"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/publishing.rs:reply_result"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_result"
+    ```
 
 Форма `Result` распознаётся по написанной сигнатуре, поэтому её нужно выписать явно (псевдоним типа,
 прячущий `Result`, считается обычным типом ответа). Как и любой другой, публикующий обработчик может
@@ -68,11 +92,21 @@ dead-letter, `HandlerResult::retry()` - запросить повторную д
 рантайм связывает их после того, как брокер подключился. Один и тот же обработчик без единой правки
 монтируется и на боевой брокер, и на его внутрипроцессный тестовый транспорт.
 
-```rust
-use ruststream::runtime::Out;
+=== "Макросы"
 
---8<-- "examples/publishing.rs:forward"
-```
+    ```rust
+    use ruststream::runtime::Out;
+
+    --8<-- "examples/publishing.rs:forward"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    use ruststream::runtime::Out;
+
+    --8<-- "examples/manual/publishing.rs:forward"
+    ```
 
 `message(&value)` кодирует кодеком области (для одного вызова другой кодек называют через
 `.with_codec(..)`), а `raw(&bytes)` отправляет полезную нагрузку, которую сервис уже держит
@@ -82,9 +116,17 @@ use ruststream::runtime::Out;
 
 Точка включения называет источник; для собственного брокера области это его политика публикации:
 
-```rust
---8<-- "examples/publishing.rs:forward_mount"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/publishing.rs:forward_mount"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:forward_mount"
+    ```
 
 Несвязанный слот `Out` - это ошибка компиляции, а не времени выполнения: регистрация не соберётся,
 пока у каждого слота нет политики.
@@ -101,15 +143,29 @@ unit-структуру с выводом `OutSlot`, записанную вто
 Единственный безымянный параметр `Out<impl Publisher>` связывается с неявным `DefaultSlot` обычным
 вызовом `.publisher(policy)`, который связывает и фиксирует за один шаг.
 
-```rust
-use ruststream::OutSlot;
+=== "Макросы"
 
---8<-- "examples/publishing.rs:slots"
-```
+    ```rust
+    use ruststream::OutSlot;
 
-```rust
---8<-- "examples/publishing.rs:slots_mount"
-```
+    --8<-- "examples/publishing.rs:slots"
+    ```
+
+    ```rust
+    --8<-- "examples/publishing.rs:slots_mount"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    use ruststream::OutSlot;
+
+    --8<-- "examples/manual/publishing.rs:slots"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:slots_mount"
+    ```
 
 Совместимость в ограничении можно уточнить: `Out<impl OwnedTransactions, Ledger>` скомпилируется
 только с политикой, живой издатель которой поддерживает владеющие транзакции; проверка происходит в
@@ -134,11 +190,19 @@ use ruststream::OutSlot;
 одной и той же форме `key = value`. `name` - это адресат, а `headers` называет тип контракта (который
 остаётся обычной serde-структурой, derive её не трогает):
 
-```rust
-use ruststream::Outgoing;
+=== "Макросы"
 
---8<-- "examples/publishing.rs:declared"
-```
+    ```rust
+    use ruststream::Outgoing;
+
+    --8<-- "examples/publishing.rs:declared"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:declared"
+    ```
 
 Объявление решает, какая позиция адресата остаётся точке вызова:
 
@@ -162,9 +226,17 @@ use ruststream::Outgoing;
 заверните такое значение в newtype с выводом `Outgoing` или, внутри транзакции, оставайтесь на
 `publish(name, &value)` у области.
 
-```rust
---8<-- "examples/publishing.rs:declared_mount"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/publishing.rs:declared_mount"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:declared_mount"
+    ```
 
 Параметр сочетается с любой формой подписчика: рядом с параметром `Seek`, на обработчике с байтовым
 входом и на пакетных обработчиках (`b.include(f).publisher(..)` - на вход целый пакет, на выход
@@ -174,13 +246,25 @@ use ruststream::Outgoing;
 безымянного слота), так что шлюз может отвечать по фиксированному адресату и одновременно рассылать
 побочные копии через внедрение:
 
-```rust
---8<-- "examples/publishing.rs:publish_out"
-```
+=== "Макросы"
 
-```rust
---8<-- "examples/publishing.rs:publish_out_mount"
-```
+    ```rust
+    --8<-- "examples/publishing.rs:publish_out"
+    ```
+
+    ```rust
+    --8<-- "examples/publishing.rs:publish_out_mount"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:publish_out"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:publish_out_mount"
+    ```
 
 ### Публикация в другой брокер
 
@@ -270,9 +354,17 @@ Redis), оберните целевой брокер вызовом `.bindable()
 
 Оба уровня складываются на приложении:
 
-```rust
---8<-- "examples/publishing.rs:pipeline"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/publishing.rs:pipeline"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:pipeline"
+    ```
 
 Конвейер работает на пути ответа (форма `publish(..)`). Внедрённый издатель `Out` - это живая форма
 прикреплённой политики, используемая напрямую, поэтому преобразования на конкретного издателя
@@ -287,15 +379,31 @@ Redis), оберните целевой брокер вызовом `.bindable()
 доставку всего пакета значением `result` (всё или ничего: выборочные исходы на каждый элемент с транзакцией не
 сочетаются):
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/publishing.rs:batch_publishing"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:batch_publishing"
+    ```
 
 Монтируйте его через `include`, добавляя в цепочку связывание ответа через `.publisher(..)`:
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing_mount"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/publishing.rs:batch_publishing_mount"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:batch_publishing_mount"
+    ```
 
 С обычным `TypedPublisher` каждый ответ публикуется независимо; сбой в середине пакета отправляет на
 повтор весь пакет, поэтому при повторной доставке ранее опубликованные ответы могут уйти ещё раз

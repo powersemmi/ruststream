@@ -12,9 +12,17 @@
    Broker crate 各自拥有自己的 `Config`，因此上游的一次变更只会波及一个 Broker crate，而不是整个
    框架。
 
-```rust
---8<-- "examples/quickstart.rs"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/quickstart.rs"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/quickstart.rs"
+    ```
 
 `#[ruststream::app]` 会生成 `main`，因此 `cargo run -- run` 即可启动服务，`cargo run -- asyncapi
 gen` 即可打印它的 AsyncAPI 文档，不需要任何运行时样板代码。

@@ -55,17 +55,33 @@ The common case: open a pool before serving, share it with every handler, close 
 The `Database` below is a stand-in for any async resource - a `sqlx::PgPool` or an HTTP client
 slots in the same way, only its `connect` / `close` calls differ:
 
-```rust
---8<-- "examples/lifespan.rs:hooks"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/lifespan.rs:hooks"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/lifespan.rs:hooks"
+    ```
 
 The hook's error type is inferred from the returned `Result`; it only needs to implement
 `std::error::Error + Send + Sync`. The resource is `Send + Sync`, so every concurrent handler borrows
 the one shared instance through `ctx.state()` - no per-message connection setup:
 
-```rust
---8<-- "examples/lifespan.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/lifespan.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/lifespan.rs:handler"
+    ```
 
 The runnable program is
 [`examples/lifespan.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/lifespan.rs).

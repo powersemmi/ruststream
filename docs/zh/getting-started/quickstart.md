@@ -46,9 +46,17 @@ cargo run -- asyncapi gen
 
 ## 入口点长什么样
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
-```
+=== "宏"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/main.rs:main"
+    ```
+
+=== "手写"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/main.rs:main"
+    ```
 
 你写的是一个构建服务的函数；宏把它变成一个 `main`，由这个 `main` 来分发 `run` 和 `asyncapi gen`。
 

@@ -60,18 +60,34 @@ after_shutdown(Arc<S>)           # финальная уборка
 `Database` ниже - заглушка вместо любого асинхронного ресурса: `sqlx::PgPool` или HTTP-клиент встают
 на то же место, отличаются только вызовы `connect` / `close`:
 
-```rust
---8<-- "examples/lifespan.rs:hooks"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/lifespan.rs:hooks"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/lifespan.rs:hooks"
+    ```
 
 Тип ошибки хука выводится из возвращаемого `Result`; от него требуется только реализовать
 `std::error::Error + Send + Sync`. Ресурс `Send + Sync`, поэтому все параллельные обработчики
 одалживают один общий экземпляр через `ctx.state()` - никакой настройки соединения на каждое
 сообщение:
 
-```rust
---8<-- "examples/lifespan.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/lifespan.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/lifespan.rs:handler"
+    ```
 
 Запускаемая программа -
 [`examples/lifespan.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/lifespan.rs).

@@ -47,9 +47,17 @@ itself are covered in the [AsyncAPI guide](../guides/asyncapi.md).
 
 ## What the entry point looks like
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
-```
+=== "Macros"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/main.rs:main"
+    ```
+
+=== "Manual"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/main.rs:main"
+    ```
 
 You write a function that builds the service; the macro turns it into a `main` that dispatches
 `run` and `asyncapi gen`.

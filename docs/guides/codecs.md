@@ -41,19 +41,37 @@ Override a single mounting:
 
 === "with_broker"
 
-    ```rust
-    --8<-- "examples/codecs.rs:per_handler"
-    ```
+    === "Macros"
+
+        ```rust
+        --8<-- "examples/codecs.rs:per_handler"
+        ```
+
+    === "Manual"
+
+        ```rust
+        --8<-- "examples/manual/codecs.rs:per_handler"
+        ```
 
 ### Per scope
 
 Set one codec for every handler in a `with_broker` scope:
 
-```rust
-use ruststream::codec::CborCodec;
+=== "Macros"
 
---8<-- "examples/codecs.rs:scope"
-```
+    ```rust
+    use ruststream::codec::CborCodec;
+
+    --8<-- "examples/codecs.rs:scope"
+    ```
+
+=== "Manual"
+
+    ```rust
+    use ruststream::codec::CborCodec;
+
+    --8<-- "examples/manual/codecs.rs:scope"
+    ```
 
 ### Default
 
@@ -76,11 +94,19 @@ When decoding fails, the failure policy decides what happens to the message; by 
 dropped (a nack without requeue). The policy is set per subscriber with the
 `on_failure(decode = ..)` clause:
 
-```rust
-use ruststream::subscriber;
+=== "Macros"
 
---8<-- "examples/codecs.rs:decode_failure"
-```
+    ```rust
+    use ruststream::subscriber;
+
+    --8<-- "examples/codecs.rs:decode_failure"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/codecs.rs:decode_failure"
+    ```
 
 When building handlers by hand, the `Typed` wrapper returned by `typed(codec, handler)` takes
 the same policy through `on_decode_failure`.
@@ -110,9 +136,17 @@ byte 0x7b`.
 A custom codec mounts at the same three levels as a built-in one - here all three at once, so
 that the scope, the chain and the reply each read their own line:
 
-```rust
---8<-- "examples/custom_codec.rs:mount"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/custom_codec.rs:mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/custom_codec.rs:mount"
+    ```
 
 ## The synchronous boundary
 

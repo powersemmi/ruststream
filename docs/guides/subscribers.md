@@ -9,12 +9,20 @@ Grouping handlers into modules is [Routing](routing.md); decoding their payloads
 
 A handler is an `async fn` whose first parameter is a reference to the decoded payload:
 
-```rust
-use ruststream::runtime::HandlerResult;
-use ruststream::subscriber;
+=== "Macros"
 
---8<-- "examples/subscribers.rs:contract"
-```
+    ```rust
+    use ruststream::runtime::HandlerResult;
+    use ruststream::subscriber;
+
+    --8<-- "examples/subscribers.rs:contract"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:contract"
+    ```
 
 The macro turns the function into a value named after it (here `handle`) that implements the
 mounting contract. You pass that value to `include`.
@@ -24,9 +32,17 @@ mounting contract. You pass that value to `include`.
 Declare an optional second parameter, `&mut Context`, to read headers, the subscription name, and
 shared state, or to publish from inside the handler:
 
-```rust
---8<-- "examples/subscribers.rs:context"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:context"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:context"
+    ```
 
 The macro resolves the context type itself, so the `Context` name needs no import when it appears
 only in `#[subscriber]` signatures. The full context surface - the headers working copy, state
@@ -81,9 +97,17 @@ On the message itself, ack consumes `self`, so the type system prevents acking t
 non-critical notification, slow follow-up work, a cache warm-up. Any outcome works
 (`drop().and_after(..)` is valid; the neutral reading is "after settle"):
 
-```rust
---8<-- "examples/post_settle.rs:single"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/post_settle.rs:single"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/post_settle.rs:single"
+    ```
 
 The continuation follows the shared post-settle semantics (at-most-once, runs only after the
 ack or nack settles, drained on graceful shutdown); see
@@ -92,9 +116,17 @@ ack or nack settles, drained on graceful shutdown); see
 In a batch each element settles individually, so the continuation rides per element - a capability
 the per-message context hook cannot offer:
 
-```rust
---8<-- "examples/post_settle.rs:batch"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/post_settle.rs:batch"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/post_settle.rs:batch"
+    ```
 
 Batch *publishing* (a batch handler with `publish(..)`) settles all-or-nothing under one
 transaction, so per-element `and_after` does not compose there; it applies to plain batch and
@@ -105,9 +137,17 @@ single forms only.
 `retry_after` covers the not-ready-yet case (a dependency has not arrived, an upstream is
 rate-limited), where an immediate redelivery would spin without progress:
 
-```rust
---8<-- "examples/retry.rs:retry_after"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/retry.rs:retry_after"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/retry.rs:retry_after"
+    ```
 
 Under the hood, the runtime honours the delay:
 
@@ -129,9 +169,17 @@ The `batch_retry_after` form composes with
 [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` carries
 per-element delays, so pending entries back off without holding up the rest of the batch:
 
-```rust
---8<-- "examples/retry.rs:batch_retry_after"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/retry.rs:batch_retry_after"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/retry.rs:batch_retry_after"
+    ```
 
 ## Choosing the subscription source
 
@@ -156,25 +204,25 @@ the name is set once on the broker.
 `#[subscriber]` is the same source with its value left out - a name the service only knows while
 it wires itself up, a subject built from a shard number, a topic read from configuration:
 
-```rust
---8<-- "examples/subscribers.rs:deferred_name"
-```
+=== "Macros"
 
-```rust
---8<-- "examples/subscribers.rs:name_mount"
-```
+    ```rust
+    --8<-- "examples/subscribers.rs:deferred_name"
+    ```
 
-A definition that was never named is not mountable: the compiler says so, and names the fix.
+    ```rust
+    --8<-- "examples/subscribers.rs:name_mount"
+    ```
 
-### Naming a kind and nothing else
+=== "Manual"
 
-`#[subscriber(RedisStream)]` names the kind and leaves the value out. It works for any kind
-identified by a name and nothing else: such a kind implements the core `FromName` trait, and the
-builder calls the kind's own constructor when the name arrives.
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:deferred_name"
+    ```
 
-```rust
---8<-- "examples/subscribers.rs:named_kind"
-```
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:name_mount"
+    ```
 
 Where a kind genuinely needs more than a name to exist - a Pulsar source takes a topic *and* a
 subscription name - it does not implement `FromName`, and this form does not compile for it. Write
@@ -222,9 +270,17 @@ Name, worker policy, failure policies and the start position are values, so each
 the attribute, at the mount site, or partly in each. The attribute expands into exactly the calls
 you would write yourself:
 
-```rust
---8<-- "examples/subscribers.rs:builder_settings"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:builder_settings"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:builder_settings"
+    ```
 
 A setting the attribute named is fixed in the definition's type and its builder method no longer
 applies, so there is no precedence rule to remember:
@@ -274,15 +330,31 @@ A handler that takes a slice consumes whole batches: it runs once per batch the 
 one database round-trip, one bulk API call. The shape is read off the signature, so nothing in the
 attribute says it.
 
-```rust
---8<-- "examples/subscribers.rs:batch"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch"
+    ```
 
 Mount it with `include`, like any other form - the definition carries the batch shape:
 
-```rust
---8<-- "examples/subscribers.rs:batch_mount"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch_mount"
+    ```
 
 The signature says the handler wants several messages at once; whether they arrive that way is a
 property of the broker, so it is settled where the definition is mounted. The subscription's
@@ -292,9 +364,17 @@ subscription options; the in-memory broker batches natively too. Where the subsc
 batch, the compiler asks for the framework's buffer and the mount supplies it, closing a batch by
 size or by a deadline after its first delivery:
 
-```rust
---8<-- "examples/subscribers.rs:batch_buffered"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch_buffered"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch_buffered"
+    ```
 
 Batches come either from the broker (configured by the broker's own settings) or from this wrap;
 the setting is named after the adapter to keep the two apart. The wrap changes the subscription
@@ -317,9 +397,17 @@ A common case is partial readiness: some messages of the batch are processed, ot
 ready yet and should be redelivered without retrying the ones that succeeded. Return
 `Vec<HandlerResult>` to settle element `i` of the slice with outcome `i`:
 
-```rust
---8<-- "examples/subscribers.rs:batch_selective"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch_selective"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch_selective"
+    ```
 
 Broker semantics are exactly those of per-message `nack(requeue = true)`: brokers with
 per-message redelivery honour selective retry natively; a positional broker degrades the same
@@ -339,38 +427,25 @@ A handler repositions its own subscription through a `Seek` parameter. The runti
 seeker off the subscription right after it opens, so the handler always holds a live handle;
 nothing is attached at the include site:
 
-```rust
---8<-- "examples/seek.rs:handler"
-```
+=== "Macros"
 
-```rust
---8<-- "examples/seek.rs:mount"
-```
+    ```rust
+    --8<-- "examples/seek.rs:handler"
+    ```
 
-A seek from inside the handler settles the current message as usual; deliveries queued before
-the target are dropped, and the stream resumes at the target position. The parameter composes
-with the rest of the subscriber surface: with an injected publisher (`Out`) in the same
-handler, with a byte input, with batch handlers, and with the `publish(..)` /
-`publish_raw(..)` reply forms - a `Seek` parameter itself never needs an attachment at the
-include site, so those mounts read exactly as without it.
+    ```rust
+    --8<-- "examples/seek.rs:mount"
+    ```
 
-Positions are broker-owned types (`MemoryPosition` here; a Kafka position carries partition
-offsets, a Redis position an entry id) and come from two places with different guarantees: a
-position captured from a delivered message (the `Positioned` capability on the message) carries
-a pinned contract - seeking to it redelivers exactly that message, then the rest of the log in
-order - while a position built with the broker's own constructors (earliest, a sequence number,
-a timestamp) keeps the semantics that broker documents.
+=== "Manual"
 
-### Starting position
+    ```rust
+    --8<-- "examples/manual/seek.rs:handler"
+    ```
 
-A subscription can also open at a chosen position instead of the broker's default: the
-`start_at(<position>)` clause seeks before the first delivery, so "start from the latest on
-deploy" or "replay the whole log into a fresh subscription" is part of the subscriber's
-declaration, not an operational action afterwards:
-
-```rust
---8<-- "examples/seek.rs:start_at"
-```
+    ```rust
+    --8<-- "examples/manual/seek.rs:mount"
+    ```
 
 The clause forces the position on every startup; without it the subscription opens at the
 broker's default. A conditional default - apply only when the broker holds no stored
@@ -397,9 +472,17 @@ A batch of payloads is the same thing at the batch shape: `&[&[u8]]` is the type
 the decode step, with the payloads borrowed from the batch's own messages for the duration of the
 call. Nothing is copied, and the settlement rules are the batch path's.
 
-```rust
---8<-- "examples/subscribers.rs:raw_batch"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:raw_batch"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:raw_batch"
+    ```
 
 An `on_failure(decode = ..)` policy on either shape is a compile error - there is no decode step
 to fail, unless the handler declares a `Headers` contract, which that policy does cover.
@@ -441,17 +524,33 @@ next is pulled, so one slow handler stalls the whole subscription. A `workers(n)
 processes up to `n` deliveries of this subscriber concurrently, each in its own task on the
 multi-thread runtime:
 
-```rust
---8<-- "examples/subscribers.rs:workers"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:workers"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:workers"
+    ```
 
 Back-pressure holds: the stream is not polled while `n` deliveries are in flight, which plays
 well with broker-side limits like JetStream `max_ack_pending`. **Global processing order is lost
 by design** - if any ordering matters, either stay sequential or use keyed lanes:
 
-```rust
---8<-- "examples/subscribers.rs:workers_by_key"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:workers_by_key"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:workers_by_key"
+    ```
 
 `workers(n, by_key)` runs `n` sequential lanes. A delivery goes to the lane its partition key
 hashes to, so messages sharing a key never overlap or reorder - the in-process analogue of

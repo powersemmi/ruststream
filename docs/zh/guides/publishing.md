@@ -13,20 +13,36 @@ Broker crate 要实现的接口（参见 [Broker 作者](../broker-authors/index
 
 用 `publish(..)` 指定一个回复目的地，然后返回回复值。运行时会把它编码并发送出去：
 
-```rust
-use ruststream::subscriber;
+=== "宏"
 
---8<-- "examples/publishing.rs:reply"
-```
+    ```rust
+    use ruststream::subscriber;
+
+    --8<-- "examples/publishing.rs:reply"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply"
+    ```
 
 用普通的 `include` 挂载它。如果不再多说什么，回复就会以默认编解码器、经由 Broker 的默认发布策略发出；
 要指定回复的编解码器或者加上变换，就用 `.publisher(..)` 链上一个架在 Broker 发布策略之上的
 [`TypedPublisher`] 栈（`TypedPublisher::new` 用默认编解码器，`TypedPublisher::with_codec` 则可以指定
 一个）。该栈是一份声明：运行时会在启动时把它与已连接的 Broker 配对。
 
-```rust
---8<-- "examples/publishing.rs:reply_mount"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/publishing.rs:reply_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_mount"
+    ```
 
 入站请求的解码遵循作用域（用 `with_broker_codec` 设定的作用域编解码器，没有设定则用默认编解码器）；
 回复的编解码器则随着附加上去的栈一起走。参见[编解码器](codecs.md#the-publish-side)。
@@ -37,9 +53,17 @@ use ruststream::subscriber;
 发布并 ack，`Err(result)` 什么都不发布，由分发器按返回的 `HandlerResult` 行事（`HandlerResult::drop()`
 表示进死信，`HandlerResult::retry()` 表示请求重新投递）：
 
-```rust
---8<-- "examples/publishing.rs:reply_result"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/publishing.rs:reply_result"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_result"
+    ```
 
 `Result` 这种写法由写出来的签名识别，所以要把它明明白白地写出来（藏起 `Result` 的类型别名，宏会
 当成普通的回复类型）。和任何处理器一样，会发布的处理器也可以声明一个可选的第二参数
@@ -56,11 +80,21 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
 在 Broker 连接之后完成配对。同一个处理器既能原封不动地挂到生产 Broker 上，也能挂到它的进程内测试
 传输上。
 
-```rust
-use ruststream::runtime::Out;
+=== "宏"
 
---8<-- "examples/publishing.rs:forward"
-```
+    ```rust
+    use ruststream::runtime::Out;
+
+    --8<-- "examples/publishing.rs:forward"
+    ```
+
+=== "手写"
+
+    ```rust
+    use ruststream::runtime::Out;
+
+    --8<-- "examples/manual/publishing.rs:forward"
+    ```
 
 `message(&value)` 用作用域的编解码器编码（想给单次调用换一个，用 `.with_codec(..)`）；`raw(&bytes)`
 发送的是服务已经编码好的载荷，因此根本没有编解码器的位置。两者都用 `.with_headers(..)` 填上消息头
@@ -69,9 +103,17 @@ use ruststream::runtime::Out;
 
 挂载点指明来源；对作用域自己的 Broker 来说，来源就是发布策略：
 
-```rust
---8<-- "examples/publishing.rs:forward_mount"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/publishing.rs:forward_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:forward_mount"
+    ```
 
 一个没有绑定的 `Out` 槽位是编译错误，而不是运行时错误：在每个槽位都有策略之前，这次注册根本构建
 不出来。
@@ -86,15 +128,29 @@ use ruststream::runtime::Out;
 `Out<impl Publisher>` 参数，它绑定的是隐含的 `DefaultSlot`，用普通的 `.publisher(policy)` 调用即可，
 绑定和提交一步完成。
 
-```rust
-use ruststream::OutSlot;
+=== "宏"
 
---8<-- "examples/publishing.rs:slots"
-```
+    ```rust
+    use ruststream::OutSlot;
 
-```rust
---8<-- "examples/publishing.rs:slots_mount"
-```
+    --8<-- "examples/publishing.rs:slots"
+    ```
+
+    ```rust
+    --8<-- "examples/publishing.rs:slots_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    use ruststream::OutSlot;
+
+    --8<-- "examples/manual/publishing.rs:slots"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:slots_mount"
+    ```
 
 trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 只有在策略的活发布者支持 owned
 事务时才能编译，这一点在挂载点检查，并给出点名缺失能力的诊断信息。槽位标记同时也是[测试套件](testing.md#asserting-on-out-slots)
@@ -113,11 +169,19 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 一个消息类型通过一次派生声明自身发送方式的全部信息，每个参数都写成同样的 `key = value` 形式。
 `name` 是目的地，`headers` 指明契约类型（它仍然是一个普通的 serde 结构体，派生不会碰它）：
 
-```rust
-use ruststream::Outgoing;
+=== "宏"
 
---8<-- "examples/publishing.rs:declared"
-```
+    ```rust
+    use ruststream::Outgoing;
+
+    --8<-- "examples/publishing.rs:declared"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:declared"
+    ```
 
 这份声明决定了调用点拥有哪一种目的地位置：
 
@@ -138,9 +202,17 @@ use ruststream::Outgoing;
 `Outgoing`，因此进不了该构建器：把它包进一个派生了 `Outgoing` 的 newtype，或者在事务内部继续用
 作用域的 `publish(name, &value)`。
 
-```rust
---8<-- "examples/publishing.rs:declared_mount"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/publishing.rs:declared_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:declared_mount"
+    ```
 
 该参数可以和每一种订阅者写法组合：与 `Seek` 参数并列、用在以字节为输入的处理器上、也用在批量处理器
 上（`b.include(f).publisher(..)`，进来的是一整页，出去的是逐元素的目的地）。在回复写法上，也就是
@@ -148,13 +220,25 @@ use ruststream::Outgoing;
 注入的发布者则用 `.out(marker, ..)` 加上收尾的 `.mount()` 来附加（单个无名槽位用 `DefaultSlot`），
 于是一个网关可以在固定的目的地上作答，同时通过注入把副本扇出出去：
 
-```rust
---8<-- "examples/publishing.rs:publish_out"
-```
+=== "宏"
 
-```rust
---8<-- "examples/publishing.rs:publish_out_mount"
-```
+    ```rust
+    --8<-- "examples/publishing.rs:publish_out"
+    ```
+
+    ```rust
+    --8<-- "examples/publishing.rs:publish_out_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:publish_out"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:publish_out_mount"
+    ```
 
 ### 发布到另一个 Broker
 
@@ -229,9 +313,17 @@ use ruststream::Outgoing;
 
 两个层次都能在应用上组合起来：
 
-```rust
---8<-- "examples/publishing.rs:pipeline"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/publishing.rs:pipeline"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:pipeline"
+    ```
 
 这条管线跑在回复路径上（`publish(..)` 那种写法）。注入的 `Out` 发布者是所附策略的活形态，直接使用，
 因此按发布者生效的变换要在挂载点用 `TypedPublisher::transform` 组合进策略里。完整的程序见
@@ -243,15 +335,31 @@ use ruststream::Outgoing;
 回复，也就是 consume-transform-produce 模式。`Ok(replies)` 把每一条回复发布到回复名下，并 ack 整批；
 `Err(result)` 什么都不发布，并用 `result` 结算整批（全有或全无：逐元素挑选结果与事务无法组合）：
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/publishing.rs:batch_publishing"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:batch_publishing"
+    ```
 
 用 `include` 挂载它，并用 `.publisher(..)` 链上回复的接线：
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing_mount"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/publishing.rs:batch_publishing_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:batch_publishing_mount"
+    ```
 
 用普通的 `TypedPublisher` 时，每条回复各自独立发布；批量中途失败会重试整批，因此先前那些回复可能在
 重新投递时再发一次（至少一次）。在 `TypedPublisher` 上调用 `.transactional()`，会把这套接线切换成

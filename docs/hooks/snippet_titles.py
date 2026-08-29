@@ -15,7 +15,11 @@ import re
 
 REPO_BLOB = "https://github.com/powersemmi/ruststream/blob/main/"
 
-FENCE = re.compile(r"^```(?P<info>[^\n`]*)\n(?P<body>.*?)^```$", re.M | re.S)
+# The indent group matches fences nested inside a content tab, whose opening and closing lines
+# are indented together; without it a tabbed snippet silently loses its filename header.
+FENCE = re.compile(
+    r"^(?P<indent>[ \t]*)```(?P<info>[^\n`]*)\n(?P<body>.*?)^(?P=indent)```$", re.M | re.S
+)
 INCLUDE = re.compile(r'--8<--\s+"(?P<path>[^":]+)(?::[^"]*)?"')
 
 # Paths whose filename headers get linkified in the HTML phase. Collected across pages; the
@@ -25,13 +29,13 @@ _linked_paths: set[str] = set()
 
 def on_page_markdown(markdown, **_kwargs):
     def add_title(match):
-        info, body = match.group("info"), match.group("body")
+        indent, info, body = match.group("indent"), match.group("info"), match.group("body")
         include = INCLUDE.search(body)
         if include is None or "title=" in info:
             return match.group(0)
         path = include.group("path")
         _linked_paths.add(path)
-        return f'```{info} title="{path}"\n{body}```'
+        return f'{indent}```{info} title="{path}"\n{body}{indent}```'
 
     return FENCE.sub(add_title, markdown)
 

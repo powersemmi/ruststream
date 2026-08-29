@@ -78,11 +78,22 @@ descriptor form uniform across brokers. From the
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:
 
-```rust
-use ruststream::memory::MemorySource;
+=== "Macros"
 
---8<-- "examples/routed_service/orders.rs:descriptor"
-```
+    ```rust
+    use ruststream::memory::MemorySource;
+
+    --8<-- "examples/routed_service/orders.rs:descriptor"
+    ```
+
+=== "Manual"
+
+    ```rust
+    use ruststream::memory::MemorySource;
+    use ruststream::runtime::{Decoded, IncludeDef, PublishingCall, PublishingDef, forms};
+
+    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
+    ```
 
 ## For testing
 

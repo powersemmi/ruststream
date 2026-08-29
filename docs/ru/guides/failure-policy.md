@@ -21,18 +21,34 @@
   внешних данных, что и полезная нагрузка, поэтому один ключ
   `decode` завершает доставку и в том, и в другом случае.
 
-```rust
---8<-- "examples/failure_policy.rs:defaults"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:defaults"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:defaults"
+    ```
 
 ## Как задать политику
 
 `on_failure(panic = .., decode = ..)` переопределяет любой из ключей (оба необязательны; пропущенный
 ключ сохраняет своё умолчание):
 
-```rust
---8<-- "examples/failure_policy.rs:tuned"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:tuned"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:tuned"
+    ```
 
 Значения политики такие:
 
@@ -50,9 +66,17 @@
 доставляться повторно вечно, если у брокера нет политики dead-letter или ограничения на число
 доставок.
 
-```rust
---8<-- "examples/failure_policy.rs:skip"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:skip"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:skip"
+    ```
 
 ## Как это ведёт себя
 

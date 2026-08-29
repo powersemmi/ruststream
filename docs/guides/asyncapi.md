@@ -34,9 +34,17 @@ hand-written call produce the same document.
 A handler's payload type appears as a schema when it derives `JsonSchema`. RustStream re-exports
 `schemars`, so you do not need a direct dependency:
 
-```rust
---8<-- "examples/asyncapi_http.rs:payload"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:payload"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:payload"
+    ```
 
 A type without `JsonSchema` still works as a handler payload; it contributes no schema to the
 document. Generating the document logs a `WARN` per such gap (once per handler or outgoing
@@ -86,9 +94,17 @@ A manual `impl Message` can name the component differently from the Rust type
 Record the servers your service connects to so they appear in the document's `servers` section.
 Build a `ServerSpec` directly:
 
-```rust
---8<-- "examples/asyncapi_http.rs:server"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:server"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:server"
+    ```
 
 A broker crate may also implement the `DescribeServer` capability, in which case
 `broker.describe_server()` produces the spec for you (the shipped brokers all do), and
@@ -140,6 +156,14 @@ example serves the document and the viewer with [axum](https://github.com/tokio-
 `cargo run --example asyncapi_http --features macros,memory,asyncapi`, then open
 <http://127.0.0.1:8080/>.
 
-```rust
---8<-- "examples/asyncapi_http.rs"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs"
+    ```

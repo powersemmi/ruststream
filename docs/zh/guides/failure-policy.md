@@ -16,18 +16,34 @@ RustStream 用同一套词汇结算这两者，都通过 `on_failure(..)` 子句
   解析失败的[带类型消息头契约](headers.md)：消息头与载荷同属外部输入这一类，所以一个 `decode` 键就把
   两者都结算了。
 
-```rust
---8<-- "examples/failure_policy.rs:defaults"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:defaults"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:defaults"
+    ```
 
 ## 设置策略
 
 `on_failure(panic = .., decode = ..)` 可以覆盖其中任意一个键（两个都是可选的；省略的键保持自己的默认
 值）：
 
-```rust
---8<-- "examples/failure_policy.rs:tuned"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:tuned"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:tuned"
+    ```
 
 各个策略取值如下：
 
@@ -42,9 +58,17 @@ RustStream 用同一套词汇结算这两者，都通过 `on_failure(..)` 子句
 `skip` 是特意留出的毒消息逃生口：它越过一条无法处理的消息，而不是把它丢弃或反复重试。给解码失败选
 `retry` 时要谨慎：除非 Broker 有死信或最大投递次数策略，一份永远解不出来的载荷会无限重新投递下去。
 
-```rust
---8<-- "examples/failure_policy.rs:skip"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:skip"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:skip"
+    ```
 
 ## 具体行为
 

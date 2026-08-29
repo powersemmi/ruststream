@@ -8,12 +8,20 @@
 
 处理器是一个 `async fn`，它的第一个参数是解码后载荷的引用：
 
-```rust
-use ruststream::runtime::HandlerResult;
-use ruststream::subscriber;
+=== "宏"
 
---8<-- "examples/subscribers.rs:contract"
-```
+    ```rust
+    use ruststream::runtime::HandlerResult;
+    use ruststream::subscriber;
+
+    --8<-- "examples/subscribers.rs:contract"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:contract"
+    ```
 
 宏会把该函数变成一个与它同名的值（这里是 `handle`），该值实现了挂载契约。把它传给 `include`。
 
@@ -22,9 +30,17 @@ use ruststream::subscriber;
 声明可选的第二个参数 `&mut Context`，就能读取消息头、订阅名和共享状态，也可以在处理器内部发布
 消息：
 
-```rust
---8<-- "examples/subscribers.rs:context"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:context"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:context"
+    ```
 
 宏会自己解析上下文的类型，因此只要 `Context` 仅出现在 `#[subscriber]` 的签名里，就不需要导入该
 名字。上下文的完整能力（消息头的工作副本、状态访问、Broker 的每次投递字段）见
@@ -74,18 +90,34 @@ use ruststream::subscriber;
 收尾工作、一次缓存预热。任何结果都可以这么用（`drop().and_after(..)` 是合法的；中性的读法是
 “结算之后”）：
 
-```rust
---8<-- "examples/post_settle.rs:single"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/post_settle.rs:single"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/post_settle.rs:single"
+    ```
 
 后续任务遵循统一的结算后语义（至多一次；只有在 ack 或 nack 结算之后才运行；优雅关闭时会排空），
 参见[结算后钩子](context.md#post-settle-hooks)。
 
 在一批消息中，每个元素各自结算，因此后续任务是逐元素携带的，这是按消息的上下文钩子给不了的能力：
 
-```rust
---8<-- "examples/post_settle.rs:batch"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/post_settle.rs:batch"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/post_settle.rs:batch"
+    ```
 
 批量*发布*（带 `publish(..)` 的批量处理器）是在一个事务里全有或全无地结算，因此逐元素的
 `and_after` 在那里无法组合；它只适用于普通的批量形态和单条形态。
@@ -95,9 +127,17 @@ use ruststream::subscriber;
 `retry_after` 针对的是“还没就绪”的情况（依赖的东西还没到、上游被限流），这时立刻重新投递只会空转
 而没有任何进展：
 
-```rust
---8<-- "examples/retry.rs:retry_after"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/retry.rs:retry_after"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/retry.rs:retry_after"
+    ```
 
 在底层，运行时会这样兑现延迟：
 
@@ -116,9 +156,17 @@ use ruststream::subscriber;
 `batch_retry_after` 这种写法可以和[选择性的批量结果](#selective-acknowledgement)组合：一个
 `Vec<HandlerResult>` 携带逐元素的延迟，于是尚未就绪的条目各自退避，而不拖住这一批里的其余消息：
 
-```rust
---8<-- "examples/retry.rs:batch_retry_after"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/retry.rs:batch_retry_after"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/retry.rs:batch_retry_after"
+    ```
 
 ## 选择订阅的来源
 
@@ -141,24 +189,25 @@ use ruststream::subscriber;
 `#[subscriber]` 用的是同一个来源，只是把值留空：名字可能是服务在装配自身时才知道的，可能是由分片
 号拼出来的 subject，也可能是从配置里读出来的主题：
 
-```rust
---8<-- "examples/subscribers.rs:deferred_name"
-```
+=== "宏"
 
-```rust
---8<-- "examples/subscribers.rs:name_mount"
-```
+    ```rust
+    --8<-- "examples/subscribers.rs:deferred_name"
+    ```
 
-从未命名的定义挂不上去：编译器会这么说，并指出该怎么修。
+    ```rust
+    --8<-- "examples/subscribers.rs:name_mount"
+    ```
 
-### 只指定种类，别的都不给
+=== "手写"
 
-`#[subscriber(RedisStream)]` 指定种类，把值留空。它适用于任何只由一个名字决定、别无其他的种类：
-这样的种类实现核心的 `FromName` trait，于是名字到位时，构建器就调用该种类自己的构造函数。
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:deferred_name"
+    ```
 
-```rust
---8<-- "examples/subscribers.rs:named_kind"
-```
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:name_mount"
+    ```
 
 如果某个种类确实不只靠一个名字就能存在（Pulsar 的来源同时需要一个主题*和*一个订阅名），它就不实现
 `FromName`，这种写法对它也编译不过。这类种类要完整写出来。
@@ -202,9 +251,17 @@ async fn handle(order: &Order) -> HandlerResult {
 名字、worker 策略、失败策略和起始位置都是值，因此每一项都可以写在属性宏里、写在挂载点，或者两边
 各写一部分。属性宏展开出来的，正是你自己会写的那些调用：
 
-```rust
---8<-- "examples/subscribers.rs:builder_settings"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:builder_settings"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:builder_settings"
+    ```
 
 属性宏里已经给出的设置会固定在定义的类型中，对应的构建器方法也就不再适用，因此没有优先级规则
 需要记：
@@ -249,15 +306,31 @@ RustStream::new(info).with_broker(broker, |b| {
 接收切片的处理器消费的是整批消息：Broker 每投递一批，它就运行一次，对应一次数据库往返、一次批量
 API 调用。该形态从签名里读出，属性宏里什么都不用写。
 
-```rust
---8<-- "examples/subscribers.rs:batch"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch"
+    ```
 
 和其他写法一样，用 `include` 挂载即可，批量形态由定义自己携带：
 
-```rust
---8<-- "examples/subscribers.rs:batch_mount"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch_mount"
+    ```
 
 签名说的是处理器想一次拿到多条消息；它们是否真的成批到达，则是 Broker 的性质，因此这件事在挂载
 定义的地方才敲定。这条订阅的订阅者必须实现 `BatchSubscriber` 能力：客户端原生成批的 Broker
@@ -265,9 +338,17 @@ API 调用。该形态从签名里读出，属性宏里什么都不用写。
 Broker 同样原生成批。如果订阅本身不成批，编译器就会要求给出框架自带的缓冲，并由挂载点提供，它按
 大小、或者按首次投递之后的一个截止时间来封批：
 
-```rust
---8<-- "examples/subscribers.rs:batch_buffered"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch_buffered"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch_buffered"
+    ```
 
 批要么来自 Broker（由 Broker 自己的设置配置），要么来自这层包装；这项设置以适配器命名，正是为了把
 两者分开。这层包装改变了订阅的类型，所以它排在最后 - 绑定在未包装类型上的 Broker 设置，过了这一步
@@ -287,9 +368,17 @@ Broker 同样原生成批。如果订阅本身不成批，编译器就会要求�
 常见的情形是部分就绪：这一批里有些消息已经处理完，另一些还没就绪，应重新投递，同时不去重试那些
 已经成功的。返回 `Vec<HandlerResult>`，切片中的第 `i` 个元素就按第 `i` 个结果结算：
 
-```rust
---8<-- "examples/subscribers.rs:batch_selective"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:batch_selective"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:batch_selective"
+    ```
 
 Broker 侧的语义和逐条消息的 `nack(requeue = true)` 完全一致：支持逐条重新投递的 Broker 原生支持
 选择性重试；基于位置的 Broker 则和它处理单条消息的 nack 时一样降级（这一点由该 Broker 的 crate
@@ -306,33 +395,25 @@ Broker 侧的语义和逐条消息的 `nack(requeue = true)` 完全一致：支�
 处理器通过一个 `Seek` 参数给自己的订阅重新定位。订阅一打开，运行时就从它身上铸出 seeker，
 因此处理器手里握着的始终是一个活的句柄；挂载点不需要附加任何东西：
 
-```rust
---8<-- "examples/seek.rs:handler"
-```
+=== "宏"
 
-```rust
---8<-- "examples/seek.rs:mount"
-```
+    ```rust
+    --8<-- "examples/seek.rs:handler"
+    ```
 
-在处理器内部发起的 seek，当前这条消息照常结算；运行时会丢弃排在目标位置之前的投递，流从目标位置
-继续。该参数和订阅者的其余能力都能组合：同一个处理器里注入的发布者（`Out`）、字节输入、批量处理器，
-以及 `publish(..)` / `publish_raw(..)` 这两种回复写法；`Seek` 参数本身在挂载点从不需要附加任何
-东西，所以那些挂载写出来和没有它时一模一样。
+    ```rust
+    --8<-- "examples/seek.rs:mount"
+    ```
 
-位置是 Broker 自有的类型（这里是 `MemoryPosition`；Kafka 的位置携带分区偏移量，Redis 的位置携带
-条目 id），它们有两个来源，保证也不一样：从已投递的消息上取得的位置（消息上的 `Positioned` 能力）
-带着钉死的契约，即定位到它会重新投递恰好那一条消息，随后按顺序投递日志中余下的部分；而用 Broker
-自己的构造函数造出来的位置（最早、某个序号、某个时间戳），遵循该 Broker 文档写明的语义。
+=== "手写"
 
-### 起始位置
+    ```rust
+    --8<-- "examples/manual/seek.rs:handler"
+    ```
 
-一条订阅也可以在选定的位置打开，而不是用 Broker 的默认位置：`start_at(<position>)` 子句会在第一次
-投递之前完成定位，于是“部署时从最新处开始”或者“把整个日志重放进一条全新的订阅”就成了订阅者
-声明的一部分，而不是事后的运维动作：
-
-```rust
---8<-- "examples/seek.rs:start_at"
-```
+    ```rust
+    --8<-- "examples/manual/seek.rs:mount"
+    ```
 
 该子句在每次启动时都强制使用给定位置；没有它时，订阅就在 Broker 的默认位置打开。有条件的默认值
 （只在 Broker 没有为该组存下游标时才生效，比如 Kafka 的 offset reset、JetStream 的 deliver
@@ -356,9 +437,17 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 一批载荷就是同一件事在批量形态下的样子：`&[&[u8]]` 是去掉了解码步骤的类型化批量，其中的载荷在调用
 期间从这批消息自身借用。不发生任何拷贝，结算规则沿用批量路径的那一套。
 
-```rust
---8<-- "examples/subscribers.rs:raw_batch"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:raw_batch"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:raw_batch"
+    ```
 
 在这两种形态上写 `on_failure(decode = ..)` 策略都是编译错误：这里没有会失败的解码步骤，除非处理器
 声明了 `Headers` 契约，那种情况这条策略确实管得着。提取器、`&mut Context`、`workers(..)`、
@@ -394,17 +483,33 @@ Broker 的默认发布策略）；两端都不经过编解码器，而回复发�
 拖住整条订阅。`workers(n)` 子句让该订阅者最多并发处理 `n` 次投递，每一次都在多线程运行时上的
 独立任务里执行：
 
-```rust
---8<-- "examples/subscribers.rs:workers"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:workers"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:workers"
+    ```
 
 背压依然成立：当有 `n` 次投递正在处理中时，运行时不会轮询流，这和 JetStream `max_ack_pending`
 这类 Broker 侧的限制配合得很好。**全局的处理顺序按设计放弃**，只要顺序还有意义，要么保持
 顺序执行，要么使用按键分道：
 
-```rust
---8<-- "examples/subscribers.rs:workers_by_key"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/subscribers.rs:workers_by_key"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/subscribers.rs:workers_by_key"
+    ```
 
 `workers(n, by_key)` 会跑 `n` 条顺序执行的道。一次投递会进入它的分区键哈希到的那条道，因此共享同
 一个键的消息绝不会重叠执行，也不会乱序，这相当于在进程内复刻了 Kafka 的分区语义。键取自 Broker

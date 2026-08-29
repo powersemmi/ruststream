@@ -18,9 +18,17 @@ cargo run --example http_outbox --features macros,memory,json
 Вместо публикации на пути запроса эндпоинт атомарно записывает событие рядом с бизнес-записью. Дальше
 записанные события переносит в брокер relay:
 
-```rust
---8<-- "examples/http_outbox.rs:event"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:event"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:event"
+    ```
 
 ```rust
 --8<-- "examples/http_outbox.rs:store"

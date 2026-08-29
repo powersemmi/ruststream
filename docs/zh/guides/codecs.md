@@ -40,19 +40,37 @@ feature 都不开时，就只剩下需要显式指定编解码器的那些方法
 
 === "with_broker"
 
-    ```rust
-    --8<-- "examples/codecs.rs:per_handler"
-    ```
+    === "宏"
+
+        ```rust
+        --8<-- "examples/codecs.rs:per_handler"
+        ```
+
+    === "手写"
+
+        ```rust
+        --8<-- "examples/manual/codecs.rs:per_handler"
+        ```
 
 ### 按作用域
 
 为一个 `with_broker` 作用域内的所有处理器设置同一个编解码器：
 
-```rust
-use ruststream::codec::CborCodec;
+=== "宏"
 
---8<-- "examples/codecs.rs:scope"
-```
+    ```rust
+    use ruststream::codec::CborCodec;
+
+    --8<-- "examples/codecs.rs:scope"
+    ```
+
+=== "手写"
+
+    ```rust
+    use ruststream::codec::CborCodec;
+
+    --8<-- "examples/manual/codecs.rs:scope"
+    ```
 
 ### 默认
 
@@ -73,11 +91,19 @@ use ruststream::codec::CborCodec;
 解码失败时，由失败策略决定这条消息的去向；默认是丢弃（不重新入队的 nack）。该策略按订阅者设置，用
 `on_failure(decode = ..)` 子句：
 
-```rust
-use ruststream::subscriber;
+=== "宏"
 
---8<-- "examples/codecs.rs:decode_failure"
-```
+    ```rust
+    use ruststream::subscriber;
+
+    --8<-- "examples/codecs.rs:decode_failure"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/codecs.rs:decode_failure"
+    ```
 
 手写处理器时，`typed(codec, handler)` 返回的 `Typed` 包装器通过 `on_decode_failure` 接收同样的策略。
 
@@ -103,9 +129,17 @@ byte 0x7b`。
 自定义编解码器可以挂载的层级和内置编解码器完全一样，共三个。这里三个一次写全，作用域、路由器链和回复
 各占一行：
 
-```rust
---8<-- "examples/custom_codec.rs:mount"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/custom_codec.rs:mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/custom_codec.rs:mount"
+    ```
 
 ## 同步边界 { #the-synchronous-boundary }
 

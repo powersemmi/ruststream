@@ -12,9 +12,17 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 Создайте `Metrics`, установите его слои для потребления и публикации и сохраните хендл, чтобы позже
 выгружать данные:
 
-```rust
---8<-- "examples/metrics_http.rs:wiring"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/metrics_http.rs:wiring"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/metrics_http.rs:wiring"
+    ```
 
 `consume_layer` учитывает каждое обработанное сообщение, `publish_layer` - каждое опубликованное.
 Чтобы собирать метрики в уже существующий реестр, а не в новый, используйте
@@ -57,9 +65,17 @@ curl -X POST http://127.0.0.1:8080/orders -d '{"id":1,"quantity":3}'
 curl http://127.0.0.1:8080/metrics
 ```
 
-```rust
---8<-- "examples/metrics_http.rs"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/metrics_http.rs"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/metrics_http.rs"
+    ```
 
 Если сервис выгружает метрики через фичу `otel`, для полного набора метрик есть готовый дашборд
 Grafana в [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana); см.

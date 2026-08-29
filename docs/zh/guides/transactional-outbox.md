@@ -16,9 +16,17 @@ cargo run --example http_outbox --features macros,memory,json
 端点不再在请求路径上发布，而是把事件与业务写入放在一起原子地记录下来。随后由一个中继把记录下来的
 事件搬到 Broker 上：
 
-```rust
---8<-- "examples/http_outbox.rs:event"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:event"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:event"
+    ```
 
 ```rust
 --8<-- "examples/http_outbox.rs:store"

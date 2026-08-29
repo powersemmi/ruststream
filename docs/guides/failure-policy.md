@@ -19,18 +19,34 @@ With no clause, a subscriber uses the built-in defaults:
   a [typed header contract](headers.md) that fails to parse - headers are the same class of
   external input as the payload, so one `decode` key settles both.
 
-```rust
---8<-- "examples/failure_policy.rs:defaults"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:defaults"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:defaults"
+    ```
 
 ## Setting a policy
 
 `on_failure(panic = .., decode = ..)` overrides either key (both are optional; an omitted key keeps
 its default):
 
-```rust
---8<-- "examples/failure_policy.rs:tuned"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:tuned"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:tuned"
+    ```
 
 The policy values are:
 
@@ -47,9 +63,17 @@ processed rather than dropping or retrying it. Pick `retry` for decode failures 
 payload that can never decode will redeliver forever unless the broker has a dead-letter or
 max-deliveries policy.
 
-```rust
---8<-- "examples/failure_policy.rs:skip"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:skip"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:skip"
+    ```
 
 ## How it behaves
 
