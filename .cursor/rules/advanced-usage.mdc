@@ -5,28 +5,33 @@ alwaysApply: false
 ---
 
 - Everything the attribute macros produce can be written by hand. `macros` is a convenience
-  feature, not a layer: it expands to calls on the same public runtime API, so a service without it
-  loses no capability that does not come *from* a declaration.
+  feature, not a layer: `#[subscriber]` expands into calls on the same public runtime API, so a
+  service without it loses no capability that does not come *from* a declaration.
+- What the attribute emits for `async fn handle(order: &Order) -> HandlerResult` is, in order: a
+  unit struct named after the function, an `impl Handler` whose `async fn handle` carries the body,
+  and the `Declared` + `SubscriberDef` impls that let `include` mount it. **Write the first two by
+  hand and stop**: the last two exist to feed `include`, and the macro-free path registers with
+  `subscribe` / `handle` instead.
+- So a handler is a named type implementing `Handler<M, C, S>`, whose `async fn handle(&self, msg:
+  &M, ctx: &mut Context<'_, C, S>) -> Settle` is an ordinary async method. What a closure would
+  capture becomes a field on that type.
 - What disappears with the feature off: `#[subscriber]`, `#[ruststream::app]`, and the
   `Message` / `Outgoing` / `OutSlot` / `OutMessages` / `FromRef` derives. Everything those expand
   into - extractor parameters (`State`, `Ctx`, `Headers`, `Out`, `Seek`), the reply clauses
   (`publish(..)`, `publish_raw(..)`), the mount-site settings builder (`.name`, `.workers`,
   `.on_failure`, `.buffered`) and `include` itself - goes with them, because all of it is carried
-  by the *definition* the attribute mints.
+  by the definition the attribute mints.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
   feature-gated, so the rest of it (builder, `Context`, `HandlerResult`, `Name`, `Publisher`,
   `PublishExt`, `TypedPublisher`) comes in unchanged.
-- A handler is any `Fn(&M, &mut Context<'_, C, S>) -> impl Future`, where the output is anything
-  `Into<Settle>` (`HandlerResult`, `()`, `Result<_, E>`, `Settle`). Closures qualify, so do plain
-  functions and any type implementing `Handler`.
 - Register with `b.subscribe(source, handler, metadata)` (the portable form: the source resolves at
   startup) or `b.handle(subscriber, handler, metadata)` when you already hold an open subscriber.
   Routers have the same `subscribe` method, so grouping still works.
 - Write `main` yourself: `#[tokio::main]` plus `app.run().await`. The attribute's CLI (`run`,
   `asyncapi gen`) is what you give up; `run_until(..)` and `start()` are plain methods.
 - State is reached through `ctx.state()`, headers through `ctx.headers()`, and publishing through a
-  publisher the closure captured or that lives in the state - the same objects the extractors would
-  have handed over.
+  publisher the handler holds or reads from the state - the same objects the extractors would have
+  handed over.
 
 ## A whole service, macro-free
 
@@ -36,7 +41,7 @@ use std::error::Error;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{HandlerMetadata, typed}; // outside the prelude
+use ruststream::runtime::{Handler, HandlerMetadata, Settle, typed}; // outside the prelude
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -44,17 +49,22 @@ struct Order {
     id: u64,
 }
 
+/// The definition value. The attribute would have generated exactly this struct, named after
+/// the function it decorates.
+struct Handle;
+
+impl Handler<Order> for Handle {
+    async fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> Settle {
+        tracing::info!(order.id, "processing order");
+        HandlerResult::ack().into()
+    }
+}
+
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.subscribe(
             Name::new("orders"),
-            typed(JsonCodec, |order: &Order, _ctx: &mut Context| {
-                let id = order.id;
-                async move {
-                    tracing::info!(id, "processing order");
-                    HandlerResult::ack()
-                }
-            }),
+            typed(JsonCodec, Handle),
             HandlerMetadata::typed::<Order>("orders"),
         );
     })
@@ -67,6 +77,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
+The method returns `Settle`, not `HandlerResult`: the attribute inserts the `IntoSettle` conversion
+around the body, so a hand-written impl does it itself - `.into()` on any outcome, or
+`HandlerResult::ack().and_after(..)` when there is post-settle work.
+
 `run()` runs until `SIGINT` / `SIGTERM`; `run_until(future)` drives shutdown from a future you own
 (a test signal, a timeout), and `start()` hands back a `RunningApp` for hosting the service beside
 another foreground server.
@@ -74,17 +88,15 @@ another foreground server.
 ## Decoding
 
 `typed(codec, handler)` is what the attribute wraps a typed handler in: it decodes the delivery
-with `codec` and calls the inner handler with `&T`. Name the codec explicitly - there is no
+with `codec` and calls the inner handler with `&T`, so the inner type implements `Handler<Order>`
+while the wrapper implements `Handler<BrokerMessage>`. Name the codec explicitly - there is no
 declaration site for a scope codec to reach.
 
 ```rust
 use ruststream::runtime::{FailurePolicy, typed};
 
 // the decode-failure policy, the manual counterpart of `on_failure(decode = ..)`
-let handler = typed(JsonCodec, |order: &Order, _ctx: &mut Context| async move {
-    HandlerResult::ack()
-})
-.on_decode_failure(FailurePolicy::Retry);
+let handler = typed(JsonCodec, Handle).on_decode_failure(FailurePolicy::Retry);
 ```
 
 ## Raw bytes
@@ -94,17 +106,18 @@ directly and no codec is involved. This is the shape `#[subscriber(.., raw)]` pr
 only subscriber form available with no codec feature at all.
 
 ```rust
-b.subscribe(
-    Name::new("frames"),
-    |msg: &MemoryMessage, _ctx: &mut Context| {
-        let frame = msg.payload().to_vec();
-        async move {
-            parse(&frame);
-            HandlerResult::ack()
-        }
-    },
-    HandlerMetadata::raw("frames"),
-);
+use ruststream::memory::MemoryMessage;
+
+struct Ingest;
+
+impl Handler<MemoryMessage> for Ingest {
+    async fn handle(&self, msg: &MemoryMessage, _ctx: &mut Context<'_>) -> Settle {
+        parse(msg.payload());
+        HandlerResult::ack().into()
+    }
+}
+
+b.subscribe(Name::new("frames"), Ingest, HandlerMetadata::raw("frames"));
 ```
 
 Use `b.handle(subscriber, handler, meta)` instead when the broker hands you an open subscriber
@@ -113,17 +126,50 @@ a plain synchronous call):
 
 ```rust
 let subscriber = b.broker().subscribe("orders");
-b.handle(subscriber, handler, HandlerMetadata::raw("orders"));
+b.handle(subscriber, Ingest, HandlerMetadata::raw("orders"));
 ```
 
-## State
+## Dependencies and state
 
-There is no `State<T>` parameter and no `FromRef` derive to make one resolve. `on_startup` is
-unchanged, and the handler reads the state off the context:
+A closure captures; a named handler holds. Anything the body needs that is fixed at registration
+becomes a field, and everything the runtime owns per delivery comes off the context - there is no
+`State<T>` parameter and no `FromRef` derive to make one resolve.
 
 ```rust
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use ruststream::codec::Codec; // the trait, for `encode`
+
+/// Held: fixed at registration. Read off the context: owned by the runtime.
+struct Confirm {
+    seen: Arc<AtomicU64>,
+}
+
 struct AppState {
     receipts: MemoryPublisher,
+}
+
+impl Handler<Order, (), AppState> for Confirm {
+    async fn handle(&self, order: &Order, ctx: &mut Context<'_, (), AppState>) -> Settle {
+        self.seen.fetch_add(order.id, Ordering::SeqCst);
+
+        let payload = JsonCodec
+            .encode(&Receipt { order_id: order.id })
+            .expect("encode");
+        if ctx
+            .state()
+            .receipts
+            .raw(&payload)
+            .to("receipts")
+            .publish()
+            .await
+            .is_err()
+        {
+            return HandlerResult::retry().into();
+        }
+        HandlerResult::ack().into()
+    }
 }
 
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -131,24 +177,15 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .with_broker(MemoryBroker::new(), |b| {
         b.subscribe(
             Name::new("orders"),
-            typed(JsonCodec, |order: &Order, ctx: &mut Context<'_, (), AppState>| {
-                let payload = serde_json::to_vec(&Receipt { order_id: order.id }).expect("encode");
-                let publisher = ctx.state().receipts.clone();
-                async move {
-                    if publisher.raw(&payload).to("receipts").publish().await.is_err() {
-                        return HandlerResult::retry();
-                    }
-                    HandlerResult::ack()
-                }
-            }),
+            typed(JsonCodec, Confirm { seen }),
             HandlerMetadata::typed::<Order>("orders"),
         );
     });
 ```
 
-The context's type parameters are what the attribute would have inferred: `Context<'_, C, S>` with
-`C` the broker's per-delivery context and `S` the application state. Spell them out when the
-closure needs the state; `Context<'_>` is the stateless default.
+`Context<'_, C, S>` names what the attribute would have inferred: `C` the broker's per-delivery
+context, `S` the application state. Both default to `()`, so a handler needing neither writes
+`Context<'_>`.
 
 ## Headers
 
@@ -157,7 +194,7 @@ extractor makes, and it returns a `Result` you settle on yourself:
 
 ```rust
 let Ok(meta) = ctx.headers().to_typed::<ChunkMeta>() else {
-    return HandlerResult::drop();
+    return HandlerResult::drop().into();
 };
 ```
 
@@ -171,6 +208,8 @@ so without the derive the typed publish builder has nothing to resolve a destina
 routes remain, and both are the ones the builder itself ends in:
 
 ```rust
+use ruststream::codec::Codec; // `encode` is a trait method
+
 // encode with the codec, then send the bytes to a destination you name
 let bytes = JsonCodec.encode(&receipt)?;
 publisher.raw(&bytes).to("receipts").publish().await?;
@@ -183,7 +222,33 @@ publisher
 
 `TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
 work unchanged; only the `Out` slot *parameter* and the reply clauses are gone, so a handler that
-publishes captures its publisher or reads it from the state.
+publishes holds its publisher as a field or reads it from the state.
+
+## Middleware
+
+A layer is the same named-type shape one level up: `Layer<H>` wraps an inner handler, and the
+wrapper implements `Handler` by delegating. This is the form the bundled layers already use, so
+nothing here is macro-dependent.
+
+```rust
+struct Counted<H> {
+    inner: H,
+    count: Arc<AtomicU64>,
+}
+
+impl<M, C, S, H> Handler<M, C, S> for Counted<H>
+where
+    M: Sync,
+    C: Send,
+    S: Send + Sync,
+    H: Handler<M, C, S>,
+{
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        self.inner.handle(msg, ctx).await
+    }
+}
+```
 
 ## What has no macro-free equivalent
 
