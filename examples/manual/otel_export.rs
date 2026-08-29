@@ -21,7 +21,6 @@ use ruststream::memory::MemoryBroker;
 use ruststream::otel::Otel;
 use ruststream::prelude::*;
 use ruststream::runtime::cli::run_main;
-use ruststream::runtime::{Decoded, IncludeDef, SubscriberDef, forms};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -66,26 +65,9 @@ impl Handler<Order, (), AppState> for Accept {
     }
 }
 
-// The `subscriber(source, handler)` constructor binds a handler over the unit state, so one reading
-// the typed `AppState` names its own definition instead; `include` mounts it the same way.
-impl SubscriberDef for Accept {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl IncludeDef for Accept {
-    type Form = forms::Subscribing;
-}
+// `subscriber(source, handler)` binds a handler over the unit state, so one reading the typed
+// `AppState` takes the `_in` variant: `subscriber_in` reads that state off the `Handler` impl, and
+// `include` mounts it the same way.
 // --8<-- [end:business_metric]
 
 // --8<-- [start:init]
@@ -108,7 +90,7 @@ fn app(otel: &Otel) -> impl App + use<> {
             })
         })
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(Accept);
+            b.include(subscriber_in("orders", Accept));
         })
 }
 

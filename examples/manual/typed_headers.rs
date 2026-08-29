@@ -11,22 +11,18 @@
 
 use std::any::type_name;
 use std::future::{Future, ready};
-use std::marker::PhantomData;
 
 use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    BatchDef, BatchWithHeadersDef, BindSlots, ContainsMessage, Decoded, HasSlots, IncludeDef,
-    InjectCall, InjectDef, IntoBatchResult, OutMessages, OutgoingMessageMetadata, PublishedThrough,
-    PublishingCall, PublishingDef, RawBytes, SliceHandlerWithHeaders, SlotPos, SlotPublisher,
-    forms,
+    ContainsMessage, IntoBatchResult, OutMessages, OutgoingMessageMetadata, PublishedThrough,
+    SliceHandlerWithHeaders, SlotPos,
 };
 use ruststream::schemars::{JsonSchema, schema_for};
 use ruststream::testing::TestApp;
 use ruststream::{
-    CallerName, ConnectedBroker, FixedName, MessageHeaders, NoHeaders, OutgoingDestination,
-    WithHeaders,
+    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeaders,
 };
 use serde::{Deserialize, Serialize};
 
@@ -147,76 +143,29 @@ impl PublishedThrough<Events> for Progress {}
 
 // `Headers<ChunkMeta>` is an extractor, so the body resolves it before its own work, under the
 // subscriber's `on_failure(decode = ..)` policy (drop by default) - the call the attribute inserts
-// for a `Headers` parameter. The `Out` parameter is a startup injection: the definition traits live
-// on a publisher-generic struct, so the concrete publisher type is inferred from the policy the
-// mount site attaches, and the declared message set rides in the injection type - destinations come
-// from each type's declaration, headers from its contract, so `Progress` publishes bare and
-// `ChunkDone` does not compile without `.with_headers(&meta)`.
+// for a `Headers` parameter. The `Out` parameter is a startup injection: the body is generic over
+// the slot's publisher, so the concrete type is inferred from the policy the mount site attaches,
+// and the marker carries the declared message set - destinations come from each type's
+// declaration, headers from its contract, so `Progress` publishes bare and `ChunkDone` does not
+// compile without `.with_headers(&meta)`.
 //
-// `with_slots(source, body)` covers the decoded slot form; this handler borrows the payload
-// undecoded and declares the headers schema itself, so it writes the definition traits out.
+// The body borrows the payload undecoded, which is what `with_slots::<[u8], ..>` selects: the
+// input kind follows the `SlotsHandler` parameter type rather than a separate spelling.
 // --8<-- [start:handler]
 #[derive(Clone, Copy)]
 struct Convert;
 
-struct ConvertDef<Slot, EncodeCodec>(PhantomData<fn() -> (Slot, EncodeCodec)>);
-
-impl IncludeDef for Convert {
-    type Form = forms::Out;
-}
-
-impl HasSlots for Convert {
-    type Markers = (Events,);
-}
-
-impl<Broker, Policy, EncodeCodec> BindSlots<Broker, ((Policy, EncodeCodec),)> for Convert
+impl<Slot, EncodeCodec, State> SlotsHandler<[u8], (Out<Slot, Events, (), EncodeCodec>,), (), State>
+    for Convert
 where
-    Broker: ConnectedBroker,
-    Policy: PublishPolicy<Broker>,
-{
-    type Bound = ConvertDef<SlotPublisher<Policy::Live, Events>, EncodeCodec>;
-    type Extra = ((Policy, EncodeCodec),);
-
-    fn bind(self, sources: ((Policy, EncodeCodec),)) -> (Self::Bound, Self::Extra) {
-        (ConvertDef(PhantomData), sources)
-    }
-}
-
-impl<Slot, EncodeCodec> InjectDef for ConvertDef<Slot, EncodeCodec>
-where
-    Slot: Publisher + Send + Sync + 'static,
-    EncodeCodec: Codec + Send + Sync + 'static,
-{
-    type Input = RawBytes;
-    type Context = ();
-    type Source = Name;
-    type Injections = (Out<Slot, Events, (ChunkDone, Progress), EncodeCodec>,);
-
-    fn source(&self) -> Name {
-        Name::new("chunks.raw")
-    }
-
-    fn headers_schema(&self) -> Option<String> {
-        Some(schema_of::<ChunkMeta>())
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        let mut entries = <ChunkDone as OutMessages<Events>>::outgoing();
-        entries.extend(<Progress as OutMessages<Events>>::outgoing());
-        entries
-    }
-}
-
-impl<Slot, EncodeCodec, State> InjectCall<State> for ConvertDef<Slot, EncodeCodec>
-where
-    Slot: Publisher + Send + Sync + 'static,
-    EncodeCodec: Codec + Send + Sync + 'static,
+    Slot: Publisher,
+    EncodeCodec: Codec + Send + Sync,
     State: Send + Sync,
 {
-    async fn call(
+    async fn handle(
         &self,
         chunk: &[u8],
-        injections: &Self::Injections,
+        slots: &(Out<Slot, Events, (), EncodeCodec>,),
         ctx: &mut Context<'_, (), State>,
     ) -> Settle {
         // Read the policy before the extraction takes the mutable borrow.
@@ -225,7 +174,7 @@ where
             Ok(value) => value,
             Err(rejection) => return rejection.into(),
         };
-        let Out(events) = &injections.0;
+        let Out(events) = &slots.0;
 
         let percent = u8::try_from(meta.chunk_no * 100 / meta.chunks_total.max(1)).unwrap_or(100);
         if events
@@ -258,14 +207,11 @@ where
 }
 // --8<-- [end:handler]
 
-// The reply form gets the same treatment from the reply type's contract: the generated document
-// declares a send operation for "jobs.status" with `DoneMeta` as the headers schema. Where the
-// attribute's `publish("jobs.status")` clause names the destination, the definition names it in
-// `reply_name` and lists the send operation in `outgoing`. At runtime reply headers stay with
-// `PublishTransform`, which can serialize a contract with `headers_mut().insert_typed(&meta)`.
-//
-// `replying(source, body).to(..)` covers the reply form itself, but its `documented` opt-in reports
-// payload schemas only; a send operation carrying a headers schema is declared by the definition.
+// The reply form gets the same treatment from the reply type's contract: `MessageHeaders` is what
+// travels with `StatusReply`, and at runtime reply headers stay with `PublishTransform`, which can
+// serialize a contract with `headers_mut().insert_typed(&meta)`. Where the attribute's
+// `publish("jobs.status")` clause names the destination, `replying(source, body).to(..)` names it,
+// and the `documented` opt-in reports the payload schemas of the send operation it declares.
 // --8<-- [start:reply]
 #[derive(Deserialize, JsonSchema)]
 struct StatusRequest {
@@ -293,46 +239,14 @@ impl Message for StatusReply {
 
 struct Status;
 
-impl IncludeDef for Status {
-    type Form = forms::Publishing;
-}
+impl Reply<StatusRequest> for Status {
+    type Out = StatusReply;
 
-impl PublishingDef for Status {
-    type Input = Decoded<StatusRequest>;
-    type Injections = ();
-    type Reply = StatusReply;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("jobs.status-requests")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "jobs.status"
-    }
-
-    fn input_schema(&self) -> Option<String> {
-        Some(schema_of::<StatusRequest>())
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        vec![
-            OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<StatusReply>())
-                .with_message_name(Some(StatusReply::NAME))
-                .with_payload_schema(Some(schema_of::<StatusReply>()))
-                .with_headers_schema(Some(schema_of::<DoneMeta>())),
-        ]
-    }
-}
-
-impl<State: Send + Sync> PublishingCall<State> for Status {
     // Nothing to await, so the future is returned directly (see `manual/quickstart.rs`).
-    fn call(
+    fn reply(
         &self,
         req: &StatusRequest,
-        _injections: &(),
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<StatusReply, HandlerResult>> + Send {
         ready(Ok(StatusReply {
             done: req.task_id.is_multiple_of(2),
@@ -344,14 +258,10 @@ impl<State: Send + Sync> PublishingCall<State> for Status {
 // Headers stay per-delivery on a batch too, so the contracts arrive as one per element: the batch
 // handler trait takes them as a second argument (this is what a `Headers<Vec<ChunkMeta>>` parameter
 // selects), the two slices line up index for index, and an element failing either the payload decode
-// or the contract is settled by the decode policy instead of reaching the handler. The batch form
-// with a headers contract has no value constructor, so it stays on the definition traits.
+// or the contract is settled by the decode policy instead of reaching the handler. The
+// `batch_with_headers` constructor is what binds that body to its subscription.
 // --8<-- [start:batch]
 struct Bulk;
-
-impl IncludeDef for Bulk {
-    type Form = forms::BatchWithHeaders;
-}
 
 impl<State: Send + Sync> SliceHandlerWithHeaders<Progress, ChunkMeta, State> for Bulk {
     fn handle_slice(
@@ -369,43 +279,32 @@ impl<State: Send + Sync> SliceHandlerWithHeaders<Progress, ChunkMeta, State> for
         ready(HandlerResult::Ack.into_batch_result())
     }
 }
-
-impl BatchWithHeadersDef for Bulk {
-    type Headers = ChunkMeta;
-}
-
-impl BatchDef for Bulk {
-    type Input = Decoded<Progress>;
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("chunks.bulk")
-    }
-
-    fn input_schema(&self) -> Option<String> {
-        Some(schema_of::<Progress>())
-    }
-
-    fn headers_schema(&self) -> Option<String> {
-        Some(schema_of::<ChunkMeta>())
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
 // --8<-- [end:batch]
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --8<-- [start:mounts]
+    // The schema opt-ins are what a hand-written definition would have returned from its metadata
+    // methods: `documented` reports the payload schemas, `documented_headers` the contract's.
     let app = RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(Convert).out(Events, MemoryPublish).mount();
-            b.include(Status);
-            b.include(Bulk);
+            b.include(
+                with_slots::<[u8], (Events,), _, _>("chunks.raw", Convert)
+                    .documented_headers::<ChunkMeta>(),
+            )
+            .out(Events, MemoryPublish)
+            .mount();
+            b.include(
+                replying("jobs.status-requests", Status)
+                    .to("jobs.status")
+                    .documented(),
+            );
+            b.include(
+                batch_with_headers("chunks.bulk", Bulk)
+                    .documented()
+                    .documented_headers::<ChunkMeta>(),
+            );
         },
     );
     // --8<-- [end:mounts]

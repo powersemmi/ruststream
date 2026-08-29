@@ -89,8 +89,7 @@ example:
 === "Manual"
 
     ```rust
-    use ruststream::memory::MemorySource;
-    use ruststream::runtime::{Decoded, IncludeDef, PublishingCall, PublishingDef, forms};
+    use ruststream::memory::{MemoryPublish, MemorySource};
 
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```

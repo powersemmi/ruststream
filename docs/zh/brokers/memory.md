@@ -77,8 +77,7 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
 === "手写"
 
     ```rust
-    use ruststream::memory::MemorySource;
-    use ruststream::runtime::{Decoded, IncludeDef, PublishingCall, PublishingDef, forms};
+    use ruststream::memory::{MemoryPublish, MemorySource};
 
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```

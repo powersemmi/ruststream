@@ -1,8 +1,8 @@
 //! The macro-free counterpart of `tests/testing_harness.rs`: the fail-fast panic path and the
-//! delayed-redelivery path, driven through hand-written definitions.
+//! delayed-redelivery path, driven through hand-written handler bodies.
 //!
-//! The harness asserts on what the definition registered, so only the declaration side changes;
-//! the two test bodies read exactly as they do with the attribute.
+//! The harness asserts on what the mount registered, so only the declaration side changes; the two
+//! test bodies read exactly as they do with the attribute.
 #![cfg(all(feature = "testing", feature = "memory", feature = "json"))]
 
 use std::future::{Future, ready};
@@ -12,9 +12,7 @@ use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, Declared, Decoded, PublishError, SubscriberBuilder, SubscriberDef, forms,
-};
+use ruststream::runtime::PublishError;
 use ruststream::testing::{TestApp, TestError};
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
@@ -99,8 +97,9 @@ struct Counter {
 
 // --8<-- [start:retry_after]
 /// A handler bound to one state type: naming `Counter` in the `Handler` impl is what the
-/// attribute's `ctx: &mut Context<'_, (), Counter>` parameter declares. The value constructors
-/// bind the handler over the unit state, so this one keeps the written-out definition.
+/// attribute's `ctx: &mut Context<'_, (), Counter>` parameter declares. `subscriber` binds a
+/// handler over the unit state, so this one mounts through the `_in` variant, which reads the
+/// state off the impl.
 struct DelayedRetry;
 
 impl Handler<Order, (), Counter> for DelayedRetry {
@@ -117,30 +116,6 @@ impl Handler<Order, (), Counter> for DelayedRetry {
     }
 }
 
-impl Declared for DelayedRetry {
-    type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("delayed"))
-    }
-}
-
-impl SubscriberDef for DelayedRetry {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("delayed")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
 #[tokio::test(start_paused = true)]
 async fn retry_after_redelivers_after_advancing_time() {
     let seen = Arc::new(AtomicU32::new(0));
@@ -150,7 +125,9 @@ async fn retry_after_redelivers_after_advancing_time() {
             let seen = state_seen;
             async move { Ok::<_, std::convert::Infallible>(Counter { seen }) }
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(DelayedRetry));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber_in("delayed", DelayedRetry));
+        });
     let tb = TestApp::start(app).await.unwrap();
 
     // The publish records the immediate NackAfter settlement and returns; the redelivery is pending.

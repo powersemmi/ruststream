@@ -1,7 +1,7 @@
 //! Repositioning live subscriptions without the `macros` feature: `start_at(..)` is a settings
 //! step chained on the mount, and the `Seek` parameter is a startup injection the runtime resolves
-//! off the subscription - the one form with no value constructor, so it stays on the definition
-//! traits.
+//! off the subscription - `with_seek` is its constructor, and the seeker reaches the body through
+//! the same injection tuple the `Out` forms use.
 //!
 //! ```text
 //! cargo run --example manual_seek --no-default-features --features memory,json
@@ -14,7 +14,6 @@ use std::time::Duration;
 use ruststream::Seeker;
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::prelude::*;
-use ruststream::runtime::{Decoded, IncludeDef, InjectCall, InjectDef, forms};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
@@ -44,32 +43,15 @@ impl Handler<Job> for Record {
 /// resume point is dropped without touching the subscription itself.
 struct Work;
 
-impl IncludeDef for Work {
-    type Form = forms::Seek;
-}
-
-/// A handler taking injected parameters is an `InjectDef` rather than a plain `SubscriberDef`:
+/// The body, over any application state: what the attribute puts behind the `Seek(seeker)`
+/// parameter. A body taking injected parameters is a `SlotsHandler` rather than a plain `Handler`:
 /// the injection tuple names what the runtime prepares once the subscription opens, and
-/// `Seek<MemorySeeker>` resolves off the subscriber itself, so the body holds a live seeker. No
-/// value constructor covers this form, so it is one of the few written out in full.
-impl InjectDef for Work {
-    type Input = Decoded<Job>;
-    type Context = ();
-    type Source = MemorySource;
-    type Injections = (Seek<MemorySeeker>,);
-
-    fn source(&self) -> MemorySource {
-        MemorySource::new("jobs")
-    }
-}
-
-/// The body, over any application state: what the attribute puts in `InjectCall::call`, with the
-/// injections destructured out of the tuple exactly as the parameter patterns would.
-impl<S: Send + Sync> InjectCall<S> for Work {
-    async fn call(
+/// `Seek<MemorySeeker>` resolves off the subscriber itself, so the body holds a live seeker.
+impl<S: Send + Sync> SlotsHandler<Job, (Seek<MemorySeeker>,), (), S> for Work {
+    async fn handle(
         &self,
         job: &Job,
-        (Seek(seeker),): &Self::Injections,
+        (Seek(seeker),): &(Seek<MemorySeeker>,),
         _ctx: &mut Context<'_, (), S>,
     ) -> Settle {
         if job.id == 999 {
@@ -99,9 +81,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // --8<-- [start:mount]
     // The runtime mints the seek handler's seeker off its subscription right after it opens, and
-    // the chained start position seeks the audit one before its first delivery.
+    // the chained start position seeks the audit one before its first delivery. `with_seek` names
+    // the message and the seeker type; the source is the broker's own descriptor.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
-        b.include(Work);
+        b.include(with_seek::<Job, MemorySeeker, _, _>(
+            MemorySource::new("jobs"),
+            Work,
+        ));
         b.include(subscriber(MemorySource::new("audit"), Record).start_at(MemoryPosition::start()));
     });
     // --8<-- [end:mount]

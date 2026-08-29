@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Decoded, Identity, IncludeDef, SubscriberDef, forms};
+use ruststream::runtime::Identity;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -70,26 +70,9 @@ impl Handler<Order, (), Database> for Handle {
     }
 }
 
-// The `subscriber(source, handler)` constructor binds a handler over the unit state, so one reading
-// the typed `Database` names its own definition instead; `include` mounts it the same way.
-impl SubscriberDef for Handle {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl IncludeDef for Handle {
-    type Form = forms::Subscribing;
-}
+// `subscriber(source, handler)` binds a handler over the unit state, so one reading the typed
+// `Database` takes the `_in` variant: `subscriber_in` reads that state off the `Handler` impl, and
+// `include` mounts it the same way.
 // --8<-- [end:handler]
 
 // --8<-- [start:hooks]
@@ -106,7 +89,7 @@ fn app() -> RustStream<Identity, Database> {
         // bound the post-shutdown drain of in-flight handlers
         .shutdown_timeout(Duration::from_secs(10))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(Handle);
+            b.include(subscriber_in("orders", Handle));
         })
 }
 // --8<-- [end:hooks]

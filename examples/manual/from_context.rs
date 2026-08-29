@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Decoded, FromContext, IncludeDef, SubscriberDef, forms};
+use ruststream::runtime::FromContext;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +54,7 @@ impl FromRef<AppState> for CreateOrder {
 // The interactor still arrives as a bound value rather than a `ctx.state().create_order`
 // reach-through: the extractor is public API, so the definition resolves it itself.
 // --8<-- [start:handler]
-/// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
+/// The handler body: `#[subscriber("orders")]` generates this struct and this impl.
 struct Handle;
 
 impl Handler<Order, (), AppState> for Handle {
@@ -73,27 +73,9 @@ impl Handler<Order, (), AppState> for Handle {
     }
 }
 
-// The `subscriber(source, handler)` constructor binds a handler over the unit state, and this one
-// extracts from `AppState`, so it names its own definition: `SubscriberDef` says what to run and on
-// which source, `IncludeDef` names the mounting machinery.
-impl SubscriberDef for Handle {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl IncludeDef for Handle {
-    type Form = forms::Subscribing;
-}
+// `subscriber(source, handler)` binds a handler over the unit state, and this one extracts from
+// `AppState`, so it mounts through the `_in` variant: `subscriber_in` reads the state type off the
+// `Handler` impl, and the mount checks it against the app's.
 // --8<-- [end:handler]
 
 #[tokio::main]
@@ -105,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(AppState { create_order }))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(Handle);
+            b.include(subscriber_in("orders", Handle));
         });
 
     let tb = TestApp::start(app).await?;

@@ -1,7 +1,7 @@
 //! The macro-free counterpart of `tests/raw_subscriber.rs`: the raw handler forms written out as
-//! named types. The plain form binds through the `raw` constructor; the byte-reply form has no
-//! value constructor, so it keeps the `PublishingDef` + `PublishingCall` pair the
-//! `publish_raw(..)` clause would have emitted.
+//! named types. The plain form binds through the `raw` constructor; the byte-reply form through
+//! `raw_replying(..).to(..)`, over the `Reply` body the `publish_raw(..)` clause would have
+//! emitted - byte-shaped `Out`, and the input kind read off the body's own parameter.
 //!
 //! The codec-free path is what the plain and the byte-reply sections pin: `RawBytes` on the input
 //! side means no `Codec` bound reaches the mount, so this file also builds with every codec
@@ -13,9 +13,6 @@ use std::sync::Mutex;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, Declared, PublishingCall, PublishingDef, RawBytes, SubscriberBuilder, forms,
-};
 use ruststream::testing::TestApp;
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
@@ -68,44 +65,18 @@ async fn raw_handler_receives_exact_bytes() {
 // --- the reply form: the returned bytes are republished as-is ---
 
 // --8<-- [start:raw_reply]
-/// The byte-reply form by hand: one definition, `RawBytes` in and `Vec<u8>` out. The form token
-/// is what picks the bare-publisher commit, so the reply bytes leave without a codec; the body
-/// moves onto `PublishingCall`, whose `Err` arm is the reply the attribute lets a handler skip.
+/// The byte-reply form by hand: a `Reply<[u8]>` body with `Vec<u8>` out, so bytes in and bytes
+/// out. `raw_replying` is what picks the bare-publisher commit, so the reply leaves without a
+/// codec, and the body's `Err` arm is the reply the attribute lets a handler skip.
 struct Relay;
 
-impl Declared for Relay {
-    type Form = forms::RawReply;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+impl Reply<[u8]> for Relay {
+    type Out = Vec<u8>;
 
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("relay-in"))
-    }
-}
-
-impl PublishingDef for Relay {
-    type Input = RawBytes;
-    type Injections = ();
-    type Reply = Vec<u8>;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("relay-in")
-    }
-
-    // Narrowed to `&'static str`: a borrowed signature returning a literal is a lint, and the
-    // destination is fixed by the definition anyway.
-    fn reply_name(&self) -> &'static str {
-        "relay-out"
-    }
-}
-
-impl<State: Send + Sync> PublishingCall<State> for Relay {
-    fn call(
+    fn reply(
         &self,
         frame: &[u8],
-        _injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<u8>, HandlerResult>> + Send {
         let mut reply = frame.to_vec();
         reply.reverse();
@@ -126,7 +97,8 @@ impl Handler<[u8]> for RelayCapture {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_round_trips_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(Relay).publisher(MemoryPublish);
+        b.include(raw_replying("relay-in", Relay).to("relay-out"))
+            .publisher(MemoryPublish);
         b.include(raw("relay-out", RelayCapture));
     });
 
@@ -160,9 +132,6 @@ mod typed_in {
 
     use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::prelude::*;
-    use ruststream::runtime::{
-        AllOpen, Declared, Decoded, PublishingCall, PublishingDef, SubscriberBuilder, forms,
-    };
     use ruststream::testing::TestApp;
     use serde::Deserialize;
 
@@ -173,41 +142,18 @@ mod typed_in {
 
     // --8<-- [start:raw_reply_typed]
     /// The gateway shape: a structured message in, a self-produced wire format out. Only the
-    /// input kind changes from the byte-reply form above, so the decode codec is resolved from
-    /// the mount while the reply still leaves unencoded.
+    /// body's input parameter changes from the byte-reply form above - `&Wrap` instead of
+    /// `&[u8]`, which is what selects the decode - so the decode codec is resolved from the mount
+    /// while the reply still leaves unencoded.
     struct Gateway;
 
-    impl Declared for Gateway {
-        type Form = forms::RawReply;
-        type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+    impl Reply<Wrap> for Gateway {
+        type Out = Vec<u8>;
 
-        fn declare(self) -> Self::Settings {
-            SubscriberBuilder::new(self, Name::new("gateway-in"))
-        }
-    }
-
-    impl PublishingDef for Gateway {
-        type Input = Decoded<Wrap>;
-        type Injections = ();
-        type Reply = Vec<u8>;
-        type Context = ();
-        type Source = Name;
-
-        fn source(&self) -> Self::Source {
-            Name::new("gateway-in")
-        }
-
-        fn reply_name(&self) -> &'static str {
-            "gateway-out"
-        }
-    }
-
-    impl<State: Send + Sync> PublishingCall<State> for Gateway {
-        fn call(
+        fn reply(
             &self,
             wrap: &Wrap,
-            _injections: &Self::Injections,
-            _ctx: &mut Context<'_, (), State>,
+            _ctx: &mut Context<'_>,
         ) -> impl Future<Output = Result<Vec<u8>, HandlerResult>> + Send {
             ready(Ok(wrap.id.to_be_bytes().to_vec()))
         }
@@ -238,7 +184,8 @@ mod typed_in {
         let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(Gateway).publisher(MemoryPublish);
+                b.include(raw_replying("gateway-in", Gateway).to("gateway-out"))
+                    .publisher(MemoryPublish);
                 b.include(raw("gateway-out", GatewayCapture));
             },
         );

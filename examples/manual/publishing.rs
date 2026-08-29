@@ -429,50 +429,18 @@ impl PublishLayer for AuditPublish {
 // --8<-- [end:app_layer]
 
 // --8<-- [start:batch_publishing]
-/// Confirms a whole page of orders; the replies become visible atomically on commit. The batch
-/// reply form has no value constructor, so it is the one place the definition traits are still
-/// written out: `Declared` names the mount form and the settings builder, `BatchPublishingDef`
-/// carries the structure, and `BatchPublishingCall` the body.
+/// Confirms a whole page of orders; the replies become visible atomically on commit. `BatchReply`
+/// is `Reply` over a page: one `Vec` of replies per batch, each published to the destination the
+/// mount site names, and an `Err` settles the whole page without publishing anything.
 struct Confirm;
 
-impl ruststream::runtime::Declared for Confirm {
-    type Form = ruststream::runtime::forms::BatchPublishing;
-    type Settings =
-        ruststream::runtime::SubscriberBuilder<Self, Name, ruststream::runtime::AllOpen>;
+impl BatchReply<Event> for Confirm {
+    type Out = Event;
 
-    fn declare(self) -> Self::Settings {
-        ruststream::runtime::SubscriberBuilder::new(self, Name::new("orders"))
-    }
-}
-
-impl ruststream::runtime::BatchPublishingDef for Confirm {
-    type Input = ruststream::runtime::Decoded<Event>;
-    type Injections = ();
-    type Reply = Event;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("orders")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "confirmations"
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        vec![OutgoingMessageMetadata::new(
-            "confirmations",
-            std::any::type_name::<Event>(),
-        )]
-    }
-}
-
-impl<State: Send + Sync> ruststream::runtime::BatchPublishingCall<State> for Confirm {
-    fn call(
+    fn reply(
         &self,
         orders: &[Event],
-        _injections: &Self::Injections,
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Event>, HandlerResult>> + Send {
         ready(if orders.is_empty() {
             // nothing published, whole batch settled
@@ -573,7 +541,7 @@ fn app() -> impl App {
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes
             // independently.
-            b.include(Confirm)
+            b.include(batch_replying("orders", Confirm).to("confirmations"))
                 .publisher(TypedPublisher::new(MemoryPublish).transactional());
             // --8<-- [end:batch_publishing_mount]
         })

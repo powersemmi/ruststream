@@ -14,18 +14,25 @@ alwaysApply: false
 - So a handler is a named type implementing `Handler<M, C, S>`, whose `async fn handle(&self, msg:
   &M, ctx: &mut Context<'_, C, S>) -> Settle` is an ordinary async method. What a closure would
   capture becomes a field on that type.
-- **Level one** - stop at `Handler` and mount with `b.include(subscriber(source, handler))` (one
-  constructor per form: `subscriber`, `batch`, `raw`, `raw_batch`, `replying(..).to(..)`,
-  `with_slots`, `replying_with_slots(..).to(..)`). Nothing else to implement; the registration
-  metadata is derived from the source and the handler's input type.
+- **Level one** - stop at the body trait and mount with `b.include(subscriber(source, handler))`.
+  There is one constructor per attribute form, and every form has one: `subscriber`, `raw`,
+  `batch`, `raw_batch`, `batch_with_headers`, `replying(..).to(..)`, `raw_replying(..).to(..)`,
+  `batch_replying(..).to(..)`, `with_slots`, `with_seek`, `batch_with_slots`, `batch_with_seek`,
+  `replying_with_slots(..).to(..)`, `raw_replying_with_slots(..).to(..)` and
+  `batch_replying_with_slots(..).to(..)`. A body implemented for one concrete application state
+  takes the `_in` variant (`subscriber_in`, `raw_in`, `batch_in`, `raw_batch_in`,
+  `batch_with_headers_in`, `replying_in`, `raw_replying_in`, `batch_replying_in`); the slot and
+  seek forms need none, their bodies being checked at the mount. Nothing else to implement; the
+  registration metadata is derived from the source and the handler's input type.
 - **Level two** - implement `SubscriberDef` plus `Declared`, and `b.include(def)` works on your own
   type with the whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`,
   `.buffered`), `.publisher(..)`, `.out(marker, ..)` and `.mount()`. The settings live on
   `Declared::Settings`, which must be a `SubscriberBuilder` - `SubscriberBuilder::new(def, source)`
-  is public for exactly this. Implementing `IncludeDef` instead is the cheap route and mounts fine,
-  but it routes through the blanket `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`:
-  the steps (`NameStep`, `WorkersStep`, `FailureStep`, `BufferedStep`) are implemented for
-  `SubscriberBuilder`, not for a bare definition, so that route has no settings surface.
+  is public for exactly this. Implementing `IncludeDef` alone routes through the blanket
+  `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`: that serves the raw forms, but a
+  decoded one resolves its codec through the builder, so a bare definition does not mount there -
+  and the steps (`NameStep`, `WorkersStep`, `FailureStep`, `BufferedStep`) are implemented for
+  `SubscriberBuilder`, not for a bare definition, so that route has no settings surface either.
 - The derives are equally reproducible, and reading their expansion is the fastest way to get one
   right: `#[derive(Outgoing)]` writes `OutgoingDestination` plus a `MessageHeaders` contract
   (`NoHeaders` or `WithHeaders<H>`), `#[derive(OutSlot)]` writes `OutSlot` plus the
@@ -35,11 +42,12 @@ alwaysApply: false
   a clause for you, so what the attribute would have declared you write as a trait impl.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
   feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerResult`,
-  `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (the constructors
-  `subscriber` / `batch` / `raw` / `raw_batch` / `replying` / `with_slots` /
-  `replying_with_slots`, the body traits `Handler` / `SliceHandler` / `RawSliceHandler` / `Reply` /
-  `SlotsHandler` / `SlotsReply`, plus `Settle`, `BatchResult`, `FailurePolicies` / `FailurePolicy`,
-  `Workers`, `Unnamed`, `DefaultSlot`, `RouterDef` and `nonzero!`).
+  `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (every form
+  constructor listed above with its `_in` variants, the body traits `Handler` / `SliceHandler` /
+  `RawSliceHandler` / `SliceHandlerWithHeaders` / `Reply` / `BatchReply` / `SlotsHandler` /
+  `SlotsSliceHandler` / `SlotsReply` / `SlotsBatchReply`, plus `Settle`, `BatchResult`,
+  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`, `Seek`, `DefaultSlot`,
+  `RouterDef` and `nonzero!`).
 - Mount with `b.include(subscriber(source, handler))` (the portable form: the source resolves at
   startup), or `b.handle(subscriber, handler, metadata)` when you already hold an open subscriber.
   Routers have the same `include` method, so grouping still works.
@@ -178,7 +186,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::codec::Codec; // the trait, for `encode`
-use ruststream::runtime::{Decoded, IncludeDef, SubscriberDef, forms};
 
 /// Held: fixed at registration. Read off the context: owned by the runtime.
 struct Confirm {
@@ -212,30 +219,12 @@ impl Handler<Order, (), AppState> for Confirm {
 }
 
 // `subscriber(source, body)` binds a body over the unit application state, so a body pinned to
-// `AppState` names its own definition instead - the escape hatch below, in its shortest form.
-impl SubscriberDef for Confirm {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl IncludeDef for Confirm {
-    type Form = forms::Subscribing;
-}
-
+// `AppState` takes the `_in` variant: it reads the state off the `Handler` impl, and the mount
+// checks it against the app's.
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .on_startup(async move |()| Ok::<_, std::convert::Infallible>(AppState { receipts }))
     .with_broker(MemoryBroker::new(), |b| {
-        b.include(Confirm { seen });
+        b.include(subscriber_in("orders", Confirm { seen }));
     });
 ```
 
@@ -321,10 +310,15 @@ A `Router` reaches a little further without a definition: `Router::workers(Worke
 worker control at all). Beyond that, `batch(source, body)` and `raw_batch(source, body)` are the
 macro-free paths for the batch shapes, and both resolve the chain's codec.
 
-What no constructor covers - a body pinned to a concrete application state or broker context, the
-injection forms (`Seek<..>` included), batch publishing, raw replies, a batch carrying a headers
-contract, a header-schema declaration - rides on the definition, so implement one and the whole
-mount surface opens up on your own type.
+Every form token has a constructor, so no form is reachable only through the definition traits: a
+body pinned to a concrete application state takes an `_in` constructor, a typed broker context is
+read off the body's own impl (and named with `.context::<K>()` on the `with_seek` /
+`replying_with_slots` chains), and the injection, batch-publishing, raw-reply and headers-contract
+shapes each have their own constructor. The schema opt-ins ride the same chain: `.describe(..)`,
+`.documented()`, `.documented_headers::<H>()` and `.message()`. What is left for the definition
+traits is being the attribute's own expansion target, and a fully custom definition - one whose
+source, metadata or settings are computed rather than named - so implement one and the whole mount
+surface opens up on your own type.
 
 ```rust
 use ruststream::runtime::{
@@ -333,7 +327,7 @@ use ruststream::runtime::{
 };
 
 // This exact case is shorter as `subscriber("orders", Handle).on_failure(..)`; the shape below is
-// what the forms with no constructor need.
+// what a definition carrying its own declaration looks like.
 impl SubscriberDef for Handle {
     type Input = /* the decode kind */;
     type Context = ();

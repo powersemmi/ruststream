@@ -1,8 +1,9 @@
 //! The `Ctx<K>` extractor without the `macros` feature. `Ctx<K>` and `ContextField` are plain
 //! public API, so the key is unchanged and the handler still binds the field through the same
-//! `FromContext` resolution the attribute emits. What the definition writes out by hand is the
-//! context type the attribute projected from the key. Driven through the real dispatch path with
-//! the in-process `TestApp` harness.
+//! `FromContext` resolution the attribute emits. What the handler writes out by hand is the context
+//! type the attribute projected from the key: it is named in the `Handler` impl, and `subscriber`
+//! reads it from there. Driven through the real dispatch path with the in-process `TestApp`
+//! harness.
 //!
 //! ```text
 //! cargo run --example manual_ctx_extractor --no-default-features --features testing,memory,json
@@ -10,7 +11,7 @@
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::prelude::*;
-use ruststream::runtime::{Decoded, FromContext, IncludeDef, SubscriberDef, forms};
+use ruststream::runtime::FromContext;
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, ContextField};
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,7 @@ impl ContextField for PayloadLen {
 // --8<-- [end:key]
 
 // --8<-- [start:handler]
-/// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
+/// The handler body: `#[subscriber("orders")]` generates this struct and this impl.
 struct Audit;
 
 // The context type is written down rather than inferred: the attribute projected it from the key
@@ -70,34 +71,16 @@ impl Handler<Order, DeliveryMeta> for Audit {
     }
 }
 
-// The value constructors fix the broker context to `()`, so a handler reading a real one names its
-// own definition: `Context` is where the attribute's projection from the key ends up, and `include`
-// builds that context per delivery.
-impl SubscriberDef for Audit {
-    type Input = Decoded<Order>;
-    type Context = DeliveryMeta;
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-impl IncludeDef for Audit {
-    type Form = forms::Subscribing;
-}
+// `subscriber` reads the broker context off the `Handler` impl, so naming `DeliveryMeta` there is
+// the whole declaration: nothing repeats it at the mount, and `include` builds that context per
+// delivery.
 // --8<-- [end:handler]
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app =
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(Audit);
+            b.include(subscriber("orders", Audit));
         });
 
     let tb = TestApp::start(app).await?;

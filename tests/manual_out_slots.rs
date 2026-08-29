@@ -1,31 +1,19 @@
 //! The macro-free counterpart of `tests/out_slots.rs`: marker-identified `Out` slots written out
-//! as definitions - multi-slot binding by marker, the harness's per-slot capture, and the
+//! as bodies - multi-slot binding by marker, the harness's per-slot capture, and the
 //! broker-defined capability extension through [`SlotPublisher::inner`].
 //!
-//! Slot markers, the slot list and the publisher-generic body are all ordinary trait impls, so a
-//! handler with several injected publishers is reachable with the attribute off. `with_slots`
-//! covers the decoded input; the raw-input slot handler below has no value constructor, so it
-//! stays written out as `HasSlots` + `BindSlots` + `InjectDef` + `InjectCall`.
+//! Slot markers and the publisher-generic body are all ordinary trait impls, so a handler with
+//! several injected publishers is reachable with the attribute off. `with_slots` binds both
+//! bodies below: the input kind follows the body's own parameter, so the raw-input one is
+//! `with_slots::<[u8], ..>` and needs nothing else.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
-use std::marker::PhantomData;
-
-use ruststream::codec::Codec;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, BindSlots, Declared, HasSlots, InjectCall, InjectDef, OutgoingMessageMetadata,
-    RawBytes, SlotPublisher, SubscriberBuilder, forms,
-};
+use ruststream::runtime::SlotPublisher;
 use ruststream::testing::TestApp;
-use ruststream::{
-    CallerName, ConnectedBroker, MessageHeaders, NoHeaders, OutgoingDestination, PairError,
-};
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, PairError};
 use serde::{Deserialize, Serialize};
-
-/// The whole content of a definition generic over its slot publishers: the inferred types and
-/// nothing else, so the definition stays a zero-sized value the mount site builds for free.
-type SlotTypes<T> = PhantomData<fn() -> T>;
 
 /// The message the slot publishes carry; it declares no name, so each call site names one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,86 +43,30 @@ impl OutSlot for Audit {
     const NAME: &'static str = "Audit";
 }
 
-/// Two slots in one handler; no broker publisher type appears anywhere in the definition.
+/// Two slots in one handler; no broker publisher type appears anywhere in the body.
 struct Transcode;
 
-impl Declared for Transcode {
-    type Form = forms::Out;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
+type TranscodeSlots<EncodedPub, AuditPub, Enc> = (
+    Out<EncodedPub, Encoded, (), Enc>,
+    Out<AuditPub, Audit, (), Enc>,
+);
 
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("slots.in"))
-    }
-}
-
-impl HasSlots for Transcode {
-    type Markers = (Encoded, Audit);
-}
-
-impl<Conn, Enc, EncodedPolicy, AuditPolicy>
-    BindSlots<Conn, ((EncodedPolicy, Enc), (AuditPolicy, Enc))> for Transcode
-where
-    Conn: ConnectedBroker,
-    EncodedPolicy: PublishPolicy<Conn>,
-    AuditPolicy: PublishPolicy<Conn>,
-{
-    type Bound = TranscodeDef<
-        SlotPublisher<EncodedPolicy::Live, Encoded>,
-        SlotPublisher<AuditPolicy::Live, Audit>,
-        Enc,
-    >;
-    type Extra = ((EncodedPolicy, Enc), (AuditPolicy, Enc));
-
-    fn bind(
-        self,
-        sources: ((EncodedPolicy, Enc), (AuditPolicy, Enc)),
-    ) -> (Self::Bound, Self::Extra) {
-        (TranscodeDef(PhantomData), sources)
-    }
-}
-
-struct TranscodeDef<EncodedPub, AuditPub, Enc>(SlotTypes<(EncodedPub, AuditPub, Enc)>);
-
-impl<EncodedPub, AuditPub, Enc> InjectDef for TranscodeDef<EncodedPub, AuditPub, Enc>
-where
-    EncodedPub: Publisher + Send + Sync + 'static,
-    AuditPub: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    type Input = RawBytes;
-    type Context = ();
-    type Source = Name;
-    type Injections = (
-        Out<EncodedPub, Encoded, (), Enc>,
-        Out<AuditPub, Audit, (), Enc>,
-    );
-
-    fn source(&self) -> Self::Source {
-        Name::new("slots.in")
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        let mut declared = <Encoded as OutSlot>::outgoing();
-        declared.extend(<Audit as OutSlot>::outgoing());
-        declared
-    }
-}
-
-impl<State, EncodedPub, AuditPub, Enc> InjectCall<State> for TranscodeDef<EncodedPub, AuditPub, Enc>
+impl<State, EncodedPub, AuditPub, Enc>
+    SlotsHandler<[u8], TranscodeSlots<EncodedPub, AuditPub, Enc>, (), State> for Transcode
 where
     State: Send + Sync,
-    EncodedPub: Publisher + Send + Sync + 'static,
-    AuditPub: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
+    EncodedPub: Publisher,
+    AuditPub: Publisher,
+    Enc: Send + Sync,
 {
-    async fn call(
+    async fn handle(
         &self,
         chunk: &[u8],
-        injections: &Self::Injections,
+        slots: &TranscodeSlots<EncodedPub, AuditPub, Enc>,
         _ctx: &mut Context<'_, (), State>,
     ) -> Settle {
-        let Out(encoded) = &injections.0;
-        let Out(audit) = &injections.1;
+        let Out(encoded) = &slots.0;
+        let Out(audit) = &slots.1;
         let mut headers = HeaderMap::new();
         headers.insert("source", "slots.in");
         if encoded
@@ -167,10 +99,12 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
     // Deliberately bound in the opposite of the marker-list order.
     let app =
         RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(Transcode)
-                .out(Audit, MemoryPublish)
-                .out(Encoded, MemoryPublish)
-                .mount();
+            b.include(with_slots::<[u8], (Encoded, Audit), _, _>(
+                "slots.in", Transcode,
+            ))
+            .out(Audit, MemoryPublish)
+            .out(Encoded, MemoryPublish)
+            .mount();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
