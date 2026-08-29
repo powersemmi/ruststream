@@ -17,11 +17,14 @@ alwaysApply: false
 - **Level one** - stop at `Handler` and register with `b.subscribe(source, handler, metadata)` or
   `b.handle(subscriber, handler, metadata)`. Nothing else to implement; you give up only what the
   definition carries.
-- **Level two** - implement `SubscriberDef` (and `IncludeDef` to name the mount form, which gets
-  you `Declared` through its blanket impl) and `b.include(def)` works on your own type, with the
-  whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`, `.buffered`),
-  `.publisher(..)`, `.out(marker, ..)` and `.mount()`. `SubscriberBuilder::new(def, source)` is
-  public for exactly this, and `SubscriberSettings` is blanket-implemented for every `Declared`.
+- **Level two** - implement `SubscriberDef` plus `Declared`, and `b.include(def)` works on your own
+  type with the whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`,
+  `.buffered`), `.publisher(..)`, `.out(marker, ..)` and `.mount()`. The settings live on
+  `Declared::Settings`, which must be a `SubscriberBuilder` - `SubscriberBuilder::new(def, source)`
+  is public for exactly this. Implementing `IncludeDef` instead is the cheap route and mounts fine,
+  but it routes through the blanket `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`:
+  the steps (`NameStep`, `WorkersStep`, `FailureStep`, `BufferedStep`) are implemented for
+  `SubscriberBuilder`, not for a bare definition, so that route has no settings surface.
 - The derives are equally reproducible, and reading their expansion is the fastest way to get one
   right: `#[derive(Outgoing)]` writes `OutgoingDestination` plus a `MessageHeaders` contract
   (`NoHeaders` or `WithHeaders<H>`), `#[derive(OutSlot)]` writes `OutSlot` plus the
@@ -261,11 +264,16 @@ where
 ## Reaching the rest: write the definition out
 
 `b.subscribe` / `b.handle` register with the default failure policies and no settings, because they
-take a handler, not a definition. Everything else the attribute offers rides on the definition, so
-implement one and the whole mount surface opens up on your own type.
+take a handler, not a definition. They also never read the scope codec, so `with_broker_codec` and
+`Router::with_codec` are inert on a `subscribe` registration - the codec is the one you named at
+`typed(..)`. Everything else the attribute offers rides on the definition, so implement one and the
+whole mount surface opens up on your own type.
 
 ```rust
-use ruststream::runtime::{IncludeDef, SubscriberDef, forms};
+use ruststream::runtime::{
+    Declared, FailurePolicies, FailurePolicy, Fixed, Open, SubscriberBuilder, SubscriberDef,
+    SubscriberSettings, forms,
+};
 
 impl SubscriberDef for Handle {
     type Input = /* the decode kind */;
@@ -277,14 +285,27 @@ impl SubscriberDef for Handle {
     fn into_handler(self) -> Self { self }
 }
 
-// Naming the mount form is what gives `Declared` (blanket) and with it `SubscriberSettings`.
-impl IncludeDef for Handle {
-    type Form = /* the matching marker from runtime::forms */;
+// `Declared` is where the settings live, and its `Settings` has to be a builder. This is
+// verbatim what the expansion emits: `SubscriberBuilder::new(self, source)` plus the chain the
+// attribute's clauses parsed into.
+impl Declared for Handle {
+    type Form = forms::Subscribing;
+    type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open)>;
+
+    fn declare(self) -> Self::Settings {
+        SubscriberBuilder::new(self, Name::new("orders"))
+            .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry))
+    }
 }
 
-// Now the definition mounts like any macro-generated one:
-b.include(Handle.name("orders").workers(nonzero!(4)));
+b.include(Handle);
 ```
+
+The settings state rides in the `Settings` type (`AllOpen` when the declaration fixed none,
+`Fixed` in the slot for each one it did), which is what makes naming the same setting again at the
+mount site a compile error rather than a silent override. Put a setting in `declare` to keep it
+next to the handler, or leave the state open and let the mount site name it - the same choice the
+attribute gives you between a clause and a builder call.
 
 Read the expansion in `crates/ruststream-macros/src/expand.rs` before writing one of these: it
 names the exact `Input` kind, `Context` and form marker per handler shape, and it is the only place
