@@ -11,9 +11,7 @@ use crate::runtime::slot::{HasSlots, InitSlots};
 
 use super::builder::Router;
 use super::builders::RouterSlotsWithReply;
-use super::mount::{
-    BatchPublishInjectMount, PublishInjectMount, RawReplyInjectMount, RouterMount,
-};
+use super::mount::{BatchPublishInjectMount, PublishInjectMount, RawReplyInjectMount, RouterMount};
 
 /// Implements the router mount of one sealed reply-and-slots token: split the attach off and
 /// seed the slot binder with it.

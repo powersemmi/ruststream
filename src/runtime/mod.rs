@@ -56,16 +56,16 @@ pub use extract::{Ctx, FromContext, FromRef, Headers, State};
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
-pub use handle::{
-    Documentable, Documented, Handle, Input, IntoSource, IntoVerdict, Message, OutStack, Outs,
-    Payload, Publish, SeekContext, Slot, Undocumented, ValueBuilder, subscriber,
-};
 #[doc(hidden)]
 pub use handle::{
     Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
-    HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair,
-    PagedAxis, Paged, ReplyValue, Sealed, Solo, SoloAxis, SoloBody, SoloBytes, SoloPair,
-    VerdictFamily, VerdictFor,
+    HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair, Paged,
+    PagedAxis, ReplyValue, Sealed, Solo, SoloAxis, SoloBody, SoloBytes, SoloPair, VerdictFamily,
+    VerdictFor,
+};
+pub use handle::{
+    Documentable, Documented, Handle, Input, IntoSource, IntoVerdict, Message, OutStack, Outs,
+    Payload, Publish, SeekContext, Slot, Undocumented, ValueBuilder, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
@@ -86,9 +86,9 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MissingSegment,
-    Outgoing, PublishBuilder, PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext,
-    PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer,
-    PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
+    Outgoing, PublishAt, PublishBuilder, PublishCodec, PublishContext, PublishDynLayer,
+    PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity,
+    PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
     PublishTransformIdentity, PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring,
     ResolvedName, SatisfiesContract, SuppliedName, TemplateAddress, TransactionPublishError,
     TransactionScope, Transactional, TypedHeaders, TypedPublisher, TypedTransaction, for_batch,

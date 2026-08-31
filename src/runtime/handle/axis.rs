@@ -141,6 +141,7 @@ pub trait Axis: Send + Sync + 'static {
     type SlotForm;
 
     /// The serialized payload schema under the documentation state `Doc`.
+    #[must_use]
     fn payload_schema<Doc: AxisDocs<Self>>() -> Option<String> {
         Doc::payload_schema()
     }
@@ -155,34 +156,41 @@ pub trait AxisDocs<A: Axis + ?Sized> {
     fn payload_schema() -> Option<String>;
 
     /// The serialized JSON Schema of the typed header contract, for a pair axis.
+    #[must_use]
     fn headers_schema() -> Option<String> {
         None
     }
 }
 
 /// The single decoded input: `In = T`.
+#[derive(Debug)]
 pub struct Solo<T>(core::marker::PhantomData<T>);
 
 /// The single raw input: `In = Payload<'_>`.
+#[derive(Debug)]
 pub struct SoloBytes;
 
 /// The single pair input: `In = Message<H, P>`.
+#[derive(Debug)]
 pub struct SoloPair<H, P>(core::marker::PhantomData<(H, P)>);
 
 /// The decoded page input: `In = [T]`.
+#[derive(Debug)]
 pub struct Page<T>(core::marker::PhantomData<T>);
 
 /// The raw page input: `In = [Payload<'_>]`.
+#[derive(Debug)]
 pub struct PageBytes;
 
 /// The pair page input: `In = [Message<H, P>]`.
+#[derive(Debug)]
 pub struct PagePair<H, P>(core::marker::PhantomData<(H, P)>);
 
 impl<T: DeserializeOwned + Send + Sync + 'static> Input for T {
     type Axis = Solo<T>;
 }
 
-impl<'a> Input for Payload<'a> {
+impl Input for Payload<'_> {
     type Axis = SoloBytes;
 }
 
@@ -198,7 +206,7 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Input for [T] {
     type Axis = Page<T>;
 }
 
-impl<'a> Input for [Payload<'a>] {
+impl Input for [Payload<'_>] {
     type Axis = PageBytes;
 }
 

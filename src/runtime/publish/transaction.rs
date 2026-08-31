@@ -6,7 +6,9 @@ use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
-use super::{HeadersUnset, MessageBody, PublishBuilder, RawBody, TypedPublisher, message_of, raw_of};
+use super::{
+    HeadersUnset, MessageBody, PublishBuilder, RawBody, TypedPublisher, message_of, raw_of,
+};
 use crate::codec::{Codec, CodecError};
 use crate::{
     CallerName, OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction,

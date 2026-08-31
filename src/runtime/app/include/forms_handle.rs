@@ -43,7 +43,6 @@ sealed_reply_scope_mount! {
     SealedBatchPublishing => BatchPublishMount,
 }
 
-
 /// Implements the scope mount of one sealed reply-and-slots token: split the attach off and
 /// seed the slot binder with it.
 macro_rules! sealed_reply_out_scope_mount {

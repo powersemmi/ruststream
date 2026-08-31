@@ -349,31 +349,34 @@ where
         // The decode product lives on this stack frame and the handler borrows its view, so
         // the input path allocates nothing of its own (a raw input borrows the payload
         // straight out of the broker's buffer).
-        let owned =
-            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload(), msg.headers()) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        subscription = %ctx.name(),
-                        message_type = <Def::Input as InputKind>::input_label(),
-                        error = %err,
-                        "codec decode failed",
-                    );
-                    #[cfg(any(feature = "testing", feature = "otel"))]
-                    ctx.mark_decode_failed();
-                    return match self.decode {
-                        FailurePolicy::FailFast => {
-                            ctx.fail_fast(&format!("decode failed: {err}"));
-                            HandlerResult::drop().into()
-                        }
-                        other => other
-                            .settlement()
-                            .unwrap_or_else(HandlerResult::drop)
-                            .into(),
-                    };
-                }
-            };
+        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
+            &self.codec,
+            msg.payload(),
+            msg.headers(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    message_type = <Def::Input as InputKind>::input_label(),
+                    error = %err,
+                    "codec decode failed",
+                );
+                #[cfg(any(feature = "testing", feature = "otel"))]
+                ctx.mark_decode_failed();
+                return match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerResult::drop().into()
+                    }
+                    other => other
+                        .settlement()
+                        .unwrap_or_else(HandlerResult::drop)
+                        .into(),
+                };
+            }
+        };
         let view = <Def::Input as InputKind>::view(&owned, msg.payload());
         self.def.call(view, &self.injections, ctx).await
     }

@@ -170,7 +170,10 @@ impl Handle<[Order], Confirmation> for ConfirmPages {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> Result<Vec<Confirmation>, Vec<HandlerResult>> {
-        Ok(page.iter().map(|order| Confirmation { id: order.id }).collect())
+        Ok(page
+            .iter()
+            .map(|order| Confirmation { id: order.id })
+            .collect())
     }
 }
 
@@ -269,7 +272,12 @@ fn eager_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", SettlePage).batch(nonzero!(8)).build())
         .include(subscriber("frames", Frames).build())
         .include(subscriber("orders", HeaderedPage).build())
-        .include(subscriber("orders", Audit).describe("Inbound orders").undocumented().build())
+        .include(
+            subscriber("orders", Audit)
+                .describe("Inbound orders")
+                .undocumented()
+                .build(),
+        )
 }
 
 #[test]
@@ -283,7 +291,12 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
     use crate::runtime::TypedPublisher;
 
     Router::<MemoryBroker>::new()
-        .include(subscriber("orders", Confirm).reply().on("confirmations").build())
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .on("confirmations")
+                .build(),
+        )
         .include(
             subscriber("orders", Confirm)
                 .reply()
@@ -476,7 +489,11 @@ async fn a_subscriber_dispatches_end_to_end() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("orders", Audit).build());
-            b.include(subscriber("orders", SettlePage).buffered(nonzero!(4), std::time::Duration::from_millis(5)).build());
+            b.include(
+                subscriber("orders", SettlePage)
+                    .buffered(nonzero!(4), std::time::Duration::from_millis(5))
+                    .build(),
+            );
             b.after_startup(MemoryPublish, async move |publisher| {
                 publisher
                     .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))

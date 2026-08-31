@@ -741,7 +741,7 @@ pub struct MemoryMessage {
     /// The subscription's pre-minted seeker, shared per delivery so the seek context can build
     /// off the message. `None` for a request-reply inbox message, which no dispatch loop and no
     /// seek context ever sees.
-    seek: Option<Arc<capability::MemorySeeker>>,
+    seek: Option<Arc<MemorySeeker>>,
     /// A clone of the broker's harness coordinator. When set, this delivery is counted in flight and
     /// is decremented once when the message is consumed or dropped (see the `Drop` impl). `None`
     /// outside a harness run and for request-reply inbox messages (which are not dispatch-driven).

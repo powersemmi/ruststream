@@ -21,8 +21,11 @@ use super::{Handle, IntoVerdict};
 /// The dispatch adapter of a single-delivery body: awaits the verdict and settles by it.
 pub struct SoloBody<A, C, S, H> {
     body: H,
-    _axes: PhantomData<fn() -> (A, C, S)>,
+    _axes: SoloAxes<A, C, S>,
 }
+
+/// The phantom carrying a solo adapter's axes.
+type SoloAxes<A, C, S> = PhantomData<fn() -> (A, C, S)>;
 
 impl<A, C, S, H> std::fmt::Debug for SoloBody<A, C, S, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -121,9 +124,11 @@ where
     }
 }
 
-/// The dispatch adapter of a page body: awaits the verdict, checks the per-element contract,
-/// and settles the page by it. Carries the [`batch`](crate::runtime::SubscriberBuilder::batch)
-/// cap, feeding an oversized page to the body in chunks.
+/// The dispatch adapter of a page body.
+///
+/// Awaits the verdict, checks the per-element contract, and settles the page by it. Carries
+/// the [`batch`](crate::runtime::SubscriberBuilder::batch) cap, feeding an oversized page to
+/// the body in chunks.
 pub struct PageBody<A, S, H> {
     body: H,
     cap: Option<std::num::NonZeroUsize>,

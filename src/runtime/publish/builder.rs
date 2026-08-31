@@ -491,7 +491,8 @@ where
     }
 }
 
-impl<Sink, T, Enc, Hdrs> PublishAt for PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
+impl<Sink, T, Enc, Hdrs> PublishAt
+    for PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
     Sink: PublishSink,
     T: OutgoingDestination + MessageHeaders + Serialize + Sync,

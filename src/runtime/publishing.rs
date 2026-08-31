@@ -48,10 +48,11 @@ pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-/// What an encoded reply value knows about leaving through a typed stack: a `Serialize` reply
-/// encodes as the payload, a [`Message`](super::Message) pair additionally serializes its
-/// header contract into the outgoing headers. The bound is pipeline-agnostic, which is what
-/// lets the routes state it once per registration.
+/// What an encoded reply value knows about leaving through a typed stack.
+///
+/// A `Serialize` reply encodes as the payload; a [`Message`](super::Message) pair additionally
+/// serializes its header contract into the outgoing headers. The bound is pipeline-agnostic,
+/// which is what lets the routes state it once per registration.
 pub trait EncodeReply: Send + Sync {
     /// Delivers `self` through the typed reply stack.
     #[doc(hidden)]
@@ -67,7 +68,7 @@ pub trait EncodeReply: Send + Sync {
         ReplyCodec: Codec,
         Transforms: PublishTransform<Cx>,
         Cx: Sync,
-        PP: super::publish::PublishPipeline;
+        PP: PublishPipeline;
 }
 
 impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
@@ -83,7 +84,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         ReplyCodec: Codec,
         Transforms: PublishTransform<Cx>,
         Cx: Sync,
-        PP: super::publish::PublishPipeline,
+        PP: PublishPipeline,
     {
         stack.publish(name, self, pipeline, cx).await
     }
@@ -106,7 +107,7 @@ where
         ReplyCodec: Codec,
         Transforms: PublishTransform<Cx>,
         Cx: Sync,
-        PP: super::publish::PublishPipeline,
+        PP: PublishPipeline,
     {
         stack
             .publish_pair(name, &self.headers, &self.body, pipeline, cx)
@@ -337,31 +338,34 @@ where
         // The publishing path settles by a bare outcome (no per-element continuation): decode,
         // run, publish the reply, then ack. It converts to `Settle` with no `and_after`. The
         // decode product lives on this stack frame and the handler borrows its view.
-        let owned =
-            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload(), msg.headers()) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        subscription = %ctx.name(),
-                        message_type = <Def::Input as InputKind>::input_label(),
-                        error = %err,
-                        "codec decode failed",
-                    );
-                    #[cfg(any(feature = "testing", feature = "otel"))]
-                    ctx.mark_decode_failed();
-                    return match self.decode {
-                        FailurePolicy::FailFast => {
-                            ctx.fail_fast(&format!("decode failed: {err}"));
-                            HandlerResult::drop().into()
-                        }
-                        other => other
-                            .settlement()
-                            .unwrap_or_else(HandlerResult::drop)
-                            .into(),
-                    };
-                }
-            };
+        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
+            &self.codec,
+            msg.payload(),
+            msg.headers(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    message_type = <Def::Input as InputKind>::input_label(),
+                    error = %err,
+                    "codec decode failed",
+                );
+                #[cfg(any(feature = "testing", feature = "otel"))]
+                ctx.mark_decode_failed();
+                return match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerResult::drop().into()
+                    }
+                    other => other
+                        .settlement()
+                        .unwrap_or_else(HandlerResult::drop)
+                        .into(),
+                };
+            }
+        };
         let view = <Def::Input as InputKind>::view(&owned, msg.payload());
         let reply = match self.def.call(view, &self.injections, ctx).await {
             Ok(reply) => reply,

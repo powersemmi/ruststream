@@ -220,7 +220,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
     /// serializes into the outgoing headers before the transforms run, and the body encodes
     /// through the reply codec.
-    pub(crate) async fn publish_pair<Hd: serde::Serialize + Sync, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_pair<Hd: Serialize + Sync, T: Serialize + Sync, Cx, PP>(
         &self,
         name: &str,
         headers: &Hd,

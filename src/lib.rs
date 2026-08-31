@@ -67,8 +67,7 @@ pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, OwnedTransactions,
     Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, SeekableMessage, Seeker,
-    ServerSpec, Subscribe,
-    Transaction, TransactionalPublisher,
+    ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
 pub use error::AckError;
 pub use field::{BuildContext, ContextField, Field, FieldMut};

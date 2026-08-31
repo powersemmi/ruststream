@@ -3,7 +3,6 @@
 //! one `.out(marker, policy)` per slot.
 
 use std::any::type_name;
-use std::future::Future;
 
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
@@ -125,13 +124,12 @@ impl<A, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingDef
     for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
 where
     A: SoloAxis,
-    R: ReplyShape,
+    R: ReplyShape + ReplyHeadersSchema<Doc>,
     E: EntryMarkers + Send + Sync,
     C: Send + Sync,
     S: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
-    R: ReplyHeadersSchema<Doc>,
     Dest: ReplyDest<R>,
     Route: Send + Sync,
     Attach: Send + Sync,
@@ -177,12 +175,7 @@ where
 impl<T, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
 where
-    Self: PublishingDef<
-            Input = <Solo<T> as Axis>::Kind,
-            Injections = Outs<E>,
-            Reply = R,
-            Context = C,
-        >,
+    Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = Outs<E>, Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
     R: ReplyShape,
     E: Send + Sync,
@@ -190,29 +183,25 @@ where
     S: Send + Sync,
     H: Handle<T, R, Outs<E>, C, S>,
 {
-    fn call(
+    async fn call(
         &self,
         input: &T,
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<R, HandlerResult>> + Send {
-        async move {
-            solo_verdict(
-                self.0
-                    .value
-                    .body
-                    .handle(input, injections, ctx)
-                    .await
-                    .into_verdict(),
-            )
-        }
+    ) -> Result<R, HandlerResult> {
+        solo_verdict(
+            self.0
+                .value
+                .body
+                .handle(input, injections, ctx)
+                .await
+                .into_verdict(),
+        )
     }
 }
 
 impl<R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<
-        ReplyValue<HandleValue<SoloBytes, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>,
-    >
+    for Sealed<ReplyValue<HandleValue<SoloBytes, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
 where
     Self: PublishingDef<
             Input = crate::runtime::RawBytes,
@@ -226,23 +215,21 @@ where
     S: Send + Sync,
     H: for<'p> Handle<Payload<'p>, R, Outs<E>, C, S>,
 {
-    fn call(
+    async fn call(
         &self,
         input: &[u8],
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<R, HandlerResult>> + Send {
-        async move {
-            let payload = Payload::new(input);
-            solo_verdict(
-                self.0
-                    .value
-                    .body
-                    .handle(&payload, injections, ctx)
-                    .await
-                    .into_verdict(),
-            )
-        }
+    ) -> Result<R, HandlerResult> {
+        let payload = Payload::new(input);
+        solo_verdict(
+            self.0
+                .value
+                .body
+                .handle(&payload, injections, ctx)
+                .await
+                .into_verdict(),
+        )
     }
 }
 
@@ -266,22 +253,20 @@ where
     S: Send + Sync,
     H: Handle<Message<Hd, P>, R, Outs<E>, C, S>,
 {
-    fn call(
+    async fn call(
         &self,
         input: &Message<Hd, P>,
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<R, HandlerResult>> + Send {
-        async move {
-            solo_verdict(
-                self.0
-                    .value
-                    .body
-                    .handle(input, injections, ctx)
-                    .await
-                    .into_verdict(),
-            )
-        }
+    ) -> Result<R, HandlerResult> {
+        solo_verdict(
+            self.0
+                .value
+                .body
+                .handle(input, injections, ctx)
+                .await
+                .into_verdict(),
+        )
     }
 }
 
@@ -291,12 +276,11 @@ impl<A, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingDef
     for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>>
 where
     A: PagedAxis,
-    R: ReplyShape,
+    R: ReplyShape + ReplyHeadersSchema<Doc>,
     E: EntryMarkers + Send + Sync,
     S: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
-    R: ReplyHeadersSchema<Doc>,
     Dest: ReplyDest<R>,
     Route: Send + Sync,
     Attach: Send + Sync,
@@ -338,9 +322,7 @@ where
 }
 
 impl<T, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<
-        ReplyValue<HandleValue<Page<T>, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>,
-    >
+    for Sealed<ReplyValue<HandleValue<Page<T>, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>>
 where
     Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
     [T]: Input<Axis = Page<T>>,
@@ -350,40 +332,29 @@ where
     S: Send + Sync,
     H: Handle<[T], R, Outs<E>, (), S>,
 {
-    fn call(
+    async fn call(
         &self,
         batch: &[T],
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<R>, crate::runtime::BatchResult>> + Send {
-        async move {
-            let verdict = self
-                .0
-                .value
-                .body
-                .handle(batch, injections, ctx)
-                .await
-                .into_verdict();
-            page_reply_verdict(verdict, batch.len(), ctx.name())
-        }
+    ) -> Result<Vec<R>, crate::runtime::BatchResult> {
+        let verdict = self
+            .0
+            .value
+            .body
+            .handle(batch, injections, ctx)
+            .await
+            .into_verdict();
+        page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
 impl<Hd, P, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
     for Sealed<
-        ReplyValue<
-            HandleValue<PagePair<Hd, P>, R, Outs<E>, (), S, H, Doc>,
-            Dest,
-            Route,
-            Attach,
-        >,
+        ReplyValue<HandleValue<PagePair<Hd, P>, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>,
     >
 where
-    Self: BatchPublishingDef<
-            Input = <PagePair<Hd, P> as Axis>::Kind,
-            Injections = Outs<E>,
-            Reply = R,
-        >,
+    Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
@@ -392,21 +363,19 @@ where
     S: Send + Sync,
     H: Handle<[Message<Hd, P>], R, Outs<E>, (), S>,
 {
-    fn call(
+    async fn call(
         &self,
         batch: &[Message<Hd, P>],
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<R>, crate::runtime::BatchResult>> + Send {
-        async move {
-            let verdict = self
-                .0
-                .value
-                .body
-                .handle(batch, injections, ctx)
-                .await
-                .into_verdict();
-            page_reply_verdict(verdict, batch.len(), ctx.name())
-        }
+    ) -> Result<Vec<R>, crate::runtime::BatchResult> {
+        let verdict = self
+            .0
+            .value
+            .body
+            .handle(batch, injections, ctx)
+            .await
+            .into_verdict();
+        page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }

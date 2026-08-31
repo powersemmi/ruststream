@@ -539,7 +539,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> PublishBuilder<InjectSink<'a>, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<
+        InjectSink<'a>,
+        MessageBody<'a, T>,
+        CallCodec<DefaultCodec>,
+        HeadersUnset,
+        T::Form,
+    >
     where
         T: OutgoingDestination,
     {
@@ -805,7 +811,13 @@ impl<'a> BrokerHandle<'a> {
     pub fn message<'v, T>(
         &self,
         value: &'v T,
-    ) -> PublishBuilder<InjectSink<'a>, MessageBody<'v, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<
+        InjectSink<'a>,
+        MessageBody<'v, T>,
+        CallCodec<DefaultCodec>,
+        HeadersUnset,
+        T::Form,
+    >
     where
         T: OutgoingDestination,
     {

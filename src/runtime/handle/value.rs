@@ -11,7 +11,45 @@ use crate::runtime::settings::SubscriberBuilder;
 
 use super::axis::{Input, PagedAxis};
 use super::docs::{Docs, Documented, Undocumented};
-use super::{Handle, IntoSource, ValueBuilder};
+use super::{Handle, IntoSource};
+
+/// The phantom carrying a definition's axes.
+type HandleAxes<A, R, O, C, S, Doc> = PhantomData<fn() -> (A, R, O, C, S, Doc)>;
+
+/// The chain over a plain definition at the documentation state `Doc`.
+type PlainChain<A, R, O, C, S, H, Doc, Src, State, DC> =
+    SubscriberBuilder<HandleValue<A, R, O, C, S, H, Doc>, Src, State, DC>;
+
+/// The chain over a reply-wired definition.
+type ReplyChain<V, Dest, Route, Attach, Src, State, DC> =
+    SubscriberBuilder<ReplyValue<V, Dest, Route, Attach>, Src, State, DC>;
+
+/// The chain [`reply`](SubscriberBuilder::reply) / [`reply_raw`](SubscriberBuilder::reply_raw)
+/// hands back: the wrapped definition at the declared destination and the default attach.
+type ReplyStart<A, R, O, C, S, H, Doc, Route, Attach, Src, State, DC> =
+    ReplyChain<HandleValue<A, R, O, C, S, H, Doc>, DeclaredDest, Route, Attach, Src, State, DC>;
+
+/// The sealed chain [`build`](SubscriberBuilder::build) hands back.
+type SealedChain<V, Src, State, DC> = SubscriberBuilder<Sealed<V>, Src, State, DC>;
+
+/// The fresh chain [`subscriber`] hands back.
+type FreshChain<A, R, O, C, S, H, Src> = super::ValueBuilder<HandleValue<A, R, O, C, S, H>, Src>;
+
+/// The sealed plain chain.
+type SealedPlainChain<A, R, O, C, S, H, Doc, Src, State, DC> =
+    SealedChain<HandleValue<A, R, O, C, S, H, Doc>, Src, State, DC>;
+
+/// The reply chain at the opted-out documentation state.
+type UndocumentedReplyChain<A, R, O, C, S, H, Dest, Route, Attach, Src, State, DC> =
+    ReplyChain<HandleValue<A, R, O, C, S, H, Undocumented>, Dest, Route, Attach, Src, State, DC>;
+
+/// The sealed reply chain.
+type SealedReplyChain<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC> = SealedChain<
+    ReplyValue<HandleValue<A, R, O, C, S, H, Doc>, Dest, Route, Attach>,
+    Src,
+    State,
+    DC,
+>;
 
 /// The definition under construction: what [`subscriber`] returns, wrapped in the settings
 /// builder. You never name this type; chain on it and seal with
@@ -20,7 +58,7 @@ pub struct HandleValue<A, R, O, C, S, H, Doc = Documented> {
     pub(super) body: H,
     pub(super) docs: Docs,
     pub(super) page_cap: Option<NonZeroUsize>,
-    pub(super) _axes: PhantomData<fn() -> (A, R, O, C, S, Doc)>,
+    pub(super) _axes: HandleAxes<A, R, O, C, S, Doc>,
 }
 
 impl<A, R, O, C, S, H, Doc> fmt::Debug for HandleValue<A, R, O, C, S, H, Doc> {
@@ -39,7 +77,6 @@ impl<A, R, O, C, S, H, Doc> HandleValue<A, R, O, C, S, H, Doc> {
             _axes: PhantomData,
         }
     }
-
 }
 
 /// Binds a [`Handle`] body to its subscription source; the one mounting verb of the manual
@@ -88,7 +125,7 @@ impl<A, R, O, C, S, H, Doc> HandleValue<A, R, O, C, S, H, Doc> {
 pub fn subscriber<Src, In, R, O, C, S, H>(
     source: Src,
     body: H,
-) -> ValueBuilder<HandleValue<In::Axis, R, O, C, S, H>, Src>
+) -> FreshChain<In::Axis, R, O, C, S, H, Src>
 where
     Src: IntoSource,
     In: ?Sized + Input,
@@ -189,10 +226,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
     /// Sets the handler's human description for the generated document, the value-path
     /// counterpart of the attribute reading the handler's doc comment.
     #[must_use]
-    pub fn describe(
-        self,
-        text: impl Into<Cow<'static, str>>,
-    ) -> SubscriberBuilder<HandleValue<A, R, O, C, S, H, Doc>, Src, State, DC> {
+    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
         self.map_def(|mut def| {
             def.docs.description = Some(text.into());
             def
@@ -205,9 +239,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
     /// Registrations are documented by default under the `asyncapi` feature; this is the
     /// per-registration exit.
     #[must_use]
-    pub fn undocumented(
-        self,
-    ) -> SubscriberBuilder<HandleValue<A, R, O, C, S, H, Undocumented>, Src, State, DC>
+    pub fn undocumented(self) -> PlainChain<A, R, O, C, S, H, Undocumented, Src, State, DC>
     where
         Doc: IsDocumented,
     {
@@ -220,10 +252,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
     /// Only a page body (`&[T]` and friends) has pages to cap; client-side batching over a
     /// single-message subscription is [`buffered`](crate::runtime::SubscriberSettings::buffered).
     #[must_use]
-    pub fn batch(
-        self,
-        max: NonZeroUsize,
-    ) -> SubscriberBuilder<HandleValue<A, R, O, C, S, H, Doc>, Src, State, DC>
+    pub fn batch(self, max: NonZeroUsize) -> Self
     where
         A: PagedAxis,
     {
@@ -240,12 +269,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
     #[must_use]
     pub fn reply(
         self,
-    ) -> SubscriberBuilder<
-        ReplyValue<HandleValue<A, R, O, C, S, H, Doc>, DeclaredDest, EncodedReply, DefaultReply>,
-        Src,
-        State,
-        DC,
-    > {
+    ) -> ReplyStart<A, R, O, C, S, H, Doc, EncodedReply, DefaultReply, Src, State, DC> {
         self.map_def(|value| ReplyValue {
             value,
             dest: DeclaredDest,
@@ -260,12 +284,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
     #[must_use]
     pub fn reply_raw(
         self,
-    ) -> SubscriberBuilder<
-        ReplyValue<HandleValue<A, R, O, C, S, H, Doc>, DeclaredDest, BareReply, DefaultBareReply>,
-        Src,
-        State,
-        DC,
-    > {
+    ) -> ReplyStart<A, R, O, C, S, H, Doc, BareReply, DefaultBareReply, Src, State, DC> {
         self.map_def(|value| ReplyValue {
             value,
             dest: DeclaredDest,
@@ -276,7 +295,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
 
     /// Seals the definition for `include`.
     #[must_use]
-    pub fn build(self) -> SubscriberBuilder<Sealed<HandleValue<A, R, O, C, S, H, Doc>>, Src, State, DC> {
+    pub fn build(self) -> SealedPlainChain<A, R, O, C, S, H, Doc, Src, State, DC> {
         self.map_def(Sealed)
     }
 }
@@ -359,10 +378,7 @@ impl<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC>
 {
     /// See [`describe`](SubscriberBuilder::describe) on the plain chain.
     #[must_use]
-    pub fn describe(
-        self,
-        text: impl Into<Cow<'static, str>>,
-    ) -> Self {
+    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
         self.map_def(|def| {
             def.map_value(|mut value| {
                 value.docs.description = Some(text.into());
@@ -375,12 +391,7 @@ impl<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC>
     #[must_use]
     pub fn undocumented(
         self,
-    ) -> SubscriberBuilder<
-        ReplyValue<HandleValue<A, R, O, C, S, H, Undocumented>, Dest, Route, Attach>,
-        Src,
-        State,
-        DC,
-    >
+    ) -> UndocumentedReplyChain<A, R, O, C, S, H, Dest, Route, Attach, Src, State, DC>
     where
         Doc: IsDocumented,
     {
@@ -402,15 +413,13 @@ impl<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC>
     }
 
     /// Seals the definition for `include`.
+    // Every parameter is one axis or chain state the seal carries through; the count is the
+    // typestate itself, not incidental nesting an alias could hide.
+    #[allow(clippy::type_complexity)]
     #[must_use]
     pub fn build(
         self,
-    ) -> SubscriberBuilder<
-        Sealed<ReplyValue<HandleValue<A, R, O, C, S, H, Doc>, Dest, Route, Attach>>,
-        Src,
-        State,
-        DC,
-    > {
+    ) -> SealedReplyChain<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC> {
         self.map_def(Sealed)
     }
 }

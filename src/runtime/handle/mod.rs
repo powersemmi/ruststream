@@ -60,27 +60,19 @@ mod verdict;
 #[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
 mod parity_tests;
 
+#[doc(hidden)]
+pub use axis::{
+    Axis, AxisDocs, Page, PageBytes, PagePair, PagedAxis, Solo, SoloAxis, SoloBytes, SoloPair,
+};
 pub use axis::{Input, Message, Payload};
 #[doc(hidden)]
-pub use axis::{Axis, AxisDocs, Page, PageBytes, PagePair, PagedAxis, Solo, SoloAxis, SoloBytes, SoloPair};
+pub use docs::{DocState, Docs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
-pub use docs::{DocState, Docs};
-pub use verdict::IntoVerdict;
-#[doc(hidden)]
-pub use verdict::{OneByOne, Paged, VerdictFamily, VerdictFor};
-pub use value::{
-    BareReply, DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented, NamedDest,
-    ReplyValue, Sealed, subscriber,
-};
-#[doc(hidden)]
-pub use value::UnbuiltDefinition;
-#[doc(hidden)]
 pub use eager::{PageBody, SoloBody};
-pub use outs::{OutStack, Outs, Publish, Slot};
-pub use seek::SeekContext;
 #[doc(hidden)]
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
+pub use outs::{OutStack, Outs, Publish, Slot};
 #[doc(hidden)]
 pub use reply::{
     ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape, SealedBatchPublishing,
@@ -90,6 +82,16 @@ pub use reply::{
 pub use reply_slots::{
     ReplySlotFormFor, SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut,
 };
+pub use seek::SeekContext;
+#[doc(hidden)]
+pub use value::UnbuiltDefinition;
+pub use value::{
+    BareReply, DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented,
+    NamedDest, ReplyValue, Sealed, subscriber,
+};
+pub use verdict::IntoVerdict;
+#[doc(hidden)]
+pub use verdict::{OneByOne, Paged, VerdictFamily, VerdictFor};
 
 /// What the constructor returns: the settings builder over its definition, mounted on the
 /// converted source with every setting open.

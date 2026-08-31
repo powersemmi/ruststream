@@ -22,7 +22,9 @@ use std::ops::Deref;
 use std::time::Duration;
 
 use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publish::{HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of};
+use crate::runtime::publish::{
+    HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of,
+};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{

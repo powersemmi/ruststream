@@ -65,7 +65,7 @@ use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publish::{
     HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of,
 };
-use crate::runtime::router::{IncludeDef, forms};
+use crate::runtime::router::IncludeDef;
 use crate::runtime::slot::{BindSlots, HasSlots, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
     CallerName, Connected, ConnectedBroker, HeaderMap, Name, OutgoingDestination, OutgoingMessage,
@@ -82,9 +82,10 @@ use super::{Handle, IntoVerdict};
 
 // ------------------------------------------------------------------------------ wired stacks
 
-/// A slot's wired publish stack: the paired live publisher under the include site's encode
-/// codec. You never name this type; a body sees it through the [`Publish`] capability bound on
-/// its [`Slot`] parameter.
+/// A slot's wired publish stack.
+///
+/// The paired live publisher under the include site's encode codec. You never name this type;
+/// a body sees it through the [`Publish`] capability bound on its [`Slot`] parameter.
 pub struct OutStack<P, E> {
     publisher: P,
     codec: E,
@@ -329,6 +330,9 @@ impl<E> fmt::Debug for Outs<E> {
 impl<E> Outs<E> {
     /// Picks the entry of `marker`. The position is inferred, so the call reads the same
     /// wherever the marker sits in the declaration.
+    // The marker travels by value like every marker selector (`.out(marker, ..)`): it is a
+    // unit token whose only job is naming the slot at the call site.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn get<M, I>(&self, marker: M) -> &<E as SelectSlot<M, I>>::Picked
     where
         E: SelectSlot<M, I>,
@@ -526,8 +530,7 @@ where
     }
 }
 
-impl<T, C, S, H, Doc, E> InjectCall<S>
-    for Sealed<HandleValue<Solo<T>, (), Outs<E>, C, S, H, Doc>>
+impl<T, C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<Solo<T>, (), Outs<E>, C, S, H, Doc>>
 where
     Self: InjectDef<Input = <Solo<T> as Axis>::Kind, Context = C, Injections = Outs<E>>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -536,21 +539,21 @@ where
     H: Handle<T, (), Outs<E>, C, S>,
     E: Send + Sync,
 {
-    async fn call(
-        &self,
-        input: &T,
-        injections: &Outs<E>,
-        ctx: &mut Context<'_, C, S>,
-    ) -> Settle {
-        match self.0.body.handle(input, injections, ctx).await.into_verdict() {
+    async fn call(&self, input: &T, injections: &Outs<E>, ctx: &mut Context<'_, C, S>) -> Settle {
+        match self
+            .0
+            .body
+            .handle(input, injections, ctx)
+            .await
+            .into_verdict()
+        {
             Ok(()) => HandlerResult::Ack.into(),
             Err(settle) => settle,
         }
     }
 }
 
-impl<C, S, H, Doc, E> InjectCall<S>
-    for Sealed<HandleValue<SoloBytes, (), Outs<E>, C, S, H, Doc>>
+impl<C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<SoloBytes, (), Outs<E>, C, S, H, Doc>>
 where
     Self: InjectDef<Input = crate::runtime::RawBytes, Context = C, Injections = Outs<E>>,
     C: Send + Sync,
@@ -596,7 +599,13 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
     ) -> Settle {
-        match self.0.body.handle(input, injections, ctx).await.into_verdict() {
+        match self
+            .0
+            .body
+            .handle(input, injections, ctx)
+            .await
+            .into_verdict()
+        {
             Ok(()) => HandlerResult::Ack.into(),
             Err(settle) => settle,
         }

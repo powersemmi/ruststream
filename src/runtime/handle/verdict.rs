@@ -92,13 +92,13 @@ impl<R> VerdictFor<OneByOne, R> for Result<R, HandlerResult> {
 }
 
 impl VerdictFor<OneByOne, ()> for Result<(), Settle> {
-    fn normalize(self) -> Result<(), Settle> {
+    fn normalize(self) -> Self {
         self
     }
 }
 
 impl VerdictFor<OneByOne, ()> for Settle {
-    fn normalize(self) -> Result<(), Settle> {
+    fn normalize(self) -> Result<(), Self> {
         Err(self)
     }
 }
