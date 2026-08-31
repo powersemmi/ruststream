@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, HeadersUnset,
-    MessageBody, Outgoing, Publish, PublishContext, PublishPipeline, PublishTransform,
+    MessageBody, Outgoing, PublishBuilder, PublishContext, PublishPipeline, PublishTransform,
     PublishTransformIdentity, PublishTransformStack, RawBody, message_of, raw_of,
 };
 use crate::codec::Codec;
@@ -144,7 +144,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// codec: `publisher.message(&done).publish().await?`.
     ///
     /// Which positions the call site still has to fill comes from the message type's
-    /// declaration; see [`Publish`]. The static [`PublishTransform`](super::PublishTransform)
+    /// declaration; see [`PublishBuilder`]. The static [`PublishTransform`](super::PublishTransform)
     /// stack and the application's publish middleware do not run here - both belong to the
     /// dispatch path, where a delivery context exists.
     ///
@@ -172,7 +172,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> Publish<&'a P, MessageBody<'a, T>, &'a C, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a P, MessageBody<'a, T>, &'a C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -184,7 +184,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {

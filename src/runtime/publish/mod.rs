@@ -106,7 +106,7 @@ mod transaction;
 mod transform;
 
 pub use builder::{
-    BoundSegment, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MissingSegment, Publish,
+    BoundSegment, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MissingSegment, PublishBuilder,
     PublishAt, PublishError, PublishHeaders, RawBody, ResolvedName, SatisfiesContract,
     SuppliedName, TemplateAddress, TypedHeaders,
 };

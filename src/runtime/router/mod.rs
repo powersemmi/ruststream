@@ -16,6 +16,7 @@
 mod builder;
 mod builders;
 mod form_eager;
+mod form_handle;
 mod form_out;
 mod form_publish;
 pub mod forms;
@@ -39,7 +40,8 @@ pub use mount::IncludeDef;
 pub use mount::RouterMount;
 pub(crate) use mount::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultBareReply, DefaultReply,
-    InjectMount, InputCodec, MountCodec, PublishInjectMount, PublishMount, RawReplyMount,
+    InjectMount, InputCodec, MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount,
+    RawReplyMount,
 };
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;

@@ -2,7 +2,7 @@
 //! their builders resolve through.
 //!
 //! The attachment is a positional slot tuple, one element per marker, starting all-unbound. Each
-//! `.out(marker, policy)` binds one position and `.mount()` commits; the commit impls exist only
+//! `.out(marker, policy)` binds one position and `.build()` commits; the commit impls exist only
 //! for fully-bound tuples, so a forgotten binding is a compile error naming the slot. A handler
 //! with a single slot uses the `.publisher(policy)` shorthand, which binds and commits in one
 //! call.

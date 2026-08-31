@@ -40,7 +40,7 @@ use super::sink::{CallCodec, PublishCodec, PublishSink};
 ///
 /// You never name this type; the entry points return it and the compiler carries it.
 #[must_use = "a publish builder does nothing until publish() is awaited"]
-pub struct Publish<Sink, Body, Enc, Hdrs, Dest> {
+pub struct PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
     sink: Sink,
     body: Body,
     codec: Enc,
@@ -48,9 +48,9 @@ pub struct Publish<Sink, Body, Enc, Hdrs, Dest> {
     dest: Dest,
 }
 
-impl<Sink, Body, Enc, Hdrs, Dest> fmt::Debug for Publish<Sink, Body, Enc, Hdrs, Dest> {
+impl<Sink, Body, Enc, Hdrs, Dest> fmt::Debug for PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Publish").finish_non_exhaustive()
+        f.debug_struct("PublishBuilder").finish_non_exhaustive()
     }
 }
 
@@ -178,10 +178,10 @@ pub enum PublishError<E> {
     Headers(#[source] SerializeHeadersError),
     /// The sink (the broker publisher, or the transaction) rejected the message.
     #[error("publishing the message failed: {0}")]
-    Publish(#[source] E),
+    PublishBuilder(#[source] E),
 }
 
-impl<Sink, Body, Enc, Hdrs, Dest> Publish<Sink, Body, Enc, Hdrs, Dest> {
+impl<Sink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
     /// The whole-tuple constructor the entry points share.
     pub(crate) const fn new(sink: Sink, body: Body, codec: Enc, headers: Hdrs, dest: Dest) -> Self {
         Self {
@@ -200,11 +200,11 @@ pub(crate) fn message_of<Sink, T, Enc>(
     sink: Sink,
     value: &T,
     codec: Enc,
-) -> Publish<Sink, MessageBody<'_, T>, Enc, HeadersUnset, T::Form>
+) -> PublishBuilder<Sink, MessageBody<'_, T>, Enc, HeadersUnset, T::Form>
 where
     T: OutgoingDestination,
 {
-    Publish::new(
+    PublishBuilder::new(
         sink,
         MessageBody(value),
         codec,
@@ -217,11 +217,11 @@ where
 pub(crate) fn raw_of<Sink, B>(
     sink: Sink,
     payload: &B,
-) -> Publish<Sink, RawBody<'_>, (), HeadersUnset, CallerName>
+) -> PublishBuilder<Sink, RawBody<'_>, (), HeadersUnset, CallerName>
 where
     B: AsRef<[u8]> + ?Sized,
 {
-    Publish::new(
+    PublishBuilder::new(
         sink,
         RawBody(payload.as_ref()),
         (),
@@ -230,7 +230,7 @@ where
     )
 }
 
-impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest> {
+impl<'a, Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest> {
     /// Names the codec for this publish, the most specific level of the codec ladder: it wins
     /// over the surface's codec, which in turn won over the application's and the crate default.
     ///
@@ -238,8 +238,8 @@ impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, 
     pub fn with_codec<C: Codec>(
         self,
         codec: C,
-    ) -> Publish<Sink, MessageBody<'a, T>, CallCodec<C>, Hdrs, Dest> {
-        Publish::new(
+    ) -> PublishBuilder<Sink, MessageBody<'a, T>, CallCodec<C>, Hdrs, Dest> {
+        PublishBuilder::new(
             self.sink,
             self.body,
             CallCodec(codec),
@@ -256,7 +256,7 @@ impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, 
 /// value is the message's declared contract, serialized one entry per field, while a map is the
 /// transport level and stands for no contract at all (a message type declaring one still demands
 /// its value). Which of the two a call site passed rides in the type, so
-/// [`with_headers`](Publish::with_headers) is one method and the contract check stays a compile
+/// [`with_headers`](PublishBuilder::with_headers) is one method and the contract check stays a compile
 /// error either way.
 ///
 /// You never implement it: [`HeaderMap`] and `&H` of every serializable `H` already do.
@@ -292,7 +292,7 @@ impl HeaderSource for HeaderMap {
     }
 }
 
-impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
+impl<Sink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> {
     /// Supplies the headers of this publish: the message's declared contract by reference, or an
     /// already-built [`HeaderMap`] by value.
     ///
@@ -306,8 +306,8 @@ impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
     pub fn with_headers<S: HeaderSource>(
         self,
         headers: S,
-    ) -> Publish<Sink, Body, Enc, S::Position, Dest> {
-        Publish::new(
+    ) -> PublishBuilder<Sink, Body, Enc, S::Position, Dest> {
+        PublishBuilder::new(
             self.sink,
             self.body,
             self.codec,
@@ -317,7 +317,7 @@ impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
     }
 }
 
-impl<Sink, Body, Enc, Hdrs> Publish<Sink, Body, Enc, Hdrs, CallerName> {
+impl<Sink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, CallerName> {
     /// Names the destination of this publish.
     ///
     /// Present when the message type declares no name of its own, and on the byte entry point.
@@ -325,8 +325,8 @@ impl<Sink, Body, Enc, Hdrs> Publish<Sink, Body, Enc, Hdrs, CallerName> {
     pub fn to<'n>(
         self,
         name: impl Into<Cow<'n, str>>,
-    ) -> Publish<Sink, Body, Enc, Hdrs, SuppliedName<'n>> {
-        Publish::new(
+    ) -> PublishBuilder<Sink, Body, Enc, Hdrs, SuppliedName<'n>> {
+        PublishBuilder::new(
             self.sink,
             self.body,
             self.codec,
@@ -336,7 +336,7 @@ impl<Sink, Body, Enc, Hdrs> Publish<Sink, Body, Enc, Hdrs, CallerName> {
     }
 }
 
-impl<Sink, T, Enc, Hdrs> Publish<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
+impl<Sink, T, Enc, Hdrs> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
     T: TemplateAddress<Self>,
 {
@@ -429,7 +429,7 @@ async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     let mut map = sink.base_headers().cloned().unwrap_or_default();
     headers.write(&mut map).map_err(PublishError::Headers)?;
     let msg = OutgoingMessage::new(name, payload).with_headers(map);
-    sink.send(msg).await.map_err(PublishError::Publish)
+    sink.send(msg).await.map_err(PublishError::PublishBuilder)
 }
 
 /// Encodes `value` and sends it, shared by the resolved and the rendered terminals.
@@ -450,7 +450,7 @@ where
     deliver(sink, name, &payload, headers).await
 }
 
-impl<Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
+impl<Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
 where
     Sink: PublishSink,
     T: OutgoingDestination + MessageHeaders + Sync,
@@ -491,7 +491,7 @@ where
     }
 }
 
-impl<Sink, T, Enc, Hdrs> PublishAt for Publish<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
+impl<Sink, T, Enc, Hdrs> PublishAt for PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
     Sink: PublishSink,
     T: OutgoingDestination + MessageHeaders + Serialize + Sync,
@@ -505,7 +505,7 @@ where
     }
 }
 
-impl<Sink, Hdrs, Dest> Publish<Sink, RawBody<'_>, (), Hdrs, Dest>
+impl<Sink, Hdrs, Dest> PublishBuilder<Sink, RawBody<'_>, (), Hdrs, Dest>
 where
     Sink: PublishSink,
     Hdrs: PublishHeaders,

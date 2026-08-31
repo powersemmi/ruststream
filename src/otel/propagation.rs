@@ -226,7 +226,7 @@ where
             trace_id = %consumer.trace_id(),
             span_id = %consumer.span_id(),
         );
-        // Publish the consumer's span as the working `traceparent` so a reply from this handler
+        // PublishBuilder the consumer's span as the working `traceparent` so a reply from this handler
         // becomes its child.
         propagator.inject_context(
             &OtelContext::new().with_remote_span_context(consumer),

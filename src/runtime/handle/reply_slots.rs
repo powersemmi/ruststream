@@ -1,0 +1,412 @@
+//! The reply-and-slots cells of the matrix: a body that answers and fans out through the arena
+//! in one signature. The chain's reply attach seeds the include-site binder, which still takes
+//! one `.out(marker, policy)` per slot.
+
+use std::any::type_name;
+use std::future::Future;
+
+use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
+use crate::runtime::context::Context;
+use crate::runtime::handler::HandlerResult;
+use crate::runtime::metadata::OutgoingMessageMetadata;
+use crate::runtime::publishing::{PublishingCall, PublishingDef};
+use crate::runtime::router::IncludeDef;
+use crate::runtime::slot::{BindSlots, HasSlots, OutSlot, SlotPublisher};
+use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
+
+use super::axis::{
+    Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
+    SoloPair,
+};
+use super::docs::DocState;
+use super::outs::{EntryMarkers, OutStack, Outs, Slot};
+use super::reply::{ReplyDest, ReplyHeadersSchema, ReplyShape, page_reply_verdict, solo_verdict};
+use super::value::{BareReply, EncodedReply, HandleValue, ReplyValue, Sealed};
+use super::verdict::{OneByOne, Paged};
+use super::{Handle, IntoVerdict};
+
+/// The reply-and-slots form token of one route on one verdict family; the bare route has no
+/// page form, as on the slot-free reply.
+#[doc(hidden)]
+pub trait ReplySlotFormFor<Fam> {
+    /// The sealed mount token.
+    type Form;
+}
+
+impl ReplySlotFormFor<OneByOne> for EncodedReply {
+    type Form = SealedPublishingOut;
+}
+
+impl ReplySlotFormFor<Paged> for EncodedReply {
+    type Form = SealedBatchPublishingOut;
+}
+
+impl ReplySlotFormFor<OneByOne> for BareReply {
+    type Form = SealedRawReplyOut;
+}
+
+/// The mount token of a sealed single-message reply definition carrying slots.
+#[derive(Debug, Clone, Copy)]
+pub struct SealedPublishingOut;
+
+/// The mount token of a sealed bare-byte reply definition carrying slots.
+#[derive(Debug, Clone, Copy)]
+pub struct SealedRawReplyOut;
+
+/// The mount token of a sealed page reply definition carrying slots.
+#[derive(Debug, Clone, Copy)]
+pub struct SealedBatchPublishingOut;
+
+impl<A, R, E, C, S, H, Doc, Dest, Route, Attach> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+where
+    A: Axis,
+    Route: ReplySlotFormFor<A::Family>,
+{
+    type Form = Route::Form;
+}
+
+impl<A, R, E, C, S, H, Doc, Dest, Route, Attach> HasSlots
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+where
+    E: EntryMarkers,
+{
+    type Markers = E::Markers;
+}
+
+/// See the plain arena's `BindSlots`: the declared entries unify with the wired stacks of the
+/// bound policies, so the definition is its own bound form.
+macro_rules! impl_reply_bind_slots {
+    ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
+        impl<Conn, A, R, C, S, H, Doc, Dest, Route, Attach, $($m, $p, $e),+>
+            BindSlots<Conn, ($(($p, $e),)+)>
+            for Sealed<
+                ReplyValue<
+                    HandleValue<
+                        A,
+                        R,
+                        Outs<($(Slot<$m, OutStack<SlotPublisher<$p::Live, $m>, $e>>,)+)>,
+                        C,
+                        S,
+                        H,
+                        Doc,
+                    >,
+                    Dest,
+                    Route,
+                    Attach,
+                >,
+            >
+        where
+            Conn: ConnectedBroker,
+            $(
+                $m: OutSlot,
+                $p: PublishPolicy<Conn>,
+            )+
+        {
+            type Bound = Self;
+            type Extra = ($(($p, $e),)+);
+
+            fn bind(self, sources: ($(($p, $e),)+)) -> (Self, Self::Extra) {
+                (self, sources)
+            }
+        }
+    )+};
+}
+
+impl_reply_bind_slots! {
+    (M0 / P0: E0)
+    (M0 / P0: E0, M1 / P1: E1)
+    (M0 / P0: E0, M1 / P1: E1, M2 / P2: E2)
+}
+
+// ------------------------------------------------------------------------- the solo reply def
+
+impl<A, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+where
+    A: SoloAxis,
+    R: ReplyShape,
+    E: EntryMarkers + Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Send + Sync,
+    Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
+    R: ReplyHeadersSchema<Doc>,
+    Dest: ReplyDest<R>,
+    Route: Send + Sync,
+    Attach: Send + Sync,
+{
+    type Input = A::Kind;
+    type Injections = Outs<E>;
+    type Reply = R;
+    type Context = C;
+    // See the eager cells: the settings builder carries the real source.
+    type Source = Unnamed<Name>;
+
+    fn source(&self) -> Unnamed<Name> {
+        Unnamed::new()
+    }
+
+    fn reply_name(&self) -> &str {
+        self.0.dest.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.0.value.docs.description()
+    }
+
+    fn input_schema(&self) -> Option<String> {
+        Doc::payload_schema()
+    }
+
+    fn headers_schema(&self) -> Option<String> {
+        Doc::headers_schema()
+    }
+
+    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        let mut declared = vec![
+            OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
+                .with_payload_schema(<Doc as DocState<R::Body>>::schema())
+                .with_headers_schema(<R as ReplyHeadersSchema<Doc>>::headers_schema()),
+        ];
+        declared.extend(E::outgoing());
+        declared
+    }
+}
+
+impl<T, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+where
+    Self: PublishingDef<
+            Input = <Solo<T> as Axis>::Kind,
+            Injections = Outs<E>,
+            Reply = R,
+            Context = C,
+        >,
+    T: Input<Axis = Solo<T>> + Send + Sync + 'static,
+    R: ReplyShape,
+    E: Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<T, R, Outs<E>, C, S>,
+{
+    fn call(
+        &self,
+        input: &T,
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<R, HandlerResult>> + Send {
+        async move {
+            solo_verdict(
+                self.0
+                    .value
+                    .body
+                    .handle(input, injections, ctx)
+                    .await
+                    .into_verdict(),
+            )
+        }
+    }
+}
+
+impl<R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
+    for Sealed<
+        ReplyValue<HandleValue<SoloBytes, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>,
+    >
+where
+    Self: PublishingDef<
+            Input = crate::runtime::RawBytes,
+            Injections = Outs<E>,
+            Reply = R,
+            Context = C,
+        >,
+    R: ReplyShape,
+    E: Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: for<'p> Handle<Payload<'p>, R, Outs<E>, C, S>,
+{
+    fn call(
+        &self,
+        input: &[u8],
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<R, HandlerResult>> + Send {
+        async move {
+            let payload = Payload::new(input);
+            solo_verdict(
+                self.0
+                    .value
+                    .body
+                    .handle(&payload, injections, ctx)
+                    .await
+                    .into_verdict(),
+            )
+        }
+    }
+}
+
+impl<Hd, P, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
+    for Sealed<
+        ReplyValue<HandleValue<SoloPair<Hd, P>, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>,
+    >
+where
+    Self: PublishingDef<
+            Input = <SoloPair<Hd, P> as Axis>::Kind,
+            Injections = Outs<E>,
+            Reply = R,
+            Context = C,
+        >,
+    Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
+    Hd: Send + Sync + 'static,
+    P: Send + Sync + 'static,
+    R: ReplyShape,
+    E: Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<Message<Hd, P>, R, Outs<E>, C, S>,
+{
+    fn call(
+        &self,
+        input: &Message<Hd, P>,
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<R, HandlerResult>> + Send {
+        async move {
+            solo_verdict(
+                self.0
+                    .value
+                    .body
+                    .handle(input, injections, ctx)
+                    .await
+                    .into_verdict(),
+            )
+        }
+    }
+}
+
+// ------------------------------------------------------------------------- the page reply def
+
+impl<A, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>>
+where
+    A: PagedAxis,
+    R: ReplyShape,
+    E: EntryMarkers + Send + Sync,
+    S: Send + Sync,
+    H: Send + Sync,
+    Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
+    R: ReplyHeadersSchema<Doc>,
+    Dest: ReplyDest<R>,
+    Route: Send + Sync,
+    Attach: Send + Sync,
+{
+    type Input = A::Kind;
+    type Injections = Outs<E>;
+    type Reply = R;
+    type Source = Unnamed<Name>;
+
+    fn source(&self) -> Unnamed<Name> {
+        Unnamed::new()
+    }
+
+    fn reply_name(&self) -> &str {
+        self.0.dest.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.0.value.docs.description()
+    }
+
+    fn input_schema(&self) -> Option<String> {
+        Doc::payload_schema()
+    }
+
+    fn headers_schema(&self) -> Option<String> {
+        Doc::headers_schema()
+    }
+
+    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        let mut declared = vec![
+            OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
+                .with_payload_schema(<Doc as DocState<R::Body>>::schema())
+                .with_headers_schema(<R as ReplyHeadersSchema<Doc>>::headers_schema()),
+        ];
+        declared.extend(E::outgoing());
+        declared
+    }
+}
+
+impl<T, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
+    for Sealed<
+        ReplyValue<HandleValue<Page<T>, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>,
+    >
+where
+    Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
+    [T]: Input<Axis = Page<T>>,
+    T: Send + Sync + 'static,
+    R: ReplyShape,
+    E: Send + Sync,
+    S: Send + Sync,
+    H: Handle<[T], R, Outs<E>, (), S>,
+{
+    fn call(
+        &self,
+        batch: &[T],
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, (), S>,
+    ) -> impl Future<Output = Result<Vec<R>, crate::runtime::BatchResult>> + Send {
+        async move {
+            let verdict = self
+                .0
+                .value
+                .body
+                .handle(batch, injections, ctx)
+                .await
+                .into_verdict();
+            page_reply_verdict(verdict, batch.len(), ctx.name())
+        }
+    }
+}
+
+impl<Hd, P, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
+    for Sealed<
+        ReplyValue<
+            HandleValue<PagePair<Hd, P>, R, Outs<E>, (), S, H, Doc>,
+            Dest,
+            Route,
+            Attach,
+        >,
+    >
+where
+    Self: BatchPublishingDef<
+            Input = <PagePair<Hd, P> as Axis>::Kind,
+            Injections = Outs<E>,
+            Reply = R,
+        >,
+    [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
+    Hd: Send + Sync + 'static,
+    P: Send + Sync + 'static,
+    R: ReplyShape,
+    E: Send + Sync,
+    S: Send + Sync,
+    H: Handle<[Message<Hd, P>], R, Outs<E>, (), S>,
+{
+    fn call(
+        &self,
+        batch: &[Message<Hd, P>],
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, (), S>,
+    ) -> impl Future<Output = Result<Vec<R>, crate::runtime::BatchResult>> + Send {
+        async move {
+            let verdict = self
+                .0
+                .value
+                .body
+                .handle(batch, injections, ctx)
+                .await
+                .into_verdict();
+            page_reply_verdict(verdict, batch.len(), ctx.name())
+        }
+    }
+}

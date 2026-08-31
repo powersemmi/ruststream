@@ -20,7 +20,7 @@ use crate::codec::{Codec, DefaultCodec};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::{CallCodec, MessageBody, message_of};
 use crate::runtime::{
-    ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, Publish,
+    ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
     PublishIdentity, PublishSink, RawBody, RegisteredBroker, RustStream, RustStreamError, Starter,
     TestParts, raw_of,
 };
@@ -446,7 +446,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
     ///     .with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(transcode).out(Encoded, MemoryPublish).mount();
+    ///         b.include(transcode).out(Encoded, MemoryPublish).build();
     ///     });
     /// let tb = TestApp::start(app).await?;
     /// tb.broker::<MemoryBroker>().raw(b"frame").to("chunks").publish().await?;
@@ -539,7 +539,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> Publish<InjectSink<'a>, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<InjectSink<'a>, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -554,7 +554,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<InjectSink<'a>, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<InjectSink<'a>, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -805,7 +805,7 @@ impl<'a> BrokerHandle<'a> {
     pub fn message<'v, T>(
         &self,
         value: &'v T,
-    ) -> Publish<InjectSink<'a>, MessageBody<'v, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<InjectSink<'a>, MessageBody<'v, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -851,7 +851,7 @@ impl<'a> BrokerHandle<'a> {
     pub fn raw<'p, B>(
         &self,
         payload: &'p B,
-    ) -> Publish<InjectSink<'a>, RawBody<'p>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<InjectSink<'a>, RawBody<'p>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {

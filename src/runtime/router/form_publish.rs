@@ -1,7 +1,7 @@
 //! Router mounts for the reply-publishing forms and the commits their builders resolve through.
 //!
 //! Each form hands back a [`RouterWith`] builder whose terminal decides the reply wiring:
-//! `.publisher(policy)` names one, `.mount()` takes the broker's own
+//! `.publisher(policy)` names one, `.build()` takes the broker's own
 //! [`DefaultPublish`](crate::DefaultPublish) policy. The subscription source comes from the
 //! definition, so the terminal only ever carries the reply side.
 

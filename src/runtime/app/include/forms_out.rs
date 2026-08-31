@@ -16,7 +16,7 @@ use crate::runtime::app::scope::BrokerScope;
 // ---------------------------------------------------------------------------------------------
 // Out injection: the attachment is a positional slot tuple, one element per marker, starting
 // all-unbound. `.publisher(..)` is the single-slot shorthand (it binds and commits in one
-// call); `.out(marker, ..)` binds one named position and `.mount()` commits - it compiles only
+// call); `.out(marker, ..)` binds one named position and `.build()` commits - it compiles only
 // once every position is bound.
 
 /// Implements the slot-tuple commit of the plain Out form for each slot arity, for fully-bound

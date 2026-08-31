@@ -4,7 +4,7 @@
 //! [`BrokerScope::include`](super::BrokerScope::include), chaining
 //! [`.publisher(..)`](super::IncludePublishing::publisher) to attach the reply publish policy
 //! (without it, the statement commits with the broker's default policy); on a
-//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.mount()`, which is what
+//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.build()`, which is what
 //! commits the registration. At startup the policy pairs into a
 //! [`TypedPublisher`] (the live connection + reply codec). The destination name comes from the
 //! macro; the publisher and codec come from wiring.

@@ -39,6 +39,7 @@ impl<A, R, O, C, S, H, Doc> HandleValue<A, R, O, C, S, H, Doc> {
             _axes: PhantomData,
         }
     }
+
 }
 
 /// Binds a [`Handle`] body to its subscription source; the one mounting verb of the manual

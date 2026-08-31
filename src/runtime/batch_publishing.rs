@@ -4,7 +4,7 @@
 //! [`BrokerScope::include`](super::BrokerScope::include), chaining
 //! [`.publisher(..)`](super::IncludeBatchPublishing::publisher) to attach the reply publish
 //! policy (without it, the statement commits with the broker's default policy); on a
-//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.mount()`, which is what
+//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.build()`, which is what
 //! commits the registration. At startup the policy pairs into a [`ReplyPublisher`]: a plain [`TypedPublisher`](super::TypedPublisher) publishes
 //! each reply independently, while a [`Transactional`](super::Transactional) one (built with
 //! [`TypedPublisher::transactional`](super::TypedPublisher::transactional)) makes the whole

@@ -6,7 +6,7 @@ use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
-use super::{HeadersUnset, MessageBody, Publish, RawBody, TypedPublisher, message_of, raw_of};
+use super::{HeadersUnset, MessageBody, PublishBuilder, RawBody, TypedPublisher, message_of, raw_of};
 use crate::codec::{Codec, CodecError};
 use crate::{
     CallerName, OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction,
@@ -44,7 +44,7 @@ impl<'s, P, C> TransactionScope<'s, P, C> {
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> Publish<&'s P, MessageBody<'a, T>, &'s C, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'s P, MessageBody<'a, T>, &'s C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -56,7 +56,7 @@ impl<'s, P, C> TransactionScope<'s, P, C> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<&'s P, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'s P, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -84,7 +84,7 @@ where
     /// # Errors
     ///
     /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
-    /// [`TransactionPublishError::Publish`] when the broker rejects the message.
+    /// [`TransactionPublishError::PublishBuilder`] when the broker rejects the message.
     ///
     /// # Cancel safety
     ///
@@ -102,7 +102,7 @@ where
         self.publisher
             .publish(OutgoingMessage::new(name, &payload))
             .await
-            .map_err(TransactionPublishError::Publish)
+            .map_err(TransactionPublishError::PublishBuilder)
     }
 
     /// Commits the transaction: every publish issued through the scope becomes visible at once.
@@ -243,7 +243,7 @@ impl<'c, Txn, C> TypedTransaction<'c, Txn, C> {
     pub fn message<'a, T>(
         &'a mut self,
         value: &'a T,
-    ) -> Publish<&'a mut Txn, MessageBody<'a, T>, &'c C, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a mut Txn, MessageBody<'a, T>, &'c C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -255,7 +255,7 @@ impl<'c, Txn, C> TypedTransaction<'c, Txn, C> {
     pub fn raw<'a, B>(
         &'a mut self,
         payload: &'a B,
-    ) -> Publish<&'a mut Txn, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a mut Txn, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -281,7 +281,7 @@ where
     /// # Errors
     ///
     /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
-    /// [`TransactionPublishError::Publish`] when the message cannot be buffered (a pure client
+    /// [`TransactionPublishError::PublishBuilder`] when the message cannot be buffered (a pure client
     /// buffer is infallible in practice).
     ///
     /// # Cancel safety
@@ -304,7 +304,7 @@ where
         self.txn
             .publish(OutgoingMessage::new(name, &payload))
             .await
-            .map_err(TransactionPublishError::Publish)
+            .map_err(TransactionPublishError::PublishBuilder)
     }
 
     /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
@@ -356,5 +356,5 @@ pub enum TransactionPublishError<E> {
     Encode(#[source] CodecError),
     /// The broker rejected the message.
     #[error("failed to publish inside the transaction")]
-    Publish(#[source] E),
+    PublishBuilder(#[source] E),
 }

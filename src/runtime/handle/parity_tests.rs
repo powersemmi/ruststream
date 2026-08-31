@@ -192,6 +192,71 @@ impl Handle<Order, Message<Meta, Confirmation>> for ConfirmWithMeta {
     }
 }
 
+struct Analytics;
+
+impl crate::runtime::OutSlot for Analytics {
+    const NAME: &'static str = "Analytics";
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct Event {
+    id: u64,
+}
+
+impl crate::OutgoingDestination for Event {
+    type Form = crate::CallerName;
+}
+
+impl crate::MessageHeaders for Event {
+    type Contract = crate::NoHeaders;
+}
+
+impl crate::runtime::PublishedThrough<Analytics> for Event {}
+
+struct Mirror;
+
+impl<PA> Handle<Order, (), crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>> for Mirror
+where
+    PA: crate::runtime::Publish,
+{
+    async fn handle(
+        &self,
+        order: &Order,
+        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerResult> {
+        if outs
+            .get(Analytics)
+            .message(&Event { id: order.id })
+            .to("order-events")
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerResult::retry());
+        }
+        Ok(())
+    }
+}
+
+struct PageMirror;
+
+impl<PA> Handle<[Order], (), crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
+    for PageMirror
+where
+    PA: crate::runtime::Publish,
+{
+    async fn handle(
+        &self,
+        page: &[Order],
+        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), Vec<HandlerResult>> {
+        let _ = (page.len(), outs);
+        Ok(())
+    }
+}
+
 // ------------------------------------------------------------------------------- the mounts
 
 /// Every plain input spelling mounts through the one constructor on a router.
@@ -252,6 +317,112 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
 #[test]
 fn every_reply_spelling_mounts() {
     let _ = reply_axes();
+}
+
+struct Gateway;
+
+impl<PA> Handle<Order, Confirmation, crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
+    for Gateway
+where
+    PA: crate::runtime::Publish,
+{
+    async fn handle(
+        &self,
+        order: &Order,
+        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<Confirmation, HandlerResult> {
+        let _ = outs;
+        Ok(Confirmation { id: order.id })
+    }
+}
+
+struct PageGateway;
+
+impl<PA> Handle<[Order], Confirmation, crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
+    for PageGateway
+where
+    PA: crate::runtime::Publish,
+{
+    async fn handle(
+        &self,
+        page: &[Order],
+        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<Vec<Confirmation>, Vec<HandlerResult>> {
+        let _ = outs;
+        Ok(page.iter().map(|o| Confirmation { id: o.id }).collect())
+    }
+}
+
+struct RawGateway;
+
+impl<PA> Handle<Order, Vec<u8>, crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
+    for RawGateway
+where
+    PA: crate::runtime::Publish,
+{
+    async fn handle(
+        &self,
+        order: &Order,
+        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<Vec<u8>, HandlerResult> {
+        let _ = outs;
+        Ok(order.id.to_be_bytes().to_vec())
+    }
+}
+
+/// The slot arena mounts on both families, bound at the include site.
+fn slot_axes() -> impl RouterDef<MemoryBroker> {
+    use crate::runtime::TypedPublisher;
+
+    Router::<MemoryBroker>::new()
+        .include(subscriber("orders", Mirror).build())
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(subscriber("orders", PageMirror).build())
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(
+            subscriber("orders", Gateway)
+                .reply()
+                .on("confirmations")
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(
+            subscriber("orders", Gateway)
+                .reply()
+                .on("confirmations")
+                .publisher(TypedPublisher::new(MemoryPublish))
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(
+            subscriber("orders", PageGateway)
+                .reply()
+                .on("confirmations")
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(
+            subscriber("orders", RawGateway)
+                .reply_raw()
+                .on("echoes")
+                .publisher(MemoryPublish)
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .build()
+}
+
+#[test]
+fn every_slot_spelling_mounts() {
+    let _ = slot_axes();
 }
 
 /// The scope surface mounts the same definitions, and one subscriber dispatches end to end.

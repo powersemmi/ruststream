@@ -17,7 +17,7 @@ use crate::runtime::app::scope::BrokerScope;
 #[diagnostic::on_unimplemented(
     message = "not every Out slot of this handler is bound",
     label = "the attachment still contains a `MissingSlot<..>` naming the unbound slot",
-    note = "bind each remaining slot with .out(marker, policy) before .mount()"
+    note = "bind each remaining slot with .out(marker, policy) before .build()"
 )]
 pub trait SlotCommit<Mount, B: Broker, Layers, C, State, Pipeline, Def>: Sized {
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>);
@@ -26,11 +26,11 @@ pub trait SlotCommit<Mount, B: Broker, Layers, C, State, Pipeline, Def>: Sized {
 /// A registration builder for a handler with [`Out`](crate::runtime::Out) slots.
 ///
 /// Unlike the reply builders, it does not commit on drop: each [`out`](Self::out) call binds
-/// one named slot (in any order), and the terminal [`mount`](Self::mount) commits - it exists
+/// one named slot (in any order), and the terminal [`build`](Self::build) commits - it exists
 /// only once every slot is bound, so a forgotten binding is a compile error naming the slot. A
 /// handler with a single slot skips the ceremony: [`publisher`](Self::publisher) binds it and
 /// commits in one call. The per-form names are aliases: [`IncludeOut`](crate::runtime::IncludeOut), [`IncludeBatchOut`](crate::runtime::IncludeBatchOut).
-#[must_use = "an Out handler registers nothing until .publisher(policy) or .out(..)+.mount() commits it"]
+#[must_use = "an Out handler registers nothing until .publisher(policy) or .out(..)+.build() commits it"]
 pub struct IncludeSlots<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>
 where
     B: Broker + 'static,
@@ -82,7 +82,7 @@ where
     /// its publish policy (or a [`Bound`](crate::runtime::Bound) token for a cross-broker
     /// target). Calls bind by marker, so their order does not matter; binding the same slot
     /// twice, or a marker the handler does not declare, fails to compile. Finish with
-    /// [`mount`](Self::mount).
+    /// [`build`](Self::build).
     ///
     /// # Panics
     ///
@@ -123,7 +123,7 @@ where
     ///
     /// Never in practice: the internal expects guard builder invariants that hold until this
     /// commit consumes them.
-    pub fn mount(self)
+    pub fn build(self)
     where
         Slots: SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
     {
@@ -138,7 +138,7 @@ where
     B: Broker + 'static,
 {
     /// Binds the handler's single [`Out`](crate::runtime::Out) slot and commits, no
-    /// [`mount`](Self::mount) needed: the one-slot shorthand
+    /// [`build`](Self::build) needed: the one-slot shorthand
     /// (`b.include(forward).publisher(MemoryPublish)`).
     ///
     /// # Panics
@@ -175,7 +175,7 @@ where
         // silently vanish - the handler would never consume.
         assert!(
             self.parts.is_none(),
-            "an Out handler was included but never mounted: finish the chain with .mount() \
+            "an Out handler was included but never mounted: finish the chain with .build() \
              (or .publisher(policy) for a single slot)",
         );
     }

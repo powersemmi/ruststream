@@ -62,7 +62,7 @@ where
 // Reply publishing with Out slots: two attachment axes on one builder. The reply side keeps its
 // default commits (typed or bare policy); the slot side starts all-unbound, each
 // `.out(marker, ..)` binds one position, and the SlotCommit impls exist only for fully-bound
-// tuples - so `.mount()` on an incomplete chain is a compile error naming the slot.
+// tuples - so `.build()` on an incomplete chain is a compile error naming the slot.
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 impl<B, Layers, C, State, Pipeline, Def, Slots>

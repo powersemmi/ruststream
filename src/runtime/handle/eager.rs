@@ -77,7 +77,7 @@ where
     }
 }
 
-impl<A, R, O, C, S, H, Doc> IncludeDef for Sealed<HandleValue<A, R, O, C, S, H, Doc>>
+impl<A, R, C, S, H, Doc> IncludeDef for Sealed<HandleValue<A, R, (), C, S, H, Doc>>
 where
     A: Axis,
 {
@@ -139,7 +139,7 @@ impl<A, S, H> std::fmt::Debug for PageBody<A, S, H> {
 /// Applies the page contract to one normalized verdict: `Ok` acks the chunk, a per-element
 /// vector must be exactly chunk-length (a mismatch is a bug in the handler and panics under the
 /// subscriber's panic policy).
-fn settle_page<R>(
+pub(super) fn settle_page<R>(
     verdict: Result<Vec<R>, BatchResult>,
     chunk_len: usize,
     subscription: &str,

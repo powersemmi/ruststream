@@ -60,8 +60,8 @@ pub use extract::{Ctx, FromContext, FromRef, Headers, State};
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handle::{
-    Documentable, Documented, Handle, Input, IntoSource, IntoVerdict, Message, Payload,
-    Undocumented, ValueBuilder, subscriber,
+    Documentable, Documented, Handle, Input, IntoSource, IntoVerdict, Message, OutStack, Outs,
+    Payload, Publish, Slot, Undocumented, ValueBuilder, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
@@ -87,7 +87,7 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MissingSegment,
-    Outgoing, Publish, PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext,
+    Outgoing, PublishBuilder, PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext,
     PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer,
     PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
     PublishTransformIdentity, PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring,

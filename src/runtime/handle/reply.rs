@@ -131,8 +131,8 @@ pub struct SealedRawReply;
 #[derive(Debug, Clone, Copy)]
 pub struct SealedBatchPublishing;
 
-impl<A, R, O, C, S, H, Doc, Dest, Route, Attach> IncludeDef
-    for Sealed<ReplyValue<HandleValue<A, R, O, C, S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, C, S, H, Doc, Dest, Route, Attach> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, (), C, S, H, Doc>, Dest, Route, Attach>>
 where
     A: Axis,
     Route: ReplyFormFor<A::Family>,
@@ -197,7 +197,7 @@ where
 
 /// Downgrades the settle side of one solo reply verdict: a reply verdict is only constructible
 /// from `Result<R, HandlerResult>`, so no continuation is lost here.
-fn solo_verdict<R>(verdict: Result<R, crate::runtime::Settle>) -> Result<R, HandlerResult> {
+pub(super) fn solo_verdict<R>(verdict: Result<R, crate::runtime::Settle>) -> Result<R, HandlerResult> {
     verdict.map_err(|settle| settle.outcome())
 }
 
@@ -334,7 +334,7 @@ where
 }
 
 /// Applies the page reply contract: one reply per element, one outcome per element.
-fn page_reply_verdict<R>(
+pub(super) fn page_reply_verdict<R>(
     verdict: Result<Vec<R>, crate::runtime::BatchResult>,
     page_len: usize,
     subscription: &str,

@@ -22,7 +22,7 @@ use std::ops::Deref;
 use std::time::Duration;
 
 use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publish::{HeadersUnset, MessageBody, Publish, RawBody, message_of, raw_of};
+use crate::runtime::publish::{HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
@@ -511,7 +511,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     /// [`PublishedThrough`]) and in the parameter's declared message set; everything else - the
     /// destination and the header contract - comes from the type's `#[derive(Outgoing)]`
     /// declaration, so the builder demands exactly the positions that declaration leaves open
-    /// (see [`Publish`]).
+    /// (see [`PublishBuilder`]).
     ///
     /// # Examples
     ///
@@ -549,7 +549,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     pub fn message<'a, T, Index>(
         &'a self,
         value: &'a T,
-    ) -> Publish<&'a P, MessageBody<'a, T>, &'a EncodeCodec, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a P, MessageBody<'a, T>, &'a EncodeCodec, HeadersUnset, T::Form>
     where
         Body: ContainsMessage<T, Index>,
         T: OutgoingDestination + PublishedThrough<M>,
@@ -565,7 +565,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -576,7 +576,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
 /// The "not bound yet" placeholder of the `Out` slot marked `M` at the include site.
 ///
 /// The marker rides in the type so the compile error of an incomplete registration (a
-/// `.mount()` whose attachment tuple still contains a `MissingSlot<..>`) names the slot that
+/// `.build()` whose attachment tuple still contains a `MissingSlot<..>`) names the slot that
 /// was forgotten. A value of this type never reaches the runtime: committing requires every
 /// position bound.
 #[doc(hidden)]

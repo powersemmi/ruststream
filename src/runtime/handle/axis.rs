@@ -137,6 +137,9 @@ pub trait Axis: Send + Sync + 'static {
     /// The mount form of the axis's plain (no reply, no injections) definition.
     type EagerForm;
 
+    /// The mount form of the axis's slot-carrying (no reply) definition.
+    type SlotForm;
+
     /// The serialized payload schema under the documentation state `Doc`.
     fn payload_schema<Doc: AxisDocs<Self>>() -> Option<String> {
         Doc::payload_schema()
@@ -211,36 +214,42 @@ impl<T: Send + Sync + 'static> Axis for Solo<T> {
     type Family = OneByOne;
     type Kind = Decoded<T>;
     type EagerForm = crate::runtime::router::forms::Subscribing;
+    type SlotForm = crate::runtime::router::forms::Out;
 }
 
 impl Axis for SoloBytes {
     type Family = OneByOne;
     type Kind = RawBytes;
     type EagerForm = crate::runtime::router::forms::RawSubscribing;
+    type SlotForm = crate::runtime::router::forms::Out;
 }
 
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for SoloPair<H, P> {
     type Family = OneByOne;
     type Kind = DecodedPair<H, P>;
     type EagerForm = crate::runtime::router::forms::Subscribing;
+    type SlotForm = crate::runtime::router::forms::Out;
 }
 
 impl<T: Send + Sync + 'static> Axis for Page<T> {
     type Family = Paged;
     type Kind = Decoded<T>;
     type EagerForm = crate::runtime::router::forms::Batch;
+    type SlotForm = crate::runtime::router::forms::BatchOut;
 }
 
 impl Axis for PageBytes {
     type Family = Paged;
     type Kind = RawBytes;
     type EagerForm = crate::runtime::router::forms::RawBatch;
+    type SlotForm = crate::runtime::router::forms::BatchOut;
 }
 
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for PagePair<H, P> {
     type Family = Paged;
     type Kind = DecodedPair<H, P>;
     type EagerForm = crate::runtime::router::forms::Batch;
+    type SlotForm = crate::runtime::router::forms::BatchOut;
 }
 
 impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {

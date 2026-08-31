@@ -5,7 +5,7 @@
 //! runs is picked by the definition's form token ([`IncludeDef::Form`]), exactly as on a
 //! [`BrokerScope`](crate::runtime::BrokerScope). Forms that take an attachment hand back a
 //! registration builder; because a router is a consuming builder, the builder commits through
-//! an explicit terminal (`.publisher(policy)`, `.mount()`, `.out(marker, policy)` per slot) and
+//! an explicit terminal (`.publisher(policy)`, `.build()`, `.out(marker, policy)` per slot) and
 //! returns the grown router.
 //!
 //! The subscription source always comes from the definition: `#[subscriber(..)]` takes the
@@ -23,7 +23,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
 {
     /// Mounts a `#[subscriber]` definition of any form, on the source the definition names: a
     /// plain or batch handler grows the router directly, a `publish("dest")` or `Out`-taking one
-    /// hands back a registration builder to finish with `.publisher(policy)`, `.mount()`, or
+    /// hands back a registration builder to finish with `.publisher(policy)`, `.build()`, or
     /// `.out(marker, policy)` per slot.
     ///
     /// A batch definition's subscriber must implement [`BatchSubscriber`] - natively, or through

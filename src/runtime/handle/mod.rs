@@ -50,7 +50,9 @@
 mod axis;
 mod docs;
 mod eager;
+mod outs;
 mod reply;
+mod reply_slots;
 mod value;
 mod verdict;
 
@@ -74,10 +76,17 @@ pub use value::{
 pub use value::UnbuiltDefinition;
 #[doc(hidden)]
 pub use eager::{PageBody, SoloBody};
+pub use outs::{OutStack, Outs, Publish, Slot};
+#[doc(hidden)]
+pub use outs::{EntryMarkers, OutPos, SelectSlot};
 #[doc(hidden)]
 pub use reply::{
     ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape, SealedBatchPublishing,
     SealedPublishing, SealedRawReply, SplitAttach,
+};
+#[doc(hidden)]
+pub use reply_slots::{
+    ReplySlotFormFor, SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut,
 };
 
 /// What the constructor returns: the settings builder over its definition, mounted on the
