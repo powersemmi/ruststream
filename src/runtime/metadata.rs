@@ -14,9 +14,9 @@ pub struct OutgoingMessageMetadata {
     pub channel: Cow<'static, str>,
     /// Type name of the published value, as captured at registration time.
     pub message_type: &'static str,
-    /// The type's [`Message`](crate::Message) name, when it implements that trait.
+    /// The type's [`Message`](crate::MessageInfo) name, when it implements that trait.
     pub message_name: Option<&'static str>,
-    /// The type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     pub message_description: Option<&'static str>,
     /// The type's serialized JSON Schema, when available (`asyncapi` feature).
     pub payload_schema: Option<String>,
@@ -52,14 +52,14 @@ impl OutgoingMessageMetadata {
         self
     }
 
-    /// Builder-style setter for the [`Message`](crate::Message) name.
+    /// Builder-style setter for the [`Message`](crate::MessageInfo) name.
     #[must_use]
     pub fn with_message_name(mut self, name: Option<&'static str>) -> Self {
         self.message_name = name;
         self
     }
 
-    /// Builder-style setter for the [`Message`](crate::Message) description.
+    /// Builder-style setter for the [`Message`](crate::MessageInfo) description.
     #[must_use]
     pub fn with_message_description(mut self, description: Option<&'static str>) -> Self {
         self.message_description = description;
@@ -106,10 +106,10 @@ pub struct HandlerMetadata {
     /// `Headers<T>` parameter, captured under the `asyncapi` feature). Feeds the `AsyncAPI`
     /// message headers schema.
     pub headers_schema: Option<String>,
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait. Overrides
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait. Overrides
     /// the `input_type`-derived name in the `AsyncAPI` document.
     pub message_name: Option<Cow<'static, str>>,
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     /// Feeds the `AsyncAPI` message description.
     pub message_description: Option<Cow<'static, str>>,
     /// The messages this handler publishes, when it declares them: the reply of a
@@ -190,14 +190,14 @@ impl HandlerMetadata {
         self
     }
 
-    /// Builder-style setter for the [`Message`](crate::Message) name of the input type.
+    /// Builder-style setter for the [`Message`](crate::MessageInfo) name of the input type.
     #[must_use]
     pub fn with_message_name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
         self.message_name = Some(name.into());
         self
     }
 
-    /// Builder-style setter for the [`Message`](crate::Message) description of the input type.
+    /// Builder-style setter for the [`Message`](crate::MessageInfo) description of the input type.
     #[must_use]
     pub fn with_message_description(mut self, description: impl Into<Cow<'static, str>>) -> Self {
         self.message_description = Some(description.into());

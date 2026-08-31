@@ -1257,9 +1257,9 @@ fn expand_batch_publishing(
         &unit_ctx,
         &state_in_ctx,
         &quote!(
-            return ::core::result::Result::Err(::core::convert::Into::<
-                ::ruststream::runtime::HandlerResult,
-            >::into(__rs_err),)
+            return ::core::result::Result::Err(::ruststream::runtime::BatchResult::Uniform(
+                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+            ))
         ),
     );
     let declaration = declaration(parts, &form);
@@ -1306,11 +1306,15 @@ fn expand_batch_publishing(
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
             ) -> ::core::result::Result<
                 ::std::vec::Vec<#reply_elem>,
-                ::ruststream::runtime::HandlerResult,
+                ::ruststream::runtime::BatchResult,
             > {
                 #prelude
                 #injection_bindings
-                #call_body
+                let __rs_replies: ::core::result::Result<
+                    ::std::vec::Vec<#reply_elem>,
+                    ::ruststream::runtime::HandlerResult,
+                > = { #call_body };
+                __rs_replies.map_err(::ruststream::runtime::BatchResult::Uniform)
             }
         }
     })

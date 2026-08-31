@@ -64,11 +64,12 @@ impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
         batch: &[u32],
         (): &(),
         _ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<u32>, HandlerResult>> {
+    ) -> impl Future<Output = Result<Vec<u32>, BatchResult>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let result = self
-            .fail_with
-            .map_or_else(|| Ok(batch.iter().map(|n| n * 10).collect()), Err);
+        let result = self.fail_with.map_or_else(
+            || Ok(batch.iter().map(|n| n * 10).collect()),
+            |outcome| Err(BatchResult::Uniform(outcome)),
+        );
         ready(result)
     }
 }

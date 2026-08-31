@@ -266,13 +266,13 @@ pub trait BatchDef: Sized {
         None
     }
 
-    /// The element type's [`Message`](crate::Message) name, when it implements that trait. The
+    /// The element type's [`Message`](crate::MessageInfo) name, when it implements that trait. The
     /// macro fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The element type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The element type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     /// The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None
@@ -631,7 +631,7 @@ where
     let mut values = Vec::with_capacity(batch.len());
     let mut accepted = Vec::with_capacity(batch.len());
     for msg in batch {
-        match Input::decode(codec, msg.payload()) {
+        match Input::decode(codec, msg.payload(), msg.headers()) {
             Ok(value) => {
                 values.push(value);
                 accepted.push(msg);
@@ -700,7 +700,7 @@ where
     let mut contracts = Vec::with_capacity(batch.len());
     let mut accepted = Vec::with_capacity(batch.len());
     for msg in batch {
-        let value = match Input::decode(codec, msg.payload()) {
+        let value = match Input::decode(codec, msg.payload(), msg.headers()) {
             Ok(value) => value,
             Err(err) => {
                 warn!(

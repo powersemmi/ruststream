@@ -246,7 +246,7 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
 
 /// Membership of a message type in an `Out` parameter's declared message list.
 ///
-/// The declaration is a tuple listing types, a set-defining type (a `#[derive(Message)]` type
+/// The declaration is a tuple listing types, a set-defining type (a `#[derive(MessageInfo)]` type
 /// declares itself, a `#[derive(OutMessages)]` enum declares its variants' models), or the
 /// unrestricted `()` (any dictionary type). The `Index` parameter is inferred per call, like
 /// the slot-binding machinery's positions; a duplicate type in a declaration is rejected where

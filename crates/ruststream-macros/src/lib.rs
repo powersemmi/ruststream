@@ -233,7 +233,7 @@ fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
 ///
 /// ```ignore
 /// /// An order placed by a customer.
-/// #[derive(Message)]
+/// #[derive(MessageInfo)]
 /// struct Order { id: u32 }
 /// // Order::NAME == "Order", Order::DESCRIPTION == Some("An order placed by a customer.")
 ///
@@ -241,7 +241,7 @@ fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
 /// #[message(headers(ChunkMeta))]
 /// struct ChunkDone { output_key: String }
 /// ```
-#[proc_macro_derive(Message, attributes(message))]
+#[proc_macro_derive(MessageInfo, attributes(message))]
 pub fn derive_message(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     let name = &input.ident;
@@ -255,7 +255,7 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     quote! {
-        impl #impl_generics ::ruststream::Message for #name #ty_generics #where_clause {
+        impl #impl_generics ::ruststream::MessageInfo for #name #ty_generics #where_clause {
             const NAME: &'static str = #name_str;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
         }
@@ -284,7 +284,7 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
 /// `headers = Meta` declares the typed header contract: `Meta` stays an ordinary serde struct
 /// the derive does not touch, and the publish builder then demands `with_headers(&meta)`.
 ///
-/// Do not combine with `#[derive(Message)]` on the same type: this derive already provides the
+/// Do not combine with `#[derive(MessageInfo)]` on the same type: this derive already provides the
 /// message metadata, and the two produce conflicting impls.
 ///
 /// ```ignore
@@ -310,7 +310,7 @@ pub fn derive_outgoing(item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Parses the optional `#[message(headers(Type))]` helper attribute of `#[derive(Message)]`.
+/// Parses the optional `#[message(headers(Type))]` helper attribute of `#[derive(MessageInfo)]`.
 fn message_headers_contract(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
     let mut found: Option<Type> = None;
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("message")) {

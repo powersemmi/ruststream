@@ -70,12 +70,12 @@ pub trait BatchInjectDef: Send + Sync {
         Vec::new()
     }
 
-    /// The element type's [`Message`](crate::Message) name, when it implements that trait.
+    /// The element type's [`Message`](crate::MessageInfo) name, when it implements that trait.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The element type's [`Message`](crate::Message) description, when it implements that
+    /// The element type's [`Message`](crate::MessageInfo) description, when it implements that
     /// trait.
     fn message_description(&self) -> Option<&'static str> {
         None

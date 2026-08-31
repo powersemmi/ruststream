@@ -17,7 +17,7 @@ use tracing::warn;
 
 use crate::IncomingMessage;
 
-use super::batch::{BatchHandler, decode_batch, settle};
+use super::batch::{BatchHandler, BatchResult, decode_batch, settle, settle_batch};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
@@ -93,13 +93,13 @@ pub trait BatchPublishingDef: Send + Sync {
         Vec::new()
     }
 
-    /// The element type's [`Message`](crate::Message) name, when it implements that trait. The
+    /// The element type's [`Message`](crate::MessageInfo) name, when it implements that trait. The
     /// macro fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The element type's [`Message`](crate::Message) description, when it implements that
+    /// The element type's [`Message`](crate::MessageInfo) description, when it implements that
     /// trait. The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None
@@ -116,13 +116,14 @@ pub trait BatchPublishingCall<S>: BatchPublishingDef {
     /// Runs the handler body on one decoded batch.
     ///
     /// `Ok(replies)` publishes every reply to [`reply_name`](BatchPublishingDef::reply_name) and
-    /// acks the batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
+    /// acks the batch; `Err(result)` publishes nothing and settles the batch with `result` -
+    /// one uniform outcome, or one outcome per element.
     fn call(
         &self,
         batch: &[<Self::Input as InputKind>::Owned],
         injections: &Self::Injections,
         ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<Self::Reply>, HandlerResult>> + Send;
+    ) -> impl Future<Output = Result<Vec<Self::Reply>, BatchResult>> + Send;
 }
 
 /// Builds the registration metadata for a batch publishing definition mounted under `name`.
@@ -187,7 +188,7 @@ where
         if accepted.is_empty() {
             return;
         }
-        let outcome = match self.def.call(&values, &self.injections, ctx).await {
+        let result = match self.def.call(&values, &self.injections, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
                 let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
@@ -196,7 +197,7 @@ where
                     .publish_batch(name, &replies, &self.pipeline, &pubcx)
                     .await
                 {
-                    Ok(()) => HandlerResult::Ack,
+                    Ok(()) => BatchResult::Uniform(HandlerResult::Ack),
                     Err(err) => {
                         warn!(
                             target: "ruststream::dispatch",
@@ -206,14 +207,22 @@ where
                             error = %err,
                             "batch reply publish failed",
                         );
-                        HandlerResult::retry()
+                        BatchResult::Uniform(HandlerResult::retry())
                     }
                 }
             }
             Err(result) => result,
         };
-        for msg in accepted {
-            settle(msg, outcome, &subscription).await;
+        match result {
+            BatchResult::Uniform(outcome) => {
+                for msg in accepted {
+                    settle(msg, outcome, &subscription).await;
+                }
+            }
+            per_element => {
+                let tasks = ctx.tasks().clone();
+                settle_batch(accepted, per_element, &subscription, &tasks).await;
+            }
         }
     }
 }

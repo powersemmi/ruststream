@@ -391,12 +391,12 @@ mod generic_message_derives {
 
     use ruststream::{Message, Outgoing};
 
-    #[derive(Message)]
+    #[derive(MessageInfo)]
     struct Borrowed<'a> {
         s: &'a str,
     }
 
-    #[derive(Message)]
+    #[derive(MessageInfo)]
     struct Wrapper<T: Clone>(T);
 
     #[derive(Outgoing)]

@@ -61,13 +61,13 @@ pub trait SubscriberDef: Sized {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait. The macro
     /// fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     /// The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None

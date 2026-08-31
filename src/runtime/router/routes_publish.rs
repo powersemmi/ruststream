@@ -119,7 +119,7 @@ where
     Def: PublishingCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Reply: crate::runtime::publishing::EncodeReply + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     // `DecodeWith` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.

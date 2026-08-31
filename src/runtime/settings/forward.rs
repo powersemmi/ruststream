@@ -254,7 +254,7 @@ where
         batch: &[<<Def as BatchPublishingDef>::Input as InputKind>::Owned],
         injections: &<Def as BatchPublishingDef>::Injections,
         ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, HandlerResult>> + Send
+    ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, BatchResult>> + Send
     {
         self.def.call(batch, injections, ctx)
     }

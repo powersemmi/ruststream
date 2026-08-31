@@ -217,6 +217,35 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         pipeline.run(&mut out, &self.publisher).await
     }
 
+    /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
+    /// serializes into the outgoing headers before the transforms run, and the body encodes
+    /// through the reply codec.
+    pub(crate) async fn publish_pair<Hd: serde::Serialize + Sync, T: Serialize + Sync, Cx, PP>(
+        &self,
+        name: &str,
+        headers: &Hd,
+        value: &T,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), BoxError>
+    where
+        PL: PublishTransform<Cx>,
+        BL: Sync,
+        Cx: Sync,
+        PP: PublishPipeline,
+    {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(|e| Box::new(e) as BoxError)?;
+        let mut out = Outgoing::new(name, payload);
+        out.headers_mut()
+            .insert_typed(headers)
+            .map_err(|e| Box::new(e) as BoxError)?;
+        self.layers.apply(&mut out, cx);
+        pipeline.run(&mut out, &self.publisher).await
+    }
+
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishTransform`] stack
     /// instead of the per-message [`PublishTransform`] one. Used per reply on the batch path: the
     /// per-message transforms do not run for batched replies (a transform wanted on both paths is

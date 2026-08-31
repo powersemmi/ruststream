@@ -48,12 +48,79 @@ pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+/// What an encoded reply value knows about leaving through a typed stack: a `Serialize` reply
+/// encodes as the payload, a [`Message`](super::Message) pair additionally serializes its
+/// header contract into the outgoing headers. The bound is pipeline-agnostic, which is what
+/// lets the routes state it once per registration.
+pub trait EncodeReply: Send + Sync {
+    /// Delivers `self` through the typed reply stack.
+    #[doc(hidden)]
+    fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
+    where
+        Leaf: Publisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<Cx>,
+        Cx: Sync,
+        PP: super::publish::PublishPipeline;
+}
+
+impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
+    async fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        Leaf: Publisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<Cx>,
+        Cx: Sync,
+        PP: super::publish::PublishPipeline,
+    {
+        stack.publish(name, self, pipeline, cx).await
+    }
+}
+
+impl<Hd, Pd> EncodeReply for super::Message<Hd, Pd>
+where
+    Hd: Serialize + Send + Sync,
+    Pd: Serialize + Send + Sync,
+{
+    async fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        Leaf: Publisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<Cx>,
+        Cx: Sync,
+        PP: super::publish::PublishPipeline,
+    {
+        stack
+            .publish_pair(name, &self.headers, &self.body, pipeline, cx)
+            .await
+    }
+}
+
 /// The encoded wiring: the reply serializes through the stack's reply codec, then travels the
-/// stack's transforms and the scope's publish pipeline.
+/// stack's transforms and the scope's publish pipeline. A [`Message`](super::Message) reply
+/// additionally carries its typed header contract into the outgoing headers.
 impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
     ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
 where
-    Reply: Serialize + Sync,
+    Reply: EncodeReply,
     DeliveryCx: Sync,
     Pipeline: PublishPipeline,
     Leaf: Publisher,
@@ -69,7 +136,7 @@ where
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
-        self.publish(name, reply, pipeline, cx).await
+        reply.deliver_typed(self, name, pipeline, cx).await
     }
 }
 
@@ -175,13 +242,13 @@ pub trait PublishingDef: Send + Sync {
         Vec::new()
     }
 
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait. The macro
     /// fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     /// The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None
@@ -271,7 +338,7 @@ where
         // run, publish the reply, then ack. It converts to `Settle` with no `and_after`. The
         // decode product lives on this stack frame and the handler borrows its view.
         let owned =
-            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload()) {
+            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload(), msg.headers()) {
                 Ok(value) => value,
                 Err(err) => {
                     warn!(

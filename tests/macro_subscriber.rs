@@ -155,7 +155,7 @@ async fn macro_builder_chain_in_decorator() {
 }
 
 /// An order placed by a customer.
-#[derive(Message)]
+#[derive(MessageInfo)]
 #[allow(dead_code)]
 struct DescribedOrder {
     id: u32,

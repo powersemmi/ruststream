@@ -8,7 +8,7 @@
 
 use crate::Broker;
 use crate::codec::Codec;
-use crate::runtime::input::{Decoded, RawBytes};
+use crate::runtime::input::{Decoded, DecodedPair, RawBytes};
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
@@ -70,6 +70,16 @@ pub trait InputCodec<Input> {
 }
 
 impl<C: MountCodec, T> InputCodec<Decoded<T>> for C {
+    type Codec = <C as MountCodec>::Codec;
+
+    fn input_codec(&self) -> Self::Codec {
+        self.mount_codec()
+    }
+}
+
+// A pair input decodes its payload with the surface codec, exactly like a plain decoded one
+// (the headers side needs no codec at all).
+impl<C: MountCodec, H, P> InputCodec<DecodedPair<H, P>> for C {
     type Codec = <C as MountCodec>::Codec;
 
     fn input_codec(&self) -> Self::Codec {

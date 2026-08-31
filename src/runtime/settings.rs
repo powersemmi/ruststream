@@ -43,7 +43,7 @@ use crate::{Buffered, FromName, StartAt, Unnamed};
 
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
-use super::input::{Decoded, RawBytes};
+use super::input::{Decoded, DecodedPair, RawBytes};
 use super::router::{IncludeDef, InputCodec};
 
 /// A setting the attribute left out, still fillable at the mount site.
@@ -180,6 +180,27 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
         }
     }
 
+    /// Splits the wrapped definition, keeping the source and the collected settings on the
+    /// remainder: the hook the sealed mounts extract their pre-attached pieces through.
+    pub(crate) fn split_def<NewDef, Extra>(
+        self,
+        f: impl FnOnce(Def) -> (NewDef, Extra),
+    ) -> (SubscriberBuilder<NewDef, Src, State, DefCodec>, Extra) {
+        let (def, source, workers, failures, codec) = self.into_parts();
+        let (def, extra) = f(def);
+        (
+            SubscriberBuilder {
+                def,
+                source,
+                workers,
+                failures,
+                codec,
+                _state: PhantomData,
+            },
+            extra,
+        )
+    }
+
     /// Replaces the wrapped definition, keeping the source and the collected settings: the hook
     /// the value-definition methods (`describe`, `documented`, `to`, ...) grow their
     /// definitions through.
@@ -222,6 +243,18 @@ impl<Input, Surface: InputCodec<Input>> DefinitionInputCodec<Input, Surface> for
 }
 
 impl<T, Surface, C> DefinitionInputCodec<Decoded<T>, Surface> for C
+where
+    C: Codec + Clone + Send + Sync + 'static,
+{
+    type Codec = C;
+
+    fn resolve(&self, _surface: &Surface) -> C {
+        self.clone()
+    }
+}
+
+// The override applies to a pair input the same way: the payload side decodes with it.
+impl<H, P, Surface, C> DefinitionInputCodec<DecodedPair<H, P>, Surface> for C
 where
     C: Codec + Clone + Send + Sync + 'static,
 {

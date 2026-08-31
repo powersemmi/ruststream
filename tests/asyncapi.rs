@@ -283,7 +283,7 @@ struct RenamedOrder {
     id: u32,
 }
 
-impl ruststream::Message for RenamedOrder {
+impl ruststream::MessageInfo for RenamedOrder {
     const NAME: &'static str = "CustomOrder";
     const DESCRIPTION: Option<&'static str> = Some("An order, renamed for the wire.");
 }

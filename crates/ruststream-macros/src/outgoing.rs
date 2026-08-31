@@ -83,7 +83,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             const PARAMETERS: &'static [&'static str] = #parameters;
         }
 
-        impl #impl_generics ::ruststream::Message for #name #ty_generics #where_clause {
+        impl #impl_generics ::ruststream::MessageInfo for #name #ty_generics #where_clause {
             const NAME: &'static str = #name_str;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
         }

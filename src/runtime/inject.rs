@@ -279,12 +279,12 @@ pub trait InjectDef: Send + Sync {
         Vec::new()
     }
 
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     fn message_description(&self) -> Option<&'static str> {
         None
     }
@@ -350,7 +350,7 @@ where
         // the input path allocates nothing of its own (a raw input borrows the payload
         // straight out of the broker's buffer).
         let owned =
-            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload()) {
+            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload(), msg.headers()) {
                 Ok(value) => value,
                 Err(err) => {
                     warn!(

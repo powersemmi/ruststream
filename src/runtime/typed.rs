@@ -90,7 +90,7 @@ where
         // The decode product lives on this stack frame and the handler borrows its view, so the
         // input path allocates nothing of its own (a raw input borrows the payload straight out
         // of the broker's buffer).
-        match Input::decode(&self.codec, msg.payload()) {
+        match Input::decode(&self.codec, msg.payload(), msg.headers()) {
             Ok(owned) => {
                 self.inner
                     .handle(Input::view(&owned, msg.payload()), ctx)

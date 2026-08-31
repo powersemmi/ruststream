@@ -10,6 +10,10 @@ mod dispatch;
 mod dynstack;
 mod extract;
 mod failure;
+// Scaffolding allowance until the value_def surface swap completes and the
+// re-export list is final.
+#[allow(unreachable_pub)]
+mod handle;
 mod handler;
 mod inject;
 mod input;
@@ -25,7 +29,6 @@ mod settings;
 mod slot;
 mod subscriber_def;
 mod typed;
-mod value_def;
 
 /// The subscriber a source opens, for broker `B` (the source resolves against the broker's
 /// connected form). Tames the long projection in bounds.
@@ -56,6 +59,22 @@ pub use extract::{Ctx, FromContext, FromRef, Headers, State};
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
+pub use handle::{
+    Documentable, Documented, Handle, Input, IntoSource, IntoVerdict, Message, Payload,
+    Undocumented, ValueBuilder, subscriber,
+};
+#[doc(hidden)]
+pub use handle::{
+    Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
+    HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair,
+    PagedAxis, Paged, ReplyValue, Sealed, Solo, SoloAxis, SoloBody, SoloBytes, SoloPair,
+    VerdictFamily, VerdictFor,
+};
+#[doc(hidden)]
+pub use handle::{
+    ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape, SealedBatchPublishing,
+    SealedPublishing, SealedRawReply, SplitAttach, UnbuiltDefinition,
+};
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out, Seek};
 pub use input::{DecodeWith, Decoded, InputKind, RawBytes};
@@ -86,7 +105,7 @@ pub(crate) use publish::message_of;
 pub(crate) use publish::raw_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
-pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
+pub use publishing::{EncodeReply, PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 pub use router::{
     IncludeDef, Router, RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterDef,
     RouterHandlers, RouterOut, RouterPublishing, RouterPublishingOut, RouterRawReply,
@@ -108,17 +127,3 @@ pub use slot::{
 };
 pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};
-pub use value_def::ValueBuilder;
-pub use value_def::{
-    BatchReply, BatchReplyingValue, BatchSeekValue, BatchSlotsValue, BatchValue,
-    BatchWithHeadersValue, BoundBatchSlots, BoundReplyingSlots, BoundSlotsValue, DeclaredName,
-    HandledInput, IntoSource, RawBatchValue, RawValue, Reply, ReplyingBuilder, ReplyingSlotsValue,
-    ReplyingValue, SeekValue, SlotsBatchReply, SlotsHandler, SlotsReply, SlotsSliceHandler,
-    SlotsValue, SubscriberValue, To, batch, batch_in, batch_replying, batch_replying_in,
-    batch_replying_with_slots, batch_with_headers, batch_with_headers_in, batch_with_seek,
-    batch_with_slots, raw, raw_batch, raw_batch_in, raw_in, raw_replying, raw_replying_in,
-    raw_replying_with_slots, replying, replying_in, replying_with_slots, subscriber, subscriber_in,
-    with_seek, with_slots,
-};
-#[doc(hidden)]
-pub use value_def::{Docs, DocumentedValue};
