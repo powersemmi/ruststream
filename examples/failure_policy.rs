@@ -6,7 +6,7 @@
 //! ```
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -19,9 +19,9 @@ struct Order {
 /// No clause: the defaults apply. A panic in the body fails fast (a loud error, then a graceful
 /// shutdown so an orchestrator restarts the service); a payload that cannot decode is dropped.
 #[subscriber("orders")]
-async fn process(order: &Order) -> HandlerResult {
+async fn process(order: &Order) -> HandlerOutcome {
     println!("processing order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:defaults]
 
@@ -29,9 +29,9 @@ async fn process(order: &Order) -> HandlerResult {
 /// An untrusted topic: a handler bug should still take the service down (fail fast), but a
 /// malformed message must not, so decode failures requeue instead of dropping or failing.
 #[subscriber("ingest", on_failure(panic = fail_fast, decode = retry))]
-async fn ingest(order: &Order) -> HandlerResult {
+async fn ingest(order: &Order) -> HandlerOutcome {
     println!("ingesting order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:tuned]
 
@@ -39,9 +39,9 @@ async fn ingest(order: &Order) -> HandlerResult {
 /// A poison-tolerant consumer: move past anything that cannot be processed. A panic acks the
 /// offending message and keeps consuming; a decode failure does the same.
 #[subscriber("audit", on_failure(panic = skip, decode = skip))]
-async fn audit(order: &Order) -> HandlerResult {
+async fn audit(order: &Order) -> HandlerOutcome {
     println!("auditing order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:skip]
 

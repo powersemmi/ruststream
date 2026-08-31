@@ -1,10 +1,10 @@
 //! The handler forms from the Subscribers guide, written without the `macros` feature.
 //!
-//! A handler is a named type with an `impl Handler` (an `impl SliceHandler` for a batch, an
-//! `impl RawSliceHandler` for a raw one). The value constructors - `subscriber`, `batch`,
-//! `raw_batch` - bind it to its subscription source, and the result mounts with `include`,
-//! chaining the declarative settings (`.name`, `.workers`, `.on_failure`, `.buffered`) the
-//! attribute would otherwise fix.
+//! A handler is a named type with an `impl Handle`, and the input spelling picks the form: `&T`
+//! for one decoded message, `&[T]` for a page, `&[Payload<'_>]` for a page of raw payloads. The
+//! one constructor - `subscriber` - binds the body to its subscription source, the declarative
+//! settings (`.name`, `.workers`, `.on_failure`, `.buffered`) chain on the result, `.build()`
+//! seals it, and `include` mounts it.
 //!
 //! ```text
 //! cargo run --example manual_subscribers --no-default-features --features memory,json
@@ -18,22 +18,26 @@ use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::prelude::*;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
 // --8<-- [start:contract]
-/// The handler contract without the attribute: a named type whose `impl Handler<Order>` carries
-/// the body. The method returns `Settle`, so the outcome converts with `.into()`.
-struct Handle;
+/// The handler contract without the attribute: a named type whose `impl Handle<Order>` carries
+/// the body. The axes it does not use - the reply, the injections, the broker context, the
+/// application state - stay at their defaults, so the impl names only the input.
+struct Receive;
 
-impl Handler<Order> for Handle {
-    // A body with nothing to await returns the future directly; a body that awaits writes
-    // `async fn handle` instead, the shape the attribute generates.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Receive {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:contract]
@@ -42,29 +46,35 @@ impl Handler<Order> for Handle {
 /// The context is a parameter of the trait method, so it is always in reach: nothing declares it.
 struct WithContext;
 
-impl Handler<Order> for WithContext {
-    fn handle(&self, order: &Order, ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for WithContext {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         if let Some(id) = ctx.headers().correlation_id() {
             println!("order {} correlates to {id}", order.id);
         }
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:context]
 
 // --8<-- [start:batch]
-/// Settles a whole page of orders in one go: `SliceHandler` is the batch counterpart of `Handler`,
-/// and one `BatchResult::Uniform` settles every delivery behind the slice.
+/// Settles a whole page of orders in one go: the slice input is what says so, and a single
+/// outcome settles every delivery behind the page.
 struct SettlePage;
 
-impl SliceHandler<Order> for SettlePage {
-    fn handle_slice(
+impl Handle<[Order]> for SettlePage {
+    fn handle(
         &self,
         orders: &[Order],
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = BatchResult> + Send {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         println!("settling {} orders", orders.len());
-        ready(BatchResult::Uniform(HandlerResult::ack()))
+        ready(Ok(()))
     }
 }
 // --8<-- [end:batch]
@@ -74,52 +84,52 @@ impl SliceHandler<Order> for SettlePage {
 /// element, in the order the slice was handed over.
 struct Reconcile;
 
-impl SliceHandler<Order> for Reconcile {
-    fn handle_slice(
+impl Handle<[Order]> for Reconcile {
+    fn handle(
         &self,
         orders: &[Order],
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = BatchResult> + Send {
-        ready(BatchResult::PerElement(
-            orders
-                .iter()
-                .map(|order| {
-                    if order.id == 0 {
-                        HandlerResult::retry().into()
-                    } else {
-                        HandlerResult::ack().into()
-                    }
-                })
-                .collect(),
-        ))
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+        ready(Err(orders
+            .iter()
+            .map(|order| {
+                if order.id == 0 {
+                    HandlerOutcome::retry()
+                } else {
+                    HandlerOutcome::ack()
+                }
+            })
+            .collect()))
     }
 }
 // --8<-- [end:batch_selective]
 
 // --8<-- [start:batch_mount]
-/// Batches dispatch per page rather than per delivery, so the constructor is `batch`: it demands
-/// a batching subscriber of the source, exactly as a `batch(..)` attribute would.
+/// Batches dispatch per page rather than per delivery, and the page input is the whole
+/// declaration: the mount demands a batching subscriber of the source, exactly as a `batch(..)`
+/// attribute would.
 fn batch_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
-        .include(batch("orders", SettlePage))
-        .include(batch("orders", Reconcile))
+        .include(subscriber("orders", SettlePage).build())
+        .include(subscriber("orders", Reconcile).build())
 }
 // --8<-- [end:batch_mount]
 
 // --8<-- [start:raw_batch]
-/// A batch of payloads: the batch shape without the decode step. `RawSliceHandler` borrows the
-/// payloads straight out of the deliveries, so no codec takes part anywhere on this path; the
-/// `raw_batch` constructor mounts it as-is.
+/// A batch of payloads: the batch shape without the decode step. `Payload` borrows the bytes
+/// straight out of the delivery, so no codec takes part anywhere on this path.
 struct Ingest;
 
-impl RawSliceHandler for Ingest {
-    fn handle_slice(
+impl<'p> Handle<[Payload<'p>]> for Ingest {
+    fn handle(
         &self,
-        frames: &[&[u8]],
+        frames: &[Payload<'p>],
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = BatchResult> + Send {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         println!("ingesting {} frames", frames.len());
-        ready(BatchResult::Uniform(HandlerResult::ack()))
+        ready(Ok(()))
     }
 }
 // --8<-- [end:raw_batch]
@@ -129,15 +139,21 @@ impl RawSliceHandler for Ingest {
 /// the registration, so it is chained where the handler is mounted.
 struct FanOut;
 
-impl Handler<Order> for FanOut {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for FanOut {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("processing order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 fn fan_out_routes() -> impl RouterDef<MemoryBroker> {
-    Router::<MemoryBroker>::new().include(subscriber("orders", FanOut).workers(nonzero!(16)))
+    Router::<MemoryBroker>::new()
+        .include(subscriber("orders", FanOut).workers(nonzero!(16)).build())
 }
 // --8<-- [end:workers]
 
@@ -146,16 +162,24 @@ fn fan_out_routes() -> impl RouterDef<MemoryBroker> {
 /// pool, filled with the keyed policy instead.
 struct PerCustomer;
 
-impl Handler<Order> for PerCustomer {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for PerCustomer {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("processing order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 fn per_customer_routes() -> impl RouterDef<MemoryBroker> {
-    Router::<MemoryBroker>::new()
-        .include(subscriber("orders", PerCustomer).workers_by_key(nonzero!(16)))
+    Router::<MemoryBroker>::new().include(
+        subscriber("orders", PerCustomer)
+            .workers_by_key(nonzero!(16))
+            .build(),
+    )
 }
 // --8<-- [end:workers_by_key]
 
@@ -165,10 +189,15 @@ fn per_customer_routes() -> impl RouterDef<MemoryBroker> {
 /// `.name(..)` does not compile. Naming it is what builds the source.
 struct Audit;
 
-impl Handler<Order> for Audit {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Audit {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("auditing order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:deferred_name]
@@ -178,10 +207,15 @@ impl Handler<Order> for Audit {
 /// builds the broker's own source instead of the generic one.
 struct Archive;
 
-impl Handler<Order> for Archive {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Archive {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("archiving order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
@@ -189,49 +223,68 @@ impl Handler<Order> for Archive {
 /// this handler's subscription buffers client-side.
 struct Drain;
 
-impl SliceHandler<Order> for Drain {
-    fn handle_slice(
+impl Handle<[Order]> for Drain {
+    fn handle(
         &self,
         orders: &[Order],
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = BatchResult> + Send {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         println!("draining {} orders", orders.len());
-        ready(BatchResult::Uniform(HandlerResult::ack()))
+        ready(Ok(()))
     }
 }
 
 /// A handler whose declarative settings are all named at the mount site.
 struct Bill;
 
-impl Handler<Order> for Bill {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Bill {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("billing order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 fn app() -> RustStream {
     let shard = 7;
     RustStream::new(AppInfo::new("subscribers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Handle));
-        b.include(subscriber("orders", WithContext));
+        b.include(subscriber("orders", Receive).build());
+        b.include(subscriber("orders", WithContext).build());
         // --8<-- [start:name_mount]
-        b.include(subscriber(Unnamed::<Name>::new(), Audit).name(format!("audit-{shard}")));
+        b.include(
+            subscriber(Unnamed::<Name>::new(), Audit)
+                .name(format!("audit-{shard}"))
+                .build(),
+        );
         // --8<-- [end:name_mount]
         // --8<-- [start:named_kind]
-        b.include(subscriber(Unnamed::<MemorySource>::new(), Archive).name("archive"));
+        b.include(
+            subscriber(Unnamed::<MemorySource>::new(), Archive)
+                .name("archive")
+                .build(),
+        );
         // --8<-- [end:named_kind]
-        b.include(raw_batch("frames", Ingest));
+        b.include(subscriber("frames", Ingest).build());
         // --8<-- [start:batch_buffered]
         // Client-side batching for subscriptions without native batches: close a batch at 128
         // deliveries, or 20 ms after its first one.
-        b.include(batch("orders", Drain).buffered(nonzero!(128), Duration::from_millis(20)));
+        b.include(
+            subscriber("orders", Drain)
+                .buffered(nonzero!(128), Duration::from_millis(20))
+                .build(),
+        );
         // --8<-- [end:batch_buffered]
         // --8<-- [start:builder_settings]
         b.include(
             subscriber("orders", Bill)
                 .workers(nonzero!(4))
-                .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
+                .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip))
+                .build(),
         );
         // --8<-- [end:builder_settings]
         b.include_router(fan_out_routes());

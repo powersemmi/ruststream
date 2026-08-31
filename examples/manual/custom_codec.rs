@@ -79,7 +79,7 @@ enum EnvelopeError {
 }
 // --8<-- [end:codec]
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -90,24 +90,32 @@ struct Receipt {
 }
 
 /// The definition value `#[subscriber("orders")]` would have minted.
-struct Handle;
+struct Receive;
 
-impl Handler<Order> for Handle {
-    // A body with nothing to await returns the future directly: `async fn` here would be an
-    // unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Receive {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 /// A second handler, mounted on a differently framed subscription.
 struct Audit;
 
-impl Handler<Order> for Audit {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Audit {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("audited order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
@@ -121,10 +129,15 @@ struct Bill {
     codec: Envelope<JsonCodec>,
 }
 
-impl Handler<Order> for Bill {
-    async fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> Settle {
+impl Handle<Order> for Bill {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
         let Ok(payload) = self.codec.encode(&Receipt { id: order.id }) else {
-            return HandlerResult::drop().into();
+            return Err(HandlerOutcome::drop());
         };
         if self
             .receipts
@@ -134,9 +147,9 @@ impl Handler<Order> for Bill {
             .await
             .is_err()
         {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::ack().into()
+        Ok(())
     }
 }
 
@@ -146,8 +159,16 @@ fn app() -> RustStream {
     RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
         // per subscription: the codec is a step on the definition, so two handlers on one broker
         // frame their payloads differently without a scope or a router to separate them
-        b.include(subscriber("orders", Handle).codec(Envelope::new(JsonCodec)));
-        b.include(subscriber("audit", Audit).codec(Envelope::new(CborCodec)));
+        b.include(
+            subscriber("orders", Receive)
+                .codec(Envelope::new(JsonCodec))
+                .build(),
+        );
+        b.include(
+            subscriber("audit", Audit)
+                .codec(Envelope::new(CborCodec))
+                .build(),
+        );
         // per publisher: the reply leaves under the envelope, the request still arrives under the
         // subscription's own codec. The in-memory broker hands out a live publisher synchronously;
         // a networked broker resolves one at startup instead, and the handler reads it off the
@@ -161,7 +182,8 @@ fn app() -> RustStream {
                     codec: Envelope::new(JsonCodec),
                 },
             )
-            .codec(Envelope::new(JsonCodec)),
+            .codec(Envelope::new(JsonCodec))
+            .build(),
         );
     })
     // --8<-- [end:mount]

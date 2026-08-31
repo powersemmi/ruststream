@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, Identity, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Identity, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -51,12 +51,12 @@ impl Database {
 // The handler names the app's state type as the third `Context` generic; `ctx.state()` then borrows
 // the typed `Database` directly, with no lookup or downcast.
 #[subscriber("orders")]
-async fn handle(order: &Order, ctx: &mut Context<'_, (), Database>) -> HandlerResult {
+async fn handle(order: &Order, ctx: &mut Context<'_, (), Database>) -> HandlerOutcome {
     let db = ctx.state();
     if db.insert_order(order.id).await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

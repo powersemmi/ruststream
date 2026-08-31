@@ -13,7 +13,7 @@ use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -24,17 +24,20 @@ struct Order {
 /// dropped.
 struct Process;
 
-impl Handler<Order> for Process {
-    // A body with nothing to await returns the future directly: `async fn` here would be an
-    // unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Process {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("processing order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 fn process_routes() -> impl RouterDef<MemoryBroker> {
-    Router::<MemoryBroker>::new().include(subscriber("orders", Process))
+    Router::<MemoryBroker>::new().include(subscriber("orders", Process).build())
 }
 // --8<-- [end:defaults]
 
@@ -43,20 +46,27 @@ fn process_routes() -> impl RouterDef<MemoryBroker> {
 /// malformed message must not, so decode failures requeue instead of dropping or failing.
 struct Ingest;
 
-impl Handler<Order> for Ingest {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Ingest {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("ingesting order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 fn ingest_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new().include(
-        subscriber("ingest", Ingest).on_failure(
-            FailurePolicies::default()
-                .with_panic(FailurePolicy::FailFast)
-                .with_decode(FailurePolicy::Retry),
-        ),
+        subscriber("ingest", Ingest)
+            .on_failure(
+                FailurePolicies::default()
+                    .with_panic(FailurePolicy::FailFast)
+                    .with_decode(FailurePolicy::Retry),
+            )
+            .build(),
     )
 }
 // --8<-- [end:tuned]
@@ -66,20 +76,27 @@ fn ingest_routes() -> impl RouterDef<MemoryBroker> {
 /// offending message and keeps consuming; a decode failure does the same.
 struct Audit;
 
-impl Handler<Order> for Audit {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Audit {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("auditing order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 fn audit_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new().include(
-        subscriber("audit", Audit).on_failure(
-            FailurePolicies::default()
-                .with_panic(FailurePolicy::Skip)
-                .with_decode(FailurePolicy::Skip),
-        ),
+        subscriber("audit", Audit)
+            .on_failure(
+                FailurePolicies::default()
+                    .with_panic(FailurePolicy::Skip)
+                    .with_decode(FailurePolicy::Skip),
+            )
+            .build(),
     )
 }
 // --8<-- [end:skip]

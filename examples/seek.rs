@@ -11,7 +11,7 @@ use std::error::Error;
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, Seek};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, Seek};
 use ruststream::{Seeker, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -25,9 +25,9 @@ struct Job {
 /// The audit trail: its subscription opens at the start of the log, so entries published
 /// before the service started are replayed into it.
 #[subscriber("audit", start_at(MemoryPosition::start()))]
-async fn record(entry: &Job) -> HandlerResult {
+async fn record(entry: &Job) -> HandlerOutcome {
     println!("audit: entry {}", entry.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:start_at]
 
@@ -35,16 +35,16 @@ async fn record(entry: &Job) -> HandlerResult {
 /// Skips forward when the producer marks a poison region: everything queued before the
 /// resume point is dropped without touching the subscription itself.
 #[subscriber(MemorySource::new("jobs"))]
-async fn work(job: &Job, Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+async fn work(job: &Job, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
     if job.id == 999 {
         // The poison marker carries the resume point: skip to the fourth log entry.
         if seeker.seek(MemoryPosition::sequence(3)).await.is_err() {
-            return HandlerResult::retry();
+            return HandlerOutcome::retry();
         }
-        return HandlerResult::Ack;
+        return HandlerOutcome::ack();
     }
     println!("jobs: processed {}", job.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

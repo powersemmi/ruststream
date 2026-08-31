@@ -9,7 +9,7 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Headers, Out, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Out, RustStream};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
@@ -67,7 +67,7 @@ async fn convert(
     chunk: &[u8],
     Headers(meta): Headers<ChunkMeta>,
     Out(events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let percent = u8::try_from(meta.chunk_no * 100 / meta.chunks_total.max(1)).unwrap_or(100);
     if events
         .message(&Progress { percent })
@@ -75,7 +75,7 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
 
     let done = ChunkDone {
@@ -92,9 +92,9 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 
@@ -129,14 +129,14 @@ async fn status(req: &StatusRequest) -> StatusReply {
 // contract is settled by the decode policy instead of reaching the handler.
 // --8<-- [start:batch]
 #[subscriber(batch("chunks.bulk"))]
-async fn bulk(reports: &[Progress], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerResult {
+async fn bulk(reports: &[Progress], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
     for (report, meta) in reports.iter().zip(&meta) {
         println!(
             "task {}: chunk {} of {} at {}%",
             meta.task_id, meta.chunk_no, meta.chunks_total, report.percent,
         );
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:batch]
 
@@ -146,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(convert).out(Events, MemoryPublish).mount();
+            b.include(convert).out(Events, MemoryPublish).build();
             b.include(status);
             b.include(bulk);
         },

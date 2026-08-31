@@ -9,7 +9,7 @@
 //! - [`routes`] - wires the handlers into two routers, each carrying the metrics consume layer.
 //!
 //! It exercises the runtime end to end: shared state opened in a startup hook and closed on
-//! shutdown, retries (`HandlerResult::retry` / `retry_after`), keyed worker lanes, a transactional
+//! shutdown, retries (`HandlerOutcome::retry` / `retry_after`), keyed worker lanes, a transactional
 //! batch publisher, app-scope middleware, and Prometheus metrics on both the consume and publish
 //! sides. `#[ruststream::app]` generates `main`, giving the service a CLI:
 //!

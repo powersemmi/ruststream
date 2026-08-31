@@ -1,9 +1,9 @@
 //! The publishing forms from the Publishing guide, written without the `macros` feature. The
 //! attribute and the derives are sugar over public value constructors and traits, so every
 //! declaration they mint is written out here: the reply bodies, the slot markers and their
-//! dictionaries, and what a message type says about being sent. The mount site then reads
-//! exactly as it does with the attribute - `include`, `.publisher(..)`, `.out(marker, ..)`,
-//! `.mount()`.
+//! dictionaries, and what a message type says about being sent. Everything a body does is an axis
+//! of its own `impl Handle`, and the mount site then reads exactly as it does with the attribute -
+//! `include`, `.publisher(..)`, `.out(marker, ..)`, `.build()`.
 //!
 //! ```text
 //! cargo run --example manual_publishing --no-default-features --features memory,json
@@ -31,18 +31,18 @@ use ruststream::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Request {
     id: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Response {
     ok: bool,
 }
 
 /// An event this service sends wherever the call site says.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Event {
     id: u64,
 }
@@ -64,21 +64,18 @@ impl<M: OutSlot> OutMessages<M> for Event {
 }
 
 // --8<-- [start:reply]
-// A `publish(..)` handler is a body producing a reply: `impl Reply` carries it, and the mount
-// site names the subscription, the destination and the publisher the reply leaves through. The
-// impl stays generic over the state, so it mounts on an app with any state type.
+// A `publish(..)` handler is a body producing a reply: the reply type is the second axis of
+// `Handle`, and the chain names the subscription, the destination and the publisher the reply
+// leaves through.
 struct Respond;
 
-impl Reply<Request> for Respond {
-    type Out = Response;
-
-    // The body awaits nothing, so it is a future-returning method rather than an `async fn`: a
-    // body that awaits writes `async fn reply` instead.
-    fn reply(
+impl Handle<Request, Response> for Respond {
+    fn handle(
         &self,
         req: &Request,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Response, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<Response, HandlerOutcome>> {
         println!("responding to request {}", req.id);
         ready(Ok(Response { ok: true }))
     }
@@ -87,22 +84,20 @@ impl Reply<Request> for Respond {
 
 // --8<-- [start:reply_result]
 // `Ok` publishes the reply and acks; `Err` publishes nothing and the dispatcher acts on the
-// returned HandlerResult (here: drop the malformed request instead of replying).
+// returned HandlerOutcome (here: drop the malformed request instead of replying).
 struct Validate;
 
-impl Reply<Request> for Validate {
-    type Out = Response;
-
-    fn reply(
+impl Handle<Request, Response> for Validate {
+    fn handle(
         &self,
         req: &Request,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Response, HandlerResult>> + Send {
-        ready(if req.id == 0 {
-            Err(HandlerResult::drop())
-        } else {
-            Ok(Response { ok: true })
-        })
+    ) -> impl Future<Output = Result<Response, HandlerOutcome>> {
+        if req.id == 0 {
+            return ready(Err(HandlerOutcome::drop()));
+        }
+        ready(Ok(Response { ok: true }))
     }
 }
 // --8<-- [end:reply_result]
@@ -116,23 +111,27 @@ impl Reply<Request> for Validate {
 // unchanged. `Event` declares no destination of its own, so the call site names one.
 struct Forward;
 
-impl<P, E, S> SlotsHandler<Event, (Out<P, DefaultSlot, (), E>,), (), S> for Forward
+impl<P, Enc> Handle<Event, (), Outs<(Slot<DefaultSlot, P, Enc>,)>> for Forward
 where
-    P: Publisher,
-    E: ruststream::codec::Codec + Send + Sync,
-    S: Send + Sync,
+    Slot<DefaultSlot, P, Enc>: Publish,
 {
     async fn handle(
         &self,
         event: &Event,
-        slots: &(Out<P, DefaultSlot, (), E>,),
-        _ctx: &mut Context<'_, (), S>,
-    ) -> Settle {
-        let Out(out) = &slots.0;
-        if out.message(event).to("egress").publish().await.is_err() {
-            return HandlerResult::retry().into();
+        outs: &Outs<(Slot<DefaultSlot, P, Enc>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        if outs
+            .get(DefaultSlot)
+            .message(event)
+            .to("egress")
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
 // --8<-- [end:forward]
@@ -167,71 +166,65 @@ impl PublishedThrough<Shadow> for Event {}
 
 struct Mirror;
 
-impl<P1, P2, E, S> SlotsHandler<Event, (Out<P1, Primary, (), E>, Out<P2, Shadow, (), E>), (), S>
+impl<PA, EncA, PB, EncB> Handle<Event, (), Outs<(Slot<Primary, PA, EncA>, Slot<Shadow, PB, EncB>)>>
     for Mirror
 where
-    P1: Publisher,
-    P2: Publisher,
-    E: ruststream::codec::Codec + Send + Sync,
-    S: Send + Sync,
+    Slot<Primary, PA, EncA>: Publish,
+    Slot<Shadow, PB, EncB>: Publish,
 {
     async fn handle(
         &self,
         event: &Event,
-        slots: &(Out<P1, Primary, (), E>, Out<P2, Shadow, (), E>),
-        _ctx: &mut Context<'_, (), S>,
-    ) -> Settle {
-        let Out(primary) = &slots.0;
-        let Out(shadow) = &slots.1;
-        if primary
+        outs: &Outs<(Slot<Primary, PA, EncA>, Slot<Shadow, PB, EncB>)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        if outs
+            .get(Primary)
             .message(event)
             .to("mirror-primary")
             .publish()
             .await
             .is_err()
-            || shadow
+            || outs
+                .get(Shadow)
                 .message(event)
                 .to("mirror-shadow")
                 .publish()
                 .await
                 .is_err()
         {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
 // --8<-- [end:slots]
 
 // --8<-- [start:publish_out]
-// A reply and an injected publisher in one body: the reply answers on the mount site's
-// destination while an audit copy fans out through the slot. `SlotsReply` is `Reply` with the
-// slot tuple in the middle, and the mount site fills both axes.
+// A reply and an injected publisher in one body: the reply answers on the chain's destination
+// while an audit copy fans out through the slot. Both are axes of the one trait - the reply type
+// and the arena - and the mount site fills both.
 struct Gateway;
 
-impl<P, E, S> SlotsReply<Request, (Out<P, DefaultSlot, (), E>,), (), S> for Gateway
+impl<P, Enc> Handle<Request, Response, Outs<(Slot<DefaultSlot, P, Enc>,)>> for Gateway
 where
-    P: Publisher,
-    E: ruststream::codec::Codec + Send + Sync,
-    S: Send + Sync,
+    Slot<DefaultSlot, P, Enc>: Publish,
 {
-    type Out = Response;
-
-    async fn reply(
+    async fn handle(
         &self,
         req: &Request,
-        slots: &(Out<P, DefaultSlot, (), E>,),
-        _ctx: &mut Context<'_, (), S>,
-    ) -> Result<Response, HandlerResult> {
-        let Out(audit) = &slots.0;
-        if audit
+        outs: &Outs<(Slot<DefaultSlot, P, Enc>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<Response, HandlerOutcome> {
+        if outs
+            .get(DefaultSlot)
             .message(&Event { id: req.id })
             .to("gateway-audit")
             .publish()
             .await
             .is_err()
         {
-            return Err(HandlerResult::retry());
+            return Err(HandlerOutcome::retry());
         }
         Ok(Response { ok: true })
     }
@@ -361,19 +354,17 @@ impl PublishedThrough<Orders> for OrderPlaced {}
 
 struct Route;
 
-impl<P, E, S> SlotsHandler<Event, (Out<P, Orders, (), E>,), (), S> for Route
+impl<P, Enc> Handle<Event, (), Outs<(Slot<Orders, P, Enc>,)>> for Route
 where
-    P: Publisher,
-    E: ruststream::codec::Codec + Send + Sync,
-    S: Send + Sync,
+    Slot<Orders, P, Enc>: Publish,
 {
     async fn handle(
         &self,
         event: &Event,
-        slots: &(Out<P, Orders, (), E>,),
-        _ctx: &mut Context<'_, (), S>,
-    ) -> Settle {
-        let Out(orders) = &slots.0;
+        outs: &Outs<(Slot<Orders, P, Enc>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        let orders = outs.get(Orders);
         // Bound to one name: the destination is already resolved.
         if orders
             .message(&OrderConfirmed { id: event.id })
@@ -381,7 +372,7 @@ where
             .await
             .is_err()
         {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
         // Bound to a space of names: one setter per placeholder, and no publish until the last one
         // is bound.
@@ -393,9 +384,9 @@ where
             .await
             .is_err()
         {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
 // --8<-- [end:declared]
@@ -429,25 +420,24 @@ impl PublishLayer for AuditPublish {
 // --8<-- [end:app_layer]
 
 // --8<-- [start:batch_publishing]
-/// Confirms a whole page of orders; the replies become visible atomically on commit. `BatchReply`
-/// is `Reply` over a page: one `Vec` of replies per batch, each published to the destination the
-/// mount site names, and an `Err` settles the whole page without publishing anything.
+/// Confirms a whole page of orders; the replies become visible atomically on commit. The page
+/// input and the reply type are two axes of the one trait: one `Vec` of replies per batch, each
+/// published to the destination the chain names, and an `Err` settles the page element-wise
+/// (one outcome per element) without publishing anything.
 struct Confirm;
 
-impl BatchReply<Event> for Confirm {
-    type Out = Event;
-
-    fn reply(
+impl Handle<[Event], Vec<Event>> for Confirm {
+    fn handle(
         &self,
         orders: &[Event],
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Vec<Event>, HandlerResult>> + Send {
-        ready(if orders.is_empty() {
-            // nothing published, whole batch settled
-            Err(HandlerResult::drop())
-        } else {
-            Ok(orders.iter().map(|o| Event { id: o.id }).collect())
-        })
+    ) -> impl Future<Output = Result<Vec<Event>, Vec<HandlerOutcome>>> {
+        if orders.iter().any(|o| o.id == 0) {
+            // nothing published, every element of the page settled on its own
+            return ready(Err(orders.iter().map(|_| HandlerOutcome::drop()).collect()));
+        }
+        ready(Ok(orders.iter().map(|o| Event { id: o.id }).collect()))
     }
 }
 // --8<-- [end:batch_publishing]
@@ -498,51 +488,61 @@ fn app() -> impl App {
             // --8<-- [start:reply_mount]
             // static, per-publisher: a policy stack, composed at compile time and paired with
             // the connected broker at startup
-            b.include(replying("requests", Respond).to("responses"))
-                .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform));
+            b.include(
+                subscriber("requests", Respond)
+                    .reply()
+                    .on("responses")
+                    .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform))
+                    .build(),
+            );
             // the default reply wiring: the broker's default policy under the default codec
-            b.include(replying("validated-requests", Validate).to("responses"));
+            b.include(
+                subscriber("validated-requests", Validate)
+                    .reply()
+                    .on("responses")
+                    .build(),
+            );
             // --8<-- [end:reply_mount]
             // --8<-- [start:forward_mount]
-            b.include(with_slots::<Event, (DefaultSlot,), _, _>(
-                "ingress", Forward,
-            ))
-            .publisher(MemoryPublish);
+            b.include(subscriber("ingress", Forward).build())
+                .publisher(MemoryPublish);
             // --8<-- [end:forward_mount]
             // --8<-- [start:slots_mount]
             // each named slot binds by marker; the call order does not matter
-            b.include(with_slots::<Event, (Primary, Shadow), _, _>(
-                "mirror", Mirror,
-            ))
-            .out(Shadow, MemoryPublish)
-            .out(Primary, MemoryPublish)
-            .mount();
+            b.include(subscriber("mirror", Mirror).build())
+                .out(Shadow, MemoryPublish)
+                .out(Primary, MemoryPublish)
+                .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
             // the reply keeps .publisher(..) (or its default); the Out slot attaches
             // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
             b.include(
-                replying_with_slots::<Request, (DefaultSlot,), _, _>("gateway-requests", Gateway)
-                    .to("gateway-responses"),
+                subscriber("gateway-requests", Gateway)
+                    .reply()
+                    .on("gateway-responses")
+                    .build(),
             )
             .out(DefaultSlot, MemoryPublish)
-            .mount();
+            .build();
             // --8<-- [end:publish_out_mount]
             // --8<-- [start:declared_mount]
             // the slot lists what it may publish; where each message goes is its own declaration
-            b.include(with_slots::<Event, (Orders,), _, _>(
-                "orders.incoming",
-                Route,
-            ))
-            .out(Orders, MemoryPublish)
-            .mount();
+            b.include(subscriber("orders.incoming", Route).build())
+                .out(Orders, MemoryPublish)
+                .build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes
             // independently.
-            b.include(batch_replying("orders", Confirm).to("confirmations"))
-                .publisher(TypedPublisher::new(MemoryPublish).transactional());
+            b.include(
+                subscriber("orders", Confirm)
+                    .reply()
+                    .on("confirmations")
+                    .publisher(TypedPublisher::new(MemoryPublish).transactional())
+                    .build(),
+            );
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

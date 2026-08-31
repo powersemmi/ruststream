@@ -13,12 +13,12 @@ use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Shipment {
     order_id: u64,
 }
@@ -26,36 +26,40 @@ struct Shipment {
 /// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
 struct Accept;
 
-impl Handler<Order> for Accept {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Accept {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("accepted order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 /// The definition value: `#[subscriber("shipments")]` generates this struct and this impl.
 struct Dispatch;
 
-impl Handler<Shipment> for Dispatch {
+impl Handle<Shipment> for Dispatch {
     fn handle(
         &self,
         shipment: &Shipment,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("dispatched shipment for order {}", shipment.order_id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 // --8<-- [start:builders]
 fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    Router::new().include(subscriber("orders", Accept))
+    Router::new().include(subscriber("orders", Accept).build())
 }
 
 fn shipping() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    Router::new().include(subscriber("shipments", Dispatch))
+    Router::new().include(subscriber("shipments", Dispatch).build())
 }
 // --8<-- [end:builders]
 

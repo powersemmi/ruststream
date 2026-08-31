@@ -3,15 +3,30 @@
 //! The attribute expands the builder below into a binary that understands `run` (the default) and
 //! `asyncapi gen`. Try it with `cargo run --example macro_app --features macros,memory -- run`.
 
+use std::future::{Future, ready};
+
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
+
+/// A raw-payload body: `Payload` borrows the delivery's bytes, so this service needs no codec
+/// feature at all.
+struct Ingest;
+
+impl<'p> Handle<Payload<'p>> for Ingest {
+    fn handle(
+        &self,
+        payload: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        let _ = payload.len();
+        ready(Ok(()))
+    }
+}
 
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        // `raw` skips the decode step, so this service needs no codec feature at all.
-        b.include(raw("orders", |_payload: &[u8], _ctx: &mut Context| async {
-            HandlerResult::Ack
-        }));
+        b.include(subscriber("orders", Ingest).build());
     })
 }

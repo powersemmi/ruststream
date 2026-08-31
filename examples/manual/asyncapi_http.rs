@@ -1,7 +1,6 @@
 //! The AsyncAPI example written without the `macros` feature: the payload keeps its `JsonSchema`
-//! derive (schemars' own, so no macro feature is involved) and the subscriber opts into the
-//! document with `documented`, so the generated document carries the same schema, name and
-//! description.
+//! derive (schemars' own, so no macro feature is involved) and the registration is documented by
+//! default, so the generated document carries the same schema, name and description.
 //!
 //! ```text
 //! cargo run --example manual_asyncapi_http --no-default-features --features memory,asyncapi
@@ -21,9 +20,7 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerResult, RustStream, Settle, subscriber,
-};
+use ruststream::runtime::{AppInfo, Context, Handle, HandlerOutcome, RustStream, subscriber};
 use ruststream::schemars::JsonSchema;
 use ruststream::{SecurityScheme, ServerSpec};
 use serde::Deserialize;
@@ -36,18 +33,21 @@ struct Order {
     item: String,
 }
 
-/// The handler `#[subscriber("orders")]` would generate. Schemas are the one thing the attribute
-/// captures on its own, by probing the input type; a value definition opts in with `documented`
-/// at the mount site below. The component's name and description follow from there: schemars
-/// carries the type's own doc comment into the schema, and the type name names the component.
-struct Handle;
+/// The handler `#[subscriber("orders")]` would generate. A value definition is documented by
+/// default, so the schema is captured at the mount below with nothing to ask for (the exit is
+/// `.undocumented()`). The component's name and description follow from there: schemars carries
+/// the type's own doc comment into the schema, and the type name names the component.
+struct Receive;
 
-impl Handler<Order> for Handle {
-    // A body with nothing to await returns the future directly; `async fn` here would be an
-    // unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Receive {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("order {} ({})", order.id, order.item);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:payload]
@@ -71,7 +71,7 @@ fn service() -> RustStream {
         )
         // --8<-- [end:security]
         .with_broker_labeled("in-process", MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Handle).documented());
+            b.include(subscriber("orders", Receive).build());
         })
 }
 // --8<-- [end:server]

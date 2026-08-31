@@ -12,7 +12,7 @@
 use std::time::Instant;
 
 use ruststream::runtime::{
-    BlanketLayer, Context, Handler, Layer, Outgoing, PublishTransform, Settle,
+    BlanketLayer, Context, Handler, HandlerOutcome, Layer, Outgoing, PublishTransform,
 };
 
 /// The layer value added with `RustStream::layer`.
@@ -44,12 +44,12 @@ impl BlanketLayer for Observe {
 impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S>
     for Observed<H>
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         let channel = ctx.name().to_owned();
         let started = Instant::now();
-        let settle = self.0.handle(msg, ctx).await;
+        let outcome = self.0.handle(msg, ctx).await;
         tracing::info!(channel = %channel, elapsed = ?started.elapsed(), "handled");
-        settle
+        outcome
     }
 }
 

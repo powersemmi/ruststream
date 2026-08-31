@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerResult, Identity, Layer, RustStream, Settle, Stack,
+    AppInfo, Context, Handler, HandlerOutcome, Identity, Layer, RustStream, Stack,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -30,7 +30,7 @@ struct AppConfig {
 
 // --8<-- [start:handler]
 #[subscriber("orders")]
-async fn handle(order: &Order, ctx: &mut Context<'_, (), AppConfig>) -> HandlerResult {
+async fn handle(order: &Order, ctx: &mut Context<'_, (), AppConfig>) -> HandlerOutcome {
     // 1. The channel the message arrived on.
     println!("received on {}", ctx.name());
 
@@ -42,7 +42,7 @@ async fn handle(order: &Order, ctx: &mut Context<'_, (), AppConfig>) -> HandlerR
     // 3. The typed app-level shared state, borrowed through state().
     let config = ctx.state();
     if config.reject_zero_ids && order.id == 0 {
-        return HandlerResult::drop();
+        return HandlerOutcome::drop();
     }
 
     // 4. A post-settle hook: fires after the broker has acked this message, off the delivery
@@ -53,7 +53,7 @@ async fn handle(order: &Order, ctx: &mut Context<'_, (), AppConfig>) -> HandlerR
         println!("order {id} acked; sending the confirmation");
     });
 
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 
@@ -78,7 +78,7 @@ static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S>
     for WithRequestId<H>
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         if ctx.headers().get("x-request-id").is_none() {
             let id = format!("req-{}", NEXT_REQUEST.fetch_add(1, Ordering::Relaxed));
             ctx.headers_mut().insert("x-request-id", id.into_bytes());

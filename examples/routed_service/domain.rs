@@ -2,8 +2,8 @@
 //! repository shared across handlers.
 //!
 //! Every payload derives [`JsonSchema`](ruststream::schemars::JsonSchema) so it contributes a
-//! schema to the AsyncAPI document, and [`Message`](ruststream::MessageInfo) so the document names the
-//! component after the type and uses its doc comment as the description. The [`Repository`] is a
+//! schema to the AsyncAPI document, and [`MessageInfo`] so the document names the component after
+//! the type and uses its doc comment as the description. The [`Repository`] is a
 //! fake for any real async resource (a connection pool, an HTTP client); it is opened once in the
 //! startup hook and shared with every handler through [`Context`](ruststream::runtime::Context).
 
@@ -17,7 +17,7 @@ use ruststream::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// An order placed by a customer, delivered on the `orders` channel.
-#[derive(Debug, Clone, Deserialize, JsonSchema, Message)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, MessageInfo)]
 pub(crate) struct Order {
     pub(crate) id: u64,
     pub(crate) customer: String,
@@ -26,7 +26,7 @@ pub(crate) struct Order {
 }
 
 /// A payment for an order, delivered on the `payments` channel and processed per customer.
-#[derive(Debug, Clone, Deserialize, JsonSchema, Message)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, MessageInfo)]
 pub(crate) struct Payment {
     pub(crate) order_id: u64,
     pub(crate) customer: String,
@@ -34,27 +34,27 @@ pub(crate) struct Payment {
 }
 
 /// A cleared payment ready to settle, delivered in batches on the `clearings` channel.
-#[derive(Debug, Clone, Deserialize, JsonSchema, Message)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, MessageInfo)]
 pub(crate) struct Clearing {
     pub(crate) order_id: u64,
     pub(crate) amount_cents: u64,
 }
 
 /// A request to cancel an order, delivered on the `cancellations` channel.
-#[derive(Debug, Clone, Deserialize, JsonSchema, Message)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, MessageInfo)]
 pub(crate) struct Cancellation {
     pub(crate) order_id: u64,
 }
 
 /// The reply published to `confirmations` for each accepted or rejected order.
-#[derive(Debug, Clone, Serialize, JsonSchema, Message)]
+#[derive(Debug, Clone, Serialize, JsonSchema, MessageInfo)]
 pub(crate) struct Confirmation {
     pub(crate) order_id: u64,
     pub(crate) accepted: bool,
 }
 
 /// The settlement published to `settlements` when a batch of clearings commits.
-#[derive(Debug, Clone, Serialize, JsonSchema, Message)]
+#[derive(Debug, Clone, Serialize, JsonSchema, MessageInfo)]
 pub(crate) struct Settlement {
     pub(crate) order_id: u64,
     pub(crate) amount_cents: u64,

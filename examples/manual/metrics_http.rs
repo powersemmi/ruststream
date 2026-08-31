@@ -1,6 +1,6 @@
 //! The Prometheus example written without the `macros` feature: the reply body is a named type
-//! with an `impl Reply`, bound to its subject and its destination by the `replying` constructor
-//! and given its reply publisher at the mount site.
+//! whose `impl Handle` names the reply type, bound to its subject by the `subscriber` constructor
+//! and given its destination and reply publisher on the same chain.
 //!
 //! ```text
 //! cargo run --example manual_metrics_http --no-default-features --features memory,metrics,json
@@ -26,17 +26,17 @@ use axum::routing::{get, post};
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{
-    AppInfo, Context, HandlerResult, PublishExt, Reply, RustStream, TypedPublisher, replying,
+    AppInfo, Context, Handle, HandlerOutcome, PublishExt, RustStream, TypedPublisher, subscriber,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
     quantity: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Confirmation {
     id: u64,
     accepted: bool,
@@ -47,16 +47,15 @@ struct Confirmation {
 /// which is what puts it through the app's publish pipeline.
 struct Confirm;
 
-impl Reply<Order> for Confirm {
-    type Out = Confirmation;
-
+impl Handle<Order, Confirmation> for Confirm {
     // `Err(result)` skips the publish and settles by the returned outcome; `Ok(reply)` publishes
-    // and acks. The body awaits nothing, so it returns the future directly.
-    fn reply(
+    // and acks.
+    fn handle(
         &self,
         order: &Order,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Confirmation, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         ready(Ok(Confirmation {
             id: order.id,
             accepted: order.quantity > 0,
@@ -89,9 +88,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .publish_layer(metrics.publish_layer())
         .with_broker(broker, |b| {
             // The attribute reads the reply publisher off the broker's default publish policy;
-            // naming it at the mount site is the same step written out.
-            b.include(replying("orders", Confirm).to("confirmations"))
-                .publisher(TypedPublisher::new(MemoryPublish));
+            // naming it on the chain is the same step written out.
+            b.include(
+                subscriber("orders", Confirm)
+                    .reply()
+                    .on("confirmations")
+                    .publisher(TypedPublisher::new(MemoryPublish))
+                    .build(),
+            );
         });
     // --8<-- [end:wiring]
 

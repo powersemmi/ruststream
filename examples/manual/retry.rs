@@ -13,7 +13,7 @@ use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Payment {
     id: u64,
     settled: bool,
@@ -24,17 +24,18 @@ struct Payment {
 /// redelivery would just spin. Ask the broker to redeliver no sooner than five seconds from now.
 struct Reconcile;
 
-impl Handler<Payment> for Reconcile {
+impl Handle<Payment> for Reconcile {
     fn handle(
         &self,
         payment: &Payment,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         if !payment.settled {
-            return ready(HandlerResult::retry_after(Duration::from_secs(5)).into());
+            return ready(Err(HandlerOutcome::retry_after(Duration::from_secs(5))));
         }
         println!("payment {} settled", payment.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:retry_after]
@@ -44,33 +45,32 @@ impl Handler<Payment> for Reconcile {
 /// come back in thirty seconds without holding up the rest of the page.
 struct ReconcilePage;
 
-impl SliceHandler<Payment> for ReconcilePage {
-    fn handle_slice(
+impl Handle<[Payment]> for ReconcilePage {
+    fn handle(
         &self,
         payments: &[Payment],
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = BatchResult> + Send {
-        ready(BatchResult::PerElement(
-            payments
-                .iter()
-                .map(|payment| {
-                    if payment.settled {
-                        HandlerResult::ack().into()
-                    } else {
-                        HandlerResult::retry_after(Duration::from_secs(30)).into()
-                    }
-                })
-                .collect(),
-        ))
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+        ready(Err(payments
+            .iter()
+            .map(|payment| {
+                if payment.settled {
+                    HandlerOutcome::ack()
+                } else {
+                    HandlerOutcome::retry_after(Duration::from_secs(30))
+                }
+            })
+            .collect()))
     }
 }
 // --8<-- [end:batch_retry_after]
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("payments", Reconcile));
-        // Batches dispatch per page rather than per delivery, so the constructor is `batch`.
-        b.include(batch("payments", ReconcilePage));
+        b.include(subscriber("payments", Reconcile).build());
+        // Batches dispatch per page rather than per delivery, and the page input is what says so.
+        b.include(subscriber("payments", ReconcilePage).build());
     })
 }
 

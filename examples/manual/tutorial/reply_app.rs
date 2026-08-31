@@ -13,14 +13,19 @@ use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 
 // --8<-- [start:reply]
-use crate::orders::{Confirm, Handle};
+use crate::orders::{Confirm, Receive};
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Handle));
+        b.include(subscriber("orders", Receive).build());
         // The reply names its destination on the chain, and with no `.publisher(..)` chained
         // the reply leaves through the broker's default publisher.
-        b.include(replying("orders", Confirm).to("confirmations"));
+        b.include(
+            subscriber("orders", Confirm)
+                .reply()
+                .on("confirmations")
+                .build(),
+        );
     })
 }
 

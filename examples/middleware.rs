@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
-    AppInfo, Context, DynMiddleware, DynStack, Handler, HandlerResult, Identity, Layer, Next,
-    RustStream, Settle, Stack,
+    AppInfo, Context, DynMiddleware, DynStack, Handler, HandlerOutcome, Identity, Layer, Next,
+    RustStream, Stack,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -23,15 +23,15 @@ struct Order {
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("returns")]
-async fn returns(order: &Order) -> HandlerResult {
+async fn returns(order: &Order) -> HandlerOutcome {
     println!("got return for order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 // --8<-- [start:layer_impl]
@@ -48,11 +48,11 @@ impl<H> Layer<H> for LogLayer {
 }
 
 impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
         println!("-> {}", ctx.name());
-        let settle = self.0.handle(msg, ctx).await;
+        let outcome = self.0.handle(msg, ctx).await;
         println!("<- {}", ctx.name());
-        settle
+        outcome
     }
 }
 // --8<-- [end:layer_impl]
@@ -68,7 +68,7 @@ impl<I: Send + Sync> DynMiddleware<I> for Audit {
         input: &'a I,
         ctx: &'a mut Context<'_>,
         next: Next<'a, I>,
-    ) -> Pin<Box<dyn Future<Output = Settle> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = HandlerOutcome> + Send + 'a>> {
         Box::pin(async move {
             println!("[{}] handling {}", self.service, ctx.name());
             next.run(input, ctx).await

@@ -1,6 +1,6 @@
 //! The tutorial's message types and handlers, written without the `macros` feature: a plain
-//! `#[subscriber]` becomes a named type with an `impl Handler`, and the reply form becomes a
-//! named type with an `impl Reply` - the mount site binds each to its subject.
+//! `#[subscriber]` becomes a named type with an `impl Handle`, and the reply form is the same
+//! trait with its reply type filled in - the mount site binds each to its subject.
 
 // --8<-- [start:order]
 use std::future::{Future, ready};
@@ -18,12 +18,17 @@ pub(crate) struct Order {
 
 /// The handler: `#[subscriber("orders")]` generates this struct and this impl. The subject it
 /// carried is named where the handler is mounted instead.
-pub(crate) struct Handle;
+pub(crate) struct Receive;
 
-impl Handler<Order> for Handle {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Receive {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("order {} x{}", order.id, order.quantity);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:order]
@@ -38,19 +43,18 @@ pub(crate) struct Confirmation {
     pub(crate) accepted: bool,
 }
 
-/// The reply body the attribute writes out for `publish("confirmations")`: the handler produces
-/// the reply, and the mount site names the destination and supplies the publisher it leaves
-/// through.
+/// The reply form of the same trait: the second parameter of `Handle` is the reply type, so the
+/// body returns a `Confirmation`, and the mount site names the destination and supplies the
+/// publisher it leaves through.
 pub(crate) struct Confirm;
 
-impl Reply<Order> for Confirm {
-    type Out = Confirmation;
-
-    fn reply(
+impl Handle<Order, Confirmation> for Confirm {
+    fn handle(
         &self,
         order: &Order,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Confirmation, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         ready(Ok(Confirmation {
             id: order.id,
             accepted: order.quantity > 0,

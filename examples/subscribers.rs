@@ -5,6 +5,7 @@
 //! cargo run --example subscribers --features macros,memory,json -- run
 //! ```
 
+use std::future::{Future, ready};
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemorySource};
@@ -13,94 +14,96 @@ use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::prelude::*;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+// The manual registration at the bottom is documented by default, which is where the schema
+// derive is owed; the attribute path asks for nothing.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
 // --8<-- [start:contract]
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:contract]
 
 // --8<-- [start:context]
 #[subscriber("orders")]
-async fn with_context(order: &Order, ctx: &mut Context<'_>) -> HandlerResult {
+async fn with_context(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
     if let Some(id) = ctx.headers().correlation_id() {
         println!("order {} correlates to {id}", order.id);
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:context]
 
 // --8<-- [start:deferred_name]
 /// The by-name source with its value left out: the mount site names the subscription.
 #[subscriber]
-async fn audit(order: &Order) -> HandlerResult {
+async fn audit(order: &Order) -> HandlerOutcome {
     println!("auditing order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:deferred_name]
 
 // --8<-- [start:named_kind]
 /// A named kind carrying only what it needs to exist; the value arrives at the mount site.
 #[subscriber(MemorySource)]
-async fn archive(order: &Order) -> HandlerResult {
+async fn archive(order: &Order) -> HandlerOutcome {
     println!("archiving order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:named_kind]
 
 // --8<-- [start:batch]
 /// Settles a whole page of orders in one go: the slice parameter is what says so.
 #[subscriber("orders")]
-async fn settle(orders: &[Order]) -> HandlerResult {
+async fn settle(orders: &[Order]) -> HandlerOutcome {
     println!("settling {} orders", orders.len());
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:batch]
 
 // --8<-- [start:raw_batch]
 /// A batch of payloads: the batch shape without the decode step.
 #[subscriber("frames")]
-async fn ingest(frames: &[&[u8]]) -> HandlerResult {
+async fn ingest(frames: &[&[u8]]) -> HandlerOutcome {
     println!("ingesting {} frames", frames.len());
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:raw_batch]
 
 // --8<-- [start:workers]
 /// Up to 16 orders processed concurrently; global order is lost by design.
 #[subscriber("orders", workers(16))]
-async fn fan_out(order: &Order) -> HandlerResult {
+async fn fan_out(order: &Order) -> HandlerOutcome {
     println!("processing order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:workers]
 
 // --8<-- [start:workers_by_key]
 /// 16 lanes keyed by the message's partition key: per-key order is preserved.
 #[subscriber("orders", workers(16, by_key))]
-async fn per_customer(order: &Order) -> HandlerResult {
+async fn per_customer(order: &Order) -> HandlerOutcome {
     println!("processing order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:workers_by_key]
 
 // --8<-- [start:batch_selective]
 /// Retries only the entries that are not ready yet; the rest of the page settles.
 #[subscriber("orders")]
-async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
+async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()
         .map(|order| {
             if order.id == 0 {
-                HandlerResult::retry()
+                HandlerOutcome::retry()
             } else {
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             }
         })
         .collect()
@@ -109,18 +112,21 @@ async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
 
 /// Whether batches arrive at all is a property of the broker, so it is settled at the mount.
 #[subscriber]
-async fn drain(orders: &[Order]) -> HandlerResult {
+async fn drain(orders: &[Order]) -> HandlerOutcome {
     println!("draining {} orders", orders.len());
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A handler whose declarative settings are all left to the mount site.
 #[subscriber]
-async fn bill(order: &Order) -> HandlerResult {
+async fn bill(order: &Order) -> HandlerOutcome {
     println!("billing order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
+// The manual snippet below defines its handler type where the guide shows it, inside the builder
+// closure, so the item follows the `include` statements above it on purpose.
+#[allow(clippy::items_after_statements)]
 #[ruststream::app]
 fn app() -> RustStream {
     let shard = 7;
@@ -155,10 +161,21 @@ fn app() -> RustStream {
         b.include(fan_out);
         b.include(per_customer);
         // --8<-- [start:manual]
-        b.include(subscriber(
-            "orders",
-            |_order: &Order, _ctx: &mut Context| async { HandlerResult::Ack },
-        ));
+        struct Inline;
+
+        impl Handle<Order> for Inline {
+            fn handle(
+                &self,
+                order: &Order,
+                _outs: &(),
+                _ctx: &mut Context<'_>,
+            ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+                println!("got order {}", order.id);
+                ready(Ok(()))
+            }
+        }
+
+        b.include(subscriber("orders", Inline).build());
         // --8<-- [end:manual]
     })
 }

@@ -1,7 +1,7 @@
 //! Repositioning live subscriptions without the `macros` feature: `start_at(..)` is a settings
-//! step chained on the mount, and the `Seek` parameter is a startup injection the runtime resolves
-//! off the subscription - `with_seek` is its constructor, and the seeker reaches the body through
-//! the same injection tuple the `Out` forms use.
+//! step chained on the mount, and the seeker rides the broker context axis - a body that declares
+//! `SeekContext<MemorySeeker>` reads its position and repositions its subscription straight
+//! through `Context`.
 //!
 //! ```text
 //! cargo run --example manual_seek --no-default-features --features memory,json
@@ -11,13 +11,12 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::Seeker;
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 struct Job {
     id: u64,
 }
@@ -28,12 +27,15 @@ struct Job {
 /// it is named where the handler is mounted, exactly as `workers` or `on_failure` would be.
 struct Record;
 
-impl Handler<Job> for Record {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, entry: &Job, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Job> for Record {
+    fn handle(
+        &self,
+        entry: &Job,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("audit: entry {}", entry.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:start_at]
@@ -43,26 +45,25 @@ impl Handler<Job> for Record {
 /// resume point is dropped without touching the subscription itself.
 struct Work;
 
-/// The body, over any application state: what the attribute puts behind the `Seek(seeker)`
-/// parameter. A body taking injected parameters is a `SlotsHandler` rather than a plain `Handler`:
-/// the injection tuple names what the runtime prepares once the subscription opens, and
-/// `Seek<MemorySeeker>` resolves off the subscriber itself, so the body holds a live seeker.
-impl<S: Send + Sync> SlotsHandler<Job, (Seek<MemorySeeker>,), (), S> for Work {
+/// The body behind the attribute's `Seek(seeker)` parameter: seeking is the broker context axis
+/// of `Handle`, so declaring `SeekContext<MemorySeeker>` is the whole declaration - the runtime
+/// builds one per delivery off the subscription, and `ctx.seek(..)` repositions it.
+impl Handle<Job, (), (), SeekContext<MemorySeeker>> for Work {
     async fn handle(
         &self,
         job: &Job,
-        (Seek(seeker),): &(Seek<MemorySeeker>,),
-        _ctx: &mut Context<'_, (), S>,
-    ) -> Settle {
+        _outs: &(),
+        ctx: &mut Context<'_, SeekContext<MemorySeeker>>,
+    ) -> Result<(), HandlerOutcome> {
         if job.id == 999 {
             // The poison marker carries the resume point: skip to the fourth log entry.
-            if seeker.seek(MemoryPosition::sequence(3)).await.is_err() {
-                return HandlerResult::retry().into();
+            if ctx.seek(MemoryPosition::sequence(3)).await.is_err() {
+                return Err(HandlerOutcome::retry());
             }
-            return HandlerResult::ack().into();
+            return Ok(());
         }
         println!("jobs: processed {}", job.id);
-        HandlerResult::ack().into()
+        Ok(())
     }
 }
 // --8<-- [end:handler]
@@ -80,15 +81,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --8<-- [start:mount]
-    // The runtime mints the seek handler's seeker off its subscription right after it opens, and
-    // the chained start position seeks the audit one before its first delivery. `with_seek` names
-    // the message and the seeker type; the source is the broker's own descriptor.
+    // Both mount plainly: the seek body's context is built off its own subscription right after
+    // it opens, and the chained start position seeks the audit one before its first delivery.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
-        b.include(with_seek::<Job, MemorySeeker, _, _>(
-            MemorySource::new("jobs"),
-            Work,
-        ));
-        b.include(subscriber(MemorySource::new("audit"), Record).start_at(MemoryPosition::start()));
+        b.include(subscriber(MemorySource::new("jobs"), Work).build());
+        b.include(
+            subscriber(MemorySource::new("audit"), Record)
+                .start_at(MemoryPosition::start())
+                .build(),
+        );
     });
     // --8<-- [end:mount]
     let running = app.start().await?;

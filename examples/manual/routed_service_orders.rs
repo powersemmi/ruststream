@@ -1,13 +1,12 @@
 //! The order-confirmation handler of the routed-service example, written without the `macros`
 //! feature. `#[subscriber(MemorySource::new("orders"), publish("confirmations"))]` mints a reply
-//! definition, and `replying_in` builds the same one from values: the same broker descriptor as
-//! the source, the same reply channel in `.to(..)`, and the body's
-//! `Result<Confirmation, HandlerResult>` return as the `Reply` method's own signature. `include`
+//! definition, and `subscriber(..).reply().on(..)` builds the same one from values: the same
+//! broker descriptor as the source, the same reply channel, and the body's
+//! `Result<Confirmation, HandlerOutcome>` return as the `Handle` method's own signature. `include`
 //! mounts it exactly as it mounts a generated one.
 //!
-//! `replying(source, body)` binds a body over the unit application state; this one reads a
-//! `Repository` off the context, so it takes the `_in` variant, which reads the state off the
-//! `Reply` impl and checks it against the app's at the mount.
+//! The application state a body reads is the last axis of its `Handle` impl; this one reads a
+//! `Repository`, so the mount checks that state against the app's.
 //!
 //! ```text
 //! cargo run --example manual_routed_service_orders --no-default-features --features memory,json
@@ -23,7 +22,7 @@ use ruststream::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// An order placed by a customer, delivered on the `orders` channel.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
     customer: String,
@@ -32,7 +31,7 @@ struct Order {
 }
 
 /// The reply published to `confirmations` for each accepted or rejected order.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 struct Confirmation {
     order_id: u64,
     accepted: bool,
@@ -82,23 +81,22 @@ impl Repository {
 ///
 /// Bound through the broker's own descriptor form, `MemorySource::new("orders")`, rather than a
 /// bare name - the slot where a real broker takes its own descriptor (a NATS `SubscribeOptions`,
-/// say). Returning `Result<Confirmation, HandlerResult>` keeps control of the acknowledgement:
+/// say). Returning `Result<Confirmation, HandlerOutcome>` keeps control of the acknowledgement:
 /// `Ok` publishes the reply and acks, while `Err` publishes nothing and hands the dispatcher a
-/// [`HandlerResult`] - here, retry on a transient store error and drop on a permanent one.
-/// `.to(..)` names the reply channel; its publisher is wired at the mount site.
+/// [`HandlerOutcome`] - here, retry on a transient store error and drop on a permanent one.
+/// `.on(..)` names the reply channel; its publisher is wired on the same chain.
 // --8<-- [start:descriptor]
 struct Confirm;
 
 // The state is named on the body, not on a definition: this one reads a `Repository`, so it is a
-// `Reply` for that state alone and mounts only on an application that carries it.
-impl Reply<Order, (), Repository> for Confirm {
-    type Out = Confirmation;
-
-    async fn reply(
+// `Handle` for that state alone and mounts only on an application that carries it.
+impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
+    async fn handle(
         &self,
         order: &Order,
+        _outs: &(),
         ctx: &mut Context<'_, (), Repository>,
-    ) -> Result<Confirmation, HandlerResult> {
+    ) -> Result<Confirmation, HandlerOutcome> {
         let repo = ctx.state();
         tracing::debug!(
             order = order.id,
@@ -113,29 +111,30 @@ impl Reply<Order, (), Repository> for Confirm {
             }),
             Err(e) if e.is_transient() => {
                 tracing::warn!(order = order.id, "store busy, asking for redelivery");
-                Err(HandlerResult::retry())
+                Err(HandlerOutcome::retry())
             }
             Err(e) => {
                 tracing::error!(order = order.id, error = %e, "dropping order");
-                Err(HandlerResult::drop())
+                Err(HandlerOutcome::drop())
             }
         }
     }
 }
 
 /// The mount, and the whole declaration the attribute's clauses carried: the broker's own
-/// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
-/// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays at
-/// the mount site on both paths: `TypedPublisher::new(MemoryPublish)` pairs the policy with the
+/// descriptor as the source, `.on(..)` for the reply channel, and `.describe(..)` for the sentence
+/// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays a
+/// chain step on both paths: `TypedPublisher::new(MemoryPublish)` pairs the policy with the
 /// default codec at startup.
 fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
-    Router::<MemoryBroker>::new()
-        .include(
-            replying_in(MemorySource::new("orders"), Confirm)
-                .to("confirmations")
-                .describe("Confirms an order and replies on `confirmations`."),
-        )
-        .publisher(TypedPublisher::new(MemoryPublish))
+    Router::<MemoryBroker>::new().include(
+        subscriber(MemorySource::new("orders"), Confirm)
+            .reply()
+            .on("confirmations")
+            .publisher(TypedPublisher::new(MemoryPublish))
+            .describe("Confirms an order and replies on `confirmations`.")
+            .build(),
+    )
 }
 // --8<-- [end:descriptor]
 

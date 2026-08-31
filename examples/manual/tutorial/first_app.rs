@@ -5,7 +5,7 @@
 //! cargo run --example manual_tutorial_first_app --no-default-features --features memory,json,asyncapi
 //! ```
 
-// Step 3 mounts `Handle` alone; the module's reply types stay unused until step 4.
+// Step 3 mounts `Receive` alone; the module's reply types stay unused until step 4.
 #[allow(dead_code)]
 // --8<-- [start:app]
 mod orders;
@@ -15,11 +15,11 @@ use std::error::Error;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 
-use crate::orders::Handle;
+use crate::orders::Receive;
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Handle));
+        b.include(subscriber("orders", Receive).build());
     })
 }
 

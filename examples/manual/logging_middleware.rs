@@ -25,7 +25,7 @@ use ruststream::runtime::layers::TracingLayer;
 use ruststream::runtime::{Identity, Stack};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
     quantity: u32,
@@ -34,26 +34,32 @@ struct Order {
 /// Accepts an order. The middleware logs the arrival and the resulting ack; no logging here.
 struct Confirm;
 
-impl Handler<Order> for Confirm {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Confirm {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let _ = order.id;
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 /// Rejects empty orders by requeueing. The middleware logs the nack at WARN with `requeue=true`.
 struct Reject;
 
-impl Handler<Order> for Reject {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
-        let outcome = if order.quantity == 0 {
-            HandlerResult::retry()
-        } else {
-            HandlerResult::ack()
-        };
-        ready(outcome.into())
+impl Handle<Order> for Reject {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        if order.quantity == 0 {
+            return ready(Err(HandlerOutcome::retry()));
+        }
+        ready(Ok(()))
     }
 }
 
@@ -62,8 +68,8 @@ impl Handler<Order> for Reject {
 // --8<-- [start:layered_router]
 fn routes() -> impl RouterDef<MemoryBroker> {
     Router::new()
-        .include(subscriber("orders", Confirm))
-        .include(subscriber("returns", Reject))
+        .include(subscriber("orders", Confirm).build())
+        .include(subscriber("returns", Reject).build())
 }
 // --8<-- [end:layered_router]
 
