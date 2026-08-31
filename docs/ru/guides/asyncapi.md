@@ -69,22 +69,23 @@ doc-комментарий типа становится описанием со
 переименование) даёт компоненту имя. Без схемы компонент называется по типу полезной нагрузки, а
 описание берётся из doc-комментария обработчика (он же документирует операцию `receive`).
 
-Чтобы задать метаданные явно - в том числе для типов без `JsonSchema`, - реализуйте трейт `Message`:
-он важнее схемы. Или выведите его, тогда в дело пойдут имя типа и его doc-комментарий:
+Чтобы задать метаданные явно - в том числе для типов без `JsonSchema`, - реализуйте трейт
+`MessageInfo`: он важнее схемы. Или выведите его, тогда в дело пойдут имя типа и его
+doc-комментарий:
 
-<!-- inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema -->
+<!-- inline-rust: minimal MessageInfo-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that MessageInfo takes precedence over the schema -->
 ```rust
-use ruststream::Message;
+use ruststream::MessageInfo;
 
 /// An order placed by a customer.
-#[derive(Message, serde::Deserialize)]
+#[derive(MessageInfo, serde::Deserialize)]
 struct Order {
     id: u64,
 }
 // In the document: components.messages.Order with that description.
 ```
 
-Ручной `impl Message` может назвать компонент иначе, чем называется тип Rust
+Ручной `impl MessageInfo` может назвать компонент иначе, чем называется тип Rust
 (`const NAME: &'static str = "CustomOrder";`), - так контракт на проводе переживает переименования.
 
 ## Серверы

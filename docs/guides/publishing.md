@@ -56,10 +56,10 @@ Decoding of the incoming request follows the scope (the scope codec set with
 
 ## Controlling the acknowledgement
 
-A plain reply form always publishes and acks. Return `Result<Reply, HandlerResult>` instead to
-take control: `Ok(reply)` publishes and acks, `Err(result)` publishes nothing and the dispatcher
-acts on the returned `HandlerResult` (`HandlerResult::drop()` to dead-letter,
-`HandlerResult::retry()` to ask for redelivery):
+A plain reply form always publishes and acks. Return `Result<Reply, HandlerOutcome>` instead to
+take control: `Ok(reply)` publishes and acks, `Err(outcome)` publishes nothing and the dispatcher
+acts on the returned `HandlerOutcome` (`HandlerOutcome::drop()` to dead-letter,
+`HandlerOutcome::retry()` to ask for redelivery):
 
 === "Macros"
 
@@ -135,8 +135,8 @@ until every slot has a policy.
 A handler that takes several publishers names a **slot marker** per parameter: a unit struct
 deriving `OutSlot`, written as the second type argument (`Out<impl Publisher, Primary>`). The
 include site binds each marker with `.out(marker, policy)` and commits the registration with a
-terminal `.mount()`. The calls bind by marker, so their order does not matter; binding the same
-slot twice (or a marker the handler does not declare) fails to compile, and `.mount()` exists
+terminal `.build()`. The calls bind by marker, so their order does not matter; binding the same
+slot twice (or a marker the handler does not declare) fails to compile, and `.build()` exists
 only once every slot is bound - a forgotten binding is a compile error whose attachment type
 names the slot (`MissingSlot<Audit>`). A single unnamed `Out<impl Publisher>` parameter binds
 the implicit `DefaultSlot` through the plain `.publisher(policy)` call, which binds and commits
@@ -239,7 +239,7 @@ The parameter composes with every subscriber form: next to a `Seek` parameter, o
 handler, and on batch handlers (`b.include(f).publisher(..)` - the whole page in,
 per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
 their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
-publisher attaches with `.out(marker, ..)` plus the terminal `.mount()` (`DefaultSlot` for a
+publisher attaches with `.out(marker, ..)` plus the terminal `.build()` (`DefaultSlot` for a
 single unnamed slot), so a gateway can answer on a fixed destination while fanning side copies
 out through the injection:
 
@@ -376,8 +376,8 @@ policy at the include site with `TypedPublisher::transform`. The full program is
 
 A `#[subscriber("in", publish("out"))]` handler taking `&[T]` consumes a whole decoded batch and
 returns the replies for it - the consume-transform-produce pattern. `Ok(replies)` publishes every reply to
-the reply name and acks the batch; `Err(result)` publishes nothing and settles the whole batch
-with `result` (all-or-nothing: selective per-element outcomes do not compose with a
+the reply name and acks the batch; `Err(outcome)` publishes nothing and settles the whole batch
+with `outcome` (all-or-nothing: selective per-element outcomes do not compose with a
 transaction):
 
 === "Macros"

@@ -108,8 +108,8 @@ dropped (a nack without requeue). The policy is set per subscriber with the
     --8<-- "examples/manual/codecs.rs:decode_failure"
     ```
 
-When building handlers by hand, the `Typed` wrapper returned by `typed(codec, handler)` takes
-the same policy through `on_decode_failure`.
+When registering through the low-level `handle` SPI, the `Typed` wrapper returned by
+`typed(codec, handler)` takes the same policy through `on_decode_failure`.
 
 The policy values (`Drop`, `Retry`, `RetryAfter(..)`, `Skip`, `FailFast`), the defaults, and the
 retry caveats live in [Failure policy](failure-policy.md). The codec examples above are

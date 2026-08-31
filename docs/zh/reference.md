@@ -23,6 +23,7 @@ cargo doc --all-features --open
 | `RustStream` | `ruststream::runtime` | 应用对象 |
 | `RunningApp` | `ruststream::runtime` | 已启动的服务：就绪状态、fail-fast 信号、优雅关闭 |
 | `Router` | `ruststream::runtime` | 延迟绑定的一组处理器 |
+| `Handle`、`subscriber` | `ruststream::runtime` | 手写路径唯一的函数体 trait，以及它唯一的挂载构造器 |
 | `FromContext`、`State`、`FromRef` | `ruststream::runtime` / `ruststream` | 处理器的提取器参数，以及状态注入的 derive |
 | `Broker`、`Subscribe`、`Subscriber`、`Publisher`、`IncomingMessage` | `ruststream` | Broker 契约 |
 | `SubscriptionSource`、`Name` | `ruststream` | 订阅描述符 |

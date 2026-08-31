@@ -39,9 +39,9 @@ turns it into a mountable definition named after the function.
     --8<-- "examples/manual/tutorial/orders.rs:order"
     ```
 
-A handler returns a [`HandlerResult`](../guides/subscribers.md#acking): `Ack`, or a `nack` that drops
-or requeues the message. Returning `()` or `Result<(), E>` also works - they convert into a result
-(`Ok` acks, `Err` drops).
+A handler returns a [`HandlerOutcome`](../guides/subscribers.md#acking): an `ack`, or a `nack` that
+drops or requeues the message. Returning `()` or `Result<(), E>` also works - they convert into an
+outcome (`Ok` acks, `Err` drops).
 
 The `JsonSchema` derive is what puts the payload's schema in the AsyncAPI document of step 6, and
 the type's doc comment becomes the message description. It needs no dependency of its own: the
@@ -127,7 +127,7 @@ As handlers grow, keep them in their own module and collect them into a
     ```
 
 A registration on a router ends in an explicit terminal. `.publisher(..)` names the reply wiring -
-a publish policy is pure declaration, so the router still needs no broker - and `.mount()` takes
+a publish policy is pure declaration, so the router still needs no broker - and `.build()` takes
 the broker's own default publish policy, the explicit spelling of what step 4 got by default.
 [Routing](../guides/routing.md) covers the rest of the router surface.
 

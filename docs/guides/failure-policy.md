@@ -82,7 +82,7 @@ max-deliveries policy.
   restart; under the other policies it is settled and the subscriber keeps consuming. Catching only
   applies under an unwinding panic profile; with `panic = "abort"` the process is already gone.
 - A decode failure surfaces as a `Result`, so no unwinding is involved; the `decode` policy settles
-  the message directly. The same policy can also be set when building a handler by hand: the typed
+  the message directly. The same policy can also be set on the low-level `handle` SPI: the typed
   adapter `typed(codec, handler)` returns a `Typed` wrapper whose `on_decode_failure` accepts a
   `FailurePolicy` (see [Codecs](codecs.md#decode-failures)).
 - On the batch path the policy applies per batch decode (each element decodes independently) and to

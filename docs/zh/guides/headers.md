@@ -59,12 +59,12 @@
 路径上写 `Router::include`。契约类型随路由一起传递，而挑中这条路由的，是定义自带的形式 token。
 
 如果同一个通道承载的消息，其消息头按事件种类各不相同，那就别让标准提取器插手，自己写一个
-[`FromContext`] 提取器：先读出用于判别的消息头，再用 [`HeaderMap::to_typed`] 解析出与之匹配的
-契约，这正是 `Headers` 内部使用的同一套机制。把各种形状的并集声明在输入类型上（见下一节），
-文档就仍然能展示出完整的契约。
+[`FromContext`] 提取器：先从无类型的消息头映射里读出用于判别的消息头（[`HeaderMap::get_str`]），
+再按这个种类构造对应的契约。把各种形状的并集声明在输入类型上（见下一节），文档就仍然能展示出
+完整的契约。
 
 [`FromContext`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.FromContext.html
-[`HeaderMap::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.to_typed
+[`HeaderMap::get_str`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.get_str
 
 ## 在消息类型上声明契约
 

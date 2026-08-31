@@ -65,7 +65,7 @@ RustStream две области middleware; обе построены на од
 Слой превращает один обработчик в другой. Реализуйте `Layer<H>`:
 
 ```rust
-use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
+use ruststream::runtime::{Context, Handler, HandlerOutcome, Layer};
 
 --8<-- "examples/middleware.rs:layer_impl"
 ```
@@ -106,7 +106,7 @@ let handler = base_handler.with(LogLayer);
 use std::future::Future;
 use std::pin::Pin;
 
-use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
+use ruststream::runtime::{Context, DynMiddleware, HandlerOutcome, Next};
 
 --8<-- "examples/middleware.rs:dyn_middleware"
 ```

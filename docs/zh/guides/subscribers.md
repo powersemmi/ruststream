@@ -11,7 +11,7 @@
 === "宏"
 
     ```rust
-    use ruststream::runtime::HandlerResult;
+    use ruststream::runtime::HandlerOutcome;
     use ruststream::subscriber;
 
     --8<-- "examples/subscribers.rs:contract"
@@ -69,24 +69,25 @@
 
 ### 确认（ack） { #acking }
 
-返回类型可以是任何能转换成 [`Settle`] 的东西（结算的单位：一个结果，外加一个可选的结算后续任务）：
+返回类型可以是任何能转换成 [`HandlerOutcome`] 的东西（结算的单位：给 Broker 的状态，外加一个可选
+的结算后续任务）：
 
 | 返回值 | 效果 |
 |---|---|
-| `HandlerResult::ack()`（或 `HandlerResult::Ack`） | 确认，即 ack；Broker 移除这条消息 |
-| `HandlerResult::retry()` | nack 并重新入队（稍后重新投递） |
-| `HandlerResult::retry_after(delay)` | nack，并要求重新投递不早于 `delay` |
-| `HandlerResult::drop()` | nack 且不重新入队（丢弃或进死信） |
-| `()` | 始终是 `Ack` |
-| `Result<(), E>` | `Ok` 时 `Ack`，`Err` 时 `drop` |
-| `Result<HandlerResult, E>` | `Ok` 时用内层的结果，`Err` 时 `drop` |
-| `Settle`（上面任意一项接 `.and_after(..)`） | 按该结果结算，然后运行后续任务 |
+| `HandlerOutcome::ack()` | 确认，即 ack；Broker 移除这条消息 |
+| `HandlerOutcome::retry()` | nack 并重新入队（稍后重新投递） |
+| `HandlerOutcome::retry_after(delay)` | nack，并要求重新投递不早于 `delay` |
+| `HandlerOutcome::drop()` | nack 且不重新入队（丢弃或进死信） |
+| `()` | 始终 ack |
+| `Result<(), E>` | `Ok` 时 ack，`Err` 时 drop |
+| `Result<HandlerOutcome, E>` | `Ok` 时用内层的结果，`Err` 时 drop |
+| `HandlerOutcome::ack().and_after(..)`（任意结果） | 按该结果结算，然后运行后续任务 |
 
 在消息本身上，ack 会消费 `self`，因此类型系统杜绝了两次 ack。
 
 ### 结算后的后续任务 { #post-settle-continuations }
 
-`HandlerResult::ack().and_after(fut)` 会给返回的结果附上一个后续任务：一条不关键的通知、一件慢的
+`HandlerOutcome::ack().and_after(fut)` 会给返回的结果附上一个后续任务：一条不关键的通知、一件慢的
 收尾工作、一次缓存预热。任何结果都可以这么用（`drop().and_after(..)` 是合法的；中性的读法是
 “结算之后”）：
 
@@ -154,7 +155,7 @@
   内，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本就丢了。
 
 `batch_retry_after` 这种写法可以和[选择性的批量结果](#selective-acknowledgement)组合：一个
-`Vec<HandlerResult>` 携带逐元素的延迟，于是尚未就绪的条目各自退避，而不拖住这一批里的其余消息：
+`Vec<HandlerOutcome>` 携带逐元素的延迟，于是尚未就绪的条目各自退避，而不拖住这一批里的其余消息：
 
 === "宏"
 
@@ -220,8 +221,8 @@
 <!-- inline-rust: 示意性的描述符写法；OrdersStream 只是某个 Broker crate 的 SubscriptionSource 类型的替身，那类类型住在别的 crate 里，本仓库没有可编译的落脚点（真实的 NATS 写法在下面引入） -->
 ```rust
 #[subscriber(OrdersStream::new("orders", "workers"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
@@ -235,8 +236,8 @@ async fn handle(order: &Order) -> HandlerResult {
 <!-- inline-rust: 示意性的构建器链来源；具体的选项类型住在某个 Broker crate 里，本仓库没有可编译的落脚点 -->
 ```rust
 #[subscriber(StreamOptions::new("orders").durable("audit"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
@@ -269,7 +270,7 @@ async fn handle(order: &Order) -> HandlerResult {
 <!-- inline-rust: 两行必须编译失败的示例；能编译的示例文件放不下这种代码（钉住的诊断信息在 tests/ui 里） -->
 ```rust
 #[subscriber("orders", workers(4))]
-async fn handle(order: &Order) -> HandlerResult { HandlerResult::Ack }
+async fn handle(order: &Order) -> HandlerOutcome { HandlerOutcome::ack() }
 
 b.include(handle.name("other"));    // does not compile: the name is already given
 b.include(handle.on_failure(..));   // fine: the attribute said nothing about failures
@@ -358,15 +359,15 @@ Broker 同样原生成批。如果订阅本身不成批，编译器就会要求�
 
 - 运行时会逐个 nack 解码失败的元素（按解码失败策略处理），它们根本不会到达处理器；其余的作为一个
   切片一起送达。
-- 返回值结算的是整批。单个 `HandlerResult`（或 `()` / `Result<_, E>`）会对**每一条**消息一视同仁
-  地结算：`Ack` 把它们全部 ack，`retry()` 把它们全部重新入队。
+- 返回值结算的是整批。单个 `HandlerOutcome`（或 `()` / `Result<_, E>`）会对**每一条**消息一视同仁
+  地结算：`ack()` 把它们全部 ack，`retry()` 把它们全部重新入队。
 - 在 `&[T]` 这种写法里拿不到逐条消息的消息头，上下文一开始的消息头是空的。
 - 应用全局的中间件和路由器上的中间件包裹的是按消息的处理器，对批量注册不生效。
 
 ### 选择性确认 { #selective-acknowledgement }
 
 常见的情形是部分就绪：这一批里有些消息已经处理完，另一些还没就绪，应重新投递，同时不去重试那些
-已经成功的。返回 `Vec<HandlerResult>`，切片中的第 `i` 个元素就按第 `i` 个结果结算：
+已经成功的。返回 `Vec<HandlerOutcome>`，切片中的第 `i` 个元素就按第 `i` 个结果结算：
 
 === "宏"
 
@@ -466,7 +467,7 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 [`Codec`](codecs.md)，继续走类型化路径。
 
 原始字节订阅者也能以同样的形式回复：`publish_raw("dest")` 子句会把返回的字节（`-> Vec<u8>`，或者
-`-> Result<Vec<u8>, HandlerResult>`，后者提供与类型化回复写法相同的显式 ack 控制）原样发布到回复
+`-> Result<Vec<u8>, HandlerOutcome>`，后者提供与类型化回复写法相同的显式 ack 控制）原样发布到回复
 名字上，走的是挂载点附加的裸发布者（`b.include(relay).publisher(policy)`，不写该调用时就用
 Broker 的默认发布策略）；两端都不经过编解码器，而回复发布失败会让这次投递 nack 并重新入队：
 
@@ -560,8 +561,8 @@ Broker 的默认发布策略）；两端都不经过编解码器，而回复发�
 ## 用宏还是手写
 
 `#[subscriber]` 是泛型 API 之上的语法糖。宏生成的是一个类型化的处理器和它的元数据；同样的注册你也
-可以手写出来，用 `typed`（它负责解码载荷）、一个闭包或结构体处理器，再加上 `HandlerMetadata`。
-下面两种写法注册的是同一个处理器。
+可以手写出来：一个具名类型，用 `impl Handle` 承载函数体，再用 `subscriber(source, body)` 把它绑定
+到来源，最后用 `.build()` 封口。下面两种写法注册的是同一个处理器。
 
 === "用宏"
 

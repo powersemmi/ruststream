@@ -7,26 +7,40 @@ alwaysApply: false
 - Everything the attribute macros produce can be written by hand. `macros` is a convenience
   feature, not a layer: `#[subscriber]` expands into calls on the same public runtime API, so a
   service without it loses no capability that does not come *from* a declaration.
-- What the attribute emits for `async fn handle(order: &Order) -> HandlerResult` is, in order: a
+- What the attribute emits for `async fn handle(order: &Order) -> HandlerOutcome` is, in order: a
   unit struct named after the function, an `impl Handler` whose `async fn handle` carries the body,
   and the `Declared` + `SubscriberDef` impls that let `include` mount it. Every one of those traits
   is public, so **how far you write it out is a choice, not a limit**.
-- So a handler is a named type implementing `Handler<M, C, S>`, whose `async fn handle(&self, msg:
-  &M, ctx: &mut Context<'_, C, S>) -> Settle` is an ordinary async method. What a closure would
-  capture becomes a field on that type.
-- **Level one** - stop at the body trait and mount with `b.include(subscriber(source, handler))`.
-  There is one constructor per attribute form, and every form has one: `subscriber`, `raw`,
-  `batch`, `raw_batch`, `batch_with_headers`, `replying(..).to(..)`, `raw_replying(..).to(..)`,
-  `batch_replying(..).to(..)`, `with_slots`, `with_seek`, `batch_with_slots`, `batch_with_seek`,
-  `replying_with_slots(..).to(..)`, `raw_replying_with_slots(..).to(..)` and
-  `batch_replying_with_slots(..).to(..)`. A body implemented for one concrete application state
-  takes the `_in` variant (`subscriber_in`, `raw_in`, `batch_in`, `raw_batch_in`,
-  `batch_with_headers_in`, `replying_in`, `raw_replying_in`, `batch_replying_in`); the slot and
-  seek forms need none, their bodies being checked at the mount. Nothing else to implement; the
-  registration metadata is derived from the source and the handler's input type.
+- So a handler is a named type implementing `Handle<In, R, O, C, S>`, whose `async fn handle(&self,
+  input: &In, outs: &O, ctx: &mut Context<'_, C, S>)` is an ordinary async method. What a closure
+  would capture becomes a field on that type - a closure is not a `Handle`, the body is always a
+  named type.
+- **Level one** - stop at the body trait and mount with
+  `b.include(subscriber(source, body).build())`. There is one body trait and one constructor:
+  every axis of the form matrix is a defaulted parameter the impl pins, so the signature decides
+  the form and nothing else names it. `In` is the input spelling (`T` decoded, `Payload<'_>` raw
+  bytes, `Message<H, P>` a decoded payload next to its typed header contract, and `[T]` /
+  `[Payload<'_>]` / `[Message<H, P>]` for a page of each), `R` the reply type (`()` declares
+  none), `O` the injections arena (`()` declares none), `C` the broker's typed per-delivery
+  context and `S` the application state the body reads with `ctx.state()`. What the signature does
+  not carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
+  `.on_failure`, `.buffered`, `.start_at`, `.codec`), the reply wiring (`.reply()`, `.on(dest)`,
+  `.publisher(policy)`), the native page cap `.batch(n)` and the document controls
+  (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and `include` mounts it. Nothing
+  else to implement; the registration metadata is derived from the source and the body's input
+  type.
+- The return shape is computed from the same two axes, so an illegal combination has no type to be
+  written in and each shape has exactly one accepted spelling: `Result<(), HandlerOutcome>` for a
+  single message with no reply (`Ok(())` acks), `Result<Reply, HandlerOutcome>` for a single one
+  with a reply, `Result<(), Vec<HandlerOutcome>>` for a page, and
+  `Result<Vec<Reply>, Vec<HandlerOutcome>>` for a page with replies, whose impl header names the
+  vector (`impl Handle<[Order], Vec<Confirmation>>`). There is no bare-outcome return and no
+  whole-page uniform outcome; a continuation is not a shape of its own either - return
+  `Err(HandlerOutcome::ack().and_after(..))`. The page vector settles element-wise and is
+  page-length by contract; a mismatch panics under the `on_failure(panic = ..)` policy.
 - **Level two** - implement `SubscriberDef` plus `Declared`, and `b.include(def)` works on your own
   type with the whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`,
-  `.buffered`), `.publisher(..)`, `.out(marker, ..)` and `.mount()`. The settings live on
+  `.buffered`), `.publisher(..)`, `.out(marker, ..)` and `.build()`. The settings live on
   `Declared::Settings`, which must be a `SubscriberBuilder` - `SubscriberBuilder::new(def, source)`
   is public for exactly this. Implementing `IncludeDef` alone routes through the blanket
   `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`: that serves the raw forms, but a
@@ -41,16 +55,15 @@ alwaysApply: false
 - The one thing genuinely lost with the feature off is the attribute surface itself: nothing reads
   a clause for you, so what the attribute would have declared you write as a trait impl.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
-  feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerResult`,
-  `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (every form
-  constructor listed above with its `_in` variants, the body traits `Handler` / `SliceHandler` /
-  `RawSliceHandler` / `SliceHandlerWithHeaders` / `Reply` / `BatchReply` / `SlotsHandler` /
-  `SlotsSliceHandler` / `SlotsReply` / `SlotsBatchReply`, plus `Settle`, `BatchResult`,
-  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`, `Seek`, `DefaultSlot`,
-  `RouterDef` and `nonzero!`).
-- Mount with `b.include(subscriber(source, handler))` (the portable form: the source resolves at
-  startup), or `b.handle(subscriber, handler, metadata)` when you already hold an open subscriber.
-  Routers have the same `include` method, so grouping still works.
+  feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerOutcome`,
+  `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (the `subscriber`
+  constructor, the body trait `Handle` with its input spellings `Message` and `Payload`, the
+  injections arena `Outs` / `Slot` / `Publish`, the seek context `SeekContext`, plus the bare-reply
+  wrapper `Bare`, `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`, `Seek`,
+  `DefaultSlot`, `RouterDef` and `nonzero!`).
+- Mount with `b.include(subscriber(source, body).build())` (the portable form: the source resolves
+  at startup), or `b.handle(subscriber, handler, metadata)` when you already hold an open
+  subscriber. Routers have the same `include` method, so grouping still works.
 - Write `main` yourself: `#[tokio::main]` plus `app.run().await`. The attribute's CLI (`run`,
   `asyncapi gen`) is what you give up; `run_until(..)` and `start()` are plain methods.
 - State is reached through `ctx.state()`, headers through `ctx.headers()`, and publishing through a
@@ -73,18 +86,23 @@ struct Order {
 
 /// The handler body. The attribute would have generated exactly this struct, named after
 /// the function it decorates.
-struct Handle;
+struct Receive;
 
-impl Handler<Order> for Handle {
-    async fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> Settle {
+impl Handle<Order> for Receive {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
         tracing::info!(order.id, "processing order");
-        HandlerResult::ack().into()
+        Ok(())
     }
 }
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Handle));
+        b.include(subscriber("orders", Receive).build());
     })
 }
 
@@ -95,17 +113,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-The method returns `Settle`, not `HandlerResult`: the attribute inserts the `IntoSettle` conversion
-around the body, so a hand-written impl does it itself - `.into()` on any outcome, or
-`HandlerResult::ack().and_after(..)` when there is post-settle work.
+`Ok(())` acks and `Err(HandlerOutcome::retry())` nacks: the verdict is a `Result`, so the happy path
+carries the reply (nothing here) and the error side carries the settlement. Post-settle work rides
+that same settlement, and the return type does not change for it - return
+`Err(HandlerOutcome::ack().and_after(fut))`.
 
-A body with nothing to await returns the future directly (`fn handle(..) -> impl Future<Output =
-Settle> + Send` with `ready(..)`), because `clippy::unused_async_trait_impl` is denied and a
-handler that awaits nothing is not async. **Keep anything that can panic inside the future**: the
-dispatcher calls `handler.handle(..)` and only then wraps the result in `catch_unwind`, so a panic
-raised in the synchronous part escapes the guard and kills the task instead of settling by
-`on_failure(panic = ..)`. Where the body can panic, write `fn handle(..) -> impl Future { async
-move { .. } }` rather than computing before `ready(..)`.
+The body's two unused parameters are not ceremony: `_outs` is the injections arena of a body that
+declared none, and `_ctx` is the per-delivery context that is always in reach. **Keep anything that
+can panic inside the future**: the dispatcher calls `handler.handle(..)` and only then wraps the
+result in `catch_unwind`, so a panic raised before the first `await` escapes the guard and kills
+the task instead of settling by `on_failure(panic = ..)`.
 
 `run()` runs until `SIGINT` / `SIGTERM`; `run_until(future)` drives shutdown from a future you own
 (a test signal, a timeout), and `start()` hands back a `RunningApp` for hosting the service beside
@@ -113,7 +130,7 @@ another foreground server.
 
 ## Decoding
 
-A constructor resolves the decode codec off the mount surface, the same ladder the attribute path
+The constructor resolves the decode codec off the mount surface, the same ladder the attribute path
 uses: the scope's (`with_broker_codec`), the router chain's (`Router::with_codec`), else
 `DefaultCodec`. `.codec(..)` overrides it for one registration, and `.on_failure(..)` carries the
 decode-failure policy. (`typed(codec, handler)` is the wrapper underneath - it decodes the delivery
@@ -125,32 +142,39 @@ use ruststream::codec::CborCodec;
 
 // the decode-failure policy, the manual counterpart of `on_failure(decode = ..)`
 b.include(
-    subscriber("orders", Handle)
-        .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry)),
+    subscriber("orders", Receive)
+        .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry))
+        .build(),
 );
 
 // this registration's own decode codec, overriding the scope's
-b.include(subscriber("audit", Handle).codec(CborCodec));
+b.include(subscriber("audit", Receive).codec(CborCodec).build());
 ```
 
 ## Raw bytes
 
-The `raw` constructor takes a `Handler<[u8]>`, so the payload arrives undecoded and no codec is
-involved. This is the shape `#[subscriber(.., raw)]` produces, and the only subscriber form
-available with no codec feature at all (`raw_batch` is its batch counterpart, over
-`RawSliceHandler`).
+`Payload<'_>` is the raw input spelling: the wrapper derefs to `&[u8]` and borrows the delivery's
+bytes, so the payload arrives undecoded and no codec is involved. This is the shape
+`#[subscriber(.., raw)]` produces, and the only subscriber form available with no codec feature at
+all (`[Payload<'_>]` is its page counterpart). The spelling is a wrapper rather than `[u8]` because
+`[u8]` is also a page of decoded `u8` elements, and coherence cannot split the two.
 
 ```rust
 struct Ingest;
 
-impl Handler<[u8]> for Ingest {
-    async fn handle(&self, payload: &[u8], _ctx: &mut Context<'_>) -> Settle {
+impl<'p> Handle<Payload<'p>> for Ingest {
+    async fn handle(
+        &self,
+        payload: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
         parse(payload);
-        HandlerResult::ack().into()
+        Ok(())
     }
 }
 
-b.include(raw("frames", Ingest));
+b.include(subscriber("frames", Ingest).build());
 ```
 
 Use `b.handle(subscriber, handler, meta)` instead when the broker hands you an open subscriber
@@ -165,9 +189,9 @@ use ruststream::runtime::HandlerMetadata;
 struct Frames;
 
 impl Handler<MemoryMessage> for Frames {
-    async fn handle(&self, msg: &MemoryMessage, _ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &MemoryMessage, _ctx: &mut Context<'_>) -> HandlerOutcome {
         parse(msg.payload());
-        HandlerResult::ack().into()
+        HandlerOutcome::ack()
     }
 }
 
@@ -196,8 +220,15 @@ struct AppState {
     receipts: MemoryPublisher,
 }
 
-impl Handler<Order, (), AppState> for Confirm {
-    async fn handle(&self, order: &Order, ctx: &mut Context<'_, (), AppState>) -> Settle {
+// The state is the body's last axis, so the impl names it and the mount checks it against the
+// app's; the reply and injection axes stay at `()` in between.
+impl Handle<Order, (), (), (), AppState> for Confirm {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_, (), AppState>,
+    ) -> Result<(), HandlerOutcome> {
         self.seen.fetch_add(order.id, Ordering::SeqCst);
 
         let payload = JsonCodec
@@ -212,19 +243,16 @@ impl Handler<Order, (), AppState> for Confirm {
             .await
             .is_err()
         {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::ack().into()
+        Ok(())
     }
 }
 
-// `subscriber(source, body)` binds a body over the unit application state, so a body pinned to
-// `AppState` takes the `_in` variant: it reads the state off the `Handler` impl, and the mount
-// checks it against the app's.
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .on_startup(async move |()| Ok::<_, std::convert::Infallible>(AppState { receipts }))
     .with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber_in("orders", Confirm { seen }));
+        b.include(subscriber("orders", Confirm { seen }).build());
     });
 ```
 
@@ -234,17 +262,31 @@ context, `S` the application state. Both default to `()`, so a handler needing n
 
 ## Headers
 
-`Headers<T>` is an extractor, so the manual path parses the map itself. It is the same call the
-extractor makes, and it returns a `Result` you settle on yourself:
+`Headers<T>` is an extractor, so the manual path declares the contract on the input instead:
+`Message<H, P>` is one delivery's decoded payload next to its decoded header contract, with both
+public fields ready when the body runs. The pairing is structural, so two subscribers of one
+subject may read different header sets, and a violation settles by the same
+`on_failure(decode = ..)` policy that covers the payload.
 
 ```rust
-let Ok(meta) = ctx.headers().to_typed::<ChunkMeta>() else {
-    return HandlerResult::drop().into();
-};
+impl Handle<Message<ChunkMeta, Chunk>> for Convert {
+    async fn handle(
+        &self,
+        msg: &Message<ChunkMeta, Chunk>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        tracing::info!(msg.headers.task_id, "converting {}", msg.body.id);
+        Ok(())
+    }
+}
+
+b.include(subscriber("chunks", Convert).build());
 ```
 
-`ctx.headers_mut()` is the working copy middleware enriches, and `HeaderMap::insert_typed(&value)`
-writes a contract back into it.
+A page reads `[Message<H, P>]`, one contract per element. `ctx.headers()` is still the untyped
+`HeaderMap` for a discriminator read (`get_str`), `ctx.headers_mut()` is the working copy
+middleware enriches, and `HeaderMap::insert_typed(&value)` writes a contract back into it.
 
 ## Publishing
 
@@ -266,11 +308,50 @@ publisher
 ```
 
 `TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
-work unchanged. The reply clause becomes `replying(source, body).to(dest)` over an `impl Reply<T>`
-with `type Out`, and the `Out` slot parameter becomes
-`with_slots::<T, (Marker,), _, _>(source, body)` over an `impl SlotsHandler<T, Slots>` (both at
-once: `replying_with_slots(..).to(..)` over `SlotsReply`); the include site still binds each slot
-with `.out(marker, policy)` or `.publisher(policy)` and commits with `.mount()`.
+work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the chain -
+`.on(dest)` names the destination the reply type does not declare itself, and the publisher step
+decides the wire: the default and `.publisher(TypedPublisher::new(policy))` encode the reply
+through a codec, while `.publisher(Bare(policy))` and `.publisher(DefaultBareReply)` send an `R` of
+`Vec<u8>` as it is, the latter through the broker's default publisher. A plain unwrapped policy is
+not accepted on this chain. The `Out` slot parameter becomes the `O` axis:
+`Outs<(Slot<Marker, W, Enc>,)>`, where `W` is the wired live value and `Enc` the include site's
+encode codec, with the capability the body needs stated as a mandatory bound on the whole entry,
+one entry per marker.
+
+```rust
+impl<W, Enc> Handle<Order, (), Outs<(Slot<Primary, W, Enc>,)>> for Mirror
+where
+    Slot<Primary, W, Enc>: Publish,
+{
+    async fn handle(
+        &self,
+        order: &Order,
+        outs: &Outs<(Slot<Primary, W, Enc>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        outs.get(Primary)
+            .message(&Event { id: order.id })
+            .to("mirror")
+            .publish()
+            .await
+            .map_err(|_| HandlerOutcome::retry())?;
+        Ok(())
+    }
+}
+
+// the reply chain seals with `.build()`, and the include site binds the arena
+b.include(subscriber("orders", Confirm).reply().on("confirmations").build());
+b.include(subscriber("mirror", Mirror).build())
+    .out(Primary, MemoryPublish)
+    .build();
+```
+
+The markers come from the impl, so a missing, duplicate or extra `.out(..)` is a compile error
+naming the slot, and a single unnamed slot binds through `.publisher(policy)`, which binds and
+commits in one call. `outs.get(Marker)` hands back the entry itself: it keeps the `.message(..)` /
+`.raw(..)` builders and is a transparent `Deref` onto the wired live value, so a broker-defined
+capability is called straight on it - a body that needs one pins the concrete live type
+(`Slot<Lanes, LaneRouter, Enc>`) or bounds `W` with the broker's own trait.
 
 ## Middleware
 
@@ -291,7 +372,7 @@ where
     S: Send + Sync,
     H: Handler<M, C, S>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.inner.handle(msg, ctx).await
     }
@@ -307,18 +388,18 @@ not a definition. It also never reads the scope codec, so `with_broker_codec` an
 
 A `Router` reaches a little further without a definition: `Router::workers(Workers::pool(n))` /
 `Workers::keyed(n)` is the functional counterpart of the `workers(..)` clause (`BrokerScope` has no
-worker control at all). Beyond that, `batch(source, body)` and `raw_batch(source, body)` are the
-macro-free paths for the batch shapes, and both resolve the chain's codec.
+worker control at all). The batch shapes need nothing extra - `[T]` and `[Payload<'_>]` are input
+spellings of the one constructor, and both resolve the chain's codec.
 
-Every form token has a constructor, so no form is reachable only through the definition traits: a
-body pinned to a concrete application state takes an `_in` constructor, a typed broker context is
-read off the body's own impl (and named with `.context::<K>()` on the `with_seek` /
-`replying_with_slots` chains), and the injection, batch-publishing, raw-reply and headers-contract
-shapes each have their own constructor. The schema opt-ins ride the same chain: `.describe(..)`,
-`.documented()`, `.documented_headers::<H>()` and `.message()`. What is left for the definition
-traits is being the attribute's own expansion target, and a fully custom definition - one whose
-source, metadata or settings are computed rather than named - so implement one and the whole mount
-surface opens up on your own type.
+Every form is reachable through that one constructor, so none is locked behind the definition
+traits: the application state, the typed broker context and the injections are all axes read off
+the body's own `impl Handle`, and the reply, page-cap and document steps ride the chain
+(`.reply()` / `.on(..)` / `.publisher(..)`, `.batch(n)`, `.describe(..)`, `.undocumented()`).
+Registrations are documented by default under `asyncapi`, which is why the
+message types need `schemars::JsonSchema` and `.undocumented()` is the per-registration exit.
+What is left for the definition traits is being the attribute's own expansion target, and a fully
+custom definition - one whose source, metadata or settings are computed rather than named - so
+implement one and the whole mount surface opens up on your own type.
 
 ```rust
 use ruststream::runtime::{
@@ -326,9 +407,10 @@ use ruststream::runtime::{
     SubscriberSettings, forms,
 };
 
-// This exact case is shorter as `subscriber("orders", Handle).on_failure(..)`; the shape below is
-// what a definition carrying its own declaration looks like.
-impl SubscriberDef for Handle {
+// This exact case is shorter as `subscriber("orders", Receive).on_failure(..).build()`; the
+// shape below is what a definition carrying its own declaration looks like. The SPI takes the
+// dispatch trait `Handler`, not the manual path's `Handle`.
+impl SubscriberDef for Receive {
     type Input = /* the decode kind */;
     type Context = ();
     type Handler = Self;
@@ -341,7 +423,7 @@ impl SubscriberDef for Handle {
 // `Declared` is where the settings live, and its `Settings` has to be a builder. This is
 // verbatim what the expansion emits: `SubscriberBuilder::new(self, source)` plus the chain the
 // attribute's clauses parsed into.
-impl Declared for Handle {
+impl Declared for Receive {
     type Form = forms::Subscribing;
     type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open)>;
 
@@ -351,7 +433,7 @@ impl Declared for Handle {
     }
 }
 
-b.include(Handle);
+b.include(Receive);
 ```
 
 The two routes are mutually exclusive: a direct `impl Declared` conflicts with the blanket

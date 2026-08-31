@@ -12,7 +12,7 @@ A handler is an `async fn` whose first parameter is a reference to the decoded p
 === "Macros"
 
     ```rust
-    use ruststream::runtime::HandlerResult;
+    use ruststream::runtime::HandlerOutcome;
     use ruststream::subscriber;
 
     --8<-- "examples/subscribers.rs:contract"
@@ -75,25 +75,25 @@ dictionary-driven typed publish path ([typed headers](headers.md)). See
 
 ### Acking
 
-The return type is anything that converts into a [`Settle`] (the settlement unit: an outcome plus
-an optional post-settle continuation):
+The return type is anything that converts into a [`HandlerOutcome`] (the settlement unit: a broker
+status plus an optional post-settle continuation):
 
 | Return value | Result |
 |---|---|
-| `HandlerResult::ack()` (or `HandlerResult::Ack`) | acknowledge; the broker removes the message |
-| `HandlerResult::retry()` | nack with requeue (redeliver later) |
-| `HandlerResult::retry_after(delay)` | nack asking for redelivery no sooner than `delay` |
-| `HandlerResult::drop()` | nack without requeue (discard or dead-letter) |
-| `()` | always `Ack` |
-| `Result<(), E>` | `Ack` on `Ok`, `drop` on `Err` |
-| `Result<HandlerResult, E>` | the inner outcome on `Ok`, `drop` on `Err` |
-| `Settle` (any of the above `.and_after(..)`) | settle by the outcome, then run the continuation |
+| `HandlerOutcome::ack()` | acknowledge; the broker removes the message |
+| `HandlerOutcome::retry()` | nack with requeue (redeliver later) |
+| `HandlerOutcome::retry_after(delay)` | nack asking for redelivery no sooner than `delay` |
+| `HandlerOutcome::drop()` | nack without requeue (discard or dead-letter) |
+| `()` | always acks |
+| `Result<(), E>` | an ack on `Ok`, a drop on `Err` |
+| `Result<HandlerOutcome, E>` | the inner outcome on `Ok`, a drop on `Err` |
+| `HandlerOutcome::ack().and_after(..)` (any outcome) | settle by the outcome, then run the continuation |
 
 On the message itself, ack consumes `self`, so the type system prevents acking twice.
 
 ### Post-settle continuations
 
-`HandlerResult::ack().and_after(fut)` attaches a continuation to the returned outcome - a
+`HandlerOutcome::ack().and_after(fut)` attaches a continuation to the returned outcome - a
 non-critical notification, slow follow-up work, a cache warm-up. Any outcome works
 (`drop().and_after(..)` is valid; the neutral reading is "after settle"):
 
@@ -166,7 +166,7 @@ Under the hood, the runtime honours the delay:
   window: if the process exits before the timer fires the copy is lost.
 
 The `batch_retry_after` form composes with
-[selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` carries
+[selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerOutcome>` carries
 per-element delays, so pending entries back off without holding up the rest of the batch:
 
 === "Macros"
@@ -236,8 +236,8 @@ policy), the broker crate exposes a descriptor type. Use its constructor directl
 <!-- inline-rust: illustrative descriptor sketch; OrdersStream is a stand-in for a broker crate's SubscriptionSource type, which lives in another crate and has no in-repo compiled home (the real NATS form is pulled in just below) -->
 ```rust
 #[subscriber(OrdersStream::new("orders", "workers"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
@@ -252,8 +252,8 @@ right in the decorator:
 <!-- inline-rust: illustrative builder-chain source; the concrete options type lives in a broker crate, so there is no in-repo compiled home -->
 ```rust
 #[subscriber(StreamOptions::new("orders").durable("audit"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
@@ -288,7 +288,7 @@ applies, so there is no precedence rule to remember:
 <!-- inline-rust: two compile-fail one-liners; a compiling example cannot host code that must not compile (the pinned diagnostics live in tests/ui) -->
 ```rust
 #[subscriber("orders", workers(4))]
-async fn handle(order: &Order) -> HandlerResult { HandlerResult::Ack }
+async fn handle(order: &Order) -> HandlerOutcome { HandlerOutcome::ack() }
 
 b.include(handle.name("other"));    // does not compile: the name is already given
 b.include(handle.on_failure(..));   // fine: the attribute said nothing about failures
@@ -384,8 +384,8 @@ The semantics differ from single-message handlers in a few ways:
 
 - Elements that fail to decode are nacked individually (per the decode-failure policy) and never
   reach the handler; the rest arrive as one slice.
-- The returned value settles the batch. A single `HandlerResult` (or `()` / `Result<_, E>`)
-  settles **every** message uniformly: `Ack` acks them all, `retry()` requeues them all.
+- The returned value settles the batch. A single `HandlerOutcome` (or `()` / `Result<_, E>`)
+  settles **every** message uniformly: `ack()` acks them all, `retry()` requeues them all.
 - Per-message headers are not accessible in the `&[T]` form, and the context starts with empty
   headers.
 - App-global and router middleware wrap per-message handlers and do not apply to batch
@@ -395,7 +395,7 @@ The semantics differ from single-message handlers in a few ways:
 
 A common case is partial readiness: some messages of the batch are processed, others are not
 ready yet and should be redelivered without retrying the ones that succeeded. Return
-`Vec<HandlerResult>` to settle element `i` of the slice with outcome `i`:
+`Vec<HandlerOutcome>` to settle element `i` of the slice with outcome `i`:
 
 === "Macros"
 
@@ -503,7 +503,7 @@ at all. For a custom serialization format you want *typed*
 handlers for, implement [`Codec`](codecs.md) instead and keep the typed path.
 
 A raw subscriber can also reply in kind: the `publish_raw("dest")` clause publishes the
-returned bytes (`-> Vec<u8>`, or `-> Result<Vec<u8>, HandlerResult>` for the same explicit ack
+returned bytes (`-> Vec<u8>`, or `-> Result<Vec<u8>, HandlerOutcome>` for the same explicit ack
 control as the typed reply form) as-is to the reply name, through the bare publisher attached
 at the include site (`b.include(relay).publisher(policy)`, or the broker's default publish
 policy without the call) - no codec on either side, and a failed reply publish nacks the
@@ -604,8 +604,9 @@ integration test.
 ## Macro or manual
 
 `#[subscriber]` is sugar over a generic API. The macro generates a typed handler and its metadata;
-you can write the same registration by hand with `typed` (which decodes the payload), a closure or
-struct handler, and `HandlerMetadata`. Both forms below register the same handler.
+you can write the same registration by hand as a named type whose `impl Handle` carries the body,
+bound to its source by `subscriber(source, body)` and sealed with `.build()`. Both forms below
+register the same handler.
 
 === "Macro"
 

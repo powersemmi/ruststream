@@ -23,6 +23,7 @@ cargo doc --all-features --open
 | `RustStream` | `ruststream::runtime` | the application object |
 | `RunningApp` | `ruststream::runtime` | a started service: readiness, fail-fast signal, graceful shutdown |
 | `Router` | `ruststream::runtime` | a lazily-bound group of handlers |
+| `Handle`, `subscriber` | `ruststream::runtime` | the manual path's one body trait and its one mounting constructor |
 | `FromContext`, `State`, `FromRef` | `ruststream::runtime` / `ruststream` | handler extractor parameters and the state-injection derive |
 | `Broker`, `Subscribe`, `Subscriber`, `Publisher`, `IncomingMessage` | `ruststream` | the broker contract |
 | `SubscriptionSource`, `Name` | `ruststream` | subscription descriptors |

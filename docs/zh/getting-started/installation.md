@@ -29,7 +29,7 @@ serde = { version = "1", features = ["derive"] }
 | `msgpack` | rmp-serde | `MsgpackCodec` |
 | `cbor` | ciborium | `CborCodec` |
 | `memory` | - | `MemoryBroker`，作为参考实现的内存 Broker |
-| `macros` | ruststream-macros | `#[subscriber]`、`#[ruststream::app]`、`#[derive(Message)]` |
+| `macros` | ruststream-macros | `#[subscriber]`、`#[ruststream::app]`、`#[derive(MessageInfo)]` |
 | `asyncapi` | schemars, serde_norway | AsyncAPI 生成与 HTML 查看器 |
 | `metrics` | prometheus | Prometheus 中间件与导出器 |
 | `logging` | tracing-subscriber | `ruststream::logging`，带颜色的控制台日志订阅者（[日志](../guides/logging.md)） |

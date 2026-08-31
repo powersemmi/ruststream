@@ -5,7 +5,7 @@ alwaysApply: false
 ---
 
 - A service imports one glob: `use ruststream::prelude::*;`. It carries the application builder,
-  the handler surface (`HandlerResult`, `Context`), every extractor (`State`, `Ctx`, `Headers`,
+  the handler surface (`HandlerOutcome`, `Context`), every extractor (`State`, `Ctx`, `Headers`,
   `Out`), the mount-site settings, `TypedPublisher`, and the attribute macros and derives. On a
   broker crate, glob that crate's prelude instead (`use ruststream_nats::prelude::*;`): it
   re-exports the core prelude plus the broker, its subscription descriptor and its publish
@@ -14,8 +14,8 @@ alwaysApply: false
 - Only what a given service actually reaches for stays an explicit import: the in-core broker
   (`ruststream::memory`), codecs (`ruststream::codec`), and the optional feature modules
   (`ruststream::testing`, `asyncapi`, `metrics`, `logging`, `otel`). `RouterDef`, `DefaultSlot`,
-  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `nonzero!` and the value constructors
-  are all in the prelude.
+  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `nonzero!` and the manual path's
+  `Handle` / `subscriber` pair are all in the prelude.
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
   payload: `&T` (`T: serde::Deserialize`) decodes, `&[T]` is a batch, `&[u8]` under the `raw`
   clause takes the codec out of the path entirely, and `&[&[u8]]` is that batch shape (the type
@@ -24,10 +24,11 @@ alwaysApply: false
   `Headers<T>` the delivery headers parsed into a typed contract, `Out<impl Publisher, ..>` a live
   publisher. An explicit `ctx: &mut Context` parameter is optional and last; omit it unless you
   use it.
-- The return type drives acknowledgement: `HandlerResult`, `()` (always acks), `Result<_, E>` (an
-  `Err` nacks), or `Vec<HandlerResult>` on a batch to settle entry by entry. For a reply handler,
-  add a `publish("subject")` clause and return the reply value, or `Result<Reply, HandlerResult>`
-  for explicit ack control.
+- The return type drives acknowledgement: `HandlerOutcome`, `()` (always acks), `Result<_, E>` (an
+  `Err` nacks), `Result<HandlerOutcome, E>`, or `Vec<HandlerOutcome>` on a batch to settle entry by
+  entry. For a reply handler, add a `publish("subject")` clause and return the reply value, or
+  `Result<Reply, HandlerOutcome>` for explicit ack control (`Vec<Reply>` and
+  `Result<Vec<Reply>, HandlerOutcome>` are the batch counterparts).
 - Build the service with `#[ruststream::app]` on a synchronous `fn app() -> RustStream` (or
   `impl App` when layers/state change the type). Do not write your own `main` or `#[tokio::main]`.
 - Application state is built once in `on_startup` (async closures: `async move |()| ...`) and
@@ -37,7 +38,7 @@ alwaysApply: false
   connects them at startup. Never connect inside the builder.
 - `include` is the only mounting call. It takes the definition and returns a builder: chain
   `.publisher(..)` for the reply side, `.out(<marker>, ..)` for each injected publisher (finish
-  those with `.mount()`), or chain nothing and the broker's default publish policy is used.
+  those with `.build()`), or chain nothing and the broker's default publish policy is used.
 - The codec defaults to `codec::DefaultCodec` (`json` > `cbor` > `msgpack`), so `include` needs no
   codec argument. Log with `tracing`, never `println!`. In tests use `MemoryBroker` driven by the
   `TestApp` harness (`testing` feature).
@@ -57,9 +58,9 @@ struct Order {
 }
 
 #[subscriber("orders.created")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     tracing::info!(order.id, "processing order");
-    HandlerResult::ack()
+    HandlerOutcome::ack()
 }
 
 #[ruststream::app]
@@ -79,55 +80,54 @@ use ruststream_nats::prelude::*; // brings NatsBroker + the core prelude
 .with_broker(NatsBroker::new("nats://localhost:4222"), |b| b.include(handle))
 ```
 
-## Handler results
+## Handler outcomes
 
-Settle through the constructors, not the bare variants: a handler then reads the same whether it
-acks or nacks, and every outcome chains into `and_after`.
+Every settlement is one of four constructors: a handler then reads the same whether it acks or
+nacks, and every outcome chains into `and_after`.
 
 ```rust
-HandlerResult::ack()                 // Ack
-HandlerResult::retry()               // Nack { requeue: true }
-HandlerResult::drop()                // Nack { requeue: false }
-HandlerResult::retry_after(delay)    // NackAfter { delay } - not ready yet, do not spin
+HandlerOutcome::ack()                 // ack
+HandlerOutcome::retry()               // nack, requeue
+HandlerOutcome::drop()                // nack, no requeue
+HandlerOutcome::retry_after(delay)    // nack with a delay - not ready yet, do not spin
 
 // `()` always acks; `Result<(), E>` acks on Ok, nacks on Err
 async fn handle(order: &Order) -> Result<(), MyError> { Ok(()) }
 ```
 
-`Ack`, `Nack { requeue }` and `NackAfter { delay }` are the underlying variants; write them out
-only when matching on an outcome. `retry_after` is a hint - brokers without native delayed
-redelivery fall back to an immediate requeue.
+The broker status inside is not a public enum: read an outcome with the predicates `is_ack()`,
+`is_retry()`, `is_drop()` and `retry_delay()`. `retry_after` is a hint - brokers without native
+delayed redelivery fall back to an immediate requeue.
 
 ## Post-settle work (`and_after`)
 
-`and_after` attaches a continuation that runs **after** the message is settled, producing a
-`Settle` (the handler's return type becomes `Settle`, or `Vec<Settle>` on a batch). Use it for a
-side effect that must not gate the settlement decision or affect redelivery: a notification, slow
-follow-up work, a cache warm-up.
+`and_after` attaches a continuation that runs **after** the message is settled and returns the
+`HandlerOutcome` it was called on (so the handler's return type stays `HandlerOutcome`, or
+`Vec<HandlerOutcome>` on a batch). Use it for a side effect that must not gate the settlement
+decision or affect redelivery: a notification, slow follow-up work, a cache warm-up.
 
 ```rust
 use ruststream::prelude::*;
-use ruststream::runtime::Settle; // outside the prelude
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> Settle {
+async fn handle(order: &Order) -> HandlerOutcome {
     let id = order.id;
-    HandlerResult::ack().and_after(async move {
+    HandlerOutcome::ack().and_after(async move {
         tracing::info!(id, "acked; notifying downstream");
     })
 }
 
 // per element on a batch: the continuation rides with its own message
 #[subscriber(batch("orders"))]
-async fn handle_page(orders: &[Order]) -> Vec<Settle> {
+async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()
         .map(|order| {
             if order.id == 0 {
-                HandlerResult::retry().into() // a plain outcome converts, no continuation
+                HandlerOutcome::retry() // a plain outcome, no continuation
             } else {
                 let id = order.id;
-                HandlerResult::ack().and_after(async move { follow_up(id).await })
+                HandlerOutcome::ack().and_after(async move { follow_up(id).await })
             }
         })
         .collect()
@@ -152,8 +152,8 @@ use ruststream::prelude::*;
 use ruststream::runtime::{FailurePolicies, FailurePolicy};
 
 #[subscriber]
-async fn bill(order: &Order) -> HandlerResult {
-    HandlerResult::ack()
+async fn bill(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 // in with_broker(broker, |b| { ... }):
@@ -196,8 +196,8 @@ b.include(confirm);                                    // broker's default publi
 b.include(confirm).publisher(TypedPublisher::new(MemoryPublish));  // an explicit one
 ```
 
-Return `Result<Reply, HandlerResult>` to control acknowledgement: `Ok(reply)` publishes and acks,
-`Err(result)` publishes nothing and the dispatcher acts on the returned `HandlerResult`. Spell the
+Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` publishes and acks,
+`Err(outcome)` publishes nothing and the dispatcher acts on the returned `HandlerOutcome`. Spell the
 `Result` out in the signature (a type alias is treated as a plain reply type). A failed reply
 publish nacks the incoming message with `requeue = true`.
 
@@ -213,16 +213,16 @@ feature enabled at all.
 
 ```rust
 #[subscriber("frames", raw)]
-async fn ingest(frame: &[u8]) -> HandlerResult {
+async fn ingest(frame: &[u8]) -> HandlerOutcome {
     parse(frame);
-    HandlerResult::ack()
+    HandlerOutcome::ack()
 }
 
 // the batch shape needs no clause - `&[&[u8]]` says it, and the payloads are borrowed
 // from the batch's own messages for the duration of the call, so nothing is copied
 #[subscriber("frames")]
-async fn ingest_page(frames: &[&[u8]]) -> HandlerResult {
-    HandlerResult::ack()
+async fn ingest_page(frames: &[&[u8]]) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
@@ -264,11 +264,11 @@ struct Event {
 }
 
 #[subscriber("ingress")]
-async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
+async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     if out.message(event).to("egress").publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::ack()
+    HandlerOutcome::ack()
 }
 
 // in with_broker(broker, |b| { ... }): the single unnamed slot is DefaultSlot
@@ -279,7 +279,7 @@ b.include(forward).publisher(MemoryPublish);
 
 A handler that publishes down more than one path names a **slot marker** per parameter - a unit
 struct deriving `OutSlot`, whose `#[publishes(..)]` list is what may leave through that path. The
-include site binds each marker with `.out(marker, policy)` and commits with a terminal `.mount()`;
+include site binds each marker with `.out(marker, policy)` and commits with a terminal `.build()`;
 the calls bind by marker, so their order does not matter. A forgotten binding is a compile error
 naming the slot (`MissingSlot<Audit>`), never a runtime surprise. `DefaultSlot` (from
 `ruststream::runtime`) names the implicit single slot when a handler also has a reply side.
@@ -299,15 +299,15 @@ async fn route(
     event: &Event,
     Out(orders): Out<impl Publisher, Orders>,
     Out(audit): Out<impl Publisher, Audit>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     // publishing an AuditEntry through `orders` is a compile error: not in its list
-    HandlerResult::ack()
+    HandlerOutcome::ack()
 }
 
 b.include(route)
     .out(Audit, MemoryPublish)
     .out(Orders, MemoryPublish)
-    .mount();
+    .build();
 ```
 
 The capability in the bound can be refined - `Out<impl OwnedTransactions, Ledger>` compiles only
@@ -398,10 +398,10 @@ struct AppState {
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order, State(db): State<Database>) -> HandlerResult {
+async fn handle(order: &Order, State(db): State<Database>) -> HandlerOutcome {
     // db.store(order).await;
     let _ = db;
-    HandlerResult::ack()
+    HandlerOutcome::ack()
 }
 
 #[ruststream::app]
@@ -497,9 +497,9 @@ extractors needs no `&mut Context` parameter at all.
 use ruststream_rdkafka::prelude::*; // the context keys ride the broker's prelude too
 
 #[subscriber("orders")]
-async fn handle(order: &Order, Ctx(partition): Ctx<Partition>) -> HandlerResult {
+async fn handle(order: &Order, Ctx(partition): Ctx<Partition>) -> HandlerOutcome {
     tracing::info!(partition, "delivery");
-    HandlerResult::ack()
+    HandlerOutcome::ack()
 }
 ```
 
@@ -514,9 +514,9 @@ map itself is `HeaderMap` (`ctx.headers()`), and `Headers` is only the extractor
 use ruststream::prelude::*;
 
 #[subscriber("chunks")]
-async fn convert(chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
+async fn convert(chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
     tracing::info!(meta.task_id, "converting");
-    HandlerResult::ack()
+    HandlerOutcome::ack()
 }
 ```
 
@@ -588,16 +588,16 @@ the broker's own vocabulary.
 use ruststream_nats::prelude::*; // brings SubscribeOptions
 
 #[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::ack()
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
 ## AsyncAPI metadata
 
 Decoding only needs `serde::Deserialize`. The extra derives are **documentation only** for the
-generated AsyncAPI spec and are optional: `Message` (in the prelude) names/describes the type, and
-`JsonSchema` (feature `asyncapi`) emits its payload schema.
+generated AsyncAPI spec and are optional: `MessageInfo` (in the prelude) names/describes the type,
+and `JsonSchema` (feature `asyncapi`) emits its payload schema.
 
 Neither selects a wire codec - that stays the default (`json` > `cbor` > `msgpack`) or whatever
 `with_codec` / `with_broker_codec` names. `JsonSchema` describes the payload's logical shape in the
@@ -610,7 +610,7 @@ use ruststream::schemars::JsonSchema;
 use serde::Deserialize;
 
 /// An order placed on the orders channel.
-#[derive(Debug, Deserialize, Message, JsonSchema)]
+#[derive(Debug, Deserialize, MessageInfo, JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -640,7 +640,7 @@ tb.broker::<MemoryBroker>()
     .subscriber("orders")
     .assert_called_once()
     .with(&Order { id: 42 })
-    .settled(HandlerResult::ack());
+    .settled(HandlerOutcome::ack());
 
 tb.broker::<MemoryBroker>()
     .published::<Receipt>("receipts")
