@@ -53,6 +53,7 @@ mod eager;
 mod outs;
 mod reply;
 mod reply_slots;
+mod seek;
 mod value;
 mod verdict;
 
@@ -77,6 +78,7 @@ pub use value::UnbuiltDefinition;
 #[doc(hidden)]
 pub use eager::{PageBody, SoloBody};
 pub use outs::{OutStack, Outs, Publish, Slot};
+pub use seek::SeekContext;
 #[doc(hidden)]
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
 #[doc(hidden)]

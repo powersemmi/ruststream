@@ -66,7 +66,8 @@ pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, OwnedTransactions,
-    Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker, ServerSpec, Subscribe,
+    Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, SeekableMessage, Seeker,
+    ServerSpec, Subscribe,
     Transaction, TransactionalPublisher,
 };
 pub use error::AckError;

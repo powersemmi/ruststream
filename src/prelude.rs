@@ -24,7 +24,8 @@
 pub use crate::runtime::{
     App, AppInfo, Context, Ctx, DefaultSlot, FailurePolicies, FailurePolicy, FromRef, Handle,
     HandlerResult, Headers, Message, Out, Payload, PublishExt, Router, RouterDef, RunningApp,
-    Outs, Publish, RustStream, Seek, Settle, Slot, State, SubscriberSettings, TypedPublisher,
+    Outs, Publish, RustStream, Seek, SeekContext, Settle, Slot, State, SubscriberSettings,
+    TypedPublisher,
     Workers, subscriber,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which

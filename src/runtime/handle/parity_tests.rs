@@ -425,6 +425,46 @@ fn every_slot_spelling_mounts() {
     let _ = slot_axes();
 }
 
+struct Replayer;
+
+impl Handle<Order, (), (), crate::runtime::SeekContext<crate::memory::MemorySeeker>> for Replayer {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_, crate::runtime::SeekContext<crate::memory::MemorySeeker>>,
+    ) -> Result<(), HandlerResult> {
+        let here = *ctx.position();
+        if order.id == u64::MAX && ctx.seek(here).await.is_err() {
+            return Err(HandlerResult::drop());
+        }
+        Ok(())
+    }
+}
+
+/// The seek axis rides the broker context: position and reposition reach the body through
+/// `Context`, and a seekable source is all the mount asks for.
+#[tokio::test]
+async fn seek_reaches_the_body_through_the_context() {
+    use crate::OutgoingMessage;
+    use crate::Publisher;
+    use crate::runtime::{AppInfo, RustStream};
+
+    let app = RustStream::new(AppInfo::new("handle-seek", "0.0.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(subscriber("orders", Replayer).build());
+            b.after_startup(MemoryPublish, async move |publisher| {
+                publisher
+                    .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))
+                    .await
+            });
+        },
+    );
+    let running = app.start().await.expect("the app starts");
+    running.shutdown().await.expect("the app stops cleanly");
+}
+
 /// The scope surface mounts the same definitions, and one subscriber dispatches end to end.
 #[tokio::test]
 async fn a_subscriber_dispatches_end_to_end() {

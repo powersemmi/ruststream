@@ -61,7 +61,7 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 pub use handle::{
     Documentable, Documented, Handle, Input, IntoSource, IntoVerdict, Message, OutStack, Outs,
-    Payload, Publish, Slot, Undocumented, ValueBuilder, subscriber,
+    Payload, Publish, SeekContext, Slot, Undocumented, ValueBuilder, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
