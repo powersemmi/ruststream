@@ -4,9 +4,10 @@
 
 use std::any::type_name;
 
+use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
-use crate::runtime::handler::HandlerResult;
+use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publishing::{PublishingCall, PublishingDef};
 use crate::runtime::router::{
@@ -15,6 +16,7 @@ use crate::runtime::router::{
 use crate::runtime::settings::SubscriberBuilder;
 use crate::{Broker, FixedName, Name, OutgoingDestination, Unnamed};
 
+use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
     SoloPair,
@@ -24,7 +26,6 @@ use super::value::{
     BareReply, DeclaredDest, EncodedReply, HandleValue, NamedDest, ReplyValue, Sealed,
 };
 use super::verdict::{OneByOne, Paged};
-use super::{Handle, IntoVerdict};
 
 // ------------------------------------------------------------------------------ reply shapes
 
@@ -98,8 +99,8 @@ where
     }
 }
 
-/// The reply-form token of one route on one verdict family. A bare reply has no page form: the
-/// attribute admits none either.
+/// The reply-form token of one route on one verdict family. The bare route has no page form:
+/// the attribute admits none either.
 #[doc(hidden)]
 pub trait ReplyFormFor<Fam> {
     /// The sealed mount token.
@@ -190,14 +191,6 @@ where
     }
 }
 
-/// Downgrades the settle side of one solo reply verdict: a reply verdict is only constructible
-/// from `Result<R, HandlerResult>`, so no continuation is lost here.
-pub(super) fn solo_verdict<R>(
-    verdict: Result<R, crate::runtime::Settle>,
-) -> Result<R, HandlerResult> {
-    verdict.map_err(|settle| settle.outcome())
-}
-
 impl<T, R, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, S, H, Doc>, Dest, Route, Attach>>
 where
@@ -213,15 +206,8 @@ where
         input: &T,
         _injections: &(),
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerResult> {
-        solo_verdict(
-            self.0
-                .value
-                .body
-                .handle(input, &(), ctx)
-                .await
-                .into_verdict(),
-        )
+    ) -> Result<R, HandlerOutcome> {
+        self.0.value.body.handle(input, &(), ctx).await
     }
 }
 
@@ -239,16 +225,9 @@ where
         input: &[u8],
         _injections: &(),
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerResult> {
+    ) -> Result<R, HandlerOutcome> {
         let payload = Payload::new(input);
-        solo_verdict(
-            self.0
-                .value
-                .body
-                .handle(&payload, &(), ctx)
-                .await
-                .into_verdict(),
-        )
+        self.0.value.body.handle(&payload, &(), ctx).await
     }
 }
 
@@ -274,22 +253,15 @@ where
         input: &Message<Hd, P>,
         _injections: &(),
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerResult> {
-        solo_verdict(
-            self.0
-                .value
-                .body
-                .handle(input, &(), ctx)
-                .await
-                .into_verdict(),
-        )
+    ) -> Result<R, HandlerOutcome> {
+        self.0.value.body.handle(input, &(), ctx).await
     }
 }
 
 // ------------------------------------------------------------------------- the page reply def
 
 impl<A, R, S, H, Doc, Dest, Route, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, (), (), S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), (), S, H, Doc>, Dest, Route, Attach>>
 where
     A: PagedAxis,
     R: ReplyShape + ReplyHeadersSchema<Doc>,
@@ -334,62 +306,58 @@ where
     }
 }
 
-/// Applies the page reply contract: one reply per element, one outcome per element.
+/// Applies the page reply contract: one reply per element, or one outcome per element.
 pub(super) fn page_reply_verdict<R>(
-    verdict: Result<Vec<R>, crate::runtime::BatchResult>,
+    verdict: Result<Vec<R>, Vec<HandlerOutcome>>,
     page_len: usize,
     subscription: &str,
-) -> Result<Vec<R>, crate::runtime::BatchResult> {
-    match &verdict {
+) -> Result<Vec<R>, BatchResult> {
+    match verdict {
         Ok(replies) => {
             assert!(
                 replies.len() == page_len,
                 "subscriber '{subscription}' returned {} replies for a page of {page_len}",
                 replies.len(),
             );
+            Ok(replies)
         }
-        Err(crate::runtime::BatchResult::PerElement(settles)) => {
+        Err(outcomes) => {
             assert!(
-                settles.len() == page_len,
+                outcomes.len() == page_len,
                 "subscriber '{subscription}' returned {} per-element outcomes for a page of \
                  {page_len}",
-                settles.len(),
+                outcomes.len(),
             );
+            Err(BatchResult::PerElement(outcomes))
         }
-        Err(crate::runtime::BatchResult::Uniform(_)) => {}
     }
-    verdict
 }
 
 impl<T, R, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, R, (), (), S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), (), S, H, Doc>, Dest, Route, Attach>>
 where
     Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = (), Reply = R>,
     [T]: Input<Axis = Page<T>>,
     T: Send + Sync + 'static,
     R: ReplyShape,
     S: Send + Sync,
-    H: Handle<[T], R, (), (), S>,
+    H: Handle<[T], Vec<R>, (), (), S>,
 {
     async fn call(
         &self,
         batch: &[T],
         _injections: &(),
         ctx: &mut Context<'_, (), S>,
-    ) -> Result<Vec<R>, crate::runtime::BatchResult> {
-        let verdict = self
-            .0
-            .value
-            .body
-            .handle(batch, &(), ctx)
-            .await
-            .into_verdict();
+    ) -> Result<Vec<R>, BatchResult> {
+        let verdict = self.0.value.body.handle(batch, &(), ctx).await;
         page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
 impl<Hd, P, R, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, R, (), (), S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<
+        ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), (), S, H, Doc>, Dest, Route, Attach>,
+    >
 where
     Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = (), Reply = R>,
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
@@ -397,21 +365,15 @@ where
     P: Send + Sync + 'static,
     R: ReplyShape,
     S: Send + Sync,
-    H: Handle<[Message<Hd, P>], R, (), (), S>,
+    H: Handle<[Message<Hd, P>], Vec<R>, (), (), S>,
 {
     async fn call(
         &self,
         batch: &[Message<Hd, P>],
         _injections: &(),
         ctx: &mut Context<'_, (), S>,
-    ) -> Result<Vec<R>, crate::runtime::BatchResult> {
-        let verdict = self
-            .0
-            .value
-            .body
-            .handle(batch, &(), ctx)
-            .await
-            .into_verdict();
+    ) -> Result<Vec<R>, BatchResult> {
+        let verdict = self.0.value.body.handle(batch, &(), ctx).await;
         page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }

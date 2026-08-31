@@ -438,8 +438,8 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
     }))
 }
 
-/// If `ty` is syntactically `Result<Reply, HandlerResult>` (under any path prefix, e.g.
-/// `std::result::Result` / `ruststream::runtime::HandlerResult`), returns the reply type.
+/// If `ty` is syntactically `Result<Reply, HandlerOutcome>` (under any path prefix, e.g.
+/// `std::result::Result` / `ruststream::runtime::HandlerOutcome`), returns the reply type.
 ///
 /// The check is token-based: a type alias hiding the `Result` is not recognized and is treated as
 /// a plain reply type, which then fails to compile with a `Serialize` error the user can act on.
@@ -471,7 +471,7 @@ pub(crate) fn publish_result_reply(ty: &Type) -> Option<&Type> {
     else {
         return None;
     };
-    (err_path.segments.last()?.ident == "HandlerResult").then_some(ok)
+    (err_path.segments.last()?.ident == "HandlerOutcome").then_some(ok)
 }
 
 /// If `ty` is syntactically `Vec<Reply>` (under any path prefix), returns the element type.

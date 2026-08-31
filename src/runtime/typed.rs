@@ -16,7 +16,7 @@ use tracing::warn;
 
 use super::context::Context;
 use super::failure::FailurePolicy;
-use super::handler::{Handler, HandlerResult, Settle};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, Decoded};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
@@ -86,7 +86,7 @@ where
     St: Send + Sync,
     Inner: Handler<Input::Target, Cx, St>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
         // The decode product lives on this stack frame and the handler borrows its view, so the
         // input path allocates nothing of its own (a raw input borrows the payload straight out
         // of the broker's buffer).
@@ -109,11 +109,12 @@ where
                 match self.decode {
                     FailurePolicy::FailFast => {
                         ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerResult::drop()
+                        HandlerOutcome::drop()
                     }
-                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
+                    other => other
+                        .settlement()
+                        .map_or_else(HandlerOutcome::drop, Into::into),
                 }
-                .into()
             }
         }
     }
@@ -132,7 +133,7 @@ mod tests {
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::failure::FailurePolicy;
-    use crate::runtime::handler::{Handler, HandlerResult};
+    use crate::runtime::handler::{Handler, HandlerOutcome, HandlerResult};
     use crate::{AckError, HeaderMap, IncomingMessage};
 
     struct StubMsg(Vec<u8>, HeaderMap);
@@ -162,7 +163,7 @@ mod tests {
             let value = *value;
             async move {
                 seen.store(value, Ordering::SeqCst);
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             }
         }
     }
@@ -198,7 +199,7 @@ mod tests {
                 let len = u32::try_from(bytes.len()).unwrap();
                 async move {
                     seen.store(len, Ordering::SeqCst);
-                    HandlerResult::Ack
+                    HandlerOutcome::ack()
                 }
             }
         };

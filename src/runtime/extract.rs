@@ -6,7 +6,7 @@
 //! parameter whose type implements `FromContext` is an extractor: the generated handler resolves it
 //! from the delivery context (and the shared state) and binds it before running the body, so
 //! dependencies arrive as arguments instead of being reached for through `ctx.state()`. A failed
-//! extraction short-circuits the delivery with the rejection's [`HandlerResult`].
+//! extraction short-circuits the delivery with the rejection's [`HandlerOutcome`].
 
 use std::any::type_name;
 use std::convert::Infallible;
@@ -20,7 +20,7 @@ use crate::ContextField;
 
 use super::context::Context;
 use super::failure::FailurePolicy;
-use super::handler::HandlerResult;
+use super::handler::HandlerOutcome;
 
 /// A value resolved from the per-delivery [`Context`] and shared state, ready to be passed to a
 /// handler as a parameter.
@@ -29,7 +29,7 @@ use super::handler::HandlerResult;
 /// generated handler calls [`from_context`](Self::from_context) for each such parameter, in
 /// declaration order, before the body runs. Resolution is async so it may do work (a lookup, a
 /// scoped allocation) and fallible so it may reject the delivery; the [`Rejection`](Self::Rejection)
-/// is turned into a [`HandlerResult`] that settles the message (typically a nack).
+/// is turned into a [`HandlerOutcome`] that settles the message (typically a nack).
 ///
 /// The first handler parameter (the message `&M`) and the optional `&mut Context` are not
 /// extractors; every other by-value parameter is.
@@ -42,27 +42,27 @@ use super::handler::HandlerResult;
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{Context, FromContext, HandlerResult};
+/// use ruststream::runtime::{Context, FromContext, HandlerOutcome};
 ///
 /// // A custom extractor: reject the delivery unless a header is present.
 /// struct RequireToken(Vec<u8>);
 ///
 /// impl<C: Send, S: Sync> FromContext<C, S> for RequireToken {
-///     type Rejection = HandlerResult;
-///     async fn from_context(ctx: &mut Context<'_, C, S>) -> Result<Self, HandlerResult> {
+///     type Rejection = HandlerOutcome;
+///     async fn from_context(ctx: &mut Context<'_, C, S>) -> Result<Self, HandlerOutcome> {
 ///         match ctx.headers().get("authorization") {
 ///             Some(token) => Ok(RequireToken(token.to_vec())),
-///             None => Err(HandlerResult::drop()),
+///             None => Err(HandlerOutcome::drop()),
 ///         }
 ///     }
 /// }
 /// ```
 pub trait FromContext<C = (), S = ()>: Sized {
-    /// The error returned when extraction fails. It is converted into a [`HandlerResult`] (the
-    /// reflexive conversion makes `HandlerResult` itself a valid rejection, and `Infallible` works
-    /// for an extractor that never fails) and the delivery is settled by that outcome, skipping the
-    /// handler body.
-    type Rejection: Into<HandlerResult>;
+    /// The error returned when extraction fails. It is converted into a [`HandlerOutcome`] (the
+    /// reflexive conversion makes `HandlerOutcome` itself a valid rejection, and `Infallible`
+    /// works for an extractor that never fails) and the delivery is settled by that outcome,
+    /// skipping the handler body.
+    type Rejection: Into<HandlerOutcome>;
 
     /// Resolves the value from the delivery context. The context is borrowed mutably so an
     /// extractor may also read broker fields or take scratch a middleware left for it.
@@ -70,7 +70,7 @@ pub trait FromContext<C = (), S = ()>: Sized {
     /// # Errors
     ///
     /// Returns [`Rejection`](Self::Rejection) when the value cannot be produced; the dispatcher
-    /// settles the delivery by the resulting [`HandlerResult`] instead of running the handler.
+    /// settles the delivery by the resulting [`HandlerOutcome`] instead of running the handler.
     fn from_context(
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
@@ -218,7 +218,7 @@ where
 
 /// Extractor that parses the delivery headers into a typed contract before the body runs.
 ///
-/// `Headers<T>` reads the header map through [`HeaderMap::to_typed`](crate::HeaderMap::to_typed):
+/// `Headers<T>` parses the header map through the crate-internal typed-headers machinery:
 /// `T` is a flat struct whose fields name headers, with string-encoded values parsed into what
 /// each field expects. The handler body only runs when the whole contract parsed; a missing or
 /// unparsable header settles the delivery by the subscriber's `on_failure(decode = ..)` policy
@@ -233,7 +233,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{Headers, HandlerResult};
+/// use ruststream::runtime::{Headers, HandlerOutcome};
 /// use serde::Deserialize;
 ///
 /// #[derive(Deserialize)]
@@ -243,7 +243,7 @@ where
 /// }
 ///
 /// // In a handler:
-/// // async fn handle(chunk: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerResult
+/// // async fn handle(chunk: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome
 /// let Headers(meta) = Headers(ChunkMeta { task_id: 7, chunk_no: 3 });
 /// assert_eq!(meta.chunk_no, 3);
 /// ```
@@ -258,7 +258,7 @@ impl<T: DeserializeOwned> Headers<T> {
     pub fn extract<C, S>(
         ctx: &mut Context<'_, C, S>,
         policy: FailurePolicy,
-    ) -> Result<Self, HandlerResult> {
+    ) -> Result<Self, HandlerOutcome> {
         match ctx.headers().to_typed::<T>() {
             Ok(value) => Ok(Self(value)),
             Err(err) => {
@@ -274,9 +274,11 @@ impl<T: DeserializeOwned> Headers<T> {
                 Err(match policy {
                     FailurePolicy::FailFast => {
                         ctx.fail_fast(&format!("header extraction failed: {err}"));
-                        HandlerResult::drop()
+                        HandlerOutcome::drop()
                     }
-                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
+                    other => other
+                        .settlement()
+                        .map_or_else(HandlerOutcome::drop, Into::into),
                 })
             }
         }
@@ -289,10 +291,10 @@ where
     C: Send,
     S: Sync,
 {
-    type Rejection = HandlerResult;
+    type Rejection = HandlerOutcome;
     fn from_context(
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<Self, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<Self, HandlerOutcome>> + Send {
         let result = Self::extract(ctx, FailurePolicy::Drop);
         async move { result }
     }
@@ -349,23 +351,29 @@ mod tests {
 
         // Drop is the default: the delivery is settled away rather than requeued forever.
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-        assert_eq!(
-            Headers::<Meta>::extract(&mut ctx, FailurePolicy::Drop).map(|_| ()),
-            Err(HandlerResult::drop()),
+        assert!(
+            Headers::<Meta>::extract(&mut ctx, FailurePolicy::Drop)
+                .map(|_| ())
+                .unwrap_err()
+                .is_drop()
         );
 
         // Retry keeps the delivery in play, in case the contract violation is transient wiring.
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-        assert_eq!(
-            Headers::<Meta>::extract(&mut ctx, FailurePolicy::Retry).map(|_| ()),
-            Err(HandlerResult::retry()),
+        assert!(
+            Headers::<Meta>::extract(&mut ctx, FailurePolicy::Retry)
+                .map(|_| ())
+                .unwrap_err()
+                .is_retry()
         );
 
         // Fail-fast still settles the delivery; the service teardown is signalled separately.
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-        assert_eq!(
-            Headers::<Meta>::extract(&mut ctx, FailurePolicy::FailFast).map(|_| ()),
-            Err(HandlerResult::drop()),
+        assert!(
+            Headers::<Meta>::extract(&mut ctx, FailurePolicy::FailFast)
+                .map(|_| ())
+                .unwrap_err()
+                .is_drop()
         );
     }
 
@@ -377,7 +385,7 @@ mod tests {
         let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
 
         let outcome = <Headers<Meta> as FromContext<(), ()>>::from_context(&mut ctx).await;
-        assert_eq!(outcome.map(|_| ()), Err(HandlerResult::drop()));
+        assert!(outcome.map(|_| ()).unwrap_err().is_drop());
     }
 
     #[test]

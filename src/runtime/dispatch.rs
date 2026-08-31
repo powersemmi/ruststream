@@ -126,7 +126,7 @@ pub(crate) struct Delivery {
     /// own source subject after the delay. `None` when the scope did not opt in, in which case a
     /// `NackAfter` on a non-native broker degrades to an immediate requeue (with a warning).
     pub(crate) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
-    /// Per-scope task tracker for post-settle [`HandlerResult::and_after`] continuations. The
+    /// Per-scope task tracker for post-settle `and_after` continuations. The
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
     pub(crate) tasks: TaskTracker,
@@ -597,7 +597,7 @@ async fn dispatch<H, M, C, St>(
         .await;
     #[cfg(feature = "testing")]
     let panicked = result.is_err();
-    // Resolve into a `Settle` regardless of whether the handler panicked. `None` means a fail-fast
+    // Resolve into a `HandlerOutcome` regardless of whether the handler panicked. `None` means a fail-fast
     // panic tore the service down and left the message unsettled (a broker with redelivery hands it
     // back after the restart).
     let settle = match result {
@@ -620,8 +620,7 @@ async fn dispatch<H, M, C, St>(
                 other => Some(
                     other
                         .settlement()
-                        .unwrap_or_else(HandlerResult::drop)
-                        .into(),
+                        .map_or_else(super::handler::HandlerOutcome::drop, Into::into),
                 ),
             }
         }
@@ -642,7 +641,7 @@ async fn dispatch<H, M, C, St>(
             scope_id: delivery.scope_id,
             name: name.to_owned(),
             raw: Bytes::copy_from_slice(msg.payload()),
-            settle: settle.as_ref().map(super::handler::Settle::outcome),
+            settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
             panicked,
             decode_failed: ctx.took_decode_failed(),
         });

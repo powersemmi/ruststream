@@ -27,7 +27,7 @@ use parse::{SubscriberArgs, doc_description};
 /// ```ignore
 /// /// Processes incoming orders.
 /// #[subscriber("orders")]
-/// async fn handle(order: &Order) -> HandlerResult { HandlerResult::Ack }
+/// async fn handle(order: &Order) -> HandlerOutcome { HandlerOutcome::ack() }
 /// // later: broker_scope.include(handle);
 ///
 /// // reply form: the return value is encoded and published to "responses" through the
@@ -37,36 +37,36 @@ use parse::{SubscriberArgs, doc_description};
 /// // later: broker_scope.include_publishing(reply, typed_publisher);
 ///
 /// // reply form with explicit ack control: `Ok` publishes the reply, `Err` skips it and the
-/// // dispatcher acts on the returned HandlerResult.
+/// // dispatcher settles by the returned HandlerOutcome.
 /// #[subscriber("requests", publish("responses"))]
-/// async fn confirm(req: &Request) -> Result<Response, HandlerResult> { /* ... */ }
+/// async fn confirm(req: &Request) -> Result<Response, HandlerOutcome> { /* ... */ }
 ///
 /// // batch form: the slice parameter says the handler takes the whole decoded batch; the
 /// // subscription's subscriber must implement BatchSubscriber (natively, or through the
 /// // buffer the mount site adds).
 /// #[subscriber("orders")]
-/// async fn bill(orders: &[Order]) -> HandlerResult { /* settles the whole batch */ }
+/// async fn bill(orders: &[Order]) -> HandlerOutcome { /* settles the whole batch */ }
 ///
 /// // raw form: no codec, no serde - the handler receives the payload bytes as-is, said by a
 /// // `&[u8]` message parameter.
 /// #[subscriber("frames")]
-/// async fn on_frame(frame: &[u8]) -> HandlerResult { /* parse it yourself */ }
+/// async fn on_frame(frame: &[u8]) -> HandlerOutcome { /* parse it yourself */ }
 ///
 /// // raw batch: the batch shape without the decode step; the payloads are borrowed from the
 /// // batch's own messages for the duration of the call.
 /// #[subscriber("frames")]
-/// async fn ingest(frames: &[&[u8]]) -> HandlerResult { /* parse them yourself */ }
+/// async fn ingest(frames: &[&[u8]]) -> HandlerOutcome { /* parse them yourself */ }
 ///
 /// // the settings the attribute leaves out are filled in at the mount site, through the same
 /// // builder the attribute expands into:
 /// #[subscriber]
-/// async fn audit(order: &Order) -> HandlerResult { HandlerResult::Ack }
+/// async fn audit(order: &Order) -> HandlerOutcome { HandlerOutcome::ack() }
 /// // later: broker_scope.include(audit.name(subject).workers(nonzero!(4)));
 ///
 /// // raw reply form: the returned bytes are published as-is to "frames-out" through the bare
 /// // publisher attached at the include site (b.include(mirror).publisher(policy), or the
 /// // broker's default publish policy without the call) - no codec on either side. Returning
-/// // Result<Vec<u8>, HandlerResult> gives the same explicit ack control as the typed form.
+/// // Result<Vec<u8>, HandlerOutcome> gives the same explicit ack control as the typed form.
 /// #[subscriber("frames", raw, publish_raw("frames-out"))]
 /// async fn mirror(frame: &[u8]) -> Vec<u8> { frame.to_vec() }
 ///
@@ -76,11 +76,12 @@ use parse::{SubscriberArgs, doc_description};
 /// async fn encode(order: &Order) -> Vec<u8> { /* your wire format */ }
 /// ```
 ///
-/// Without `publish(..)` the handler returns any `Into<Settle>` (a `Settle`, a `HandlerResult`,
-/// `()`, or `Result<_, E>`). Attach a post-settle continuation with `HandlerResult::ack().and_after`
-/// (any outcome works), which runs after the message is settled. With `publish(..)` it returns the
-/// reply value to publish, or `Result<Reply, HandlerResult>` to control acknowledgement:
-/// `Err(result)` publishes nothing and returns `result` to the dispatcher. The `Result` form is
+/// Without `publish(..)` the handler returns any accepted outcome shape (a `HandlerOutcome`,
+/// `()`, or `Result<_, E>`). Attach a post-settle continuation with
+/// `HandlerOutcome::ack().and_after` (any outcome works), which runs after the message is
+/// settled. With `publish(..)` it returns the reply value to publish, or
+/// `Result<Reply, HandlerOutcome>` to control acknowledgement: `Err(outcome)` publishes nothing
+/// and settles by `outcome`. The `Result` form is
 /// detected syntactically, so spell it out in the signature (a type alias is treated as a plain
 /// reply type). `publish_raw(..)` is the byte reply clause: the handler returns `Vec<u8>` (any
 /// owned `AsRef<[u8]>` type) and the bytes are published unencoded through the bare publisher
@@ -91,14 +92,14 @@ use parse::{SubscriberArgs, doc_description};
 /// A `&[T]` message parameter makes the definition a `BatchDef`: the handler runs once per batch
 /// pulled from the subscription's `BatchSubscriber` (added by the mount site's buffer for
 /// subscriptions without native batching). It returns any `IntoBatchResult` - one outcome
-/// for the whole batch (`HandlerResult`, `()`, `Result<_, E>`), or a per-element vector
-/// (`Vec<Settle>`, or `Vec<HandlerResult>`) to settle element `i` of the slice with outcome `i`,
-/// each element carrying its own optional `and_after` continuation. A `&[&[u8]]` parameter is
-/// the same shape without the decode step.
+/// for the whole batch (`HandlerOutcome`, `()`, `Result<_, E>`), or a per-element
+/// `Vec<HandlerOutcome>` to settle element `i` of the slice with outcome `i`, each element
+/// carrying its own optional `and_after` continuation. A `&[&[u8]]` parameter is the same shape
+/// without the decode step.
 ///
 /// Combining a batch handler with `publish(..)` produces a `BatchPublishingDef`: the handler returns
 /// `Vec<Reply>` (or
-/// `Result<Vec<Reply>, HandlerResult>` for explicit ack control, all-or-nothing - selective
+/// `Result<Vec<Reply>, HandlerOutcome>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
 /// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply
 /// publishes, or `.transactional()` for one transaction per batch.
@@ -140,7 +141,7 @@ use parse::{SubscriberArgs, doc_description};
 /// // Opens at the start of the log: entries published before the service started are
 /// // replayed into the fresh subscription.
 /// #[subscriber("audit", start_at(MemoryPosition::start()))]
-/// async fn record(entry: &Entry) -> HandlerResult { /* ... */ }
+/// async fn record(entry: &Entry) -> HandlerOutcome { /* ... */ }
 /// ```
 ///
 /// In both forms the handler may declare an optional second parameter, the per-delivery
@@ -148,13 +149,13 @@ use parse::{SubscriberArgs, doc_description};
 /// type must implement
 /// [`FromContext`](../ruststream/runtime/trait.FromContext.html), and the generated handler resolves
 /// it from the delivery context (in declaration order) before the body runs, so dependencies arrive
-/// as arguments. A failed extraction settles the delivery by the rejection's `HandlerResult` without
-/// running the body.
+/// as arguments. A failed extraction settles the delivery by the rejection's `HandlerOutcome`
+/// without running the body.
 ///
 /// ```ignore
 /// // `State<Db>` is resolved from the application state before the body runs.
 /// #[subscriber("orders")]
-/// async fn handle(order: &Order, State(db): State<Db>) -> HandlerResult { /* ... */ }
+/// async fn handle(order: &Order, State(db): State<Db>) -> HandlerOutcome { /* ... */ }
 /// ```
 ///
 /// The attribute expands into the definition and then the settings builder over it, so the
@@ -385,7 +386,7 @@ pub fn derive_from_ref(item: TokenStream) -> TokenStream {
 /// struct Events;
 ///
 /// #[subscriber("chunks", raw)]
-/// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerResult {
+/// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerOutcome {
 ///     /* ... */
 /// }
 /// // include site: b.include(transcode).out(Encoded, KafkaPublish::default());
@@ -488,7 +489,7 @@ fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
 /// async fn convert(
 ///     chunk: &Chunk,
 ///     Out(out): Out<impl Publisher, Events, ConvertSends>,
-/// ) -> HandlerResult { /* out.message(&Progress { .. }).publish() */ }
+/// ) -> HandlerOutcome { /* out.message(&Progress { .. }).publish() */ }
 /// ```
 #[proc_macro_derive(OutMessages)]
 pub fn derive_out_messages(item: TokenStream) -> TokenStream {

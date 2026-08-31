@@ -56,7 +56,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// # #[cfg(feature = "memory")]
 /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerResult, RustStream};
+/// use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerOutcome, RustStream};
 /// use ruststream::runtime::layers::TracingLayer;
 ///
 /// let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -65,7 +65,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 ///         let subscriber = b.broker().subscribe("orders");
 ///         b.handle(
 ///             subscriber,
-///             |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+///             |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
 ///             HandlerMetadata::raw("orders"),
 ///         );
 ///     });

@@ -363,7 +363,7 @@ impl<M: OutSlot> OutMessages<M> for () {
 /// ```
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
-/// use ruststream::runtime::{HandlerResult, Out};
+/// use ruststream::runtime::{HandlerOutcome, Out};
 /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
 /// use serde::{Deserialize, Serialize};
 /// # #[derive(serde::Deserialize)]
@@ -394,18 +394,18 @@ impl<M: OutSlot> OutMessages<M> for () {
 /// async fn convert(
 ///     event: &Event,
 ///     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-/// ) -> HandlerResult {
+/// ) -> HandlerOutcome {
 ///     // No headers contract on Progress: publish straight away.
 ///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-///         return HandlerResult::retry();
+///         return HandlerOutcome::retry();
 ///     }
 ///     // ChunkDone declares DoneMeta: with_headers is demanded by the contract.
 ///     let done = ChunkDone { output_key: format!("out/{}", event.id) };
 ///     let meta = DoneMeta { task_id: event.id };
 ///     if out.message(&done).with_headers(&meta).publish().await.is_err() {
-///         return HandlerResult::retry();
+///         return HandlerOutcome::retry();
 ///     }
-///     HandlerResult::Ack
+///     HandlerOutcome::ack()
 /// }
 /// # }
 /// ```
@@ -520,7 +520,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     /// ```
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
-    /// use ruststream::runtime::{HandlerResult, Out};
+    /// use ruststream::runtime::{HandlerOutcome, Out};
     /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
     /// use serde::Serialize;
     /// # #[derive(serde::Deserialize)]
@@ -540,11 +540,11 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     /// async fn convert(
     ///     event: &Event,
     ///     Out(out): Out<impl Publisher, Events, Progress>,
-    /// ) -> HandlerResult {
+    /// ) -> HandlerOutcome {
     ///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-    ///         return HandlerResult::retry();
+    ///         return HandlerOutcome::retry();
     ///     }
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     /// # }
     /// ```

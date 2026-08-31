@@ -20,7 +20,7 @@ use crate::{IncomingMessage, OutgoingMessage, Publisher};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::{Handler, HandlerResult, Settle};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
@@ -53,6 +53,12 @@ pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
 /// A `Serialize` reply encodes as the payload; a [`Message`](super::Message) pair additionally
 /// serializes its header contract into the outgoing headers. The bound is pipeline-agnostic,
 /// which is what lets the routes state it once per registration.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be encoded as a reply",
+    note = "an encoded reply is a `serde::Serialize` value (derive it), or a \
+            `Message<Headers, Payload>` pair whose halves are; reply bytes that must leave \
+            unencoded take the bare wire instead (`.publisher(Bare(policy))`)"
+)]
 pub trait EncodeReply: Send + Sync {
     /// Delivers `self` through the typed reply stack.
     #[doc(hidden)]
@@ -266,14 +272,15 @@ pub trait PublishingCall<S>: PublishingDef {
     /// Runs the handler body.
     ///
     /// `Ok(reply)` is encoded and published to [`reply_name`](PublishingDef::reply_name), then the
-    /// incoming message is acked. `Err(result)` skips publishing and the dispatcher acts on the
-    /// returned [`HandlerResult`] (for example [`HandlerResult::retry`] to ask for redelivery).
+    /// incoming message is acked. `Err(outcome)` skips publishing and the dispatcher settles by
+    /// the returned [`HandlerOutcome`] (for example [`HandlerOutcome::retry`] to ask for
+    /// redelivery), running its continuation after the settle.
     fn call(
         &self,
         input: &<Self::Input as InputKind>::Target,
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
+    ) -> impl Future<Output = Result<Self::Reply, HandlerOutcome>> + Send;
 }
 
 /// Builds the registration metadata for a publishing definition mounted under `name`.
@@ -334,9 +341,13 @@ where
     Pipeline: Send + Sync,
     State: Send + Sync,
 {
-    async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {
-        // The publishing path settles by a bare outcome (no per-element continuation): decode,
-        // run, publish the reply, then ack. It converts to `Settle` with no `and_after`. The
+    async fn handle(
+        &self,
+        msg: &Msg,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) -> HandlerOutcome {
+        // The publishing path: decode, run, publish the reply, then ack. A body's `Err` outcome
+        // (with any `and_after` continuation it carries) settles the delivery directly. The
         // decode product lives on this stack frame and the handler borrows its view.
         let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
             &self.codec,
@@ -357,19 +368,18 @@ where
                 return match self.decode {
                     FailurePolicy::FailFast => {
                         ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerResult::drop().into()
+                        HandlerOutcome::drop()
                     }
                     other => other
                         .settlement()
-                        .unwrap_or_else(HandlerResult::drop)
-                        .into(),
+                        .map_or_else(HandlerOutcome::drop, Into::into),
                 };
             }
         };
         let view = <Def::Input as InputKind>::view(&owned, msg.payload());
         let reply = match self.def.call(view, &self.injections, ctx).await {
             Ok(reply) => reply,
-            Err(result) => return result.into(),
+            Err(outcome) => return outcome,
         };
         let name = self.def.reply_name();
         let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
@@ -383,9 +393,9 @@ where
                 error = %err,
                 "reply publish failed",
             );
-            return HandlerResult::retry().into();
+            return HandlerOutcome::retry();
         }
-        HandlerResult::Ack.into()
+        HandlerOutcome::ack()
     }
 }
 
@@ -398,7 +408,7 @@ mod tests {
     use crate::Name;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
-    use crate::runtime::handler::HandlerResult;
+    use crate::runtime::handler::HandlerOutcome;
 
     /// A hand-written publishing def overriding nothing optional, pinning the trait defaults that
     /// the macro always fills in.
@@ -430,7 +440,7 @@ mod tests {
             input: &u32,
             (): &(),
             _ctx: &mut Context<'_, (), S>,
-        ) -> impl Future<Output = Result<u32, HandlerResult>> {
+        ) -> impl Future<Output = Result<u32, HandlerOutcome>> {
             ready(Ok(*input))
         }
     }
@@ -471,7 +481,7 @@ mod tests {
         use crate::runtime::context::Context;
         use crate::runtime::dispatch::Delivery;
         use crate::runtime::failure::FailurePolicy;
-        use crate::runtime::handler::{Handler, HandlerResult};
+        use crate::runtime::handler::Handler;
         use crate::runtime::publish::{PublishIdentity, TypedPublisher};
         use crate::runtime::publishing::PublishingHandler;
         use crate::testkit::log_capture::{find, start};
@@ -539,7 +549,7 @@ mod tests {
                 failure.get("error").is_some_and(|e| e.contains("decode")),
                 "the diagnostic must carry the codec error: {failure:?}",
             );
-            assert_eq!(settle.outcome(), HandlerResult::drop());
+            assert!(settle.is_drop());
         }
 
         /// A reply the broker rejects is diagnosed with the reply channel and asks for a
@@ -576,7 +586,7 @@ mod tests {
                     .is_some_and(|e| e.contains("shut down")),
                 "the diagnostic must carry the broker error: {failure:?}",
             );
-            assert_eq!(settle.outcome(), HandlerResult::retry());
+            assert!(settle.is_retry());
         }
     }
 

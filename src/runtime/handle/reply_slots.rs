@@ -4,25 +4,26 @@
 
 use std::any::type_name;
 
+use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
-use crate::runtime::handler::HandlerResult;
+use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publishing::{PublishingCall, PublishingDef};
 use crate::runtime::router::IncludeDef;
-use crate::runtime::slot::{BindSlots, HasSlots, OutSlot, SlotPublisher};
+use crate::runtime::slot::{BindSlots, HasSlots, OutSlot};
 use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 
+use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
     SoloPair,
 };
 use super::docs::DocState;
-use super::outs::{EntryMarkers, OutStack, Outs, Slot};
-use super::reply::{ReplyDest, ReplyHeadersSchema, ReplyShape, page_reply_verdict, solo_verdict};
+use super::outs::{EntryMarkers, Outs, Slot};
+use super::reply::{ReplyDest, ReplyHeadersSchema, ReplyShape, page_reply_verdict};
 use super::value::{BareReply, EncodedReply, HandleValue, ReplyValue, Sealed};
 use super::verdict::{OneByOne, Paged};
-use super::{Handle, IntoVerdict};
 
 /// The reply-and-slots form token of one route on one verdict family; the bare route has no
 /// page form, as on the slot-free reply.
@@ -73,8 +74,8 @@ where
     type Markers = E::Markers;
 }
 
-/// See the plain arena's `BindSlots`: the declared entries unify with the wired stacks of the
-/// bound policies, so the definition is its own bound form.
+/// See the plain arena's `BindSlots`: the declared entries unify with their markers' paired
+/// live values, so the definition is its own bound form.
 macro_rules! impl_reply_bind_slots {
     ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
         impl<Conn, A, R, C, S, H, Doc, Dest, Route, Attach, $($m, $p, $e),+>
@@ -84,7 +85,7 @@ macro_rules! impl_reply_bind_slots {
                     HandleValue<
                         A,
                         R,
-                        Outs<($(Slot<$m, OutStack<SlotPublisher<$p::Live, $m>, $e>>,)+)>,
+                        Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e>,)+)>,
                         C,
                         S,
                         H,
@@ -188,15 +189,8 @@ where
         input: &T,
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerResult> {
-        solo_verdict(
-            self.0
-                .value
-                .body
-                .handle(input, injections, ctx)
-                .await
-                .into_verdict(),
-        )
+    ) -> Result<R, HandlerOutcome> {
+        self.0.value.body.handle(input, injections, ctx).await
     }
 }
 
@@ -220,16 +214,9 @@ where
         input: &[u8],
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerResult> {
+    ) -> Result<R, HandlerOutcome> {
         let payload = Payload::new(input);
-        solo_verdict(
-            self.0
-                .value
-                .body
-                .handle(&payload, injections, ctx)
-                .await
-                .into_verdict(),
-        )
+        self.0.value.body.handle(&payload, injections, ctx).await
     }
 }
 
@@ -258,22 +245,15 @@ where
         input: &Message<Hd, P>,
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerResult> {
-        solo_verdict(
-            self.0
-                .value
-                .body
-                .handle(input, injections, ctx)
-                .await
-                .into_verdict(),
-        )
+    ) -> Result<R, HandlerOutcome> {
+        self.0.value.body.handle(input, injections, ctx).await
     }
 }
 
 // ------------------------------------------------------------------------- the page reply def
 
 impl<A, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>>
 where
     A: PagedAxis,
     R: ReplyShape + ReplyHeadersSchema<Doc>,
@@ -322,7 +302,9 @@ where
 }
 
 impl<T, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<
+        ReplyValue<HandleValue<Page<T>, Vec<R>, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>,
+    >
 where
     Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
     [T]: Input<Axis = Page<T>>,
@@ -330,28 +312,27 @@ where
     R: ReplyShape,
     E: Send + Sync,
     S: Send + Sync,
-    H: Handle<[T], R, Outs<E>, (), S>,
+    H: Handle<[T], Vec<R>, Outs<E>, (), S>,
 {
     async fn call(
         &self,
         batch: &[T],
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
-    ) -> Result<Vec<R>, crate::runtime::BatchResult> {
-        let verdict = self
-            .0
-            .value
-            .body
-            .handle(batch, injections, ctx)
-            .await
-            .into_verdict();
+    ) -> Result<Vec<R>, BatchResult> {
+        let verdict = self.0.value.body.handle(batch, injections, ctx).await;
         page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
 impl<Hd, P, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
     for Sealed<
-        ReplyValue<HandleValue<PagePair<Hd, P>, R, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>,
+        ReplyValue<
+            HandleValue<PagePair<Hd, P>, Vec<R>, Outs<E>, (), S, H, Doc>,
+            Dest,
+            Route,
+            Attach,
+        >,
     >
 where
     Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
@@ -361,21 +342,15 @@ where
     R: ReplyShape,
     E: Send + Sync,
     S: Send + Sync,
-    H: Handle<[Message<Hd, P>], R, Outs<E>, (), S>,
+    H: Handle<[Message<Hd, P>], Vec<R>, Outs<E>, (), S>,
 {
     async fn call(
         &self,
         batch: &[Message<Hd, P>],
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
-    ) -> Result<Vec<R>, crate::runtime::BatchResult> {
-        let verdict = self
-            .0
-            .value
-            .body
-            .handle(batch, injections, ctx)
-            .await
-            .into_verdict();
+    ) -> Result<Vec<R>, BatchResult> {
+        let verdict = self.0.value.body.handle(batch, injections, ctx).await;
         page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }

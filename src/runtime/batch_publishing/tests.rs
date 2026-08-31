@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::StreamExt;
 
 use super::super::dispatch::Delivery;
+use super::super::handler::HandlerResult;
 use super::super::publish::TypedPublisher;
 use super::*;
 use crate::codec::JsonCodec;
@@ -68,7 +69,7 @@ impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let result = self.fail_with.map_or_else(
             || Ok(batch.iter().map(|n| n * 10).collect()),
-            |outcome| Err(BatchResult::Uniform(outcome)),
+            |outcome| Err(BatchResult::Uniform(outcome.into())),
         );
         ready(result)
     }

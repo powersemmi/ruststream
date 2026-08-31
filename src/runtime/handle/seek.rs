@@ -19,7 +19,7 @@
 //!         job: &Job,
 //!         _outs: &(),
 //!         ctx: &mut Context<'_, SeekContext<MemorySeeker>>,
-//!     ) -> Result<(), HandlerResult> {
+//!     ) -> Result<(), HandlerOutcome> {
 //!         let _here = ctx.position();
 //!         let _ = job.id;
 //!         Ok(())

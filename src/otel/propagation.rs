@@ -48,7 +48,8 @@ use tracing::Instrument;
 
 use crate::HeaderMap;
 use crate::runtime::{
-    BlanketLayer, Context, Handler, Layer, Outgoing, PublishContext, PublishTransform, Settle,
+    BlanketLayer, Context, Handler, HandlerOutcome, Layer, Outgoing, PublishContext,
+    PublishTransform,
 };
 
 /// The HTTP header carrying the W3C trace context.
@@ -191,7 +192,11 @@ where
     S: Send + Sync,
     H: Handler<M, C, S>,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send {
+    fn handle(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
         // The concrete propagator, not `opentelemetry::global`: the global defaults to a no-op
         // until `Otel::init` installs one, and propagation must keep working with no SDK setup
         // at all. The type is a ZST, so constructing it per delivery is free.

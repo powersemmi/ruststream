@@ -60,12 +60,12 @@ pub use failure::{FailurePolicies, FailurePolicy};
 pub use handle::{
     Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
     HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair, Paged,
-    PagedAxis, ReplyValue, Sealed, Solo, SoloAxis, SoloBody, SoloBytes, SoloPair, VerdictFamily,
-    VerdictFor,
+    PagedAxis, ReplyPublisherForm, ReplyValue, Sealed, Solo, SoloAxis, SoloBody, SoloBytes,
+    SoloPair, VerdictFamily,
 };
 pub use handle::{
-    Documentable, Documented, Handle, Input, IntoSource, IntoVerdict, Message, OutStack, Outs,
-    Payload, Publish, SeekContext, Slot, Undocumented, ValueBuilder, subscriber,
+    Bare, Documentable, Documented, Handle, Input, IntoSource, Message, Outs, Payload, Publish,
+    SeekContext, Slot, Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
@@ -74,7 +74,14 @@ pub use handle::{
     SealedPublishingOut, SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach,
     UnbuiltDefinition,
 };
-pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
+#[doc(hidden)]
+pub use handler::IntoOutcome;
+pub use handler::{Handler, HandlerOutcome};
+// The status half of `HandlerOutcome`, for the crate's own policies, dispatch and test seams.
+// The consumers outside `runtime` are all feature-gated (metrics, otel, testing), so a minimal
+// build leaves this re-export unused.
+#[allow(unused_imports)]
+pub(crate) use handler::HandlerResult;
 pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out, Seek};
 pub use input::{DecodeWith, Decoded, InputKind, RawBytes};
 #[cfg(feature = "testing")]
@@ -106,9 +113,10 @@ pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 pub use publishing::{EncodeReply, PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 pub use router::{
-    IncludeDef, Router, RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterDef,
-    RouterHandlers, RouterOut, RouterPublishing, RouterPublishingOut, RouterRawReply,
-    RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
+    DefaultBareReply, IncludeDef, Router, RouterBatchOut, RouterBatchPublishing,
+    RouterBatchPublishingOut, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
+    RouterPublishingOut, RouterRawReply, RouterRawReplyOut, RouterSink, RouterSlots,
+    RouterSlotsWithReply, RouterWith, forms,
 };
 #[doc(hidden)]
 pub use router::{RouterCommit, RouterMount, RouterSlotCommit};

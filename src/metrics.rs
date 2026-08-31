@@ -32,8 +32,8 @@ use prometheus::{
 };
 
 use crate::runtime::{
-    BlanketLayer, Context, Handler, HandlerResult, Layer, Outgoing, PublishLayer, PublishNext,
-    PublishPipeline, Settle,
+    BlanketLayer, Context, Handler, HandlerOutcome, HandlerResult, Layer, Outgoing, PublishLayer,
+    PublishNext, PublishPipeline,
 };
 
 /// Default histogram buckets (seconds) for handler duration.
@@ -219,7 +219,11 @@ where
     S: Send + Sync,
     H: Handler<M, C, S>,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send {
+    fn handle(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
         let name = ctx.name().to_owned();
         async move {
             let started = std::time::Instant::now();
@@ -278,7 +282,7 @@ mod tests {
     use prometheus::Registry;
 
     use super::{Metrics, consume_status};
-    use crate::runtime::{Context, HandlerResult, Layer};
+    use crate::runtime::{Context, HandlerOutcome, HandlerResult, Layer};
 
     #[test]
     fn debug_impls_registry_and_status_mapping() {
@@ -289,7 +293,7 @@ mod tests {
 
         let handler = metrics
             .consume_layer()
-            .layer(|_: &u32, _: &mut Context| async { HandlerResult::Ack });
+            .layer(|_: &u32, _: &mut Context| async { HandlerOutcome::ack() });
         assert!(format!("{handler:?}").contains("MetricsHandler"));
 
         // registry() exposes the registry the three collectors were registered in: registering a

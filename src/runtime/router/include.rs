@@ -26,7 +26,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// hands back a registration builder to finish with `.publisher(policy)`, `.build()`, or
     /// `.out(marker, policy)` per slot.
     ///
-    /// A batch definition's subscriber must implement [`BatchSubscriber`] - natively, or through
+    /// A batch definition's subscriber must implement
+    /// [`BatchSubscriber`](crate::BatchSubscriber) - natively, or through
     /// the [`Buffered`](crate::Buffered) adapter; router and app middleware wrap per-message
     /// handlers and do not apply to batch registrations.
     ///
@@ -41,15 +42,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{HandlerResult, Router, RouterDef};
+    /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
     /// use ruststream::subscriber;
     /// # #[derive(serde::Deserialize)]
     /// # struct Order { id: u64 }
     ///
     /// #[subscriber("orders")]
-    /// async fn handle(order: &Order) -> HandlerResult {
+    /// async fn handle(order: &Order) -> HandlerOutcome {
     ///     let _ = order.id;
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// fn routes() -> impl RouterDef<MemoryBroker> {

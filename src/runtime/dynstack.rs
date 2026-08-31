@@ -13,10 +13,10 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use super::context::Context;
-use super::handler::{Handler, Settle};
+use super::handler::{Handler, HandlerOutcome};
 use super::middleware::Layer;
 
-type BoxFut<'a> = Pin<Box<dyn Future<Output = Settle> + Send + 'a>>;
+type BoxFut<'a> = Pin<Box<dyn Future<Output = HandlerOutcome> + Send + 'a>>;
 
 /// The wrapped handler at the end of the chain, erased so [`Next`] need not carry its type.
 trait ErasedHandler<I>: Send + Sync {
@@ -144,7 +144,7 @@ where
 {
     // The returned future captures &self, so the chain and the wrapped handler are borrowed:
     // no Arc refcount traffic per message.
-    async fn handle(&self, input: &I, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, input: &I, ctx: &mut Context<'_>) -> HandlerOutcome {
         let tail: &dyn ErasedHandler<I> = &self.inner;
         Next {
             rest: &self.chain,
@@ -161,7 +161,7 @@ mod tests {
 
     use super::super::HandlerExt;
     use super::super::context::Context;
-    use super::super::handler::{Handler, HandlerResult};
+    use super::super::handler::{Handler, HandlerOutcome};
     use super::{BoxFut, DynMiddleware, DynStack, Next};
     use crate::HeaderMap;
 
@@ -197,7 +197,7 @@ mod tests {
             let inner_log = Arc::clone(&inner_log);
             async move {
                 inner_log.lock().expect("poisoned").push("inner");
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             }
         };
         assert!(format!("{:?}", stack.clone()).contains("middleware"));
@@ -207,10 +207,7 @@ mod tests {
         let delivery = crate::runtime::dispatch::Delivery::empty();
         let headers = HeaderMap::new();
         let mut ctx = Context::new("test", &headers, &state, (), &delivery);
-        assert_eq!(
-            handler.handle(&Input, &mut ctx).await.outcome(),
-            HandlerResult::Ack
-        );
+        assert!(handler.handle(&Input, &mut ctx).await.is_ack());
         assert_eq!(*log.lock().expect("poisoned"), vec!["a", "b", "inner"]);
     }
 }

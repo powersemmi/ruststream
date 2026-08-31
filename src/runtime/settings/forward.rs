@@ -23,7 +23,7 @@ use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handler::{HandlerResult, Settle};
+use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::inject::{InjectCall, InjectDef};
 use crate::runtime::input::InputKind;
 use crate::runtime::metadata::OutgoingMessageMetadata;
@@ -147,7 +147,7 @@ where
         input: &<<Def as InjectDef>::Input as InputKind>::Target,
         injections: &<Def as InjectDef>::Injections,
         ctx: &mut Context<'_, <Def as InjectDef>::Context, S>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + Send {
         self.def.call(input, injections, ctx)
     }
 }
@@ -185,7 +185,7 @@ where
         input: &<<Def as PublishingDef>::Input as InputKind>::Target,
         injections: &<Def as PublishingDef>::Injections,
         ctx: &mut Context<'_, <Def as PublishingDef>::Context, S>,
-    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> + Send {
         self.def.call(input, injections, ctx)
     }
 }

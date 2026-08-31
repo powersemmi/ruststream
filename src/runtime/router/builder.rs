@@ -55,24 +55,29 @@ use super::{
 /// # #[cfg(all(feature = "memory", feature = "json"))]
 /// # fn build() {
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{Context, HandlerResult, Router, RouterDef, subscriber};
+/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, RouterDef, subscriber};
 ///
-/// #[derive(serde::Deserialize)]
+/// #[derive(serde::Deserialize, schemars::JsonSchema)]
 /// struct Event {
 ///     id: u64,
 /// }
 ///
+/// struct Audit;
+///
+/// impl Handle<Event> for Audit {
+///     async fn handle(
+///         &self,
+///         event: &Event,
+///         _outs: &(),
+///         _ctx: &mut Context<'_>,
+///     ) -> Result<(), HandlerOutcome> {
+///         let _ = event.id;
+///         Ok(())
+///     }
+/// }
+///
 /// fn routes() -> impl RouterDef<MemoryBroker> {
-///     Router::<MemoryBroker>::new().include(subscriber(
-///         "events",
-///         |event: &Event, _ctx: &mut Context| {
-///             let id = event.id;
-///             async move {
-///                 let _ = id;
-///                 HandlerResult::Ack
-///             }
-///         },
-///     ))
+///     Router::<MemoryBroker>::new().include(subscriber("events", Audit).build())
 /// }
 /// // later: app.with_broker(broker, |b| b.include_router(routes()));
 /// # }
@@ -616,14 +621,18 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers>
     /// use ruststream::nonzero;
     ///
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{Context, HandlerResult, Router, Workers, subscriber};
+    /// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, Workers, subscriber};
     ///
-    /// # #[derive(serde::Deserialize)]
+    /// # #[derive(serde::Deserialize, schemars::JsonSchema)]
     /// # struct Job { id: u64 }
+    /// # struct Work;
+    /// # impl Handle<Job> for Work {
+    /// #     async fn handle(&self, _job: &Job, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
+    /// #         Ok(())
+    /// #     }
+    /// # }
     /// let router = Router::<MemoryBroker>::new()
-    ///     .include(subscriber("jobs", |_job: &Job, _ctx: &mut Context| async {
-    ///         HandlerResult::Ack
-    ///     }))
+    ///     .include(subscriber("jobs", Work).build())
     ///     .workers(Workers::keyed(nonzero!(4)));
     /// # }
     /// ```

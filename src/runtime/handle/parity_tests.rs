@@ -1,13 +1,16 @@
 //! The completion artifact of the manual path: every input spelling, reply shape, injection
 //! set and chain axis, mounted on both surfaces. A missing spelling fails this module's build.
 
+use std::future::{Future, ready};
+
 use serde::{Deserialize, Serialize};
 
-use crate::memory::{MemoryBroker, MemoryPublish, MemorySource};
+use crate::codec::JsonCodec;
+use crate::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemorySource};
 use crate::nonzero;
 use crate::runtime::{
-    Context, Handle, HandlerResult, Message, Payload, Router, RouterDef, SubscriberSettings,
-    subscriber,
+    Bare, Context, Handle, HandlerOutcome, Message, Outs, Payload, Publish, Router, RouterDef,
+    Slot, SubscriberSettings, Verdict, subscriber,
 };
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -30,97 +33,97 @@ struct Confirmation {
 struct Audit;
 
 impl Handle<Order> for Audit {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerResult> {
+    ) -> impl Future<Output = Verdict<Order, ()>> {
         let _ = order.id;
-        Ok(())
+        ready(Ok(()))
     }
 }
 
 struct Inspect;
 
 impl<'p> Handle<Payload<'p>> for Inspect {
-    async fn handle(
+    fn handle(
         &self,
         payload: &Payload<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerResult> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let _ = payload.len();
-        Ok(())
+        ready(Ok(()))
     }
 }
 
 struct Expedite;
 
 impl Handle<Message<Meta, Order>> for Expedite {
-    async fn handle(
+    fn handle(
         &self,
         msg: &Message<Meta, Order>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerResult> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let _ = (&msg.headers.tenant, msg.body.id);
-        Ok(())
+        ready(Ok(()))
     }
 }
 
 struct SettlePage;
 
 impl Handle<[Order]> for SettlePage {
-    async fn handle(
+    fn handle(
         &self,
         page: &[Order],
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), Vec<HandlerResult>> {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         let _ = page.len();
-        Ok(())
+        ready(Ok(()))
     }
 }
 
 struct Frames;
 
 impl<'p> Handle<[Payload<'p>]> for Frames {
-    async fn handle(
+    fn handle(
         &self,
         page: &[Payload<'p>],
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerResult> {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         let _ = page.len();
-        Ok(())
+        ready(Ok(()))
     }
 }
 
 struct HeaderedPage;
 
 impl Handle<[Message<Meta, Order>]> for HeaderedPage {
-    async fn handle(
+    fn handle(
         &self,
         page: &[Message<Meta, Order>],
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), Vec<HandlerResult>> {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         let _ = page.len();
-        Ok(())
+        ready(Ok(()))
     }
 }
 
 struct Confirm;
 
 impl Handle<Order, Confirmation> for Confirm {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Confirmation, HandlerResult> {
-        Ok(Confirmation { id: order.id })
+    ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
+        ready(Ok(Confirmation { id: order.id }))
     }
 }
 
@@ -138,60 +141,73 @@ impl crate::OutgoingDestination for Receipt {
 struct IssueReceipt;
 
 impl Handle<Order, Receipt> for IssueReceipt {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Receipt, HandlerResult> {
-        Ok(Receipt { id: order.id })
+    ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
+        ready(Ok(Receipt { id: order.id }))
     }
 }
 
 struct Echo;
 
 impl Handle<Order, Vec<u8>> for Echo {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Vec<u8>, HandlerResult> {
-        Ok(order.id.to_be_bytes().to_vec())
+    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
+        ready(Ok(order.id.to_be_bytes().to_vec()))
+    }
+}
+
+struct RawEcho;
+
+impl<'p> Handle<Payload<'p>, Vec<u8>> for RawEcho {
+    fn handle(
+        &self,
+        payload: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
+        ready(Ok(payload.to_vec()))
     }
 }
 
 struct ConfirmPages;
 
-impl Handle<[Order], Confirmation> for ConfirmPages {
-    async fn handle(
+impl Handle<[Order], Vec<Confirmation>> for ConfirmPages {
+    fn handle(
         &self,
         page: &[Order],
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Vec<Confirmation>, Vec<HandlerResult>> {
-        Ok(page
+    ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
+        ready(Ok(page
             .iter()
             .map(|order| Confirmation { id: order.id })
-            .collect())
+            .collect()))
     }
 }
 
 struct ConfirmWithMeta;
 
 impl Handle<Order, Message<Meta, Confirmation>> for ConfirmWithMeta {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Message<Meta, Confirmation>, HandlerResult> {
-        Ok(Message::new(
+    ) -> impl Future<Output = Result<Message<Meta, Confirmation>, HandlerOutcome>> {
+        ready(Ok(Message::new(
             Meta {
                 tenant: "acme".into(),
             },
             Confirmation { id: order.id },
-        ))
+        )))
     }
 }
 
@@ -218,16 +234,18 @@ impl crate::runtime::PublishedThrough<Analytics> for Event {}
 
 struct Mirror;
 
-impl<PA> Handle<Order, (), crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>> for Mirror
+impl<W, E> Handle<Order, (), Outs<(Slot<Analytics, W, E>,)>> for Mirror
 where
-    PA: crate::runtime::Publish,
+    Slot<Analytics, W, E>: Publish,
+    W: Send + Sync,
+    E: Send + Sync,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerResult> {
+    ) -> Result<(), HandlerOutcome> {
         if outs
             .get(Analytics)
             .message(&Event { id: order.id })
@@ -236,7 +254,37 @@ where
             .await
             .is_err()
         {
-            return Err(HandlerResult::retry());
+            return Err(HandlerOutcome::retry());
+        }
+        Ok(())
+    }
+}
+
+/// Pins the concrete-binding spelling: the body names the wired live type directly.
+fn assert_wired_live(_live: &MemoryPublisher) {}
+
+/// The concrete-binding spelling: the body names the wired live type directly and reaches it
+/// through the entry's transparent `Deref`, next to the typed publish surface.
+struct PinnedMirror;
+
+impl Handle<Order, (), Outs<(Slot<Analytics, MemoryPublisher, JsonCodec>,)>> for PinnedMirror {
+    async fn handle(
+        &self,
+        order: &Order,
+        outs: &Outs<(Slot<Analytics, MemoryPublisher, JsonCodec>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        let entry = outs.get(Analytics);
+        // The deref target is the broker's live publisher itself.
+        assert_wired_live(entry);
+        if entry
+            .message(&Event { id: order.id })
+            .to("order-events")
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerOutcome::retry());
         }
         Ok(())
     }
@@ -244,19 +292,20 @@ where
 
 struct PageMirror;
 
-impl<PA> Handle<[Order], (), crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
-    for PageMirror
+impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>> for PageMirror
 where
-    PA: crate::runtime::Publish,
+    Slot<Analytics, W, E>: Publish,
+    W: Send + Sync,
+    E: Send + Sync,
 {
-    async fn handle(
+    fn handle(
         &self,
         page: &[Order],
-        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
-    ) -> Result<(), Vec<HandlerResult>> {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         let _ = (page.len(), outs);
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -286,9 +335,10 @@ fn every_eager_spelling_mounts() {
 }
 
 /// Every reply shape mounts through the chain: named and declared destinations, an attached
-/// and a defaulted policy, the bare route, the page form, and typed reply headers.
+/// and a defaulted policy, the bare wire (from a decoded and a byte input, with an explicit
+/// and the default bare publisher), the page form, and typed reply headers.
 fn reply_axes() -> impl RouterDef<MemoryBroker> {
-    use crate::runtime::TypedPublisher;
+    use crate::runtime::{DefaultBareReply, TypedPublisher};
 
     Router::<MemoryBroker>::new()
         .include(
@@ -307,9 +357,16 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", IssueReceipt).reply().build())
         .include(
             subscriber("orders", Echo)
-                .reply_raw()
+                .reply()
                 .on("echoes")
-                .publisher(MemoryPublish)
+                .publisher(Bare(MemoryPublish))
+                .build(),
+        )
+        .include(
+            subscriber("frames", RawEcho)
+                .reply()
+                .on("echoes")
+                .publisher(DefaultBareReply)
                 .build(),
         )
         .include(
@@ -334,64 +391,71 @@ fn every_reply_spelling_mounts() {
 
 struct Gateway;
 
-impl<PA> Handle<Order, Confirmation, crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
-    for Gateway
+impl<W, E> Handle<Order, Confirmation, Outs<(Slot<Analytics, W, E>,)>> for Gateway
 where
-    PA: crate::runtime::Publish,
+    Slot<Analytics, W, E>: Publish,
+    W: Send + Sync,
+    E: Send + Sync,
 {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
-        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
-    ) -> Result<Confirmation, HandlerResult> {
+    ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         let _ = outs;
-        Ok(Confirmation { id: order.id })
+        ready(Ok(Confirmation { id: order.id }))
     }
 }
 
 struct PageGateway;
 
-impl<PA> Handle<[Order], Confirmation, crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
-    for PageGateway
+impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>> for PageGateway
 where
-    PA: crate::runtime::Publish,
+    Slot<Analytics, W, E>: Publish,
+    W: Send + Sync,
+    E: Send + Sync,
 {
-    async fn handle(
+    fn handle(
         &self,
         page: &[Order],
-        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
-    ) -> Result<Vec<Confirmation>, Vec<HandlerResult>> {
+    ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
         let _ = outs;
-        Ok(page.iter().map(|o| Confirmation { id: o.id }).collect())
+        ready(Ok(page.iter().map(|o| Confirmation { id: o.id }).collect()))
     }
 }
 
 struct RawGateway;
 
-impl<PA> Handle<Order, Vec<u8>, crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>>
-    for RawGateway
+impl<W, E> Handle<Order, Vec<u8>, Outs<(Slot<Analytics, W, E>,)>> for RawGateway
 where
-    PA: crate::runtime::Publish,
+    Slot<Analytics, W, E>: Publish,
+    W: Send + Sync,
+    E: Send + Sync,
 {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
-        outs: &crate::runtime::Outs<(crate::runtime::Slot<Analytics, PA>,)>,
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
-    ) -> Result<Vec<u8>, HandlerResult> {
+    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
         let _ = outs;
-        Ok(order.id.to_be_bytes().to_vec())
+        ready(Ok(order.id.to_be_bytes().to_vec()))
     }
 }
 
-/// The slot arena mounts on both families, bound at the include site.
+/// The slot arena mounts on both families, bound at the include site - the generic and the
+/// concrete-typed spelling alike.
 fn slot_axes() -> impl RouterDef<MemoryBroker> {
     use crate::runtime::TypedPublisher;
 
     Router::<MemoryBroker>::new()
         .include(subscriber("orders", Mirror).build())
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(subscriber("orders", PinnedMirror).build())
         .out(Analytics, MemoryPublish)
         .build()
         .include(subscriber("orders", PageMirror).build())
@@ -424,9 +488,9 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .build()
         .include(
             subscriber("orders", RawGateway)
-                .reply_raw()
+                .reply()
                 .on("echoes")
-                .publisher(MemoryPublish)
+                .publisher(Bare(MemoryPublish))
                 .build(),
         )
         .out(Analytics, MemoryPublish)
@@ -446,10 +510,10 @@ impl Handle<Order, (), (), crate::runtime::SeekContext<crate::memory::MemorySeek
         order: &Order,
         _outs: &(),
         ctx: &mut Context<'_, crate::runtime::SeekContext<crate::memory::MemorySeeker>>,
-    ) -> Result<(), HandlerResult> {
+    ) -> Result<(), HandlerOutcome> {
         let here = *ctx.position();
         if order.id == u64::MAX && ctx.seek(here).await.is_err() {
-            return Err(HandlerResult::drop());
+            return Err(HandlerOutcome::drop());
         }
         Ok(())
     }

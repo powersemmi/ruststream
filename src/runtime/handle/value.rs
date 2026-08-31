@@ -6,8 +6,10 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 
+use crate::runtime::publish::{Transactional, TypedPublisher};
 use crate::runtime::router::{DefaultBareReply, DefaultReply};
 use crate::runtime::settings::SubscriberBuilder;
+use crate::runtime::slot::WithSource;
 
 use super::axis::{Input, PagedAxis};
 use super::docs::{Docs, Documented, Undocumented};
@@ -24,13 +26,22 @@ type PlainChain<A, R, O, C, S, H, Doc, Src, State, DC> =
 type ReplyChain<V, Dest, Route, Attach, Src, State, DC> =
     SubscriberBuilder<ReplyValue<V, Dest, Route, Attach>, Src, State, DC>;
 
-/// The chain [`reply`](SubscriberBuilder::reply) / [`reply_raw`](SubscriberBuilder::reply_raw)
-/// hands back: the wrapped definition at the declared destination and the default attach.
+/// The chain [`reply`](SubscriberBuilder::reply) hands back: the wrapped definition at the
+/// declared destination and the default attach.
 type ReplyStart<A, R, O, C, S, H, Doc, Route, Attach, Src, State, DC> =
     ReplyChain<HandleValue<A, R, O, C, S, H, Doc>, DeclaredDest, Route, Attach, Src, State, DC>;
 
 /// The sealed chain [`build`](SubscriberBuilder::build) hands back.
 type SealedChain<V, Src, State, DC> = SubscriberBuilder<Sealed<V>, Src, State, DC>;
+
+/// The chain [`publisher`](SubscriberBuilder::publisher) hands back: the wire the attachment's
+/// form selected.
+type WiredReplyChain<V, Dest, Wire, Src, State, DC> = SubscriberBuilder<
+    ReplyValue<V, Dest, <Wire as ReplyPublisherForm>::Route, <Wire as ReplyPublisherForm>::Attach>,
+    Src,
+    State,
+    DC,
+>;
 
 /// The fresh chain [`subscriber`] hands back.
 type FreshChain<A, R, O, C, S, H, Src> = super::ValueBuilder<HandleValue<A, R, O, C, S, H>, Src>;
@@ -108,7 +119,7 @@ impl<A, R, O, C, S, H, Doc> HandleValue<A, R, O, C, S, H, Doc> {
 /// struct Audit;
 ///
 /// impl Handle<Order> for Audit {
-///     async fn handle(&self, order: &Order, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerResult> {
+///     async fn handle(&self, order: &Order, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
 ///         println!("order {}", order.id);
 ///         Ok(())
 ///     }
@@ -161,6 +172,75 @@ pub struct EncodedReply;
 /// The bare reply route: the reply bytes leave as they are, through a bare publisher.
 #[derive(Debug, Clone, Copy)]
 pub struct BareReply;
+
+/// Marks a reply publish policy attached bare: the returned `Vec<u8>` leaves as it is, with no
+/// codec (`.publisher(Bare(policy))`).
+///
+/// The wire follows the publisher step's form: a [`TypedPublisher`] (or no `publisher` call at
+/// all) encodes the reply through a codec, this wrapper - or the bare
+/// [`DefaultBareReply`](crate::runtime::DefaultBareReply) token for the broker's default
+/// publisher - sends the returned bytes unencoded.
+#[derive(Debug, Clone, Copy)]
+pub struct Bare<Policy>(pub Policy);
+
+/// What [`publisher`](SubscriberBuilder::publisher) accepts on the reply chain.
+///
+/// The attachment's form decides the reply's wire: a [`TypedPublisher`] (or its
+/// [`Transactional`] batch wiring) encodes the reply, a [`Bare`]-wrapped policy (or the bare
+/// default token) sends the returned bytes as they are.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not name a reply wire",
+    note = "wrap the policy: `TypedPublisher::new(policy)` encodes the reply through a codec \
+            (`.transactional()` publishes a page's replies in one transaction), `Bare(policy)` \
+            sends the returned bytes as they are (`DefaultBareReply` does so through the \
+            broker's default publisher)"
+)]
+pub trait ReplyPublisherForm {
+    /// The reply route the attachment selects ([`EncodedReply`] / [`BareReply`]).
+    type Route;
+
+    /// The attach the chain stores.
+    type Attach;
+
+    /// Wraps the attachment for the chain.
+    fn into_attach(self) -> Self::Attach;
+}
+
+impl<P, C, PL, BL> ReplyPublisherForm for TypedPublisher<P, C, PL, BL> {
+    type Route = EncodedReply;
+    type Attach = WithSource<Self>;
+
+    fn into_attach(self) -> WithSource<Self> {
+        WithSource::new(self)
+    }
+}
+
+impl<P, C, PL, BL> ReplyPublisherForm for Transactional<P, C, PL, BL> {
+    type Route = EncodedReply;
+    type Attach = WithSource<Self>;
+
+    fn into_attach(self) -> WithSource<Self> {
+        WithSource::new(self)
+    }
+}
+
+impl<Policy> ReplyPublisherForm for Bare<Policy> {
+    type Route = BareReply;
+    type Attach = WithSource<Policy>;
+
+    fn into_attach(self) -> WithSource<Policy> {
+        WithSource::new(self.0)
+    }
+}
+
+impl ReplyPublisherForm for DefaultBareReply {
+    type Route = BareReply;
+    type Attach = Self;
+
+    fn into_attach(self) -> Self {
+        self
+    }
+}
 
 /// A definition whose body's reply the chain is wiring: what
 /// [`reply`](SubscriberBuilder::reply) wraps the definition in.
@@ -264,8 +344,13 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
 
     /// Declares the body's reply wired for publishing: the reply type's declared destination
     /// applies (name one with [`on`](SubscriberBuilder::on)), and the reply publish policy
-    /// attaches with [`publisher`](SubscriberBuilder::publisher) (the broker's default without
-    /// it).
+    /// attaches with [`publisher`](SubscriberBuilder::publisher) (the broker's default, encoding
+    /// through the scope codec, without it).
+    ///
+    /// The wire follows the publisher step's form: the default and a
+    /// [`TypedPublisher`] attach encode the reply; a [`Bare`]-wrapped policy (or the
+    /// [`DefaultBareReply`](crate::runtime::DefaultBareReply) token) sends the body's returned
+    /// bytes as they are.
     #[must_use]
     pub fn reply(
         self,
@@ -274,21 +359,6 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
             value,
             dest: DeclaredDest,
             attach: DefaultReply,
-            _route: PhantomData,
-        })
-    }
-
-    /// Declares the body's reply published bare: the returned bytes leave as they are, with no
-    /// codec, through a bare publisher. The destination is named with
-    /// [`on`](SubscriberBuilder::on).
-    #[must_use]
-    pub fn reply_raw(
-        self,
-    ) -> ReplyStart<A, R, O, C, S, H, Doc, BareReply, DefaultBareReply, Src, State, DC> {
-        self.map_def(|value| ReplyValue {
-            value,
-            dest: DeclaredDest,
-            attach: DefaultBareReply,
             _route: PhantomData,
         })
     }
@@ -340,27 +410,27 @@ impl<V, Route, Attach, Src, State, DC>
 )]
 pub trait DefaultReplyAttach {}
 impl DefaultReplyAttach for DefaultReply {}
-impl DefaultReplyAttach for DefaultBareReply {}
 
 impl<V, Dest, Route, Attach: DefaultReplyAttach, Src, State, DC>
     SubscriberBuilder<ReplyValue<V, Dest, Route, Attach>, Src, State, DC>
 {
-    /// Attaches the reply publish policy. Policies are connection-free declarations, so the
-    /// definition carries it; without this call the broker's default policy applies.
+    /// Attaches the reply publish policy, and with it the reply's wire. Policies are
+    /// connection-free declarations, so the definition carries the attachment; without this
+    /// call the broker's default policy applies, encoding through the scope codec.
+    ///
+    /// The argument's form decides the wire (see [`ReplyPublisherForm`]): a [`TypedPublisher`]
+    /// encodes the reply through its codec, `Bare(policy)` sends the body's returned bytes as
+    /// they are, and the bare [`DefaultBareReply`](crate::runtime::DefaultBareReply) token does
+    /// so through the broker's default publisher.
     #[must_use]
-    pub fn publisher<Policy>(
-        self,
-        policy: Policy,
-    ) -> SubscriberBuilder<
-        ReplyValue<V, Dest, Route, crate::runtime::slot::WithSource<Policy>>,
-        Src,
-        State,
-        DC,
-    > {
+    pub fn publisher<Wire>(self, wire: Wire) -> WiredReplyChain<V, Dest, Wire, Src, State, DC>
+    where
+        Wire: ReplyPublisherForm,
+    {
         self.map_def(|def| ReplyValue {
             value: def.value,
             dest: def.dest,
-            attach: crate::runtime::slot::WithSource::new(policy),
+            attach: wire.into_attach(),
             _route: PhantomData,
         })
     }

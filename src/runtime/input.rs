@@ -41,7 +41,7 @@ pub trait InputKind: Send + Sync + 'static {
 ///
 /// Split from [`InputKind`] so the view machinery stays codec-free: [`RawBytes`] implements
 /// this for every `C` without touching the payload. The delivery's headers travel next to the
-/// payload so a pair input ([`DecodedPair`]) materializes its typed header contract in the same
+/// payload so a pair input (`DecodedPair`) materializes its typed header contract in the same
 /// stage, under the same decode failure policy.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be decoded with the codec `{DecodeCodec}`",

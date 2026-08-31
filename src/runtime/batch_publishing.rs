@@ -17,11 +17,11 @@ use tracing::warn;
 
 use crate::IncomingMessage;
 
-use super::batch::{BatchHandler, BatchResult, decode_batch, settle, settle_batch};
+use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::HandlerResult;
+use super::handler::HandlerOutcome;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
@@ -197,7 +197,7 @@ where
                     .publish_batch(name, &replies, &self.pipeline, &pubcx)
                     .await
                 {
-                    Ok(()) => BatchResult::Uniform(HandlerResult::Ack),
+                    Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
                     Err(err) => {
                         warn!(
                             target: "ruststream::dispatch",
@@ -207,23 +207,14 @@ where
                             error = %err,
                             "batch reply publish failed",
                         );
-                        BatchResult::Uniform(HandlerResult::retry())
+                        BatchResult::Uniform(HandlerOutcome::retry())
                     }
                 }
             }
             Err(result) => result,
         };
-        match result {
-            BatchResult::Uniform(outcome) => {
-                for msg in accepted {
-                    settle(msg, outcome, &subscription).await;
-                }
-            }
-            per_element => {
-                let tasks = ctx.tasks().clone();
-                settle_batch(accepted, per_element, &subscription, &tasks).await;
-            }
-        }
+        let tasks = ctx.tasks().clone();
+        settle_batch(accepted, result, &subscription, &tasks).await;
     }
 }
 

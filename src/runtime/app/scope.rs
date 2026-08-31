@@ -108,7 +108,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
 
     /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.
     ///
-    /// When a handler returns [`HandlerResult::retry_after`](crate::runtime::HandlerResult::retry_after)
+    /// When a handler returns [`HandlerOutcome::retry_after`](crate::runtime::HandlerOutcome::retry_after)
     /// (or a delivery is `nack_after`-ed) on a broker that does not natively support delayed
     /// redelivery, the runtime re-publishes the message to its own source subject after the delay,
     /// through `publisher`, with the
@@ -123,7 +123,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// # Cancel safety
     ///
     /// The fallback's deferred re-publish is at-most-once over the delay window: see
-    /// [`HandlerResult::retry_after`](crate::runtime::HandlerResult::retry_after).
+    /// [`HandlerOutcome::retry_after`](crate::runtime::HandlerOutcome::retry_after).
     ///
     /// # Examples
     ///

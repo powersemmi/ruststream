@@ -5,9 +5,9 @@
 //!
 //! - `In` - the input spelling (see [`Input`]): a decoded `T`, raw `[u8]`, a
 //!   [`Message<H, P>`] pair, or a page of any of them;
-//! - `R` - the reply type (`()` declares none; a [`Message<H, P>`] reply carries typed
-//!   headers);
-//! - `O` - the injections arena (`()` declares none; see [`Outs`](super::Outs));
+//! - `R` - the verdict's `Ok` side (`()` declares no reply; a reply body names its reply type,
+//!   a page reply body `Vec<Reply>`; a [`Message<H, P>`] reply carries typed headers);
+//! - `O` - the injections arena (`()` declares none; see [`Outs`]);
 //! - `C` - the broker's typed per-delivery context;
 //! - `S` - the typed application state the body reads via
 //!   [`Context::state`](super::Context::state).
@@ -33,7 +33,7 @@
 //! struct Audit;
 //!
 //! impl Handle<Order> for Audit {
-//!     async fn handle(&self, order: &Order, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerResult> {
+//!     async fn handle(&self, order: &Order, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
 //!         println!("order {}", order.id);
 //!         Ok(())
 //!     }
@@ -72,7 +72,7 @@ pub use docs::{Documentable, Documented, Undocumented};
 pub use eager::{PageBody, SoloBody};
 #[doc(hidden)]
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
-pub use outs::{OutStack, Outs, Publish, Slot};
+pub use outs::{Outs, Publish, Slot};
 #[doc(hidden)]
 pub use reply::{
     ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape, SealedBatchPublishing,
@@ -86,12 +86,12 @@ pub use seek::SeekContext;
 #[doc(hidden)]
 pub use value::UnbuiltDefinition;
 pub use value::{
-    BareReply, DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented,
-    NamedDest, ReplyValue, Sealed, subscriber,
+    Bare, BareReply, DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented,
+    NamedDest, ReplyPublisherForm, ReplyValue, Sealed, subscriber,
 };
-pub use verdict::IntoVerdict;
+pub use verdict::Verdict;
 #[doc(hidden)]
-pub use verdict::{OneByOne, Paged, VerdictFamily, VerdictFor};
+pub use verdict::{OneByOne, Paged, VerdictFamily};
 
 /// What the constructor returns: the settings builder over its definition, mounted on the
 /// converted source with every setting open.
@@ -108,11 +108,14 @@ use crate::{Name, Unnamed};
 
 use super::context::Context;
 
-/// The one body contract of the manual path. See the [module docs](self).
+/// The one body contract of the manual path: every axis of the form matrix is a defaulted
+/// parameter the impl pins.
 ///
 /// The `outs` parameter carries the injections arena for a body that declared one (`O` other
-/// than `()`); a body without injections takes `&()`. The returned future's output is one of
-/// the family's accepted verdict spellings (see [`IntoVerdict`]).
+/// than `()`); a body without injections takes `&()`. The returned future's output is the
+/// input family's canonical verdict ([`Verdict<In, R>`]): `Result<R, HandlerOutcome>` for one
+/// message at a time, `Result<R, Vec<HandlerOutcome>>` for a page - so the body's `async fn`
+/// signature spells the verdict out literally.
 pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Sync {
     /// Handles one input (a message, or a page of them).
     fn handle(
@@ -120,7 +123,7 @@ pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Syn
         input: &In,
         outs: &O,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output: IntoVerdict<In, R>> + Send;
+    ) -> impl Future<Output = Verdict<In, R>> + Send;
 }
 
 /// What a value-definition constructor accepts as its subscription source.

@@ -25,7 +25,7 @@ use crate::IncomingMessage;
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::{HandlerResult, Settle};
+use super::handler::{HandlerOutcome, HandlerResult};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
 
@@ -34,26 +34,27 @@ use super::metadata::HandlerMetadata;
 /// Returned by batch handlers (usually through [`IntoBatchResult`]) and applied by the
 /// dispatcher to each message's own `ack` / `nack`.
 ///
-/// Per-element [`Settle`]s carry an optional `and_after` continuation each; the uniform form is a
-/// bare outcome, since one continuation cannot fan out to every message of the batch.
+/// Per-element [`HandlerOutcome`]s carry an optional `and_after` continuation each; the uniform
+/// form carries at most one, which runs once after the whole batch is settled.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum BatchResult {
-    /// One outcome settles every message of the batch.
-    Uniform(HandlerResult),
+    /// One outcome settles every message of the batch; its continuation (if any) runs once,
+    /// after the last message is settled.
+    Uniform(HandlerOutcome),
     /// Settlement `i` settles slice element `i`, each with its own optional post-settle
     /// continuation. A length mismatch with the dispatched batch is a bug in the handler: the
     /// unmatched remainder is retried (an extra redelivery beats a silently lost message) and the
     /// mismatch is logged.
-    PerElement(Vec<Settle>),
+    PerElement(Vec<HandlerOutcome>),
 }
 
 /// Conversion into a [`BatchResult`], so `#[subscriber(batch(..))]` handlers can return a plain
 /// value.
 ///
-/// Implemented for [`BatchResult`] (identity), [`HandlerResult`] / `()` / `Result<(), E>` /
-/// `Result<HandlerResult, E>` (one outcome for the whole batch), and a per-element vector
-/// (`Vec<Settle>`, or `Vec<HandlerResult>`) where element `i` settles slice element `i`.
+/// Implemented for [`BatchResult`] (identity), [`HandlerOutcome`] / `()` / `Result<(), E>` /
+/// `Result<HandlerOutcome, E>` (one outcome for the whole batch), and a per-element
+/// `Vec<HandlerOutcome>` where element `i` settles slice element `i`.
 pub trait IntoBatchResult {
     /// Converts `self` into the settlement the dispatcher applies.
     fn into_batch_result(self) -> BatchResult;
@@ -65,7 +66,7 @@ impl IntoBatchResult for BatchResult {
     }
 }
 
-impl IntoBatchResult for HandlerResult {
+impl IntoBatchResult for HandlerOutcome {
     fn into_batch_result(self) -> BatchResult {
         BatchResult::Uniform(self)
     }
@@ -73,34 +74,28 @@ impl IntoBatchResult for HandlerResult {
 
 impl IntoBatchResult for () {
     fn into_batch_result(self) -> BatchResult {
-        BatchResult::Uniform(HandlerResult::Ack)
+        BatchResult::Uniform(HandlerOutcome::ack())
     }
 }
 
 impl<E> IntoBatchResult for Result<(), E> {
     fn into_batch_result(self) -> BatchResult {
         BatchResult::Uniform(match self {
-            Ok(()) => HandlerResult::Ack,
-            Err(_) => HandlerResult::drop(),
+            Ok(()) => HandlerOutcome::ack(),
+            Err(_) => HandlerOutcome::drop(),
         })
     }
 }
 
-impl<E> IntoBatchResult for Result<HandlerResult, E> {
+impl<E> IntoBatchResult for Result<HandlerOutcome, E> {
     fn into_batch_result(self) -> BatchResult {
-        BatchResult::Uniform(self.unwrap_or_else(|_| HandlerResult::drop()))
+        BatchResult::Uniform(self.unwrap_or_else(|_| HandlerOutcome::drop()))
     }
 }
 
-impl IntoBatchResult for Vec<Settle> {
+impl IntoBatchResult for Vec<HandlerOutcome> {
     fn into_batch_result(self) -> BatchResult {
         BatchResult::PerElement(self)
-    }
-}
-
-impl IntoBatchResult for Vec<HandlerResult> {
-    fn into_batch_result(self) -> BatchResult {
-        BatchResult::PerElement(self.into_iter().map(Settle::from).collect())
     }
 }
 
@@ -115,7 +110,7 @@ impl IntoBatchResult for Vec<HandlerResult> {
 /// Closures returning any [`IntoBatchResult`] implement `SliceHandler` automatically:
 ///
 /// ```
-/// use ruststream::runtime::{Context, HandlerResult, SliceHandler};
+/// use ruststream::runtime::{Context, HandlerOutcome, SliceHandler};
 ///
 /// fn assert_slice_handler<T, H: SliceHandler<T>>(_: H) {}
 ///
@@ -123,17 +118,17 @@ impl IntoBatchResult for Vec<HandlerResult> {
 ///     // One outcome for the whole batch.
 ///     assert_slice_handler::<u32, _>(|batch: &[u32], _ctx: &mut Context| {
 ///         let _ = batch.len();
-///         async { HandlerResult::Ack }
+///         async { HandlerOutcome::ack() }
 ///     });
 ///     // One outcome per element: entries that are not ready yet retry individually.
 ///     assert_slice_handler::<u32, _>(|batch: &[u32], _ctx: &mut Context| {
-///         let outcomes: Vec<HandlerResult> = batch
+///         let outcomes: Vec<HandlerOutcome> = batch
 ///             .iter()
 ///             .map(|n| {
 ///                 if *n == 0 {
-///                     HandlerResult::retry()
+///                     HandlerOutcome::retry()
 ///                 } else {
-///                     HandlerResult::Ack
+///                     HandlerOutcome::ack()
 ///                 }
 ///             })
 ///             .collect();
@@ -538,9 +533,17 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
     tasks: &TaskTracker,
 ) {
     match result {
-        BatchResult::Uniform(result) => {
+        BatchResult::Uniform(mut outcome) => {
+            let after = outcome.take_after();
+            let status = outcome.outcome();
             for msg in accepted {
-                settle(msg, result, subscription).await;
+                settle(msg, status, subscription).await;
+            }
+            // The one uniform continuation runs after the whole batch is settled, on the
+            // tracked set so a graceful shutdown drains it (at-most-once, like the
+            // per-element ones below).
+            if let Some(after) = after {
+                tasks.spawn(after);
             }
         }
         BatchResult::PerElement(results) => {
@@ -557,9 +560,7 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
             let mut results = results.into_iter();
             for msg in accepted {
                 // An unmatched message gets retried: an extra redelivery beats losing it.
-                let mut result = results
-                    .next()
-                    .unwrap_or_else(|| HandlerResult::retry().into());
+                let mut result = results.next().unwrap_or_else(HandlerOutcome::retry);
                 let after = result.take_after();
                 settle(msg, result.outcome(), subscription).await;
                 // The continuation runs after this element is settled, on the tracked set so a

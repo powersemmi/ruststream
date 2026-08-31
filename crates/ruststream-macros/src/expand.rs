@@ -489,7 +489,8 @@ fn extractor_where(
 }
 
 /// The `let` bindings that resolve each extractor from the context before the body runs. A failed
-/// extraction runs `reject` (a `return` settling the delivery by the rejection's `HandlerResult`).
+/// extraction runs `reject` (a `return` settling the delivery by the rejection's
+/// `HandlerOutcome`).
 ///
 /// A `Headers<T>` parameter takes the policy-aware path instead of the generic
 /// [`FromContext`] call, and reads the policy off the delivery context rather than off the
@@ -1157,9 +1158,9 @@ fn state_marker(fixed: bool) -> TokenStream2 {
 }
 
 /// Splits a batch publishing handler's declared return type into the reply element type and the
-/// body that yields `Result<Vec<Reply>, HandlerResult>`. `-> Result<Vec<Reply>, HandlerResult>` is
-/// passed through; a plain `-> Vec<Reply>` is wrapped in `Ok`. Both checks are syntactic, like the
-/// single-message publish form: a type alias is not seen through.
+/// body that yields `Result<Vec<Reply>, HandlerOutcome>`. `-> Result<Vec<Reply>, HandlerOutcome>`
+/// is passed through; a plain `-> Vec<Reply>` is wrapped in `Ok`. Both checks are syntactic, like
+/// the single-message publish form: a type alias is not seen through.
 fn batch_reply_body<'a>(
     func: &'a ItemFn,
     block: &syn::Block,
@@ -1170,7 +1171,7 @@ fn batch_reply_body<'a>(
             return Err(Error::new_spanned(
                 &func.sig,
                 "a batch publishing handler must return the replies: Vec<Reply>, or \
-                 Result<Vec<Reply>, HandlerResult>",
+                 Result<Vec<Reply>, HandlerOutcome>",
             ));
         }
     };
@@ -1178,7 +1179,7 @@ fn batch_reply_body<'a>(
         let Some(elem) = vec_element(ok_ty) else {
             return Err(Error::new_spanned(
                 ok_ty,
-                "a batch publishing handler replies with a Vec: Result<Vec<Reply>, HandlerResult>",
+                "a batch publishing handler replies with a Vec: Result<Vec<Reply>, HandlerOutcome>",
             ));
         };
         Ok((elem, quote!((async move #block).await)))
@@ -1187,7 +1188,7 @@ fn batch_reply_body<'a>(
             return Err(Error::new_spanned(
                 declared_ty,
                 "a batch publishing handler returns the replies: Vec<Reply>, or \
-                 Result<Vec<Reply>, HandlerResult>",
+                 Result<Vec<Reply>, HandlerOutcome>",
             ));
         };
         Ok((
@@ -1258,7 +1259,7 @@ fn expand_batch_publishing(
         &state_in_ctx,
         &quote!(
             return ::core::result::Result::Err(::ruststream::runtime::BatchResult::Uniform(
-                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+                ::core::convert::Into::<::ruststream::runtime::HandlerOutcome>::into(__rs_err),
             ))
         ),
     );
@@ -1312,7 +1313,7 @@ fn expand_batch_publishing(
                 #injection_bindings
                 let __rs_replies: ::core::result::Result<
                     ::std::vec::Vec<#reply_elem>,
-                    ::ruststream::runtime::HandlerResult,
+                    ::ruststream::runtime::HandlerOutcome,
                 > = { #call_body };
                 __rs_replies.map_err(::ruststream::runtime::BatchResult::Uniform)
             }
@@ -1421,7 +1422,7 @@ fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         &state_in_ctx,
         &quote!(
             return ::ruststream::runtime::IntoBatchResult::into_batch_result(
-                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+                ::core::convert::Into::<::ruststream::runtime::HandlerOutcome>::into(__rs_err),
             )
         ),
     );
@@ -1518,7 +1519,7 @@ fn expand_raw_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
         &state_in_ctx,
         &quote!(
             return ::ruststream::runtime::IntoBatchResult::into_batch_result(
-                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+                ::core::convert::Into::<::ruststream::runtime::HandlerOutcome>::into(__rs_err),
             )
         ),
     );
@@ -1622,7 +1623,7 @@ fn expand_batch_injected(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream
         &state_in_ctx,
         &quote!(
             return ::ruststream::runtime::IntoBatchResult::into_batch_result(
-                ::core::convert::Into::<::ruststream::runtime::HandlerResult>::into(__rs_err),
+                ::core::convert::Into::<::ruststream::runtime::HandlerOutcome>::into(__rs_err),
             )
         ),
     );
@@ -1752,7 +1753,7 @@ fn expand_publishing(
         &state_in_ctx,
         &quote!(
             return ::core::result::Result::Err(::core::convert::Into::<
-                ::ruststream::runtime::HandlerResult,
+                ::ruststream::runtime::HandlerOutcome,
             >::into(__rs_err),)
         ),
     );
@@ -1799,7 +1800,7 @@ fn expand_publishing(
                 #pat: #input_param,
                 __rs_inj: &Self::Injections,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerResult> {
+            ) -> ::core::result::Result<#reply_ty, ::ruststream::runtime::HandlerOutcome> {
                 #prelude
                 #injection_bindings
                 #call_body
@@ -1809,7 +1810,7 @@ fn expand_publishing(
 }
 
 /// Resolves a publishing handler's reply type and call body from its return type.
-/// `-> Result<Reply, HandlerResult>` lets the handler skip the publish: `Err(result)` is
+/// `-> Result<Reply, HandlerOutcome>` lets the handler skip the publish: `Err(result)` is
 /// returned to the dispatcher as-is. A plain `-> Reply` is wrapped in `Ok` here. The check
 /// is syntactic, so a type alias hiding the `Result` is treated as a plain reply type.
 fn publishing_reply<'a>(
@@ -1824,7 +1825,7 @@ fn publishing_reply<'a>(
                 &func.sig,
                 if bare {
                     "a publish_raw handler must return the reply bytes: Vec<u8>, or \
-                     Result<Vec<u8>, HandlerResult>"
+                     Result<Vec<u8>, HandlerOutcome>"
                 } else {
                     "a publishing handler must return the reply value"
                 },
@@ -2150,8 +2151,8 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_ty,
         &state_in_ctx,
         &quote!(
-            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
-                ::ruststream::runtime::HandlerResult,
+            return ::ruststream::runtime::IntoOutcome::into_outcome(::core::convert::Into::<
+                ::ruststream::runtime::HandlerOutcome,
             >::into(__rs_err),)
         ),
     );
@@ -2198,10 +2199,10 @@ fn expand_injected(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
                 #pat: #input_param,
                 __rs_inj: &Self::Injections,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> ::ruststream::runtime::Settle {
+            ) -> ::ruststream::runtime::HandlerOutcome {
                 #prelude
                 #injection_bindings
-                ::ruststream::runtime::IntoSettle::into_settle(
+                ::ruststream::runtime::IntoOutcome::into_outcome(
                     (async move #block).await,
                 )
             }
@@ -2260,8 +2261,8 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
         ctx_ty,
         &state_in_ctx,
         &quote!(
-            return ::ruststream::runtime::IntoSettle::into_settle(::core::convert::Into::<
-                ::ruststream::runtime::HandlerResult,
+            return ::ruststream::runtime::IntoOutcome::into_outcome(::core::convert::Into::<
+                ::ruststream::runtime::HandlerOutcome,
             >::into(__rs_err),)
         ),
     );
@@ -2280,9 +2281,9 @@ fn expand_subscribing(parts: &HandlerParts<'_>, raw: bool) -> TokenStream2 {
                     &self,
                     #pat: #input_param,
                     #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-                ) -> ::ruststream::runtime::Settle {
+                ) -> ::ruststream::runtime::HandlerOutcome {
                     #prelude
-                    ::ruststream::runtime::IntoSettle::into_settle(
+                    ::ruststream::runtime::IntoOutcome::into_outcome(
                         (async move #block).await,
                     )
                 }

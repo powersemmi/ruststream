@@ -15,7 +15,7 @@ use bytes::Bytes;
 use crate::RawMessage;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
-use crate::runtime::HandlerResult;
+use crate::runtime::HandlerOutcome;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use serde::de::DeserializeOwned;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
@@ -215,17 +215,21 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
-    /// Asserts the most recent delivery settled with `outcome`.
+    /// Asserts the most recent delivery settled with `outcome`'s status (any continuation on the
+    /// expected value is ignored: the harness compares how the broker settled).
     ///
     /// # Panics
     ///
     /// Panics if the subscriber was not called, or settled differently (a fail-fast panic leaves the
     /// message unsettled, which never matches).
-    pub fn settled(self, outcome: HandlerResult) -> Self {
+    // The expectation is a just-built outcome token (`settled(HandlerOutcome::ack())`); a
+    // reference parameter would force `&` noise at every call site.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn settled(self, outcome: HandlerOutcome) -> Self {
         self.with_last("the settlement", |record| {
             assert_eq!(
                 record.settle,
-                Some(outcome),
+                Some(outcome.outcome()),
                 "subscriber {:?} settled differently than expected",
                 self.name,
             );

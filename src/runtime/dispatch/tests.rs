@@ -10,7 +10,7 @@ use super::*;
 use crate::memory::MemoryBroker;
 use crate::runtime::PublishExt;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
-use crate::runtime::handler::IntoSettle;
+use crate::runtime::handler::HandlerOutcome;
 use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher};
 
 /// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
@@ -107,11 +107,11 @@ impl Handler<PlainMessage, (), ()> for ReportingHandler {
         &self,
         msg: &PlainMessage,
         _ctx: &mut Context<'_, (), ()>,
-    ) -> impl Future<Output = crate::runtime::Settle> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + Send {
         let sent = self.seen.send(msg.payload.clone());
         async move {
             sent.expect("the test holds the receiver");
-            HandlerResult::Ack.into_settle()
+            HandlerOutcome::ack()
         }
     }
 }

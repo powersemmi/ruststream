@@ -114,7 +114,8 @@ impl AsRef<[u8]> for Payload<'_> {
     }
 }
 
-/// A [`Handle`](super::Handle) input spelling. See the [module docs](self) for the closed set.
+/// A [`Handle`](super::Handle) input spelling: a decoded `T`, the raw [`Payload`], a
+/// [`Message<H, P>`](Message) pair, or a page (slice) of any of them.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a handler input",
     note = "a body's input is `&T` (T: DeserializeOwned), `&Payload<'_>` (raw bytes), \

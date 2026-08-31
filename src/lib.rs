@@ -14,7 +14,8 @@
 //! * `memory`: [`memory::MemoryBroker`], an in-process broker usable in applications, prototypes
 //!   and tests.
 //! * `macros`: the `#[subscriber]`, [`#[ruststream::app]`](macro@app),
-//!   [`#[derive(Outgoing)]`](macro@Outgoing) and [`#[derive(MessageInfo)]`](macro@Message) macros.
+//!   [`#[derive(Outgoing)]`](macro@Outgoing) and [`#[derive(MessageInfo)]`](macro@MessageInfo)
+//!   macros.
 //! * `asyncapi`: `AsyncAPI` document generation and the HTML viewer.
 //! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`

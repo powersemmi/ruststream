@@ -7,7 +7,7 @@ use futures::future::join_all;
 use super::Context;
 use crate::HeaderMap;
 use crate::runtime::dispatch::Delivery;
-use crate::runtime::handler::HandlerResult;
+use crate::runtime::handler::{HandlerOutcome, HandlerResult};
 
 fn run_all(continuations: Vec<super::Continuation>) {
     futures::executor::block_on(async {
@@ -52,7 +52,7 @@ fn the_debug_forms_report_the_subscription_and_pending_work() {
     assert!(rendered.contains("orders"), "{rendered}");
     assert!(rendered.contains("after_hooks: 0"), "{rendered}");
 
-    let after = ctx.after(HandlerResult::Ack);
+    let after = ctx.after(HandlerOutcome::ack());
     // The gate is what decides whether the continuation runs, so Debug must name it.
     assert!(format!("{after:?}").contains("Ack"));
 
@@ -80,9 +80,9 @@ fn take_hooks_runs_only_the_matching_gate() {
         }
     };
 
-    ctx.after(HandlerResult::Ack).then(bump(&acked));
-    ctx.after(HandlerResult::drop()).then(bump(&dropped));
-    ctx.after(HandlerResult::retry()).then(bump(&retried));
+    ctx.after(HandlerOutcome::ack()).then(bump(&acked));
+    ctx.after(HandlerOutcome::drop()).then(bump(&dropped));
+    ctx.after(HandlerOutcome::retry()).then(bump(&retried));
     ctx.after_ack(bump(&acked));
     ctx.after_settle(bump(&settled));
 
@@ -115,7 +115,7 @@ fn take_settle_hooks_drops_outcome_gated_ones() {
     let ungated = Arc::new(AtomicU32::new(0));
 
     let gated_clone = Arc::clone(&gated);
-    ctx.after(HandlerResult::Ack).then(async move {
+    ctx.after(HandlerOutcome::ack()).then(async move {
         gated_clone.fetch_add(1, Ordering::SeqCst);
     });
     let ungated_clone = Arc::clone(&ungated);

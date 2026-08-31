@@ -13,15 +13,15 @@
 //! # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 //! # mod demo {
 //! use ruststream::nonzero;
-//! use ruststream::runtime::{HandlerResult, SubscriberSettings};
+//! use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
 //! use ruststream::subscriber;
 //! # #[derive(serde::Deserialize)]
 //! # struct Order;
 //!
 //! // The attribute fixes the worker policy; the name is left to the mount site.
 //! #[subscriber(workers(4))]
-//! async fn audit(order: &Order) -> HandlerResult {
-//!     HandlerResult::Ack
+//! async fn audit(order: &Order) -> HandlerOutcome {
+//!     HandlerOutcome::ack()
 //! }
 //!
 //! # fn wire(subject: String) {
@@ -482,14 +482,14 @@ where
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::nonzero;
-/// use ruststream::runtime::{FailurePolicies, FailurePolicy, HandlerResult, SubscriberSettings};
+/// use ruststream::runtime::{FailurePolicies, FailurePolicy, HandlerOutcome, SubscriberSettings};
 /// use ruststream::subscriber;
 /// # #[derive(serde::Deserialize)]
 /// # struct Order;
 ///
 /// #[subscriber]
-/// async fn audit(order: &Order) -> HandlerResult {
-///     HandlerResult::Ack
+/// async fn audit(order: &Order) -> HandlerOutcome {
+///     HandlerOutcome::ack()
 /// }
 ///
 /// # fn wire(shard: u8) {
@@ -579,14 +579,14 @@ pub trait SubscriberSettings: Declared {
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::MemorySource;
-    /// use ruststream::runtime::{HandlerResult, SubscriberSettings};
+    /// use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
     /// use ruststream::subscriber;
     /// # #[derive(serde::Deserialize)]
     /// # struct Order;
     ///
     /// #[subscriber(MemorySource)]
-    /// async fn audit(order: &Order) -> HandlerResult {
-    ///     HandlerResult::Ack
+    /// async fn audit(order: &Order) -> HandlerOutcome {
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// # fn wire() {

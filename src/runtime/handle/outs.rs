@@ -2,7 +2,8 @@
 //! `.out(marker, policy)` chain.
 //!
 //! A body that publishes declares the arena in its `O` position - one [`Slot`] entry per
-//! marker, generic over the wired publisher, with the capability it needs as a mandatory bound:
+//! marker, generic over the wired live value and the include site's codec, with the capability
+//! it needs as a mandatory bound:
 //!
 //! ```
 //! # #[cfg(all(feature = "memory", feature = "json"))]
@@ -13,22 +14,24 @@
 //! # struct Order { id: u64 }
 //! # #[derive(serde::Serialize, schemars::JsonSchema)]
 //! # struct Event { id: u64 }
+//! # impl ruststream::OutgoingDestination for Event { type Form = ruststream::CallerName; }
+//! # impl ruststream::MessageHeaders for Event { type Contract = ruststream::NoHeaders; }
 //! # struct Primary;
 //! # impl OutSlot for Primary { const NAME: &'static str = "Primary"; }
 //! # impl PublishedThrough<Primary> for Event {}
 //!
 //! struct Mirror;
 //!
-//! impl<PA> Handle<Order, (), Outs<(Slot<Primary, PA>,)>> for Mirror
+//! impl<W, E> Handle<Order, (), Outs<(Slot<Primary, W, E>,)>> for Mirror
 //! where
-//!     PA: Publish,
+//!     Slot<Primary, W, E>: Publish,
 //! {
 //!     async fn handle(
 //!         &self,
 //!         order: &Order,
-//!         outs: &Outs<(Slot<Primary, PA>,)>,
+//!         outs: &Outs<(Slot<Primary, W, E>,)>,
 //!         _ctx: &mut Context<'_>,
-//!     ) -> Result<(), HandlerResult> {
+//!     ) -> Result<(), HandlerOutcome> {
 //!         if outs
 //!             .get(Primary)
 //!             .message(&Event { id: order.id })
@@ -37,7 +40,7 @@
 //!             .await
 //!             .is_err()
 //!         {
-//!             return Err(HandlerResult::retry());
+//!             return Err(HandlerOutcome::retry());
 //!         }
 //!         Ok(())
 //!     }
@@ -47,18 +50,22 @@
 //!
 //! The include site binds each marker with `.out(marker, policy)` in any order and seals with
 //! `.build()`; a missing, duplicate or extra binding, or a policy whose live form lacks the
-//! body's declared capability, fails to compile naming the marker. Everything is monomorphized:
-//! the arena is built once at startup, and a delivery only ever passes a reference to it.
+//! body's declared capability, fails to compile naming the marker. The slot's wired value is
+//! the policy's live form itself: a body needing a broker-defined capability pins the entry to
+//! the concrete live type (`Slot<Lanes, LaneRouter, E>`) - or bounds `W` with the broker's own
+//! capability trait - and calls it directly through the entry's transparent `Deref`. Everything
+//! is monomorphized: the arena is built once at startup, and a delivery only ever passes a
+//! reference to it.
 
 use std::fmt;
-use std::marker::PhantomData;
+use std::ops::Deref;
 use std::time::Duration;
 
 use crate::codec::Codec;
 use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::context::Context;
-use crate::runtime::handler::{HandlerResult, Settle};
+use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::inject::FromStartup;
 use crate::runtime::inject::{InjectCall, InjectDef};
 use crate::runtime::metadata::OutgoingMessageMetadata;
@@ -73,45 +80,68 @@ use crate::{
     Unnamed,
 };
 
+use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
     SoloPair,
 };
+use super::eager::{settle_page, settle_solo};
 use super::value::{HandleValue, Sealed};
-use super::{Handle, IntoVerdict};
 
-// ------------------------------------------------------------------------------ wired stacks
+// ------------------------------------------------------------------------------------- slots
 
-/// A slot's wired publish stack.
+/// One arena entry: the wired live value of the marker `M`, plus the include site's encode
+/// codec.
 ///
-/// The paired live publisher under the include site's encode codec. You never name this type;
-/// a body sees it through the [`Publish`] capability bound on its [`Slot`] parameter.
-pub struct OutStack<P, E> {
-    publisher: P,
+/// The wired value is the bound policy's [`Live`](crate::PublishPolicy::Live) form, and the
+/// entry is a transparent window onto it: `Deref` reaches every method the live value offers -
+/// the core capability vocabulary ([`TransactionalPublisher`](crate::TransactionalPublisher),
+/// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply)) and
+/// any broker-defined capability trait alike, so a body pins the entry to the broker's concrete
+/// live type (or bounds `W` with the broker's trait) and calls it directly. A publisher-shaped
+/// entry additionally offers the typed and raw publish builders through [`Publish`].
+pub struct Slot<M, W, E> {
+    wired: SlotPublisher<W, M>,
     codec: E,
 }
 
-impl<P, E> fmt::Debug for OutStack<P, E> {
+impl<M, W, E> fmt::Debug for Slot<M, W, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OutStack").finish_non_exhaustive()
+        f.debug_struct("Slot").finish_non_exhaustive()
+    }
+}
+
+// The transparent window: the wired live value's whole surface (broker-defined capability
+// traits included) is reachable without any grafting machinery. Calls that resolve on the
+// entry itself (`Publish::message`, the delegated core capabilities) keep the slot's
+// test-capture attribution; calls reaching the live value through this `Deref` leave through
+// the unwrapped value and bypass it, like a settled owned transaction's buffer.
+impl<M, W, E> Deref for Slot<M, W, E> {
+    type Target = W;
+
+    fn deref(&self) -> &W {
+        self.wired.inner()
     }
 }
 
 /// The publish capability of a wired slot: what a body's mandatory bound names to start typed
 /// (or raw) publishes through the slot.
 ///
+/// The bound is stated on the whole entry (`Slot<Marker, W, E>: Publish`), and holds exactly
+/// when the bound policy's live form is a [`Publisher`] and the include site's codec encodes.
 /// The other capabilities keep their own vocabulary: a slot whose body begins transactions
-/// bounds [`TransactionalPublisher`](crate::TransactionalPublisher) (or
-/// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply))
-/// next to - or instead of - this one, and the include site's policy must pair a live form
-/// carrying it.
+/// bounds its `W` parameter with [`TransactionalPublisher`](crate::TransactionalPublisher) (or
+/// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply), a
+/// broker-defined trait) next to - or instead of - this one, and the include site's policy must
+/// pair a live form carrying it.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a wired publish stack",
-    note = "a slot parameter's capability bound is stated on the `Slot`'s second parameter: \
-            `impl<P> Handle<T, (), Outs<(Slot<Marker, P>,)>> for Body where P: Publish`"
+    message = "`{Self}` is not a publish-capable slot entry",
+    note = "a slot body's publish bound is stated on the whole entry: `impl<W, E> Handle<T, (), \
+            Outs<(Slot<Marker, W, E>,)>> for Body where Slot<Marker, W, E>: Publish`"
 )]
 pub trait Publish: Send + Sync {
-    /// The live publisher under the stack.
+    /// The attributed live publisher under the entry. The bound is stated here so a body
+    /// generic over the entry can drive the whole publish builder off the one `Publish` bound.
     #[doc(hidden)]
     type Leaf: Publisher;
 
@@ -126,12 +156,12 @@ pub trait Publish: Send + Sync {
     fn encode_codec(&self) -> &Self::EncodeCodec;
 }
 
-impl<P: Publisher, E: Codec + Send + Sync> Publish for OutStack<P, E> {
-    type Leaf = P;
+impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync> Publish for Slot<M, W, E> {
+    type Leaf = SlotPublisher<W, M>;
     type EncodeCodec = E;
 
-    fn leaf(&self) -> &P {
-        &self.publisher
+    fn leaf(&self) -> &SlotPublisher<W, M> {
+        &self.wired
     }
 
     fn encode_codec(&self) -> &E {
@@ -139,85 +169,27 @@ impl<P: Publisher, E: Codec + Send + Sync> Publish for OutStack<P, E> {
     }
 }
 
-impl<P: Publisher, E: Send + Sync> Publisher for OutStack<P, E> {
-    type Error = P::Error;
-
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        self.publisher.publish(msg).await
-    }
-
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        self.publisher.base_headers()
-    }
-}
-
-impl<P: TransactionalPublisher, E: Send + Sync> TransactionalPublisher for OutStack<P, E> {
-    async fn begin_transaction(&self) -> Result<(), Self::Error> {
-        self.publisher.begin_transaction().await
-    }
-
-    async fn commit(&self) -> Result<(), Self::Error> {
-        self.publisher.commit().await
-    }
-
-    async fn abort(&self) -> Result<(), Self::Error> {
-        self.publisher.abort().await
-    }
-}
-
-impl<P: OwnedTransactions, E: Send + Sync> OwnedTransactions for OutStack<P, E> {
-    type Transaction = P::Transaction;
-
-    async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
-        self.publisher.transaction().await
-    }
-}
-
-impl<P: RequestReply, E: Send + Sync> RequestReply for OutStack<P, E> {
-    type Reply = P::Reply;
-
-    async fn request(
-        &self,
-        msg: OutgoingMessage<'_>,
-        timeout: Duration,
-    ) -> Result<Self::Reply, Self::Error> {
-        self.publisher.request(msg, timeout).await
-    }
-}
-
-// ------------------------------------------------------------------------------------- slots
-
-/// One arena entry: the wired publish stack of the marker `M`.
-///
-/// The body publishes through it with [`message`](Self::message) (typed, admitted by the
-/// marker's `#[publishes(..)]` dictionary) or [`raw`](Self::raw) (bytes as they are); the
-/// broker capability vocabulary ([`TransactionalPublisher`](crate::TransactionalPublisher),
-/// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply)) is
-/// delegated, so a capability bound on the entry's `W` parameter is reachable directly on the
-/// entry.
-pub struct Slot<M, W> {
-    wired: W,
-    _marker: PhantomData<fn() -> M>,
-}
-
-impl<M, W> fmt::Debug for Slot<M, W> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Slot").finish_non_exhaustive()
-    }
-}
-
-impl<M: OutSlot, W: Publish> Slot<M, W> {
+impl<M: OutSlot, W, E> Slot<M, W, E> {
     /// Starts a typed publish through the slot, encoded with the include site's codec. The
     /// message type has to be in the marker's `#[publishes(..)]` dictionary (see
     /// [`PublishedThrough`](crate::runtime::PublishedThrough)).
+    // The builder is spelled through the `Publish` projections (not `W` and `E` directly) so a
+    // body generic over the entry needs only its declared `Slot<..>: Publish` bound to publish.
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> PublishBuilder<&'a W::Leaf, MessageBody<'a, T>, &'a W::EncodeCodec, HeadersUnset, T::Form>
+    ) -> PublishBuilder<
+        &'a <Self as Publish>::Leaf,
+        MessageBody<'a, T>,
+        &'a <Self as Publish>::EncodeCodec,
+        HeadersUnset,
+        T::Form,
+    >
     where
+        Self: Publish,
         T: OutgoingDestination + PublishedThrough<M>,
     {
-        message_of(self.wired.leaf(), value, self.wired.encode_codec())
+        message_of(self.leaf(), value, self.encode_codec())
     }
 
     /// Starts a byte publish through the slot: the payload travels as it is, to the destination
@@ -226,15 +198,19 @@ impl<M: OutSlot, W: Publish> Slot<M, W> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> PublishBuilder<&'a W::Leaf, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a <Self as Publish>::Leaf, RawBody<'a>, (), HeadersUnset, CallerName>
     where
+        Self: Publish,
         B: AsRef<[u8]> + ?Sized,
     {
-        raw_of(self.wired.leaf(), payload)
+        raw_of(self.leaf(), payload)
     }
 }
 
-impl<M: OutSlot, W: Publisher> Publisher for Slot<M, W> {
+// The core capability vocabulary is also delegated on the entry itself (not only through
+// Deref), so an entry passes into generic positions demanding the capability and a direct
+// `publish` / `request` keeps the slot's test-capture attribution.
+impl<M: OutSlot, W: Publisher, E: Send + Sync> Publisher for Slot<M, W, E> {
     type Error = W::Error;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
@@ -246,7 +222,9 @@ impl<M: OutSlot, W: Publisher> Publisher for Slot<M, W> {
     }
 }
 
-impl<M: OutSlot, W: TransactionalPublisher> TransactionalPublisher for Slot<M, W> {
+impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync> TransactionalPublisher
+    for Slot<M, W, E>
+{
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
         self.wired.begin_transaction().await
     }
@@ -260,7 +238,7 @@ impl<M: OutSlot, W: TransactionalPublisher> TransactionalPublisher for Slot<M, W
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions> OwnedTransactions for Slot<M, W> {
+impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync> OwnedTransactions for Slot<M, W, E> {
     type Transaction = W::Transaction;
 
     async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
@@ -268,7 +246,7 @@ impl<M: OutSlot, W: OwnedTransactions> OwnedTransactions for Slot<M, W> {
     }
 }
 
-impl<M: OutSlot, W: RequestReply> RequestReply for Slot<M, W> {
+impl<M: OutSlot, W: RequestReply, E: Send + Sync> RequestReply for Slot<M, W, E> {
     type Reply = W::Reply;
 
     async fn request(
@@ -281,10 +259,11 @@ impl<M: OutSlot, W: RequestReply> RequestReply for Slot<M, W> {
 }
 
 /// The injected slot: pairs the marker's attached policy against the connected broker and
-/// wires it under the include site's encode codec. A failing pair surfaces at startup with the
-/// slot's name; an unbound slot never gets this far (the include site does not compile).
+/// stores the live value under the include site's encode codec. A failing pair surfaces at
+/// startup with the slot's name; an unbound slot never gets this far (the include site does not
+/// compile).
 impl<B, Sub, Policy, E, M> FromStartup<B, Sub, (Policy, E)>
-    for Slot<M, OutStack<SlotPublisher<Policy::Live, M>, E>>
+    for Slot<M, <Policy as PublishPolicy<Connected<B>>>::Live, E>
 where
     B: crate::Broker,
     Sub: Sync,
@@ -304,11 +283,8 @@ where
             )))
         })?;
         Ok(Self {
-            wired: OutStack {
-                publisher: SlotPublisher::new(live),
-                codec,
-            },
-            _marker: PhantomData,
+            wired: SlotPublisher::new(live),
+            codec,
         })
     }
 }
@@ -328,8 +304,9 @@ impl<E> fmt::Debug for Outs<E> {
 }
 
 impl<E> Outs<E> {
-    /// Picks the entry of `marker`. The position is inferred, so the call reads the same
-    /// wherever the marker sits in the declaration.
+    /// Picks the entry of `marker`: the wired live value behind its transparent [`Slot`]
+    /// window. The position is inferred, so the call reads the same wherever the marker sits in
+    /// the declaration.
     // The marker travels by value like every marker selector (`.out(marker, ..)`): it is a
     // unit token whose only job is naming the slot at the call site.
     #[allow(clippy::needless_pass_by_value)]
@@ -364,12 +341,12 @@ pub struct OutPos<const N: usize>;
 
 macro_rules! impl_select_slot {
     ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
-        impl<M, W $(, $before)* $(, $after)*> SelectSlot<M, OutPos<$pos>>
-            for ($($before,)* Slot<M, W>, $($after,)*)
+        impl<M, W, E $(, $before)* $(, $after)*> SelectSlot<M, OutPos<$pos>>
+            for ($($before,)* Slot<M, W, E>, $($after,)*)
         {
-            type Picked = Slot<M, W>;
+            type Picked = Slot<M, W, E>;
 
-            fn pick(&self) -> &Slot<M, W> {
+            fn pick(&self) -> &Slot<M, W, E> {
                 #[allow(non_snake_case)]
                 let ($($before,)* picked, $($after,)*) = self;
                 $(let _ = $before;)*
@@ -419,8 +396,8 @@ pub trait EntryMarkers {
 }
 
 macro_rules! impl_entry_markers {
-    ($(($($m:ident: $w:ident),+))+) => {$(
-        impl<$($m: OutSlot, $w),+> EntryMarkers for ($(Slot<$m, $w>,)+) {
+    ($(($($m:ident: $w:ident / $e:ident),+))+) => {$(
+        impl<$($m: OutSlot, $w, $e),+> EntryMarkers for ($(Slot<$m, $w, $e>,)+) {
             type Markers = ($($m,)+);
 
             fn outgoing() -> Vec<OutgoingMessageMetadata> {
@@ -433,9 +410,9 @@ macro_rules! impl_entry_markers {
 }
 
 impl_entry_markers! {
-    (M0: W0)
-    (M0: W0, M1: W1)
-    (M0: W0, M1: W1, M2: W2)
+    (M0: W0 / E0)
+    (M0: W0 / E0, M1: W1 / E1)
+    (M0: W0 / E0, M1: W1 / E1, M2: W2 / E2)
 }
 
 // -------------------------------------------------------------------- the slot definitions
@@ -455,8 +432,8 @@ where
 }
 
 /// Ties the declared arena to the bound policies: the entry a body left generic unifies with
-/// the wired stack of its marker's paired live publisher, so the definition is its own bound
-/// form and the body's capability bounds are checked right here.
+/// its marker's paired live value, so the definition is its own bound form and the body's
+/// capability bounds are checked right here.
 macro_rules! impl_bind_slots {
     ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
         impl<Conn, A, C, S, H, Doc, $($m, $p, $e),+> BindSlots<Conn, ($(($p, $e),)+)>
@@ -464,7 +441,7 @@ macro_rules! impl_bind_slots {
                 HandleValue<
                     A,
                     (),
-                    Outs<($(Slot<$m, OutStack<SlotPublisher<$p::Live, $m>, $e>>,)+)>,
+                    Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e>,)+)>,
                     C,
                     S,
                     H,
@@ -539,17 +516,13 @@ where
     H: Handle<T, (), Outs<E>, C, S>,
     E: Send + Sync,
 {
-    async fn call(&self, input: &T, injections: &Outs<E>, ctx: &mut Context<'_, C, S>) -> Settle {
-        match self
-            .0
-            .body
-            .handle(input, injections, ctx)
-            .await
-            .into_verdict()
-        {
-            Ok(()) => HandlerResult::Ack.into(),
-            Err(settle) => settle,
-        }
+    async fn call(
+        &self,
+        input: &T,
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, C, S>,
+    ) -> HandlerOutcome {
+        settle_solo(self.0.body.handle(input, injections, ctx).await)
     }
 }
 
@@ -566,18 +539,9 @@ where
         input: &[u8],
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Settle {
+    ) -> HandlerOutcome {
         let payload = Payload::new(input);
-        match self
-            .0
-            .body
-            .handle(&payload, injections, ctx)
-            .await
-            .into_verdict()
-        {
-            Ok(()) => HandlerResult::Ack.into(),
-            Err(settle) => settle,
-        }
+        settle_solo(self.0.body.handle(&payload, injections, ctx).await)
     }
 }
 
@@ -598,17 +562,8 @@ where
         input: &Message<Hd, P>,
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Settle {
-        match self
-            .0
-            .body
-            .handle(input, injections, ctx)
-            .await
-            .into_verdict()
-        {
-            Ok(()) => HandlerResult::Ack.into(),
-            Err(settle) => settle,
-        }
+    ) -> HandlerOutcome {
+        settle_solo(self.0.body.handle(input, injections, ctx).await)
     }
 }
 
@@ -661,13 +616,8 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
     ) -> BatchResult {
-        let verdict = self
-            .0
-            .body
-            .handle(batch, injections, ctx)
-            .await
-            .into_verdict();
-        super::eager::settle_page(verdict, batch.len(), ctx.name())
+        let verdict = self.0.body.handle(batch, injections, ctx).await;
+        settle_page(verdict, batch.len(), ctx.name())
     }
 }
 
@@ -688,12 +638,7 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
     ) -> BatchResult {
-        let verdict = self
-            .0
-            .body
-            .handle(batch, injections, ctx)
-            .await
-            .into_verdict();
-        super::eager::settle_page(verdict, batch.len(), ctx.name())
+        let verdict = self.0.body.handle(batch, injections, ctx).await;
+        settle_page(verdict, batch.len(), ctx.name())
     }
 }
