@@ -137,7 +137,7 @@ impl HeaderMap {
     /// assert_eq!(meta.trace, None);
     /// # Ok::<(), ruststream::DeserializeHeadersError>(())
     /// ```
-    pub fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
+    pub(crate) fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
         T::deserialize(de::HeadersDeserializer::new(self))
     }
 

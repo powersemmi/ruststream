@@ -84,7 +84,7 @@ where
     /// # Errors
     ///
     /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
-    /// [`TransactionPublishError::PublishBuilder`] when the broker rejects the message.
+    /// [`TransactionPublishError::Publish`] when the broker rejects the message.
     ///
     /// # Cancel safety
     ///
@@ -102,7 +102,7 @@ where
         self.publisher
             .publish(OutgoingMessage::new(name, &payload))
             .await
-            .map_err(TransactionPublishError::PublishBuilder)
+            .map_err(TransactionPublishError::Publish)
     }
 
     /// Commits the transaction: every publish issued through the scope becomes visible at once.
@@ -281,7 +281,7 @@ where
     /// # Errors
     ///
     /// Returns [`TransactionPublishError::Encode`] when the codec rejects the value, and
-    /// [`TransactionPublishError::PublishBuilder`] when the message cannot be buffered (a pure client
+    /// [`TransactionPublishError::Publish`] when the message cannot be buffered (a pure client
     /// buffer is infallible in practice).
     ///
     /// # Cancel safety
@@ -304,7 +304,7 @@ where
         self.txn
             .publish(OutgoingMessage::new(name, &payload))
             .await
-            .map_err(TransactionPublishError::PublishBuilder)
+            .map_err(TransactionPublishError::Publish)
     }
 
     /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
@@ -356,5 +356,5 @@ pub enum TransactionPublishError<E> {
     Encode(#[source] CodecError),
     /// The broker rejected the message.
     #[error("failed to publish inside the transaction")]
-    PublishBuilder(#[source] E),
+    Publish(#[source] E),
 }

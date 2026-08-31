@@ -10,9 +10,6 @@ mod dispatch;
 mod dynstack;
 mod extract;
 mod failure;
-// Scaffolding allowance until the value_def surface swap completes and the
-// re-export list is final.
-#[allow(unreachable_pub)]
 mod handle;
 mod handler;
 mod inject;
@@ -72,8 +69,10 @@ pub use handle::{
 };
 #[doc(hidden)]
 pub use handle::{
-    ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape, SealedBatchPublishing,
-    SealedPublishing, SealedRawReply, SplitAttach, UnbuiltDefinition,
+    EntryMarkers, OutPos, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape,
+    ReplySlotFormFor, SealedBatchPublishing, SealedBatchPublishingOut, SealedPublishing,
+    SealedPublishingOut, SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach,
+    UnbuiltDefinition,
 };
 pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
 pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out, Seek};

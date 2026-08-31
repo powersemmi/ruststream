@@ -178,7 +178,7 @@ pub enum PublishError<E> {
     Headers(#[source] SerializeHeadersError),
     /// The sink (the broker publisher, or the transaction) rejected the message.
     #[error("publishing the message failed: {0}")]
-    PublishBuilder(#[source] E),
+    Publish(#[source] E),
 }
 
 impl<Sink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
@@ -429,7 +429,7 @@ async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     let mut map = sink.base_headers().cloned().unwrap_or_default();
     headers.write(&mut map).map_err(PublishError::Headers)?;
     let msg = OutgoingMessage::new(name, payload).with_headers(map);
-    sink.send(msg).await.map_err(PublishError::PublishBuilder)
+    sink.send(msg).await.map_err(PublishError::Publish)
 }
 
 /// Encodes `value` and sends it, shared by the resolved and the rendered terminals.
