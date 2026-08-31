@@ -1,22 +1,21 @@
 //! The macro-free counterpart of `tests/out_slots.rs`: marker-identified `Out` slots written out
 //! as bodies - multi-slot binding by marker, the harness's per-slot capture, and the
-//! broker-defined capability extension through [`SlotPublisher::inner`].
+//! broker-defined capability extension through the arena's transparent entry.
 //!
-//! Slot markers and the publisher-generic body are all ordinary trait impls, so a handler with
-//! several injected publishers is reachable with the attribute off. `with_slots` binds both
-//! bodies below: the input kind follows the body's own parameter, so the raw-input one is
-//! `with_slots::<[u8], ..>` and needs nothing else.
+//! Slot markers and the entry-generic body are all ordinary trait impls, so a handler with
+//! several injected publishers is reachable with the attribute off. The include site binds what
+//! the body's arena declares: the marker list comes from the impl, and the input kind follows the
+//! body's own parameter, so the raw-input one needs nothing else.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::SlotPublisher;
 use ruststream::testing::TestApp;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, PairError};
 use serde::{Deserialize, Serialize};
 
 /// The message the slot publishes carry; it declares no name, so each call site names one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct Event {
     id: u64,
 }
@@ -46,50 +45,48 @@ impl OutSlot for Audit {
 /// Two slots in one handler; no broker publisher type appears anywhere in the body.
 struct Transcode;
 
-type TranscodeSlots<EncodedPub, AuditPub, Enc> = (
-    Out<EncodedPub, Encoded, (), Enc>,
-    Out<AuditPub, Audit, (), Enc>,
-);
+type TranscodeSlots<EncodedPub, AuditPub, EncA, EncB> =
+    Outs<(Slot<Encoded, EncodedPub, EncA>, Slot<Audit, AuditPub, EncB>)>;
 
-impl<State, EncodedPub, AuditPub, Enc>
-    SlotsHandler<[u8], TranscodeSlots<EncodedPub, AuditPub, Enc>, (), State> for Transcode
+impl<'p, State, EncodedPub, AuditPub, EncA, EncB>
+    Handle<Payload<'p>, (), TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>, (), State>
+    for Transcode
 where
     State: Send + Sync,
-    EncodedPub: Publisher,
-    AuditPub: Publisher,
-    Enc: Send + Sync,
+    Slot<Encoded, EncodedPub, EncA>: Publish,
+    Slot<Audit, AuditPub, EncB>: Publish,
 {
     async fn handle(
         &self,
-        chunk: &[u8],
-        slots: &TranscodeSlots<EncodedPub, AuditPub, Enc>,
+        chunk: &Payload<'p>,
+        outs: &TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>,
         _ctx: &mut Context<'_, (), State>,
-    ) -> Settle {
-        let Out(encoded) = &slots.0;
-        let Out(audit) = &slots.1;
+    ) -> Result<(), HandlerOutcome> {
         let mut headers = HeaderMap::new();
         headers.insert("source", "slots.in");
-        if encoded
-            .raw(chunk)
+        if outs
+            .get(Encoded)
+            .raw(&chunk[..])
             .with_headers(headers)
             .to("slots.encoded")
             .publish()
             .await
             .is_err()
         {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
         let receipt = chunk.len().to_be_bytes();
-        if audit
+        if outs
+            .get(Audit)
             .raw(&receipt)
             .to("slots.audit")
             .publish()
             .await
             .is_err()
         {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
 
@@ -99,12 +96,10 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
     // Deliberately bound in the opposite of the marker-list order.
     let app =
         RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(with_slots::<[u8], (Encoded, Audit), _, _>(
-                "slots.in", Transcode,
-            ))
-            .out(Audit, MemoryPublish)
-            .out(Encoded, MemoryPublish)
-            .mount();
+            b.include(subscriber("slots.in", Transcode).build())
+                .out(Audit, MemoryPublish)
+                .out(Encoded, MemoryPublish)
+                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -159,14 +154,6 @@ impl ShardLanes for LaneRouter {
     }
 }
 
-// Grafted onto the slot wrapper once, for every marker: this is what `SlotPublisher::inner`
-// exists for, and how a broker crate extends the slot vocabulary with its own traits.
-impl<P: ShardLanes, M: OutSlot> ShardLanes for SlotPublisher<P, M> {
-    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-        self.inner().lane(shard)
-    }
-}
-
 /// The policy half: pure declaration pairing into the router, like a broker's
 /// `per_partition()` policy pairs into its producer cache. No `Clone`: resolution consumes it.
 struct LanePolicy;
@@ -181,47 +168,47 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
     }
 }
 
-/// The body bounds its slot with the broker-defined capability, not a core one: the publisher
-/// generic carries `ShardLanes` where a plain slot would carry `Publisher`.
+/// The body names the wired live type directly - the arena entry is a transparent window onto
+/// it, so the broker-defined capability is called with no grafting machinery in between.
 struct RouteShard;
 
-impl<Lanes, Enc, State> SlotsHandler<Event, (Out<Lanes, DefaultSlot, (), Enc>,), (), State>
-    for RouteShard
+struct Lanes;
+
+impl OutSlot for Lanes {
+    const NAME: &'static str = "Lanes";
+}
+
+impl<Enc> Handle<Event, (), Outs<(Slot<Lanes, LaneRouter, Enc>,)>> for RouteShard
 where
-    Lanes: ShardLanes + Send + Sync,
     Enc: Send + Sync,
-    State: Send + Sync,
 {
     async fn handle(
         &self,
         event: &Event,
-        slots: &(Out<Lanes, DefaultSlot, (), Enc>,),
-        _ctx: &mut Context<'_, (), State>,
-    ) -> Settle {
-        let Out(lanes) = &slots.0;
-        let (publisher, dest) = lanes.lane(event.id);
+        outs: &Outs<(Slot<Lanes, LaneRouter, Enc>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        let (publisher, dest) = outs.get(Lanes).lane(event.id);
         let payload = serde_json::to_vec(event).expect("serializable");
         if publisher.raw(&payload).to(dest).publish().await.is_err() {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
 // --8<-- [end:extension]
 
 /// A broker-defined capability rides the slot machinery end to end; its publishes bypass the
-/// slot attribution (they leave through the unwrapped inner value) and land in the broker's
+/// slot attribution (they leave through the unwrapped live value) and land in the broker's
 /// publish log, the documented boundary.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
     let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(with_slots::<Event, (DefaultSlot,), _, _>(
-                "slots.sharded",
-                RouteShard,
-            ))
-            .publisher(LanePolicy);
+            b.include(subscriber("slots.sharded", RouteShard).build())
+                .out(Lanes, LanePolicy)
+                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -242,6 +229,6 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
         .published::<Event>("slots.lane.odd")
         .assert_called_once()
         .with(&Event { id: 3 });
-    // The inner value's publishes are not attributed to the slot: the capture boundary.
-    tb.out::<DefaultSlot>().assert_not_called();
+    // The live value's publishes are not attributed to the slot: the capture boundary.
+    tb.out::<Lanes>().assert_not_called();
 }

@@ -1,10 +1,11 @@
 //! The macro-free counterpart of `tests/raw_subscriber.rs`: the raw handler forms written out as
-//! named types. The plain form binds through the `raw` constructor; the byte-reply form through
-//! `raw_replying(..).to(..)`, over the `Reply` body the `publish_raw(..)` clause would have
-//! emitted - byte-shaped `Out`, and the input kind read off the body's own parameter.
+//! named types. The plain form is a body over `Payload<'_>`; the byte-reply form declares
+//! `Vec<u8>` as its reply and wires it with `.reply().on(..).publisher(Bare(..))`, which is what
+//! the `publish_raw(..)` clause would have emitted - the input kind is read off the body's own
+//! parameter either way.
 //!
-//! The codec-free path is what the plain and the byte-reply sections pin: `RawBytes` on the input
-//! side means no `Codec` bound reaches the mount, so this file also builds with every codec
+//! The codec-free path is what the plain and the byte-reply sections pin: raw bytes on the input
+//! side mean no `Codec` bound reaches the mount, so this file also builds with every codec
 //! feature off (the typed-input module below is the one exception, and it is gated).
 #![cfg(all(feature = "memory", feature = "testing"))]
 
@@ -23,24 +24,29 @@ const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
 static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 
 // --8<-- [start:raw]
-/// The raw form by hand. `Handler<[u8]>` is what the attribute implements for a `&[u8]`
-/// parameter: the mount adapter lends the delivery's payload itself, so nothing decodes. The
-/// `raw` constructor is what binds it to its subscription and tells the mount to skip the codec.
+/// The raw form by hand. `Handle<Payload<'_>>` is what the attribute implements for a `&[u8]`
+/// parameter: the input spelling itself tells the mount to skip the codec, and the adapter lends
+/// the delivery's payload rather than decoding it.
 struct OnFrame;
 
-impl Handler<[u8]> for OnFrame {
-    // The body awaits nothing, so it returns the future rather than being an `async fn`.
-    fn handle(&self, frame: &[u8], _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl<'p> Handle<Payload<'p>> for OnFrame {
+    fn handle(
+        &self,
+        frame: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         FRAMES.lock().expect("frame log").push(frame.to_vec());
-        ready(HandlerResult::Ack.into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:raw]
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_handler_receives_exact_bytes() {
-    let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(raw("frames", OnFrame)));
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(subscriber("frames", OnFrame).build());
+    });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -54,7 +60,7 @@ async fn raw_handler_receives_exact_bytes() {
         .subscriber("frames")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(
         FRAMES.lock().expect("frame log").as_slice(),
         &[FRAME.to_vec()],
@@ -65,19 +71,19 @@ async fn raw_handler_receives_exact_bytes() {
 // --- the reply form: the returned bytes are republished as-is ---
 
 // --8<-- [start:raw_reply]
-/// The byte-reply form by hand: a `Reply<[u8]>` body with `Vec<u8>` out, so bytes in and bytes
-/// out. `raw_replying` is what picks the bare-publisher commit, so the reply leaves without a
-/// codec, and the body's `Err` arm is the reply the attribute lets a handler skip.
+/// The byte-reply form by hand: a body over `Payload<'_>` declaring `Vec<u8>` as its reply, so
+/// bytes in and bytes out. The publisher step's `Bare(..)` form is what picks the bare-publisher
+/// commit, so the reply leaves without a codec, and the body's `Err` arm is the reply the
+/// attribute lets a handler skip.
 struct Relay;
 
-impl Reply<[u8]> for Relay {
-    type Out = Vec<u8>;
-
-    fn reply(
+impl<'p> Handle<Payload<'p>, Vec<u8>> for Relay {
+    fn handle(
         &self,
-        frame: &[u8],
+        frame: &Payload<'p>,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Vec<u8>, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
         let mut reply = frame.to_vec();
         reply.reverse();
         ready(Ok(reply))
@@ -88,18 +94,28 @@ impl Reply<[u8]> for Relay {
 /// The far end of the relay, so the round trip is observable as a delivery, not just a publish.
 struct RelayCapture;
 
-impl Handler<[u8]> for RelayCapture {
-    fn handle(&self, _frame: &[u8], _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
-        ready(HandlerResult::Ack.into())
+impl<'p> Handle<Payload<'p>> for RelayCapture {
+    fn handle(
+        &self,
+        _frame: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        ready(Ok(()))
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_round_trips_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(raw_replying("relay-in", Relay).to("relay-out"))
-            .publisher(MemoryPublish);
-        b.include(raw("relay-out", RelayCapture));
+        b.include(
+            subscriber("relay-in", Relay)
+                .reply()
+                .on("relay-out")
+                .publisher(Bare(MemoryPublish))
+                .build(),
+        );
+        b.include(subscriber("relay-out", RelayCapture).build());
     });
 
     let tb = TestApp::start(app).await.expect("start");
@@ -116,12 +132,12 @@ async fn raw_reply_round_trips_exact_bytes() {
         .subscriber("relay-in")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.broker::<MemoryBroker>()
         .subscriber("relay-out")
         .assert_called_once()
         .with_raw(&expected)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
 // --- publish_raw with a TYPED input: decode with the scope codec, reply bytes as-is ---
@@ -135,7 +151,7 @@ mod typed_in {
     use ruststream::testing::TestApp;
     use serde::Deserialize;
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, schemars::JsonSchema)]
     struct Wrap {
         id: u32,
     }
@@ -143,18 +159,17 @@ mod typed_in {
     // --8<-- [start:raw_reply_typed]
     /// The gateway shape: a structured message in, a self-produced wire format out. Only the
     /// body's input parameter changes from the byte-reply form above - `&Wrap` instead of
-    /// `&[u8]`, which is what selects the decode - so the decode codec is resolved from the mount
-    /// while the reply still leaves unencoded.
+    /// `&Payload<'_>`, which is what selects the decode - so the decode codec is resolved from the
+    /// mount while the reply still leaves unencoded.
     struct Gateway;
 
-    impl Reply<Wrap> for Gateway {
-        type Out = Vec<u8>;
-
-        fn reply(
+    impl Handle<Wrap, Vec<u8>> for Gateway {
+        fn handle(
             &self,
             wrap: &Wrap,
+            _outs: &(),
             _ctx: &mut Context<'_>,
-        ) -> impl Future<Output = Result<Vec<u8>, HandlerResult>> + Send {
+        ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
             ready(Ok(wrap.id.to_be_bytes().to_vec()))
         }
     }
@@ -163,19 +178,21 @@ mod typed_in {
     /// Asserts inside the delivery that the reply bytes arrived untouched.
     struct GatewayCapture;
 
-    impl Handler<[u8]> for GatewayCapture {
+    impl<'p> Handle<Payload<'p>> for GatewayCapture {
         fn handle(
             &self,
-            frame: &[u8],
+            frame: &Payload<'p>,
+            _outs: &(),
             _ctx: &mut Context<'_>,
-        ) -> impl Future<Output = Settle> + Send {
-            // The assertion lives inside the future: the dispatcher's unwind guard wraps the
-            // future it is handed, not the call that builds it.
-            let frame = frame.to_vec();
-            async move {
-                assert_eq!(frame, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
-                HandlerResult::Ack.into()
-            }
+        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+            // The adapter builds this future inside the dispatcher's unwind guard, so a failed
+            // assertion is caught like any other handler panic.
+            assert_eq!(
+                &frame[..],
+                7_u32.to_be_bytes(),
+                "the reply bytes arrive as-is"
+            );
+            ready(Ok(()))
         }
     }
 
@@ -184,9 +201,14 @@ mod typed_in {
         let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(raw_replying("gateway-in", Gateway).to("gateway-out"))
-                    .publisher(MemoryPublish);
-                b.include(raw("gateway-out", GatewayCapture));
+                b.include(
+                    subscriber("gateway-in", Gateway)
+                        .reply()
+                        .on("gateway-out")
+                        .publisher(Bare(MemoryPublish))
+                        .build(),
+                );
+                b.include(subscriber("gateway-out", GatewayCapture).build());
             },
         );
 
@@ -199,11 +221,11 @@ mod typed_in {
         tb.broker::<MemoryBroker>()
             .subscriber("gateway-in")
             .assert_called_once()
-            .settled(HandlerResult::Ack);
+            .settled(HandlerOutcome::ack());
         tb.broker::<MemoryBroker>()
             .subscriber("gateway-out")
             .assert_called_once()
             .with_raw(7_u32.to_be_bytes().as_slice())
-            .settled(HandlerResult::Ack);
+            .settled(HandlerOutcome::ack());
     }
 }

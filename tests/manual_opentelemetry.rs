@@ -25,14 +25,13 @@ use tokio::sync::Notify;
 /// definition is built.
 struct Echo;
 
-impl<State: Send + Sync> Reply<Req, (), State> for Echo {
-    type Out = Resp;
-
-    fn reply(
+impl<State: Send + Sync> Handle<Req, Resp, (), (), State> for Echo {
+    fn handle(
         &self,
         req: &Req,
+        _outs: &(),
         _ctx: &mut Context<'_, (), State>,
-    ) -> impl Future<Output = Result<Resp, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<Resp, HandlerOutcome>> {
         ready(Ok(Resp { n: req.n }))
     }
 }
@@ -43,16 +42,17 @@ static GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
 /// The far end: records the reply's `traceparent`, which is the whole subject of the file.
 struct Capture;
 
-impl<State: Send + Sync> Handler<Resp, (), State> for Capture {
+impl<State: Send + Sync> Handle<Resp, (), (), (), State> for Capture {
     fn handle(
         &self,
         _resp: &Resp,
+        _outs: &(),
         ctx: &mut Context<'_, (), State>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         *CAPTURED.lock().expect("poisoned") =
             ctx.headers().get_str("traceparent").map(str::to_owned);
         GOT.notify_one();
-        ready(HandlerResult::Ack.into())
+        ready(Ok(()))
     }
 }
 
@@ -95,9 +95,14 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
         // The consume layer opens a span per delivery and records the consumer's trace context.
         .layer(otel.consume_layer())
         .with_broker(broker, |b| {
-            b.include(replying("in", Echo).to("out"))
-                .publisher(reply_pub);
-            b.include(subscriber("out", Capture));
+            b.include(
+                subscriber("in", Echo)
+                    .reply()
+                    .on("out")
+                    .publisher(reply_pub)
+                    .build(),
+            );
+            b.include(subscriber("out", Capture).build());
         });
     // --8<-- [end:wiring]
 

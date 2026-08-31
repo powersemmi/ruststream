@@ -1,5 +1,5 @@
-use ruststream::runtime::{HandlerResult, Out};
-use ruststream::{Message, OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::runtime::{HandlerOutcome, Out};
+use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -13,7 +13,7 @@ struct Progress {
     percent: u8,
 }
 
-#[derive(Message, Serialize)]
+#[derive(MessageInfo, Serialize)]
 struct Rogue {
     note: String,
 }
@@ -28,9 +28,9 @@ struct Events;
 async fn forward(
     _order: &Order,
     Out(out): Out<impl Publisher, Events, (Progress, Rogue)>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let _ = out;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

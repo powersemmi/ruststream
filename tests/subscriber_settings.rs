@@ -14,7 +14,7 @@ use std::time::Duration;
 use common::{Order, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
 use ruststream::runtime::{
-    AppInfo, FailurePolicies, FailurePolicy, HandlerResult, PublishExt, Router, RustStream,
+    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, PublishExt, Router, RustStream,
     SubscriberSettings,
 };
 use ruststream::{nonzero, subscriber};
@@ -23,9 +23,9 @@ static NAMED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// The shortest source form: the by-name source with its value left to the mount site.
 #[subscriber]
-async fn audit(order: &Order) -> HandlerResult {
+async fn audit(order: &Order) -> HandlerOutcome {
     NAMED.lock().unwrap().push(order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -55,9 +55,9 @@ static KIND: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// A named kind carrying only what it needs to exist: the value arrives through the builder,
 /// which constructs it through the kind's own from-name constructor.
 #[subscriber(MemorySource)]
-async fn record(order: &Order) -> HandlerResult {
+async fn record(order: &Order) -> HandlerOutcome {
     KIND.lock().unwrap().push(order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -88,7 +88,7 @@ static PEAK: AtomicUsize = AtomicUsize::new(0);
 
 /// The worker policy is left open by the attribute and named at the mount site.
 #[subscriber("workers-from-builder")]
-async fn parallel(order: &Order) -> HandlerResult {
+async fn parallel(order: &Order) -> HandlerOutcome {
     let _ = order.id;
     let in_flight = CONCURRENT.fetch_add(1, Ordering::SeqCst) + 1;
     PEAK.fetch_max(in_flight, Ordering::SeqCst);
@@ -97,7 +97,7 @@ async fn parallel(order: &Order) -> HandlerResult {
         tokio::task::yield_now().await;
     }
     CONCURRENT.fetch_sub(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -125,9 +125,9 @@ static SKIPPED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// The failure policies are left open by the attribute and named at the mount site.
 #[subscriber("failures-from-builder")]
-async fn tolerant(order: &Order) -> HandlerResult {
+async fn tolerant(order: &Order) -> HandlerOutcome {
     SKIPPED.lock().unwrap().push(order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -166,9 +166,9 @@ static REPLAYED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// The start position is left open by the attribute and named at the mount site.
 #[subscriber(MemorySource)]
-async fn replay(order: &Order) -> HandlerResult {
+async fn replay(order: &Order) -> HandlerOutcome {
     REPLAYED.lock().unwrap().push(order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -201,12 +201,12 @@ static BUFFERED: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
 
 /// A batch shape read off the signature; where the batches come from is settled at the mount.
 #[subscriber]
-async fn correlate(orders: &[Order]) -> HandlerResult {
+async fn correlate(orders: &[Order]) -> HandlerOutcome {
     BUFFERED
         .lock()
         .unwrap()
         .push(orders.iter().map(|o| o.id).collect());
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -246,12 +246,12 @@ static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 /// A batch of payloads: the typed batch without the decode step, borrowed from the batch's own
 /// messages.
 #[subscriber("frames")]
-async fn ingest(frames: &[&[u8]]) -> HandlerResult {
+async fn ingest(frames: &[&[u8]]) -> HandlerOutcome {
     FRAMES
         .lock()
         .unwrap()
         .extend(frames.iter().map(|f| f.to_vec()));
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -283,9 +283,9 @@ static ROUTED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// The same surface on the router: `include` takes the settings builder there too.
 #[subscriber]
-async fn routed(order: &Order) -> HandlerResult {
+async fn routed(order: &Order) -> HandlerOutcome {
     ROUTED.lock().unwrap().push(order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

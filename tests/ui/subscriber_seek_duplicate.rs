@@ -1,5 +1,5 @@
 use ruststream::memory::MemorySeeker;
-use ruststream::runtime::{HandlerResult, Seek};
+use ruststream::runtime::{HandlerOutcome, Seek};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -14,9 +14,9 @@ async fn handle(
     order: &Order,
     Seek(_a): Seek<MemorySeeker>,
     Seek(_b): Seek<MemorySeeker>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

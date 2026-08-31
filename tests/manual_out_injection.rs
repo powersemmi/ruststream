@@ -1,9 +1,9 @@
 //! The macro-free counterpart of `tests/out_injection.rs`: a handler that receives a live
 //! publisher as an injected parameter, written out as a definition.
 //!
-//! An `Out` parameter reaches the body through the slots tuple: `SlotsHandler` names the slot
-//! list in its impl, and the publisher type stays generic, so the attachment at the include site
-//! decides it with nothing erased.
+//! An injected publisher reaches the body through the arena: the `Handle` impl names one `Slot`
+//! per marker, and the publisher type stays generic, so the attachment at the include site decides
+//! it with nothing erased.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 mod common;
@@ -17,25 +17,30 @@ use ruststream::prelude::*;
 /// impl, so the definition stays a zero-sized value the mount site builds for free.
 struct Crossing;
 
-impl<Egress, Enc, State> SlotsHandler<Event, (Out<Egress, DefaultSlot, (), Enc>,), (), State>
+impl<Egress, Enc, State> Handle<Event, (), Outs<(Slot<DefaultSlot, Egress, Enc>,)>, (), State>
     for Crossing
 where
-    Egress: Publisher + Send + Sync,
-    Enc: Send + Sync,
+    Slot<DefaultSlot, Egress, Enc>: Publish,
     State: Send + Sync,
 {
     async fn handle(
         &self,
         event: &Event,
-        slots: &(Out<Egress, DefaultSlot, (), Enc>,),
+        outs: &Outs<(Slot<DefaultSlot, Egress, Enc>,)>,
         _ctx: &mut Context<'_, (), State>,
-    ) -> Settle {
-        let Out(out) = &slots.0;
+    ) -> Result<(), HandlerOutcome> {
         let payload = serde_json::to_vec(event).expect("serializable");
-        if out.raw(&payload).to("out.other").publish().await.is_err() {
-            return HandlerResult::retry().into();
+        if outs
+            .get(DefaultSlot)
+            .raw(&payload)
+            .to("out.other")
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
 
@@ -55,11 +60,8 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
             let _ = b; // the target broker may mount its own handlers here
         })
         .with_broker(ingress_broker, |b| {
-            b.include(with_slots::<Event, (DefaultSlot,), _, _>(
-                "out.crossing",
-                Crossing,
-            ))
-            .publisher(to_other);
+            b.include(subscriber("out.crossing", Crossing).build())
+                .publisher(to_other);
         });
     // --8<-- [end:cross_broker]
     let running = app.start().await.expect("startup failed");

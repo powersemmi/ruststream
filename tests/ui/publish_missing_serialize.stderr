@@ -21,14 +21,14 @@ help: the trait `_serde::Serialize` is not implemented for `Archived`
              (T0, T1, T2, T3)
              (T0, T1, T2, T3, T4)
            and $N others
-note: required by a bound in `ruststream::runtime::Publish::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
+note: required by a bound in `PublishBuilder::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
   --> src/runtime/publish/builder.rs
    |
    |     pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
    |                  ------- required by a bound in this associated function
    |     where
    |         T: Serialize,
-   |            ^^^^^^^^^ required by this bound in `Publish::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
+   |            ^^^^^^^^^ required by this bound in `PublishBuilder::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
 
 error[E0277]: the trait bound `Archived: serde::Serialize` is not satisfied
   --> tests/ui/publish_missing_serialize.rs:26:13
@@ -53,14 +53,14 @@ help: the trait `_serde::Serialize` is not implemented for `Archived`
              (T0, T1, T2, T3)
              (T0, T1, T2, T3, T4)
            and $N others
-note: required by a bound in `ruststream::runtime::Publish::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
+note: required by a bound in `PublishBuilder::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
   --> src/runtime/publish/builder.rs
    |
    |     pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
    |                  ------- required by a bound in this associated function
    |     where
    |         T: Serialize,
-   |            ^^^^^^^^^ required by this bound in `Publish::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
+   |            ^^^^^^^^^ required by this bound in `PublishBuilder::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
 
 error[E0277]: the trait bound `Archived: serde::Serialize` is not satisfied
   --> tests/ui/publish_missing_serialize.rs:26:63
@@ -85,11 +85,11 @@ help: the trait `_serde::Serialize` is not implemented for `Archived`
              (T0, T1, T2, T3)
              (T0, T1, T2, T3, T4)
            and $N others
-note: required by a bound in `ruststream::runtime::Publish::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
+note: required by a bound in `PublishBuilder::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
   --> src/runtime/publish/builder.rs
    |
    |     pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
    |                  ------- required by a bound in this associated function
    |     where
    |         T: Serialize,
-   |            ^^^^^^^^^ required by this bound in `Publish::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`
+   |            ^^^^^^^^^ required by this bound in `PublishBuilder::<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>::publish`

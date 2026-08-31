@@ -1,4 +1,4 @@
-use ruststream::runtime::HandlerResult;
+use ruststream::runtime::HandlerOutcome;
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -9,9 +9,9 @@ struct Order {
 
 // An empty start_at() would mean "the broker's default", which is what no clause already does.
 #[subscriber("orders", start_at())]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

@@ -14,14 +14,14 @@ use std::time::Duration;
 use common::{Event, connected, expect_id, observed_memory};
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, DefaultSlot, HandlerResult, Out, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream};
 use ruststream::testing::{Outcome, TestApp, expect_published};
 use ruststream::{Broker, Publisher, subscriber};
 
 /// The destination is computed per message: exactly the case reply publishing cannot cover and
 /// the injected publisher exists for.
 #[subscriber("out.in")]
-async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
+async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     let dest = if event.id.is_multiple_of(2) {
         "out.even"
     } else {
@@ -29,9 +29,9 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult 
     };
     let payload = serde_json::to_vec(event).expect("serializable");
     if out.raw(&payload).to(dest).publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -58,12 +58,12 @@ async fn an_injected_publisher_reaches_the_handler_live() {
 }
 
 #[subscriber("out.crossing")]
-async fn crossing(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
+async fn crossing(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     let payload = serde_json::to_vec(event).expect("serializable");
     if out.raw(&payload).to("out.other").publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -125,14 +125,14 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
 /// The destination is computed per element, off the whole page: exactly what a reply form
 /// cannot express and the injected publisher can - batch and Out compose.
 #[subscriber(batch("out.page"))]
-async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerResult {
+async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for event in events {
         let payload = serde_json::to_vec(event).expect("serializable");
         if out.raw(&payload).to("out.paged").publish().await.is_err() {
-            return HandlerResult::retry();
+            return HandlerOutcome::retry();
         }
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -169,7 +169,7 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
 /// The reply leaves through the fixed destination while an audit copy leaves through the
 /// injected publisher: publish and Out compose, each side with its own attachment.
 #[subscriber("out.gate", publish("out.gate.reply"))]
-async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, HandlerResult> {
+async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, HandlerOutcome> {
     let payload = serde_json::to_vec(event).expect("serializable");
     if out
         .raw(&payload)
@@ -178,7 +178,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
         .await
         .is_err()
     {
-        return Err(HandlerResult::retry());
+        return Err(HandlerOutcome::retry());
     }
     Ok(Event { id: event.id + 1 })
 }
@@ -188,7 +188,7 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(broker, |b| {
-        b.include(gate).out(DefaultSlot, MemoryPublish).mount();
+        b.include(gate).out(DefaultSlot, MemoryPublish).build();
     });
     let running = app.start().await.expect("startup failed");
 
@@ -210,7 +210,7 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
 async fn settle_page(
     events: &[Event],
     Out(out): Out<impl Publisher>,
-) -> Result<Vec<Event>, HandlerResult> {
+) -> Result<Vec<Event>, HandlerOutcome> {
     let page = Event {
         id: u64::try_from(events.len()).expect("a page fits in u64"),
     };
@@ -222,7 +222,7 @@ async fn settle_page(
         .await
         .is_err()
     {
-        return Err(HandlerResult::retry());
+        return Err(HandlerOutcome::retry());
     }
     Ok(events
         .iter()
@@ -237,7 +237,7 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
         b.include(settle_page)
             .out(DefaultSlot, MemoryPublish)
-            .mount();
+            .build();
     });
     let running = app.start().await.expect("startup failed");
 

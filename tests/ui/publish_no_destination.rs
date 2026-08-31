@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -20,9 +20,9 @@ struct Events;
 // Publishing without naming the destination does not compile: the builder's destination
 // position is still `CallerName`, which is not a resolved one.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Archived>) -> HandlerResult {
+async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Archived>) -> HandlerOutcome {
     let _ = out.message(&Archived { id: order.id }).publish().await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

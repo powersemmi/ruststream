@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -25,14 +25,14 @@ struct Events;
 // `Done` declares a headers contract: publishing it without `.with_headers(&meta)` does not
 // compile - the empty headers position does not satisfy the declared `WithHeaders<DoneMeta>`.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Done>) -> HandlerResult {
+async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Done>) -> HandlerOutcome {
     let _ = out
         .message(&Done {
             key: order.id.to_string(),
         })
         .publish()
         .await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

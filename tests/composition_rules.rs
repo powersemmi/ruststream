@@ -16,7 +16,7 @@ use std::{
 
 use common::{Order, Receipt, connected, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
 use ruststream::{Buffered, Name, nonzero, subscriber};
 
@@ -80,10 +80,10 @@ static BUF_BATCHES: AtomicUsize = AtomicUsize::new(0);
 #[subscriber(batch(Buffered::<Name>::new(Name::new("buf-in"))
     .max_size(nonzero!(2))
     .max_wait(Duration::from_millis(10))), workers(2))]
-async fn buffered_drain(orders: &[Order]) -> HandlerResult {
+async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
     BUF_SEEN.fetch_add(orders.len(), Ordering::SeqCst);
     BUF_BATCHES.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// The Buffered adapter composes with a batch pool: batches still close by size or deadline,
@@ -129,9 +129,9 @@ async fn pooled_relay(o: &Order) -> Receipt {
 }
 
 #[subscriber("pub-out")]
-async fn pooled_check(_r: &Receipt) -> HandlerResult {
+async fn pooled_check(_r: &Receipt) -> HandlerOutcome {
     PUB_REPLIED.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A publishing handler composes with a worker pool: every delivery's reply arrives; reply

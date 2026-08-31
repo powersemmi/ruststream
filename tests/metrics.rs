@@ -9,11 +9,27 @@ mod common;
 
 use common::wait_for;
 
+use std::future::{Future, ready};
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::prelude::*;
+
+/// Acks whatever arrives: the subject is the metric the dispatch records around the body, not the
+/// body itself.
+struct Ping;
+
+impl<'p> Handle<Payload<'p>> for Ping {
+    fn handle(
+        &self,
+        _ping: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        ready(Ok(()))
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consume_metrics_are_recorded() {
@@ -24,9 +40,7 @@ async fn consume_metrics_are_recorded() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(metrics.consume_layer())
         .with_broker(broker, |b| {
-            b.include(raw("pings", |_msg: &[u8], _ctx: &mut Context| async {
-                HandlerResult::Ack
-            }));
+            b.include(subscriber("pings", Ping).build());
         });
 
     let running = app.start().await.expect("startup failed");
@@ -67,9 +81,7 @@ async fn consume_metrics_are_recorded_through_a_router() {
         b.include_router(
             Router::new()
                 .layer(metrics.consume_layer())
-                .include(raw("pings", |_msg: &[u8], _ctx: &mut Context| async {
-                    HandlerResult::Ack
-                })),
+                .include(subscriber("pings", Ping).build()),
         );
     });
 

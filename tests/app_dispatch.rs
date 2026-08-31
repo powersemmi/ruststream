@@ -4,6 +4,7 @@ mod common;
 
 use common::{BackgroundRun, wait_for};
 use std::{
+    future::{Future, ready},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU32, Ordering},
@@ -12,9 +13,9 @@ use std::{
 };
 
 use ruststream::codec::JsonCodec;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{BlanketLayer, HandlerMetadata, Layer};
+use ruststream::runtime::{BlanketLayer, Handler, HandlerMetadata, Layer};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -26,6 +27,22 @@ struct Order {
 
 fn order_bytes(id: u32, total: f64) -> Vec<u8> {
     serde_json::to_vec(&Order { id, total }).unwrap()
+}
+
+/// Counts the raw deliveries that reach it; the subject of the suites below is the wiring that
+/// gets a delivery here, not what the body does with it.
+struct CountFrames(Arc<AtomicU32>);
+
+impl<'p> Handle<Payload<'p>> for CountFrames {
+    fn handle(
+        &self,
+        _frame: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        ready(Ok(()))
+    }
 }
 
 /// A test layer that counts every invocation, to prove the global stack wraps handlers.
@@ -55,7 +72,7 @@ where
     S: Send + Sync,
     H: Handler<M, C, S>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.inner.handle(msg, ctx).await
     }
@@ -93,7 +110,7 @@ async fn app_dispatches_typed_messages() {
             async move {
                 assert!(total > 0.0);
                 received.fetch_add(id, Ordering::SeqCst);
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             }
         });
 
@@ -150,7 +167,7 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
         let gate = Arc::clone(&gate);
         let flag = Arc::clone(&flag);
         async move {
-            HandlerResult::ack().and_after(async move {
+            HandlerOutcome::ack().and_after(async move {
                 // Signal once the continuation is in flight, then block: the drain must await it.
                 on_parked.notify_one();
                 gate.notified().await;
@@ -199,7 +216,7 @@ async fn shutdown_timeout_abandons_stuck_continuations() {
         let on_parked = Arc::clone(&on_parked);
         let flag = Arc::clone(&flag);
         async move {
-            HandlerResult::ack().and_after(async move {
+            HandlerOutcome::ack().and_after(async move {
                 on_parked.notify_one();
                 std::future::pending::<()>().await;
                 flag.store(1, Ordering::SeqCst);
@@ -236,13 +253,7 @@ async fn app_subscribes_via_descriptor_after_connect() {
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0")).with_broker(broker, |b| {
-        b.include(raw("events", move |_msg: &[u8], _ctx: &mut Context| {
-            let seen = Arc::clone(&seen_clone);
-            async move {
-                seen.fetch_add(1, Ordering::SeqCst);
-                HandlerResult::Ack
-            }
-        }));
+        b.include(subscriber("events", CountFrames(seen_clone)).build());
     });
 
     let run = BackgroundRun::spawn(app);
@@ -262,16 +273,8 @@ async fn included_router_handlers_dispatch() {
     let seen_clone = Arc::clone(&seen);
 
     // Router defined independently of any live broker, then mounted. Consuming builder.
-    let router = Router::<MemoryBroker>::new().include(raw(
-        "events",
-        move |_msg: &[u8], _ctx: &mut Context| {
-            let seen = Arc::clone(&seen_clone);
-            async move {
-                seen.fetch_add(1, Ordering::SeqCst);
-                HandlerResult::Ack
-            }
-        },
-    ));
+    let router = Router::<MemoryBroker>::new()
+        .include(subscriber("events", CountFrames(seen_clone)).build());
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -293,16 +296,8 @@ async fn global_layer_reaches_router_handlers() {
     let handler_hits_clone = Arc::clone(&handler_hits);
 
     // The app-global stack must reach handlers mounted through include_router.
-    let router = Router::<MemoryBroker>::new().include(raw(
-        "events",
-        move |_msg: &[u8], _ctx: &mut Context| {
-            let handler_hits = Arc::clone(&handler_hits_clone);
-            async move {
-                handler_hits.fetch_add(1, Ordering::SeqCst);
-                HandlerResult::Ack
-            }
-        },
-    ));
+    let router = Router::<MemoryBroker>::new()
+        .include(subscriber("events", CountFrames(handler_hits_clone)).build());
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .layer(CountLayer(Arc::clone(&layer_hits)))
@@ -339,7 +334,7 @@ async fn global_layer_wraps_handlers() {
                     let handler_hits = Arc::clone(&handler_hits_clone);
                     async move {
                         handler_hits.fetch_add(1, Ordering::SeqCst);
-                        HandlerResult::Ack
+                        HandlerOutcome::ack()
                     }
                 },
                 HandlerMetadata::raw("orders"),
@@ -359,6 +354,22 @@ async fn global_layer_wraps_handlers() {
     run.stop().await;
 }
 
+/// Forwards every delivery to the publisher it was built with: the captured publisher belongs to
+/// another broker, which is what the suite below asserts on.
+struct Bridge(MemoryPublisher);
+
+impl<'p> Handle<Payload<'p>> for Bridge {
+    async fn handle(
+        &self,
+        _frame: &Payload<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        let _ = self.0.raw(b"reply").to("responses").publish().await;
+        Ok(())
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cross_broker_publish_via_captured_publisher() {
     let ingress = MemoryBroker::new();
@@ -373,14 +384,7 @@ async fn cross_broker_publish_via_captured_publisher() {
 
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
         .with_broker(ingress, |b| {
-            let out = egress_pub.clone();
-            b.include(raw("orders", move |_msg: &[u8], _ctx: &mut Context| {
-                let out = out.clone();
-                async move {
-                    let _ = out.raw(b"reply").to("responses").publish().await;
-                    HandlerResult::Ack
-                }
-            }));
+            b.include(subscriber("orders", Bridge(egress_pub.clone())).build());
         })
         .with_broker(egress, |b| {
             let subscriber = b.broker().subscribe("responses");
@@ -390,7 +394,7 @@ async fn cross_broker_publish_via_captured_publisher() {
                     let received = Arc::clone(&received_clone);
                     async move {
                         received.fetch_add(1, Ordering::SeqCst);
-                        HandlerResult::Ack
+                        HandlerOutcome::ack()
                     }
                 },
                 HandlerMetadata::raw("responses"),
@@ -448,7 +452,7 @@ async fn handler_reads_context_topic_and_state() {
                     let seen = Arc::clone(&seen_clone);
                     async move {
                         *seen.lock().expect("poisoned") = Some((name, greeting));
-                        HandlerResult::Ack
+                        HandlerOutcome::ack()
                     }
                 },
                 HandlerMetadata::raw("orders"),
@@ -540,13 +544,13 @@ fn app_records_handler_metadata() {
         let subscriber = b.broker().subscribe("orders");
         b.handle(
             subscriber,
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
             HandlerMetadata::typed::<Order>("orders").with_description("processes orders"),
         );
         let alerts = b.broker().subscribe("alerts");
         b.handle(
             alerts,
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
             HandlerMetadata::raw("alerts"),
         );
     });

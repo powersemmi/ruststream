@@ -23,14 +23,15 @@ static SEEN: Notify = Notify::const_new();
 /// Signals the test that a delivery arrived; the run machinery, not the body, is the subject.
 struct Observe;
 
-impl<State: Send + Sync> Handler<Order, (), State> for Observe {
+impl<State: Send + Sync> Handle<Order, (), (), (), State> for Observe {
     fn handle(
         &self,
         _order: &Order,
+        _outs: &(),
         _ctx: &mut Context<'_, (), State>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         SEEN.notify_one();
-        ready(HandlerResult::Ack.into())
+        ready(Ok(()))
     }
 }
 
@@ -40,7 +41,9 @@ async fn start_resolves_running_and_shutdown_completes() {
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| b.include(subscriber("started.orders", Observe)));
+        .with_broker(broker, |b| {
+            b.include(subscriber("started.orders", Observe).build());
+        });
 
     // --8<-- [start:handle]
     // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.

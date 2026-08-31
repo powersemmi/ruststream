@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -29,14 +29,14 @@ struct Events;
 async fn forward(
     order: &Order,
     Out(out): Out<impl Publisher, Events, (Progress,)>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let _ = out
         .message(&Done {
             key: order.id.to_string(),
         })
         .publish()
         .await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

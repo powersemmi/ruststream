@@ -17,7 +17,7 @@ use ruststream::testing::{TestApp, TestError};
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -35,26 +35,24 @@ impl MessageHeaders for Order {
 /// `panic = fail_fast` policy the definition leaves in place.
 struct HandleOrders;
 
-impl<State: Send + Sync> Handler<Order, (), State> for HandleOrders {
+impl<State: Send + Sync> Handle<Order, (), (), (), State> for HandleOrders {
     fn handle(
         &self,
         order: &Order,
+        _outs: &(),
         _ctx: &mut Context<'_, (), State>,
-    ) -> impl Future<Output = Settle> + Send {
-        // The panic belongs inside the future: the dispatcher's unwind guard wraps what `handle`
-        // returns, not the call that builds it.
-        let id = order.id;
-        async move {
-            assert!(id != 0, "boom on id 0");
-            HandlerResult::Ack.into()
-        }
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        // The adapter builds this future inside the dispatcher's unwind guard, so the panic is
+        // caught rather than escaping the call.
+        assert!(order.id != 0, "boom on id 0");
+        ready(Ok(()))
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", HandleOrders));
+        b.include(subscriber("orders", HandleOrders).build());
     });
     let tb = TestApp::start(app).await.unwrap();
 
@@ -96,23 +94,22 @@ struct Counter {
 // --- Delayed redelivery: retry_after is recorded immediately and driven by advancing time. ---
 
 // --8<-- [start:retry_after]
-/// A handler bound to one state type: naming `Counter` in the `Handler` impl is what the
-/// attribute's `ctx: &mut Context<'_, (), Counter>` parameter declares. `subscriber` binds a
-/// handler over the unit state, so this one mounts through the `_in` variant, which reads the
-/// state off the impl.
+/// A handler bound to one state type: naming `Counter` in the state position of the `Handle` impl
+/// is what the attribute's `ctx: &mut Context<'_, (), Counter>` parameter declares. The mount reads
+/// the state off the impl, so the definition is built the same way as a stateless one.
 struct DelayedRetry;
 
-impl Handler<Order, (), Counter> for DelayedRetry {
+impl Handle<Order, (), (), (), Counter> for DelayedRetry {
     fn handle(
         &self,
         _order: &Order,
+        _outs: &(),
         ctx: &mut Context<'_, (), Counter>,
-    ) -> impl Future<Output = Settle> + Send {
-        ready(if ctx.state().seen.fetch_add(1, Ordering::SeqCst) == 0 {
-            HandlerResult::retry_after(Duration::from_secs(30)).into()
-        } else {
-            HandlerResult::Ack.into()
-        })
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        if ctx.state().seen.fetch_add(1, Ordering::SeqCst) == 0 {
+            return ready(Err(HandlerOutcome::retry_after(Duration::from_secs(30))));
+        }
+        ready(Ok(()))
     }
 }
 
@@ -126,7 +123,7 @@ async fn retry_after_redelivers_after_advancing_time() {
             async move { Ok::<_, std::convert::Infallible>(Counter { seen }) }
         })
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber_in("delayed", DelayedRetry));
+            b.include(subscriber("delayed", DelayedRetry).build());
         });
     let tb = TestApp::start(app).await.unwrap();
 
@@ -139,9 +136,7 @@ async fn retry_after_redelivers_after_advancing_time() {
     tb.broker::<MemoryBroker>()
         .subscriber("delayed")
         .assert_called_once()
-        .settled(HandlerResult::NackAfter {
-            delay: Duration::from_secs(30),
-        });
+        .settled(HandlerOutcome::retry_after(Duration::from_secs(30)));
     assert_eq!(seen.load(Ordering::SeqCst), 1);
 
     // Advancing past the delay fires the redelivery and drives it to settle.
@@ -149,7 +144,7 @@ async fn retry_after_redelivers_after_advancing_time() {
     tb.broker::<MemoryBroker>()
         .subscriber("delayed")
         .assert_called(2)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
 // --8<-- [end:retry_after]

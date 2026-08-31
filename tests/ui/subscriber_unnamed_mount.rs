@@ -1,5 +1,5 @@
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -11,9 +11,9 @@ struct Order {
 // A bare attribute is the by-name source with its value left out, so the definition is not
 // mountable until the mount site names it.
 #[subscriber]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {

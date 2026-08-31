@@ -10,8 +10,8 @@ help: the trait `ReplySink<Reply, DeliveryCx, Pipeline>` is conditionally implem
    | / impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
    | |     ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
    | | where
-   | |     Reply: Serialize + Sync,
-   | |            --------- unsatisfied requirement introduced here: `Receipt: _serde::Serialize`
+   | |     Reply: EncodeReply,
+   | |            ----------- unsatisfied requirement introduced here: `Receipt: EncodeReply`
 ...  |
    | |     ReplyCodec: Codec,
    | |     Transforms: PublishTransform<DeliveryCx>,
@@ -21,13 +21,14 @@ help: the trait `ReplySink<Reply, DeliveryCx, Pipeline>` is conditionally implem
    = note: required for `runtime::router::mount::DefaultReply` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
    = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
 
-error[E0277]: the trait bound `PublishingHandler<SubscriberBuilder<handle, Name, (Open, Open, Open)>, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>: Handler<MemoryMessage>` is not satisfied
+error[E0277]: `PublishingHandler<SubscriberBuilder<handle, Name, (Open, Open, Open)>, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>` cannot handle `MemoryMessage`
   --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
    |
 23 |         b.include(handle);
    |           ^^^^^^^ unsatisfied trait bound
    |
    = help: the trait `Handler<MemoryMessage>` is not implemented for `PublishingHandler<SubscriberBuilder<handle, Name, (Open, Open, Open)>, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>`
+   = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
 help: the trait `Handler<Msg, <Def as PublishingDef>::Context, State>` is conditionally implemented for `PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>`
   --> src/runtime/publishing.rs
    |

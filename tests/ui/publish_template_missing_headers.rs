@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -26,14 +26,14 @@ struct Events;
 // the address is complete, and what the publish still owes is the declared `with_headers(&meta)`.
 // The generated terminal reports that contract, rather than reading as a missing method.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Placed>) -> HandlerResult {
+async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Placed>) -> HandlerOutcome {
     let _ = out
         .message(&Placed { id: order.id })
         .to()
         .tenant("acme")
         .publish()
         .await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Publisher, subscriber};
 use serde::Deserialize;
 
@@ -16,9 +16,9 @@ async fn forward(
     order: &Order,
     Out(_a): Out<impl Publisher, Audit>,
     Out(_b): Out<impl Publisher, Audit>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

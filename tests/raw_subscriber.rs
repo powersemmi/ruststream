@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish, MemoryPublisher,
 };
-use ruststream::runtime::{AppInfo, Ctx, HandlerResult, Router, RustStream, State};
+use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Router, RustStream, State};
 use ruststream::testing::TestApp;
 use ruststream::{
     BuildContext, ContextField, FromRef, IncomingMessage, OutgoingMessage, PairError,
@@ -30,9 +30,9 @@ static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 
 // --8<-- [start:raw]
 #[subscriber("frames", raw)]
-async fn on_frame(frame: &[u8]) -> HandlerResult {
+async fn on_frame(frame: &[u8]) -> HandlerOutcome {
     FRAMES.lock().expect("frame log").push(frame.to_vec());
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:raw]
 
@@ -53,7 +53,7 @@ async fn raw_handler_receives_exact_bytes() {
         .subscriber("frames")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(
         FRAMES.lock().expect("frame log").as_slice(),
         &[FRAME.to_vec()],
@@ -73,8 +73,8 @@ async fn relay(frame: &[u8]) -> Vec<u8> {
 // --8<-- [end:raw_reply]
 
 #[subscriber("relay-out", raw)]
-async fn relay_capture(_frame: &[u8]) -> HandlerResult {
-    HandlerResult::Ack
+async fn relay_capture(_frame: &[u8]) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -98,12 +98,12 @@ async fn raw_reply_round_trips_exact_bytes() {
         .subscriber("relay-in")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.broker::<MemoryBroker>()
         .subscriber("relay-out")
         .assert_called_once()
         .with_raw(&expected)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
 // --- without .publisher(..) the reply commits with the broker's default publish policy ---
@@ -114,8 +114,8 @@ async fn relay_default(frame: &[u8]) -> Vec<u8> {
 }
 
 #[subscriber("relay-default-out", raw)]
-async fn relay_default_capture(_frame: &[u8]) -> HandlerResult {
-    HandlerResult::Ack
+async fn relay_default_capture(_frame: &[u8]) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -137,22 +137,22 @@ async fn raw_reply_defaults_to_the_brokers_publish_policy() {
         .subscriber("relay-default-out")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
-// --- the Result form: Err skips the publish and settles by the returned HandlerResult ---
+// --- the Result form: Err skips the publish and settles by the returned HandlerOutcome ---
 
 #[subscriber("relay-checked-in", raw, publish_raw("relay-checked-out"))]
-async fn relay_checked(frame: &[u8]) -> Result<Vec<u8>, HandlerResult> {
+async fn relay_checked(frame: &[u8]) -> Result<Vec<u8>, HandlerOutcome> {
     if frame.is_empty() {
-        return Err(HandlerResult::drop());
+        return Err(HandlerOutcome::drop());
     }
     Ok(frame.to_vec())
 }
 
 #[subscriber("relay-checked-out", raw)]
-async fn relay_checked_capture(_frame: &[u8]) -> HandlerResult {
-    HandlerResult::Ack
+async fn relay_checked_capture(_frame: &[u8]) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -174,7 +174,7 @@ async fn raw_reply_result_form_controls_the_publish() {
     tb.broker::<MemoryBroker>()
         .subscriber("relay-checked-in")
         .assert_called_once()
-        .settled(HandlerResult::drop());
+        .settled(HandlerOutcome::drop());
     tb.broker::<MemoryBroker>()
         .subscriber("relay-checked-out")
         .assert_called(0);
@@ -189,12 +189,12 @@ async fn raw_reply_result_form_controls_the_publish() {
     tb.broker::<MemoryBroker>()
         .subscriber("relay-checked-in")
         .assert_called(2)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.broker::<MemoryBroker>()
         .subscriber("relay-checked-out")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
 // --- a failed reply publish nacks the delivery with requeue, like the typed reply form ---
@@ -239,8 +239,8 @@ async fn relay_flaky(frame: &[u8]) -> Vec<u8> {
 }
 
 #[subscriber("relay-flaky-out", raw)]
-async fn relay_flaky_capture(_frame: &[u8]) -> HandlerResult {
-    HandlerResult::Ack
+async fn relay_flaky_capture(_frame: &[u8]) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -267,12 +267,12 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
     tb.broker::<MemoryBroker>()
         .subscriber("relay-flaky-in")
         .assert_called(2)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.broker::<MemoryBroker>()
         .subscriber("relay-flaky-out")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert!(
         !fail_next.load(Ordering::SeqCst),
         "the flaky publisher consumed its failure"
@@ -286,7 +286,8 @@ mod typed_in {
     use serde::Deserialize;
 
     use super::{
-        AppInfo, FRAME, HandlerResult, MemoryBroker, MemoryPublish, RustStream, TestApp, subscriber,
+        AppInfo, FRAME, HandlerOutcome, MemoryBroker, MemoryPublish, RustStream, TestApp,
+        subscriber,
     };
 
     #[derive(Debug, Deserialize)]
@@ -304,17 +305,17 @@ mod typed_in {
 
     /// The Result form keeps ack control: an odd id skips the publish and drops.
     #[subscriber("gateway-checked-in", publish_raw("gateway-checked-out"))]
-    async fn gateway_checked(wrap: &Wrap) -> Result<Vec<u8>, HandlerResult> {
+    async fn gateway_checked(wrap: &Wrap) -> Result<Vec<u8>, HandlerOutcome> {
         if wrap.id % 2 == 1 {
-            return Err(HandlerResult::drop());
+            return Err(HandlerOutcome::drop());
         }
         Ok(wrap.id.to_be_bytes().to_vec())
     }
 
     #[subscriber("gateway-out", raw)]
-    async fn gateway_capture(frame: &[u8]) -> HandlerResult {
+    async fn gateway_capture(frame: &[u8]) -> HandlerOutcome {
         assert_eq!(frame, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -336,12 +337,12 @@ mod typed_in {
         tb.broker::<MemoryBroker>()
             .subscriber("gateway-in")
             .assert_called_once()
-            .settled(HandlerResult::Ack);
+            .settled(HandlerOutcome::ack());
         tb.broker::<MemoryBroker>()
             .subscriber("gateway-out")
             .assert_called_once()
             .with_raw(7_u32.to_be_bytes().as_slice())
-            .settled(HandlerResult::Ack);
+            .settled(HandlerOutcome::ack());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -373,7 +374,7 @@ mod typed_in {
             .expect("publish");
         tb.broker::<MemoryBroker>()
             .subscriber("gateway-checked-in")
-            .settled(HandlerResult::drop());
+            .settled(HandlerOutcome::drop());
         // A skipped reply must not publish.
         tb.broker::<MemoryBroker>()
             .subscriber("gateway-checked-out")
@@ -393,10 +394,10 @@ async fn with_state(
     frame: &[u8],
     ctx: &mut Context,
     State(bytes_seen): State<Arc<AtomicUsize>>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     assert_eq!(ctx.name(), "frames-state");
     bytes_seen.fetch_add(frame.len(), Ordering::Relaxed);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -422,7 +423,7 @@ async fn state_extractor_and_ctx_resolve_alongside_raw() {
     tb.broker::<MemoryBroker>()
         .subscriber("frames-state")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(
         bytes_seen.load(Ordering::Relaxed),
         FRAME.len(),
@@ -460,9 +461,9 @@ impl ContextField for FrameLen {
 static SEEN_LEN: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("frames-meta", raw)]
-async fn measured(_frame: &[u8], Ctx(len): Ctx<FrameLen>) -> HandlerResult {
+async fn measured(_frame: &[u8], Ctx(len): Ctx<FrameLen>) -> HandlerOutcome {
     SEEN_LEN.store(len, Ordering::Relaxed);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -481,16 +482,16 @@ async fn ctx_extractor_projects_the_context_under_raw() {
     tb.broker::<MemoryBroker>()
         .subscriber("frames-meta")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(SEEN_LEN.load(Ordering::Relaxed), FRAME.len());
 }
 
 // --- workers(..) and on_failure(panic = ..) keep working on the raw form ---
 
 #[subscriber("frames-workers", raw, workers(2), on_failure(panic = drop))]
-async fn tolerant(frame: &[u8]) -> HandlerResult {
+async fn tolerant(frame: &[u8]) -> HandlerOutcome {
     assert_ne!(frame, b"boom", "poison frame");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -521,7 +522,7 @@ async fn workers_and_panic_policy_apply_to_raw() {
         .subscriber("frames-workers")
         .assert_called(2)
         .with_raw(b"ok")
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
 // --- a Router mounts raw definitions through the form-dispatched include ---
@@ -529,9 +530,9 @@ async fn workers_and_panic_policy_apply_to_raw() {
 static ROUTED: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("routed-raw", raw)]
-async fn routed(frame: &[u8]) -> HandlerResult {
+async fn routed(frame: &[u8]) -> HandlerOutcome {
     ROUTED.fetch_add(frame.len(), Ordering::Relaxed);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -552,7 +553,7 @@ async fn router_mounts_raw_definitions() {
         .subscriber("routed-raw")
         .assert_called_once()
         .with_raw(FRAME)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(ROUTED.load(Ordering::Relaxed), FRAME.len());
 }
 
@@ -605,15 +606,15 @@ mod scope_codec {
     static TYPED_ID: AtomicUsize = AtomicUsize::new(0);
 
     #[subscriber("mixed-raw", raw)]
-    async fn raw_side(frame: &[u8]) -> HandlerResult {
+    async fn raw_side(frame: &[u8]) -> HandlerOutcome {
         RAW_BYTES.lock().expect("raw log").push(frame.to_vec());
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 
     #[subscriber("mixed-typed")]
-    async fn typed_side(order: &Order) -> HandlerResult {
+    async fn typed_side(order: &Order) -> HandlerOutcome {
         TYPED_ID.store(order.id as usize, Ordering::Relaxed);
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -639,7 +640,7 @@ mod scope_codec {
             .subscriber("mixed-raw")
             .assert_called_once()
             .with_raw(FRAME)
-            .settled(HandlerResult::Ack);
+            .settled(HandlerOutcome::ack());
         assert_eq!(
             RAW_BYTES.lock().expect("raw log").as_slice(),
             &[FRAME.to_vec()]
@@ -656,7 +657,7 @@ mod scope_codec {
             .subscriber("mixed-typed")
             .assert_called_once()
             .with(&Order { id: 9 })
-            .settled(HandlerResult::Ack);
+            .settled(HandlerOutcome::ack());
         assert_eq!(TYPED_ID.load(Ordering::Relaxed), 9);
     }
 }

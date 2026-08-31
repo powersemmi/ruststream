@@ -12,8 +12,8 @@ warning: unused import: `ruststream::memory::MemorySeeker`
   |
   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
 
-warning: unused imports: `HandlerResult` and `Seek`
+warning: unused imports: `HandlerOutcome` and `Seek`
  --> tests/ui/subscriber_seek_duplicate.rs:2:27
   |
-2 | use ruststream::runtime::{HandlerResult, Seek};
-  |                           ^^^^^^^^^^^^^  ^^^^
+2 | use ruststream::runtime::{HandlerOutcome, Seek};
+  |                           ^^^^^^^^^^^^^^  ^^^^
