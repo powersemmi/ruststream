@@ -66,7 +66,7 @@ pub use axis::{
 };
 pub use axis::{Input, Message, Payload};
 #[doc(hidden)]
-pub use docs::{DocState, Docs};
+pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
 pub use eager::{PageBody, SoloBody};
@@ -83,12 +83,12 @@ pub use reply_slots::{
     ReplySlotFormFor, SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut,
 };
 pub use seek::SeekContext;
-#[doc(hidden)]
-pub use value::UnbuiltDefinition;
 pub use value::{
     Bare, BareReply, DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented,
     NamedDest, ReplyPublisherForm, ReplyValue, Sealed, subscriber,
 };
+#[doc(hidden)]
+pub use value::{UnbuiltDefinition, probed_def, probed_reply_def};
 pub use verdict::Verdict;
 #[doc(hidden)]
 pub use verdict::{OneByOne, Paged, VerdictFamily};

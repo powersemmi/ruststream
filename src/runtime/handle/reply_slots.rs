@@ -153,14 +153,35 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .value
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .value
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
+    }
+
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.value.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.value.docs.message_description
     }
 
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        if let Some(declared) = &self.0.value.docs.outgoing {
+            return declared.clone();
+        }
         let mut declared = vec![
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
                 .with_payload_schema(<Doc as DocState<R::Body>>::schema())
@@ -278,14 +299,35 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .value
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .value
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
+    }
+
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.value.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.value.docs.message_description
     }
 
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        if let Some(declared) = &self.0.value.docs.outgoing {
+            return declared.clone();
+        }
         let mut declared = vec![
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
                 .with_payload_schema(<Doc as DocState<R::Body>>::schema())

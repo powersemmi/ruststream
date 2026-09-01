@@ -99,6 +99,50 @@ impl IntoBatchResult for Vec<HandlerOutcome> {
     }
 }
 
+/// Lowers one accepted batch return shape to the canonical page verdict of the unified body
+/// contract: `Ok(())` acks the page, a page-length `Err` vector settles element-wise. The
+/// `#[subscriber]` expansion converts through here, so a batch body keeps its whole return
+/// vocabulary while the emitted `Handle` impl returns the fixed verdict. Machinery; not part of
+/// the public API.
+///
+/// A uniform non-ack outcome fans out per element - the failure path, the one place the page
+/// vector exists - and its continuation rides the last element, keeping the at-most-once
+/// post-settle contract.
+#[doc(hidden)]
+pub fn page_verdict<O: IntoBatchResult>(
+    outcome: O,
+    page_len: usize,
+) -> Result<(), Vec<HandlerOutcome>> {
+    match outcome.into_batch_result() {
+        BatchResult::Uniform(one) => {
+            if one.is_ack() && !one.has_after() {
+                Ok(())
+            } else {
+                Err(uniform_page(one, page_len))
+            }
+        }
+        BatchResult::PerElement(outcomes) => Err(outcomes),
+    }
+}
+
+/// Fans one uniform outcome out to a page-length settlement vector: the status repeats per
+/// element and the continuation rides the last one. The failure-path half of [`page_verdict`],
+/// also how the `#[subscriber]` expansion lowers a batch reply body's uniform `Err`. Machinery;
+/// not part of the public API.
+#[doc(hidden)]
+#[must_use]
+pub fn uniform_page(outcome: HandlerOutcome, page_len: usize) -> Vec<HandlerOutcome> {
+    if page_len == 0 {
+        return Vec::new();
+    }
+    let status = outcome.outcome();
+    let mut settles: Vec<HandlerOutcome> = std::iter::repeat_with(|| HandlerOutcome::from(status))
+        .take(page_len - 1)
+        .collect();
+    settles.push(outcome);
+    settles
+}
+
 /// A handler invoked with one whole decoded batch.
 ///
 /// The batch parameter is a slice: per-message broker handles stay with the dispatcher, which

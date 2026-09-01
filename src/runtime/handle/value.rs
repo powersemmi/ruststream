@@ -12,7 +12,7 @@ use crate::runtime::settings::SubscriberBuilder;
 use crate::runtime::slot::WithSource;
 
 use super::axis::{Input, PagedAxis};
-use super::docs::{Docs, Documented, Undocumented};
+use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::{Handle, IntoSource};
 
 /// The phantom carrying a definition's axes.
@@ -151,6 +151,51 @@ where
         },
         source.into_source(),
     )
+}
+
+// --------------------------------------------------------------------- the macro expansion seam
+
+/// Builds a `#[subscriber]` expansion's sealed plain definition: the same value the
+/// `subscriber(..) .. .build()` chain produces, at the probe-captured documentation state
+/// (see [`ProbedDocs`]) instead of the documented-by-default obligations. Machinery behind the
+/// macro expansion; not part of the public API.
+#[doc(hidden)]
+#[must_use]
+pub fn probed_def<A, R, O, C, H>(
+    body: H,
+    docs: ProbedDocs,
+) -> Sealed<HandleValue<A, R, O, C, H, Probed>> {
+    Sealed(HandleValue {
+        body,
+        docs: docs.into_docs(),
+        page_cap: None,
+        _axes: PhantomData,
+    })
+}
+
+/// Builds a `#[subscriber]` expansion's sealed reply definition: the plain definition wrapped
+/// at the clause-named destination, with the route and attach the reply clause selects
+/// (`publish(..)` = encoded + the default typed reply, `publish_raw(..)` = bare + the default
+/// bare reply). Machinery behind the macro expansion; not part of the public API.
+// The explicit `&'static str` parameter keeps a wrongly-typed destination expression a plain
+// type error at the expansion site, as the attribute always reported it.
+#[doc(hidden)]
+#[must_use]
+pub fn probed_reply_def<A, R, O, C, H, Route, Attach>(
+    body: H,
+    docs: ProbedDocs,
+    dest: &'static str,
+) -> Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, NamedDest, Route, Attach>>
+where
+    Attach: Default,
+{
+    let Sealed(value) = probed_def(body, docs);
+    Sealed(ReplyValue {
+        value,
+        dest: NamedDest(Cow::Borrowed(dest)),
+        attach: Attach::default(),
+        _route: PhantomData,
+    })
 }
 
 // ------------------------------------------------------------------------- the reply wiring

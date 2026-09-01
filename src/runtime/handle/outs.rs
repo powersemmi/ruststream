@@ -493,15 +493,31 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
+    }
+
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.docs.message_description
     }
 
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        E::outgoing()
+        self.0.docs.outgoing.clone().unwrap_or_else(E::outgoing)
     }
 }
 
@@ -585,15 +601,31 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
+    }
+
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.docs.message_description
     }
 
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        E::outgoing()
+        self.0.docs.outgoing.clone().unwrap_or_else(E::outgoing)
     }
 }
 

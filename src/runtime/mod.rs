@@ -47,6 +47,8 @@ pub use batch::{
     BatchDef, BatchResult, BatchWithHeadersDef, IntoBatchResult, RawBatch, RawSliceHandler,
     SliceHandler, SliceHandlerWithHeaders, TypedBatch, TypedBatchWithHeaders,
 };
+#[doc(hidden)]
+pub use batch::{page_verdict, uniform_page};
 pub use batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
 pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
 pub use context::{After, Context};
@@ -60,8 +62,8 @@ pub use failure::{FailurePolicies, FailurePolicy};
 pub use handle::{
     Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
     HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair, Paged,
-    PagedAxis, ReplyPublisherForm, ReplyValue, Sealed, Solo, SoloAxis, SoloBody, SoloBytes,
-    SoloPair, VerdictFamily,
+    PagedAxis, Probed, ProbedDocs, ReplyPublisherForm, ReplyValue, Sealed, Solo, SoloAxis,
+    SoloBody, SoloBytes, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
     Bare, Documentable, Documented, Handle, Input, IntoSource, Message, Outs, Payload, Publish,
@@ -119,7 +121,7 @@ pub use router::{
     RouterSlotsWithReply, RouterWith, forms,
 };
 #[doc(hidden)]
-pub use router::{RouterCommit, RouterMount, RouterSlotCommit};
+pub use router::{DefaultReply, RouterCommit, RouterMount, RouterSlotCommit};
 pub use settings::{
     AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,

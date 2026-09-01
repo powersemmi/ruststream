@@ -216,6 +216,11 @@ impl HandlerOutcome {
 
     /// Takes the post-settle continuation out of this settlement, leaving none. The dispatcher
     /// calls this after settling, to spawn the continuation on its tracked task set.
+    /// Whether a post-settle continuation is attached.
+    pub(crate) const fn has_after(&self) -> bool {
+        self.after.is_some()
+    }
+
     pub(crate) fn take_after(&mut self) -> Option<AfterFut> {
         self.after.take()
     }
