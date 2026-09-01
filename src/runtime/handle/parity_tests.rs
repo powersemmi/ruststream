@@ -344,13 +344,13 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", Confirm)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .build(),
         )
         .include(
             subscriber("orders", Confirm)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .publisher(TypedPublisher::new(MemoryPublish))
                 .build(),
         )
@@ -358,28 +358,28 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", Echo)
                 .reply()
-                .on("echoes")
+                .to("echoes")
                 .publisher(Bare(MemoryPublish))
                 .build(),
         )
         .include(
             subscriber("frames", RawEcho)
                 .reply()
-                .on("echoes")
+                .to("echoes")
                 .publisher(DefaultBareReply)
                 .build(),
         )
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .batch(nonzero!(8))
                 .build(),
         )
         .include(
             subscriber("orders", ConfirmWithMeta)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .build(),
         )
 }
@@ -464,7 +464,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", Gateway)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .build(),
         )
         .out(Analytics, MemoryPublish)
@@ -472,7 +472,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", Gateway)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .publisher(TypedPublisher::new(MemoryPublish))
                 .build(),
         )
@@ -481,7 +481,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", PageGateway)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .build(),
         )
         .out(Analytics, MemoryPublish)
@@ -489,7 +489,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", RawGateway)
                 .reply()
-                .on("echoes")
+                .to("echoes")
                 .publisher(Bare(MemoryPublish))
                 .build(),
         )

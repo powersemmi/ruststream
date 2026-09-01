@@ -1,6 +1,6 @@
 //! The order-confirmation handler of the routed-service example, written without the `macros`
 //! feature. `#[subscriber(MemorySource::new("orders"), publish("confirmations"))]` mints a reply
-//! definition, and `subscriber(..).reply().on(..)` builds the same one from values: the same
+//! definition, and `subscriber(..).reply().to(..)` builds the same one from values: the same
 //! broker descriptor as the source, the same reply channel, and the body's
 //! `Result<Confirmation, HandlerOutcome>` return as the `Handle` method's own signature. `include`
 //! mounts it exactly as it mounts a generated one.
@@ -84,7 +84,7 @@ impl Repository {
 /// say). Returning `Result<Confirmation, HandlerOutcome>` keeps control of the acknowledgement:
 /// `Ok` publishes the reply and acks, while `Err` publishes nothing and hands the dispatcher a
 /// [`HandlerOutcome`] - here, retry on a transient store error and drop on a permanent one.
-/// `.on(..)` names the reply channel; its publisher is wired on the same chain.
+/// `.to(..)` names the reply channel; its publisher is wired on the same chain.
 // --8<-- [start:descriptor]
 struct Confirm;
 
@@ -122,7 +122,7 @@ impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
 }
 
 /// The mount, and the whole declaration the attribute's clauses carried: the broker's own
-/// descriptor as the source, `.on(..)` for the reply channel, and `.describe(..)` for the sentence
+/// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
 /// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays a
 /// chain step on both paths: `TypedPublisher::new(MemoryPublish)` pairs the policy with the
 /// default codec at startup.
@@ -130,7 +130,7 @@ fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
     Router::<MemoryBroker>::new().include(
         subscriber(MemorySource::new("orders"), Confirm)
             .reply()
-            .on("confirmations")
+            .to("confirmations")
             .publisher(TypedPublisher::new(MemoryPublish))
             .describe("Confirms an order and replies on `confirmations`.")
             .build(),

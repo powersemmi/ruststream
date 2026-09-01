@@ -491,7 +491,7 @@ fn app() -> impl App {
             b.include(
                 subscriber("requests", Respond)
                     .reply()
-                    .on("responses")
+                    .to("responses")
                     .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform))
                     .build(),
             );
@@ -499,7 +499,7 @@ fn app() -> impl App {
             b.include(
                 subscriber("validated-requests", Validate)
                     .reply()
-                    .on("responses")
+                    .to("responses")
                     .build(),
             );
             // --8<-- [end:reply_mount]
@@ -520,7 +520,7 @@ fn app() -> impl App {
             b.include(
                 subscriber("gateway-requests", Gateway)
                     .reply()
-                    .on("gateway-responses")
+                    .to("gateway-responses")
                     .build(),
             )
             .out(DefaultSlot, MemoryPublish)
@@ -539,7 +539,7 @@ fn app() -> impl App {
             b.include(
                 subscriber("orders", Confirm)
                     .reply()
-                    .on("confirmations")
+                    .to("confirmations")
                     .publisher(TypedPublisher::new(MemoryPublish).transactional())
                     .build(),
             );

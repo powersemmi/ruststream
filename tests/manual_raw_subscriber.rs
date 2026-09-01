@@ -1,6 +1,6 @@
 //! The macro-free counterpart of `tests/raw_subscriber.rs`: the raw handler forms written out as
 //! named types. The plain form is a body over `Payload<'_>`; the byte-reply form declares
-//! `Vec<u8>` as its reply and wires it with `.reply().on(..).publisher(Bare(..))`, which is what
+//! `Vec<u8>` as its reply and wires it with `.reply().to(..).publisher(Bare(..))`, which is what
 //! the `publish_raw(..)` clause would have emitted - the input kind is read off the body's own
 //! parameter either way.
 //!
@@ -111,7 +111,7 @@ async fn raw_reply_round_trips_exact_bytes() {
         b.include(
             subscriber("relay-in", Relay)
                 .reply()
-                .on("relay-out")
+                .to("relay-out")
                 .publisher(Bare(MemoryPublish))
                 .build(),
         );
@@ -204,7 +204,7 @@ mod typed_in {
                 b.include(
                     subscriber("gateway-in", Gateway)
                         .reply()
-                        .on("gateway-out")
+                        .to("gateway-out")
                         .publisher(Bare(MemoryPublish))
                         .build(),
                 );

@@ -388,7 +388,7 @@ impl<V, Route, Attach, Src, State, DC>
     /// destination comes from the reply type's own `#[outgoing(name = "..")]` declaration, and
     /// a type declaring none does not mount.
     #[must_use]
-    pub fn on(
+    pub fn to(
         self,
         name: impl Into<Cow<'static, str>>,
     ) -> SubscriberBuilder<ReplyValue<V, NamedDest, Route, Attach>, Src, State, DC> {

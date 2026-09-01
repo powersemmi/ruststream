@@ -23,7 +23,7 @@ fn app() -> RustStream {
         b.include(
             subscriber("orders", Confirm)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .build(),
         );
     })

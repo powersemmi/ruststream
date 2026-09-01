@@ -98,7 +98,7 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
             b.include(
                 subscriber("in", Echo)
                     .reply()
-                    .on("out")
+                    .to("out")
                     .publisher(reply_pub)
                     .build(),
             );

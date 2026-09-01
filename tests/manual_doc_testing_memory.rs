@@ -68,7 +68,7 @@ async fn confirms_valid_orders() {
             b.include(
                 subscriber("orders", Confirm)
                     .reply()
-                    .on("confirmations")
+                    .to("confirmations")
                     .publisher(replies)
                     .build(),
             );

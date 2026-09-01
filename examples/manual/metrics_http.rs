@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             b.include(
                 subscriber("orders", Confirm)
                     .reply()
-                    .on("confirmations")
+                    .to("confirmations")
                     .publisher(TypedPublisher::new(MemoryPublish))
                     .build(),
             );

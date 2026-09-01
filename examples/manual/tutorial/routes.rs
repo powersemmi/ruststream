@@ -17,7 +17,7 @@ pub(crate) fn orders() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", Confirm)
                 .reply()
-                .on("confirmations")
+                .to("confirmations")
                 .publisher(replies)
                 .build(),
         )

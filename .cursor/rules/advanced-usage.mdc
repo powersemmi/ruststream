@@ -24,7 +24,7 @@ alwaysApply: false
   none), `O` the injections arena (`()` declares none), `C` the broker's typed per-delivery
   context and `S` the application state the body reads with `ctx.state()`. What the signature does
   not carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
-  `.on_failure`, `.buffered`, `.start_at`, `.codec`), the reply wiring (`.reply()`, `.on(dest)`,
+  `.on_failure`, `.buffered`, `.start_at`, `.codec`), the reply wiring (`.reply()`, `.to(dest)`,
   `.publisher(policy)`), the native page cap `.batch(n)` and the document controls
   (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and `include` mounts it. Nothing
   else to implement; the registration metadata is derived from the source and the body's input
@@ -309,7 +309,7 @@ publisher
 
 `TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
 work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the chain -
-`.on(dest)` names the destination the reply type does not declare itself, and the publisher step
+`.to(dest)` names the destination the reply type does not declare itself, and the publisher step
 decides the wire: the default and `.publisher(TypedPublisher::new(policy))` encode the reply
 through a codec, while `.publisher(Bare(policy))` and `.publisher(DefaultBareReply)` send an `R` of
 `Vec<u8>` as it is, the latter through the broker's default publisher. A plain unwrapped policy is
@@ -340,7 +340,7 @@ where
 }
 
 // the reply chain seals with `.build()`, and the include site binds the arena
-b.include(subscriber("orders", Confirm).reply().on("confirmations").build());
+b.include(subscriber("orders", Confirm).reply().to("confirmations").build());
 b.include(subscriber("mirror", Mirror).build())
     .out(Primary, MemoryPublish)
     .build();
@@ -394,7 +394,7 @@ spellings of the one constructor, and both resolve the chain's codec.
 Every form is reachable through that one constructor, so none is locked behind the definition
 traits: the application state, the typed broker context and the injections are all axes read off
 the body's own `impl Handle`, and the reply, page-cap and document steps ride the chain
-(`.reply()` / `.on(..)` / `.publisher(..)`, `.batch(n)`, `.describe(..)`, `.undocumented()`).
+(`.reply()` / `.to(..)` / `.publisher(..)`, `.batch(n)`, `.describe(..)`, `.undocumented()`).
 Registrations are documented by default under `asyncapi`, which is why the
 message types need `schemars::JsonSchema` and `.undocumented()` is the per-registration exit.
 What is left for the definition traits is being the attribute's own expansion target, and a fully

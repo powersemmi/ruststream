@@ -200,7 +200,7 @@ where
 // The reply form gets the same treatment from the reply type's contract: `MessageHeaders` is what
 // travels with `StatusReply`, and at runtime reply headers stay with `PublishTransform`, which can
 // serialize a contract with `headers_mut().insert_typed(&meta)`. Where the attribute's
-// `publish("jobs.status")` clause names the destination, `.reply().on(..)` names it, and the
+// `publish("jobs.status")` clause names the destination, `.reply().to(..)` names it, and the
 // registration is documented by default, so the send operation it declares reports its schemas.
 // --8<-- [start:reply]
 #[derive(Deserialize, JsonSchema)]
@@ -284,7 +284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             b.include(
                 subscriber("jobs.status-requests", Status)
                     .reply()
-                    .on("jobs.status")
+                    .to("jobs.status")
                     .build(),
             );
             b.include(subscriber("chunks.bulk", Bulk).build());
