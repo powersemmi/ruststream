@@ -48,11 +48,9 @@ struct Transcode;
 type TranscodeSlots<EncodedPub, AuditPub, EncA, EncB> =
     Outs<(Slot<Encoded, EncodedPub, EncA>, Slot<Audit, AuditPub, EncB>)>;
 
-impl<'p, State, EncodedPub, AuditPub, EncA, EncB>
-    Handle<Payload<'p>, (), TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>, (), State>
-    for Transcode
+impl<'p, EncodedPub, AuditPub, EncA, EncB>
+    Handle<Payload<'p>, (), TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>> for Transcode
 where
-    State: Send + Sync,
     Slot<Encoded, EncodedPub, EncA>: Publish,
     Slot<Audit, AuditPub, EncB>: Publish,
 {
@@ -60,7 +58,7 @@ where
         &self,
         chunk: &Payload<'p>,
         outs: &TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>,
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let mut headers = HeaderMap::new();
         headers.insert("source", "slots.in");

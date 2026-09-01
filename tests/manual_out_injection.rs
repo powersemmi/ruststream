@@ -17,17 +17,15 @@ use ruststream::prelude::*;
 /// impl, so the definition stays a zero-sized value the mount site builds for free.
 struct Crossing;
 
-impl<Egress, Enc, State> Handle<Event, (), Outs<(Slot<DefaultSlot, Egress, Enc>,)>, (), State>
-    for Crossing
+impl<Egress, Enc> Handle<Event, (), Outs<(Slot<DefaultSlot, Egress, Enc>,)>> for Crossing
 where
     Slot<DefaultSlot, Egress, Enc>: Publish,
-    State: Send + Sync,
 {
     async fn handle(
         &self,
         event: &Event,
         outs: &Outs<(Slot<DefaultSlot, Egress, Enc>,)>,
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let payload = serde_json::to_vec(event).expect("serializable");
         if outs

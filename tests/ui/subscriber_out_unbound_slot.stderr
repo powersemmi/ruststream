@@ -8,8 +8,8 @@ error[E0277]: not every Out slot of this handler is bound
    = note: bind each remaining slot with .out(marker, policy) before .build()
    = help: the following other types implement trait `ruststream::runtime::SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>`:
              `(DefaultBareReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
-             `(runtime::router::mount::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
-             `(runtime::router::mount::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>, ruststream::runtime::WithSource<A2>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`

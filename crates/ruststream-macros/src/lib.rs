@@ -89,16 +89,16 @@ use parse::{SubscriberArgs, doc_description};
 /// like the typed reply form. It composes with both a byte and a typed input; a byte input with
 /// the encoded `publish(..)` is rejected (such a handler's reply is bytes).
 ///
-/// A `&[T]` message parameter makes the definition a `BatchDef`: the handler runs once per batch
+/// A `&[T]` message parameter makes the definition a batch one: the handler runs once per batch
 /// pulled from the subscription's `BatchSubscriber` (added by the mount site's buffer for
-/// subscriptions without native batching). It returns any `IntoBatchResult` - one outcome
+/// subscriptions without native batching). It returns one outcome
 /// for the whole batch (`HandlerOutcome`, `()`, `Result<_, E>`), or a per-element
 /// `Vec<HandlerOutcome>` to settle element `i` of the slice with outcome `i`, each element
 /// carrying its own optional `and_after` continuation. A `&[&[u8]]` parameter is the same shape
 /// without the decode step.
 ///
-/// Combining a batch handler with `publish(..)` produces a `BatchPublishingDef`: the handler returns
-/// `Vec<Reply>` (or
+/// Combining a batch handler with `publish(..)` produces a batch reply definition: the handler
+/// returns `Vec<Reply>` (or
 /// `Result<Vec<Reply>, HandlerOutcome>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
 /// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply

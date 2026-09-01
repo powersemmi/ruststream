@@ -35,12 +35,12 @@ impl MessageHeaders for Order {
 /// `panic = fail_fast` policy the definition leaves in place.
 struct HandleOrders;
 
-impl<State: Send + Sync> Handle<Order, (), (), (), State> for HandleOrders {
+impl Handle<Order> for HandleOrders {
     fn handle(
         &self,
         order: &Order,
         _outs: &(),
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         // The adapter builds this future inside the dispatcher's unwind guard, so the panic is
         // caught rather than escaping the call.

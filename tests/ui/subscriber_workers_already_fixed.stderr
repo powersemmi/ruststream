@@ -4,7 +4,7 @@ error[E0277]: this subscriber's worker policy is already fixed
 19 |     let _widened = handle.workers(nonzero!(4));
    |                           ^^^^^^^ `workers(..)` is named in the `#[subscriber(..)]` attribute
    |
-   = help: the trait `WorkersStep` is not implemented for `SubscriberBuilder<handle, Name, (Fixed, Open, Open)>`
+   = help: the trait `WorkersStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Fixed, Open, Open)>`
    = note: a setting is named once: keep `workers(..)` in the attribute, or drop it there and name the policy here
 help: the trait `WorkersStep` is implemented for `SubscriberBuilder<Def, Src, (Open, F, P), DC>`
   --> src/runtime/settings.rs

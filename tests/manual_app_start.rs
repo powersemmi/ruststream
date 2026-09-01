@@ -23,12 +23,12 @@ static SEEN: Notify = Notify::const_new();
 /// Signals the test that a delivery arrived; the run machinery, not the body, is the subject.
 struct Observe;
 
-impl<State: Send + Sync> Handle<Order, (), (), (), State> for Observe {
+impl Handle<Order> for Observe {
     fn handle(
         &self,
         _order: &Order,
         _outs: &(),
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         SEEN.notify_one();
         ready(Ok(()))

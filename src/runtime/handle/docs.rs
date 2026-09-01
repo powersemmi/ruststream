@@ -90,9 +90,10 @@ impl<T: ?Sized> DocState<T> for Probed {
     }
 }
 
-/// The chain-collected documentation values of one definition: what `describe` set, plus the
-/// probe-captured metadata a `#[subscriber]` expansion carries (`None` fields defer to the
-/// axis-computed values, so the value path is unaffected).
+/// The chain-collected documentation values of one definition.
+///
+/// What `describe` set, plus the probe-captured metadata a `#[subscriber]` expansion carries
+/// (`None` fields defer to the axis-computed values, so the value path is unaffected).
 #[derive(Debug, Clone, Default)]
 pub struct Docs {
     pub(crate) description: Option<Cow<'static, str>>,
@@ -109,9 +110,11 @@ impl Docs {
     }
 }
 
-/// The probe-captured metadata of one `#[subscriber]` expansion, evaluated at the concrete
-/// types of the handler's signature (the autoref probes only specialize there) and carried into
-/// the definition as data. Machinery behind the macro expansion; not part of the public API.
+/// The probe-captured metadata of one `#[subscriber]` expansion.
+///
+/// Evaluated at the concrete types of the handler's signature (the autoref probes only
+/// specialize there) and carried into the definition as data. Machinery behind the macro
+/// expansion; not part of the public API.
 #[doc(hidden)]
 #[derive(Debug, Default)]
 pub struct ProbedDocs {

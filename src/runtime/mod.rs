@@ -62,8 +62,8 @@ pub use failure::{FailurePolicies, FailurePolicy};
 pub use handle::{
     Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
     HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair, Paged,
-    PagedAxis, Probed, ProbedDocs, ReplyPublisherForm, ReplyValue, Sealed, Solo, SoloAxis,
-    SoloBody, SoloBytes, SoloPair, VerdictFamily, probed_def, probed_reply_def,
+    PagedAxis, Probed, ProbedDocs, ProbedReplyDef, ReplyPublisherForm, ReplyValue, Sealed, Solo,
+    SoloAxis, SoloBody, SoloBytes, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
     Bare, Documentable, Documented, Handle, Input, IntoSource, Message, Outs, Payload, Publish,

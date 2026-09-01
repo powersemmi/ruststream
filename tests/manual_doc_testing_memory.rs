@@ -36,15 +36,15 @@ struct Confirmation {
 
 /// The reply body without the attribute: the reply type sits in the `Handle` impl's second
 /// position, and the subscription source and the reply destination are named where the definition
-/// is built. The impl stays generic over the state so it mounts on an app with any state type.
+/// is built.
 struct Confirm;
 
-impl<State: Send + Sync> Handle<Order, Confirmation, (), (), State> for Confirm {
+impl Handle<Order, Confirmation> for Confirm {
     fn handle(
         &self,
         order: &Order,
         _outs: &(),
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         ready(Ok(Confirmation {
             id: order.id,

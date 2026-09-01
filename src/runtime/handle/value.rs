@@ -173,6 +173,12 @@ pub fn probed_def<A, R, O, C, H>(
     })
 }
 
+/// The sealed reply definition [`probed_reply_def`] builds. Names the projection once; the
+/// macro spells the concrete form itself.
+#[doc(hidden)]
+pub type ProbedReplyDef<A, R, O, C, H, Route, Attach> =
+    Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, NamedDest, Route, Attach>>;
+
 /// Builds a `#[subscriber]` expansion's sealed reply definition: the plain definition wrapped
 /// at the clause-named destination, with the route and attach the reply clause selects
 /// (`publish(..)` = encoded + the default typed reply, `publish_raw(..)` = bare + the default
@@ -185,7 +191,7 @@ pub fn probed_reply_def<A, R, O, C, H, Route, Attach>(
     body: H,
     docs: ProbedDocs,
     dest: &'static str,
-) -> Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, NamedDest, Route, Attach>>
+) -> ProbedReplyDef<A, R, O, C, H, Route, Attach>
 where
     Attach: Default,
 {

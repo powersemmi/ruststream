@@ -88,7 +88,7 @@ pub use value::{
     NamedDest, ReplyPublisherForm, ReplyValue, Sealed, subscriber,
 };
 #[doc(hidden)]
-pub use value::{UnbuiltDefinition, probed_def, probed_reply_def};
+pub use value::{ProbedReplyDef, UnbuiltDefinition, probed_def, probed_reply_def};
 pub use verdict::Verdict;
 #[doc(hidden)]
 pub use verdict::{OneByOne, Paged, VerdictFamily};
