@@ -16,11 +16,15 @@ use super::docs::{Docs, Documented, Undocumented};
 use super::{Handle, IntoSource};
 
 /// The phantom carrying a definition's axes.
-type HandleAxes<A, R, O, C, S, Doc> = PhantomData<fn() -> (A, R, O, C, S, Doc)>;
+///
+/// The state axis `S` is deliberately absent: state is a quantification point, not data, so it
+/// lives on the body's [`Handle`] impl (a concrete state pins it, a generic impl mounts on any
+/// app) and the adapters quantify over it at their own impls.
+type HandleAxes<A, R, O, C, Doc> = PhantomData<fn() -> (A, R, O, C, Doc)>;
 
 /// The chain over a plain definition at the documentation state `Doc`.
-type PlainChain<A, R, O, C, S, H, Doc, Src, State, DC> =
-    SubscriberBuilder<HandleValue<A, R, O, C, S, H, Doc>, Src, State, DC>;
+type PlainChain<A, R, O, C, H, Doc, Src, State, DC> =
+    SubscriberBuilder<HandleValue<A, R, O, C, H, Doc>, Src, State, DC>;
 
 /// The chain over a reply-wired definition.
 type ReplyChain<V, Dest, Route, Attach, Src, State, DC> =
@@ -28,8 +32,8 @@ type ReplyChain<V, Dest, Route, Attach, Src, State, DC> =
 
 /// The chain [`reply`](SubscriberBuilder::reply) hands back: the wrapped definition at the
 /// declared destination and the default attach.
-type ReplyStart<A, R, O, C, S, H, Doc, Route, Attach, Src, State, DC> =
-    ReplyChain<HandleValue<A, R, O, C, S, H, Doc>, DeclaredDest, Route, Attach, Src, State, DC>;
+type ReplyStart<A, R, O, C, H, Doc, Route, Attach, Src, State, DC> =
+    ReplyChain<HandleValue<A, R, O, C, H, Doc>, DeclaredDest, Route, Attach, Src, State, DC>;
 
 /// The sealed chain [`build`](SubscriberBuilder::build) hands back.
 type SealedChain<V, Src, State, DC> = SubscriberBuilder<Sealed<V>, Src, State, DC>;
@@ -44,43 +48,39 @@ type WiredReplyChain<V, Dest, Wire, Src, State, DC> = SubscriberBuilder<
 >;
 
 /// The fresh chain [`subscriber`] hands back.
-type FreshChain<A, R, O, C, S, H, Src> = super::ValueBuilder<HandleValue<A, R, O, C, S, H>, Src>;
+type FreshChain<A, R, O, C, H, Src> = super::ValueBuilder<HandleValue<A, R, O, C, H>, Src>;
 
 /// The sealed plain chain.
-type SealedPlainChain<A, R, O, C, S, H, Doc, Src, State, DC> =
-    SealedChain<HandleValue<A, R, O, C, S, H, Doc>, Src, State, DC>;
+type SealedPlainChain<A, R, O, C, H, Doc, Src, State, DC> =
+    SealedChain<HandleValue<A, R, O, C, H, Doc>, Src, State, DC>;
 
 /// The reply chain at the opted-out documentation state.
-type UndocumentedReplyChain<A, R, O, C, S, H, Dest, Route, Attach, Src, State, DC> =
-    ReplyChain<HandleValue<A, R, O, C, S, H, Undocumented>, Dest, Route, Attach, Src, State, DC>;
+type UndocumentedReplyChain<A, R, O, C, H, Dest, Route, Attach, Src, State, DC> =
+    ReplyChain<HandleValue<A, R, O, C, H, Undocumented>, Dest, Route, Attach, Src, State, DC>;
 
 /// The sealed reply chain.
-type SealedReplyChain<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC> = SealedChain<
-    ReplyValue<HandleValue<A, R, O, C, S, H, Doc>, Dest, Route, Attach>,
-    Src,
-    State,
-    DC,
->;
+type SealedReplyChain<A, R, O, C, H, Doc, Dest, Route, Attach, Src, State, DC> =
+    SealedChain<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Route, Attach>, Src, State, DC>;
 
 /// The definition under construction: what [`subscriber`] returns, wrapped in the settings
 /// builder. You never name this type; chain on it and seal with
 /// [`build`](SubscriberBuilder::build).
-pub struct HandleValue<A, R, O, C, S, H, Doc = Documented> {
+pub struct HandleValue<A, R, O, C, H, Doc = Documented> {
     pub(super) body: H,
     pub(super) docs: Docs,
     pub(super) page_cap: Option<NonZeroUsize>,
-    pub(super) _axes: HandleAxes<A, R, O, C, S, Doc>,
+    pub(super) _axes: HandleAxes<A, R, O, C, Doc>,
 }
 
-impl<A, R, O, C, S, H, Doc> fmt::Debug for HandleValue<A, R, O, C, S, H, Doc> {
+impl<A, R, O, C, H, Doc> fmt::Debug for HandleValue<A, R, O, C, H, Doc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HandleValue").finish_non_exhaustive()
     }
 }
 
-impl<A, R, O, C, S, H, Doc> HandleValue<A, R, O, C, S, H, Doc> {
+impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
     /// Rewraps the value at another documentation state, keeping everything else.
-    fn with_doc<NewDoc>(self) -> HandleValue<A, R, O, C, S, H, NewDoc> {
+    fn with_doc<NewDoc>(self) -> HandleValue<A, R, O, C, H, NewDoc> {
         HandleValue {
             body: self.body,
             docs: self.docs,
@@ -136,7 +136,7 @@ impl<A, R, O, C, S, H, Doc> HandleValue<A, R, O, C, S, H, Doc> {
 pub fn subscriber<Src, In, R, O, C, S, H>(
     source: Src,
     body: H,
-) -> FreshChain<In::Axis, R, O, C, S, H, Src>
+) -> FreshChain<In::Axis, R, O, C, H, Src>
 where
     Src: IntoSource,
     In: ?Sized + Input,
@@ -276,9 +276,7 @@ pub struct UnbuiltDefinition;
 // The settings chain (`.workers(..)`, `.buffered(..)`, ...) rides the `Declared` blanket over
 // `IncludeDef`, so the unsealed values carry the diagnostic form token: settings chain freely,
 // and a mount before `.build()` names the missing step.
-impl<A, R, O, C, S, H, Doc> crate::runtime::router::IncludeDef
-    for HandleValue<A, R, O, C, S, H, Doc>
-{
+impl<A, R, O, C, H, Doc> crate::runtime::router::IncludeDef for HandleValue<A, R, O, C, H, Doc> {
     type Form = UnbuiltDefinition;
 }
 
@@ -300,8 +298,8 @@ impl<V> fmt::Debug for Sealed<V> {
 
 // ------------------------------------------------------------------ steps on the plain chain
 
-impl<A, R, O, C, S, H, Doc, Src, State, DC>
-    SubscriberBuilder<HandleValue<A, R, O, C, S, H, Doc>, Src, State, DC>
+impl<A, R, O, C, H, Doc, Src, State, DC>
+    SubscriberBuilder<HandleValue<A, R, O, C, H, Doc>, Src, State, DC>
 {
     /// Sets the handler's human description for the generated document, the value-path
     /// counterpart of the attribute reading the handler's doc comment.
@@ -319,7 +317,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
     /// Registrations are documented by default under the `asyncapi` feature; this is the
     /// per-registration exit.
     #[must_use]
-    pub fn undocumented(self) -> PlainChain<A, R, O, C, S, H, Undocumented, Src, State, DC>
+    pub fn undocumented(self) -> PlainChain<A, R, O, C, H, Undocumented, Src, State, DC>
     where
         Doc: IsDocumented,
     {
@@ -354,7 +352,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
     #[must_use]
     pub fn reply(
         self,
-    ) -> ReplyStart<A, R, O, C, S, H, Doc, EncodedReply, DefaultReply, Src, State, DC> {
+    ) -> ReplyStart<A, R, O, C, H, Doc, EncodedReply, DefaultReply, Src, State, DC> {
         self.map_def(|value| ReplyValue {
             value,
             dest: DeclaredDest,
@@ -365,7 +363,7 @@ impl<A, R, O, C, S, H, Doc, Src, State, DC>
 
     /// Seals the definition for `include`.
     #[must_use]
-    pub fn build(self) -> SealedPlainChain<A, R, O, C, S, H, Doc, Src, State, DC> {
+    pub fn build(self) -> SealedPlainChain<A, R, O, C, H, Doc, Src, State, DC> {
         self.map_def(Sealed)
     }
 }
@@ -438,9 +436,9 @@ impl<V, Dest, Route, Attach: DefaultReplyAttach, Src, State, DC>
 
 // The inner-value steps stay reachable after `.reply()`: `.batch(..)`, `.describe(..)` and
 // `.undocumented()` reach through the wrapper, so the chain order is free.
-impl<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC>
+impl<A, R, O, C, H, Doc, Dest, Route, Attach, Src, State, DC>
     SubscriberBuilder<
-        ReplyValue<HandleValue<A, R, O, C, S, H, Doc>, Dest, Route, Attach>,
+        ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Route, Attach>,
         Src,
         State,
         DC,
@@ -461,7 +459,7 @@ impl<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC>
     #[must_use]
     pub fn undocumented(
         self,
-    ) -> UndocumentedReplyChain<A, R, O, C, S, H, Dest, Route, Attach, Src, State, DC>
+    ) -> UndocumentedReplyChain<A, R, O, C, H, Dest, Route, Attach, Src, State, DC>
     where
         Doc: IsDocumented,
     {
@@ -489,7 +487,7 @@ impl<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC>
     #[must_use]
     pub fn build(
         self,
-    ) -> SealedReplyChain<A, R, O, C, S, H, Doc, Dest, Route, Attach, Src, State, DC> {
+    ) -> SealedReplyChain<A, R, O, C, H, Doc, Dest, Route, Attach, Src, State, DC> {
         self.map_def(Sealed)
     }
 }

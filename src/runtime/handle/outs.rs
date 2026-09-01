@@ -417,14 +417,14 @@ impl_entry_markers! {
 
 // -------------------------------------------------------------------- the slot definitions
 
-impl<A, E, C, S, H, Doc> IncludeDef for Sealed<HandleValue<A, (), Outs<E>, C, S, H, Doc>>
+impl<A, E, C, H, Doc> IncludeDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
     A: Axis,
 {
     type Form = A::SlotForm;
 }
 
-impl<A, E, C, S, H, Doc> HasSlots for Sealed<HandleValue<A, (), Outs<E>, C, S, H, Doc>>
+impl<A, E, C, H, Doc> HasSlots for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
     E: EntryMarkers,
 {
@@ -436,14 +436,13 @@ where
 /// capability bounds are checked right here.
 macro_rules! impl_bind_slots {
     ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
-        impl<Conn, A, C, S, H, Doc, $($m, $p, $e),+> BindSlots<Conn, ($(($p, $e),)+)>
+        impl<Conn, A, C, H, Doc, $($m, $p, $e),+> BindSlots<Conn, ($(($p, $e),)+)>
             for Sealed<
                 HandleValue<
                     A,
                     (),
                     Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e>,)+)>,
                     C,
-                    S,
                     H,
                     Doc,
                 >,
@@ -471,11 +470,10 @@ impl_bind_slots! {
     (M0 / P0: E0, M1 / P1: E1, M2 / P2: E2)
 }
 
-impl<A, C, S, H, Doc, E> InjectDef for Sealed<HandleValue<A, (), Outs<E>, C, S, H, Doc>>
+impl<A, C, H, Doc, E> InjectDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
     A: SoloAxis,
     C: Send + Sync,
-    S: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     E: EntryMarkers + Send + Sync,
@@ -507,7 +505,7 @@ where
     }
 }
 
-impl<T, C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<Solo<T>, (), Outs<E>, C, S, H, Doc>>
+impl<T, C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<Solo<T>, (), Outs<E>, C, H, Doc>>
 where
     Self: InjectDef<Input = <Solo<T> as Axis>::Kind, Context = C, Injections = Outs<E>>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -526,7 +524,7 @@ where
     }
 }
 
-impl<C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<SoloBytes, (), Outs<E>, C, S, H, Doc>>
+impl<C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<SoloBytes, (), Outs<E>, C, H, Doc>>
 where
     Self: InjectDef<Input = crate::runtime::RawBytes, Context = C, Injections = Outs<E>>,
     C: Send + Sync,
@@ -546,7 +544,7 @@ where
 }
 
 impl<Hd, P, C, S, H, Doc, E> InjectCall<S>
-    for Sealed<HandleValue<SoloPair<Hd, P>, (), Outs<E>, C, S, H, Doc>>
+    for Sealed<HandleValue<SoloPair<Hd, P>, (), Outs<E>, C, H, Doc>>
 where
     Self: InjectDef<Input = <SoloPair<Hd, P> as Axis>::Kind, Context = C, Injections = Outs<E>>,
     Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
@@ -567,10 +565,9 @@ where
     }
 }
 
-impl<A, S, H, Doc, E> BatchInjectDef for Sealed<HandleValue<A, (), Outs<E>, (), S, H, Doc>>
+impl<A, H, Doc, E> BatchInjectDef for Sealed<HandleValue<A, (), Outs<E>, (), H, Doc>>
 where
     A: PagedAxis,
-    S: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     E: EntryMarkers + Send + Sync,
@@ -600,8 +597,7 @@ where
     }
 }
 
-impl<T, S, H, Doc, E> BatchInjectCall<S>
-    for Sealed<HandleValue<Page<T>, (), Outs<E>, (), S, H, Doc>>
+impl<T, S, H, Doc, E> BatchInjectCall<S> for Sealed<HandleValue<Page<T>, (), Outs<E>, (), H, Doc>>
 where
     Self: BatchInjectDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>>,
     [T]: Input<Axis = Page<T>>,
@@ -622,7 +618,7 @@ where
 }
 
 impl<Hd, P, S, H, Doc, E> BatchInjectCall<S>
-    for Sealed<HandleValue<PagePair<Hd, P>, (), Outs<E>, (), S, H, Doc>>
+    for Sealed<HandleValue<PagePair<Hd, P>, (), Outs<E>, (), H, Doc>>
 where
     Self: BatchInjectDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>>,
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,

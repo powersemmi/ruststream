@@ -19,15 +19,19 @@ use super::axis::{
 use super::value::{HandleValue, Sealed};
 
 /// The dispatch adapter of a single-delivery body: awaits the verdict and settles by it.
-pub struct SoloBody<A, C, S, H> {
+///
+/// The state axis is not part of the type: the [`Handler`] impls quantify over it, so a body
+/// whose `Handle` impl is generic over the state mounts on an app with any state, and one
+/// naming a concrete state mounts only there.
+pub struct SoloBody<A, C, H> {
     body: H,
-    _axes: SoloAxes<A, C, S>,
+    _axes: SoloAxes<A, C>,
 }
 
 /// The phantom carrying a solo adapter's axes.
-type SoloAxes<A, C, S> = PhantomData<fn() -> (A, C, S)>;
+type SoloAxes<A, C> = PhantomData<fn() -> (A, C)>;
 
-impl<A, C, S, H> std::fmt::Debug for SoloBody<A, C, S, H> {
+impl<A, C, H> std::fmt::Debug for SoloBody<A, C, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SoloBody").finish_non_exhaustive()
     }
@@ -41,7 +45,7 @@ pub(super) fn settle_solo(verdict: Result<(), HandlerOutcome>) -> HandlerOutcome
     }
 }
 
-impl<T, C, S, H> Handler<T, C, S> for SoloBody<Solo<T>, C, S, H>
+impl<T, C, S, H> Handler<T, C, S> for SoloBody<Solo<T>, C, H>
 where
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
     C: Send + Sync,
@@ -53,7 +57,7 @@ where
     }
 }
 
-impl<C, S, H> Handler<[u8], C, S> for SoloBody<SoloBytes, C, S, H>
+impl<C, S, H> Handler<[u8], C, S> for SoloBody<SoloBytes, C, H>
 where
     C: Send + Sync,
     S: Send + Sync,
@@ -65,7 +69,7 @@ where
     }
 }
 
-impl<Hd, P, C, S, H> Handler<Message<Hd, P>, C, S> for SoloBody<SoloPair<Hd, P>, C, S, H>
+impl<Hd, P, C, S, H> Handler<Message<Hd, P>, C, S> for SoloBody<SoloPair<Hd, P>, C, H>
 where
     Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
     Hd: Send + Sync + 'static,
@@ -79,21 +83,21 @@ where
     }
 }
 
-impl<A, R, C, S, H, Doc> IncludeDef for Sealed<HandleValue<A, R, (), C, S, H, Doc>>
+impl<A, R, C, H, Doc> IncludeDef for Sealed<HandleValue<A, R, (), C, H, Doc>>
 where
     A: Axis,
 {
     type Form = A::EagerForm;
 }
 
-impl<A, C, S, H, Doc> SubscriberDef for Sealed<HandleValue<A, (), (), C, S, H, Doc>>
+impl<A, C, H, Doc> SubscriberDef for Sealed<HandleValue<A, (), (), C, H, Doc>>
 where
     A: SoloAxis,
     Doc: AxisDocs<A>,
 {
     type Input = A::Kind;
     type Context = C;
-    type Handler = SoloBody<A, C, S, H>;
+    type Handler = SoloBody<A, C, H>;
     // The sealed value never builds a source: the settings builder wrapping it carries the real
     // one, and this placeholder is no `SubscriptionSource` at all, so a bare mount is a compile
     // error.
@@ -115,7 +119,7 @@ where
         Doc::headers_schema()
     }
 
-    fn into_handler(self) -> SoloBody<A, C, S, H> {
+    fn into_handler(self) -> SoloBody<A, C, H> {
         SoloBody {
             body: self.0.body,
             _axes: PhantomData,
@@ -128,13 +132,13 @@ where
 /// Awaits the verdict, checks the per-element contract, and settles the page by it. Carries
 /// the [`batch`](crate::runtime::SubscriberBuilder::batch) cap, feeding an oversized page to
 /// the body in chunks.
-pub struct PageBody<A, S, H> {
+pub struct PageBody<A, H> {
     body: H,
     cap: Option<std::num::NonZeroUsize>,
-    _axes: PhantomData<fn() -> (A, S)>,
+    _axes: PhantomData<fn() -> A>,
 }
 
-impl<A, S, H> std::fmt::Debug for PageBody<A, S, H> {
+impl<A, H> std::fmt::Debug for PageBody<A, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PageBody").finish_non_exhaustive()
     }
@@ -182,7 +186,7 @@ fn extend_settles(settles: &mut Vec<HandlerOutcome>, outcome: BatchResult, chunk
     }
 }
 
-impl<T, S, H> SliceHandler<T, S> for PageBody<Page<T>, S, H>
+impl<T, S, H> SliceHandler<T, S> for PageBody<Page<T>, H>
 where
     [T]: Input<Axis = Page<T>>,
     T: Send + Sync + 'static,
@@ -208,7 +212,7 @@ where
     }
 }
 
-impl<Hd, P, S, H> SliceHandler<Message<Hd, P>, S> for PageBody<PagePair<Hd, P>, S, H>
+impl<Hd, P, S, H> SliceHandler<Message<Hd, P>, S> for PageBody<PagePair<Hd, P>, H>
 where
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
     Hd: Send + Sync + 'static,
@@ -239,7 +243,7 @@ where
     }
 }
 
-impl<S, H> RawSliceHandler<S> for PageBody<super::axis::PageBytes, S, H>
+impl<S, H> RawSliceHandler<S> for PageBody<super::axis::PageBytes, H>
 where
     S: Send + Sync,
     H: for<'p> Handle<[Payload<'p>], (), (), (), S>,
@@ -266,13 +270,13 @@ where
     }
 }
 
-impl<A, S, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), (), S, H, Doc>>
+impl<A, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), (), H, Doc>>
 where
     A: PagedAxis,
     Doc: AxisDocs<A>,
 {
     type Input = A::Kind;
-    type Handler = PageBody<A, S, H>;
+    type Handler = PageBody<A, H>;
     // See `SubscriberDef::Source` above: the builder carries the real source.
     type Source = Unnamed<Name>;
 
@@ -292,7 +296,7 @@ where
         Doc::headers_schema()
     }
 
-    fn into_handler(self) -> PageBody<A, S, H> {
+    fn into_handler(self) -> PageBody<A, H> {
         PageBody {
             body: self.0.body,
             cap: self.0.page_cap,

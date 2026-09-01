@@ -131,8 +131,8 @@ pub struct SealedRawReply;
 #[derive(Debug, Clone, Copy)]
 pub struct SealedBatchPublishing;
 
-impl<A, R, C, S, H, Doc, Dest, Route, Attach> IncludeDef
-    for Sealed<ReplyValue<HandleValue<A, R, (), C, S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, C, H, Doc, Dest, Route, Attach> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Route, Attach>>
 where
     A: Axis,
     Route: ReplyFormFor<A::Family>,
@@ -142,13 +142,12 @@ where
 
 // ------------------------------------------------------------------------- the solo reply def
 
-impl<A, R, C, S, H, Doc, Dest, Route, Attach> PublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, (), C, S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, C, H, Doc, Dest, Route, Attach> PublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Route, Attach>>
 where
     A: SoloAxis,
     R: ReplyShape + ReplyHeadersSchema<Doc>,
     C: Send + Sync,
-    S: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
     Dest: ReplyDest<R>,
@@ -192,7 +191,7 @@ where
 }
 
 impl<T, R, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, H, Doc>, Dest, Route, Attach>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = (), Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -212,7 +211,7 @@ where
 }
 
 impl<R, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloBytes, R, (), C, S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<ReplyValue<HandleValue<SoloBytes, R, (), C, H, Doc>, Dest, Route, Attach>>
 where
     Self: PublishingDef<Input = crate::runtime::RawBytes, Injections = (), Reply = R, Context = C>,
     R: ReplyShape,
@@ -232,7 +231,7 @@ where
 }
 
 impl<Hd, P, R, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest, Route, Attach>>
 where
     Self: PublishingDef<
             Input = <SoloPair<Hd, P> as Axis>::Kind,
@@ -260,12 +259,11 @@ where
 
 // ------------------------------------------------------------------------- the page reply def
 
-impl<A, R, S, H, Doc, Dest, Route, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), (), S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, H, Doc, Dest, Route, Attach> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), (), H, Doc>, Dest, Route, Attach>>
 where
     A: PagedAxis,
     R: ReplyShape + ReplyHeadersSchema<Doc>,
-    S: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
     Dest: ReplyDest<R>,
@@ -334,7 +332,7 @@ pub(super) fn page_reply_verdict<R>(
 }
 
 impl<T, R, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), (), S, H, Doc>, Dest, Route, Attach>>
+    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), (), H, Doc>, Dest, Route, Attach>>
 where
     Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = (), Reply = R>,
     [T]: Input<Axis = Page<T>>,
@@ -356,7 +354,7 @@ where
 
 impl<Hd, P, R, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
     for Sealed<
-        ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), (), S, H, Doc>, Dest, Route, Attach>,
+        ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), (), H, Doc>, Dest, Route, Attach>,
     >
 where
     Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = (), Reply = R>,
