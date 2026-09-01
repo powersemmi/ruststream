@@ -99,7 +99,7 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// settings ([`workers`](crate::runtime::SubscriberSettings::workers),
 /// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
 /// [`buffered`](crate::runtime::SubscriberSettings::buffered), ...), the reply wiring
-/// ([`reply`](SubscriberBuilder::reply), [`on`](SubscriberBuilder::on),
+/// ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to),
 /// [`publisher`](SubscriberBuilder::publisher)), the native page cap
 /// ([`batch`](SubscriberBuilder::batch)) and the documentation opt-out
 /// ([`undocumented`](SubscriberBuilder::undocumented)) - and
@@ -208,11 +208,11 @@ where
 
 /// The reply destination still unnamed: it resolves from the reply type's own
 /// `#[outgoing(name = "..")]` declaration, and a type declaring none takes a mandatory
-/// [`on`](SubscriberBuilder::on).
+/// [`to`](SubscriberBuilder::to).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DeclaredDest;
 
-/// The reply destination the chain named with [`on`](SubscriberBuilder::on).
+/// The reply destination the chain named with [`to`](SubscriberBuilder::to).
 #[derive(Debug, Clone)]
 pub struct NamedDest(pub(super) Cow<'static, str>);
 
@@ -392,7 +392,7 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
     }
 
     /// Declares the body's reply wired for publishing: the reply type's declared destination
-    /// applies (name one with [`on`](SubscriberBuilder::on)), and the reply publish policy
+    /// applies (name one with [`to`](SubscriberBuilder::to)), and the reply publish policy
     /// attaches with [`publisher`](SubscriberBuilder::publisher) (the broker's default, encoding
     /// through the scope codec, without it).
     ///
