@@ -53,9 +53,9 @@ use parse::{SubscriberArgs, doc_description};
 /// async fn on_frame(frame: &[u8]) -> HandlerOutcome { /* parse it yourself */ }
 ///
 /// // raw batch: the batch shape without the decode step; the payloads are borrowed from the
-/// // batch's own messages for the duration of the call.
+/// // batch's own messages for the duration of the call (`Payload` derefs to `&[u8]`).
 /// #[subscriber("frames")]
-/// async fn ingest(frames: &[&[u8]]) -> HandlerOutcome { /* parse them yourself */ }
+/// async fn ingest(frames: &[Payload<'_>]) -> HandlerOutcome { /* parse them yourself */ }
 ///
 /// // the settings the attribute leaves out are filled in at the mount site, through the same
 /// // builder the attribute expands into:
@@ -94,8 +94,8 @@ use parse::{SubscriberArgs, doc_description};
 /// subscriptions without native batching). It returns one outcome
 /// for the whole batch (`HandlerOutcome`, `()`, `Result<_, E>`), or a per-element
 /// `Vec<HandlerOutcome>` to settle element `i` of the slice with outcome `i`, each element
-/// carrying its own optional `and_after` continuation. A `&[&[u8]]` parameter is the same shape
-/// without the decode step. A `&[Message<H, T>]` parameter pairs each element with its typed
+/// carrying its own optional `and_after` continuation. A `&[Payload<'_>]` parameter is the same
+/// shape without the decode step. A `&[Message<H, T>]` parameter pairs each element with its typed
 /// header contract: the core decodes both under the subscriber's decode policy, and the body
 /// reads `element.headers` next to `element.body` (the single-message counterpart stays the
 /// `Headers<T>` extractor parameter).

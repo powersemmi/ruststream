@@ -264,18 +264,21 @@ where
     S: Send + Sync,
     H: for<'p> Handle<[Payload<'p>], (), (), (), S>,
 {
-    async fn handle_slice(&self, batch: &[&[u8]], ctx: &mut Context<'_, (), S>) -> BatchResult {
-        // One page-sized Vec of borrowing wrappers; the payload bytes themselves stay in the
-        // broker's buffers.
-        let payloads: Vec<Payload<'_>> = batch.iter().map(|bytes| Payload::new(bytes)).collect();
+    async fn handle_slice(
+        &self,
+        batch: &[Payload<'_>],
+        ctx: &mut Context<'_, (), S>,
+    ) -> BatchResult {
+        // The dispatcher's page already carries the payload views, so nothing is rebuilt here
+        // and the payload bytes stay in the broker's buffers.
         match self.cap {
             None => {
-                let verdict = self.body.handle(&payloads, &(), ctx).await;
-                settle_page(verdict, payloads.len(), ctx.name())
+                let verdict = self.body.handle(batch, &(), ctx).await;
+                settle_page(verdict, batch.len(), ctx.name())
             }
             Some(max) => {
-                let mut settles = Vec::with_capacity(payloads.len());
-                for chunk in payloads.chunks(max.get()) {
+                let mut settles = Vec::with_capacity(batch.len());
+                for chunk in batch.chunks(max.get()) {
                     let verdict = self.body.handle(chunk, &(), ctx).await;
                     let outcome = settle_page(verdict, chunk.len(), ctx.name());
                     extend_settles(&mut settles, outcome, chunk.len());

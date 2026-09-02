@@ -37,12 +37,8 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
 ///   implement for existing handlers.
 /// - An `Out` parameter's declared message set (the third position): the arena's [`Slot`] entry
 ///   carries no per-parameter dictionary, so the compile-time narrowing would be lost.
-/// - The raw batch shape: the arena page axis wraps each payload, and rebinding `&[&[u8]]`
-///   from it would add a second per-page allocation the old emission never paid.
 fn uses_legacy(parts: &HandlerParts<'_>) -> bool {
-    parts.seek.is_some()
-        || parts.outs.iter().any(|out| out.bodies.is_some())
-        || parts.shape == Shape::RawBatch
+    parts.seek.is_some() || parts.outs.iter().any(|out| out.bodies.is_some())
 }
 
 /// The combinations that are wrong before the signature is even read: two reply clauses at once.
@@ -858,7 +854,8 @@ fn split_seek<'a>(
 
 /// What the handler consumes per invocation, read off its message parameter - the attribute
 /// carries no form clause: `&T` is one decoded message, `&[u8]` one delivery's payload as
-/// delivered, `&[T]` a whole decoded batch, and `&[&[u8]]` a batch of payloads.
+/// delivered, `&[T]` a whole decoded batch, and `&[Payload<'_>]` a batch of payloads (the
+/// manual path's own raw page element).
 ///
 /// A batch of `u8` values is not a thing anyone means, so `&[u8]` reads as the payload.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -870,17 +867,17 @@ enum Shape {
 }
 
 /// Resolves the message parameter's referent into the handler's shape and the type the
-/// definition carries as its input (the element for a batch; `[u8]` for the byte shapes, which
-/// never emit it). The mapping is purely syntactic, over the type's own tokens: an alias hiding
-/// a slice reads as a single decoded message.
+/// definition carries as its input (the element for a batch; the byte types for the raw shapes,
+/// which never emit it). The mapping is purely syntactic, over the type's own tokens: an alias
+/// hiding a slice reads as a single decoded message.
 fn resolve_shape(reference: &syn::TypeReference) -> (Shape, &Type) {
     let elem = &*reference.elem;
-    // A slice of byte slices only reads one way: a batch of payloads.
+    // A page of raw payloads: the element is the same `Payload` view the manual path's page
+    // body takes, so the byte-level batch costs nothing over the wrapped one.
     if let Type::Slice(slice) = elem
-        && let Type::Reference(inner) = &*slice.elem
-        && is_u8_slice(&inner.elem)
+        && is_payload(&slice.elem)
     {
-        return (Shape::RawBatch, &inner.elem);
+        return (Shape::RawBatch, &slice.elem);
     }
     match elem {
         byte_slice if is_u8_slice(byte_slice) => (Shape::Raw, byte_slice),
@@ -897,6 +894,19 @@ fn is_u8_slice(ty: &Type) -> bool {
         }) = &*slice.elem
     {
         return path.is_ident("u8");
+    }
+    false
+}
+
+/// True when `ty` is syntactically the `Payload` view (the last path segment `Payload`), like
+/// the `Ctx<K>` probe above.
+fn is_payload(ty: &Type) -> bool {
+    if let Type::Path(TypePath {
+        qself: None, path, ..
+    }) = ty
+        && let Some(segment) = path.segments.last()
+    {
+        return segment.ident == "Payload";
     }
     false
 }

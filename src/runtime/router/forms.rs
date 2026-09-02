@@ -40,7 +40,7 @@ pub struct RawReplyOut;
 /// A batch subscriber (a handler taking `&[T]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
-/// A raw batch subscriber (a handler taking `&[&[u8]]`): a batch with no decode step.
+/// A raw batch subscriber (a handler taking `&[Payload<'_>]`): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
 /// A batch reply-publishing subscriber (a `&[T]` handler with `publish("out")`).

@@ -476,9 +476,9 @@ receives each delivery's bytes exactly as the broker handed them over.
     --8<-- "tests/manual_raw_subscriber.rs:raw"
     ```
 
-A batch of payloads is the same thing at the batch shape: `&[&[u8]]` is the typed batch without
-the decode step, with the payloads borrowed from the batch's own messages for the duration of the
-call. Nothing is copied, and the settlement rules are the batch path's.
+A batch of payloads is the same thing at the batch shape: `&[Payload<'_>]` is the typed batch
+without the decode step, with the payloads borrowed from the batch's own messages for the duration
+of the call. Nothing is copied, and the settlement rules are the batch path's.
 
 === "Macros"
 

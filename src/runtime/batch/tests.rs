@@ -465,7 +465,7 @@ struct Frames(Arc<Mutex<Vec<Vec<u8>>>>);
 impl RawSliceHandler for Frames {
     fn handle_slice(
         &self,
-        batch: &[&[u8]],
+        batch: &[Payload<'_>],
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = BatchResult> {
         self.0

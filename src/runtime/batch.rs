@@ -28,6 +28,7 @@ use crate::IncomingMessage;
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
+use super::handle::Payload;
 use super::handler::{HandlerOutcome, HandlerResult};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
@@ -217,16 +218,16 @@ where
 
 /// A handler invoked with one whole batch of undecoded payloads.
 ///
-/// The byte-level counterpart of [`SliceHandler`], selected by a `&[&[u8]]` message parameter:
-/// a raw batch is the typed batch without the decode step, so the handler sees the payloads as
-/// a slice of byte slices borrowed from the batch's own messages, which the dispatcher holds for
-/// the duration of the call. Nothing is copied, and the settlement rules are the batch path's.
+/// The byte-level counterpart of [`SliceHandler`], selected by a `&[Payload<'_>]` message
+/// parameter: a raw batch is the typed batch without the decode step, so the handler sees the
+/// payloads as borrowed views into the batch's own messages, which the dispatcher holds for the
+/// duration of the call. Nothing is copied, and the settlement rules are the batch path's.
 pub trait RawSliceHandler<S = ()>: Send + Sync {
     /// Handles one batch of payloads, with the per-batch [`Context`] carrying the typed app
     /// state `S`.
     fn handle_slice(
         &self,
-        batch: &[&[u8]],
+        batch: &[Payload<'_>],
         ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = BatchResult> + Send;
 }
@@ -459,7 +460,10 @@ where
         let tasks = ctx.tasks().clone();
         // The views borrow the deliveries, so they are gone before the batch is settled.
         let result = {
-            let payloads: Vec<&[u8]> = batch.iter().map(IncomingMessage::payload).collect();
+            let payloads: Vec<Payload<'_>> = batch
+                .iter()
+                .map(|msg| Payload::new(msg.payload()))
+                .collect();
             self.inner.handle_slice(&payloads, ctx).await
         };
         settle_batch(batch, result, &subscription, &tasks).await;

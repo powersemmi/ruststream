@@ -14,8 +14,8 @@ use std::time::Duration;
 use common::{Order, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
 use ruststream::runtime::{
-    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, PublishExt, Router, RustStream,
-    SubscriberSettings,
+    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, Payload, PublishExt, Router,
+    RustStream, SubscriberSettings,
 };
 use ruststream::{nonzero, subscriber};
 
@@ -246,7 +246,7 @@ static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 /// A batch of payloads: the typed batch without the decode step, borrowed from the batch's own
 /// messages.
 #[subscriber("frames")]
-async fn ingest(frames: &[&[u8]]) -> HandlerOutcome {
+async fn ingest(frames: &[Payload<'_>]) -> HandlerOutcome {
     FRAMES
         .lock()
         .unwrap()

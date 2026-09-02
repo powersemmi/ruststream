@@ -79,8 +79,8 @@ pub(super) fn expand(
         ..
     } = parts;
     let shape = *shape;
-    let paged = shape == Shape::Batch;
-    let raw = shape == Shape::Raw;
+    let paged = matches!(shape, Shape::Batch | Shape::RawBatch);
+    let raw = matches!(shape, Shape::Raw | Shape::RawBatch);
 
     // ------------------------------------------------------------------------- the input axis
     let InputAxis {
@@ -238,8 +238,18 @@ fn input_axis(
                 let #pat = __rs_input;
             },
         },
-        // The raw batch shape keeps the legacy emission; the dispatcher never sends it here.
-        Shape::RawBatch => unreachable!("the raw batch shape keeps the legacy emission"),
+        // The raw page rebinds off a named parameter like the decoded one; the rebinding is
+        // ascribed through the user's own `Payload` path, so their import stays used.
+        Shape::RawBatch => InputAxis {
+            in_ty: quote!([::ruststream::runtime::Payload<'__rs>]),
+            axis: quote!(::ruststream::runtime::PageBytes),
+            input_arg: quote!(__rs_input: &[::ruststream::runtime::Payload<'__rs>]),
+            lifetime: quote!('__rs,),
+            input_binding: quote! {
+                #[allow(clippy::no_effect_underscore_binding)]
+                let #pat: &[#input_ty] = __rs_input;
+            },
+        },
     }
 }
 
@@ -302,7 +312,7 @@ fn definition_wiring(
         settings_state_ty,
         ..
     } = parts;
-    let paged = *shape == Shape::Batch;
+    let paged = matches!(shape, Shape::Batch | Shape::RawBatch);
     let form = form_token(paged, raw, reply, !outs.is_empty());
     let doc_state = quote!(::ruststream::runtime::Probed);
     let sealed_ty = |o: &TokenStream2| {
@@ -541,6 +551,7 @@ fn verdict_pieces(
 fn form_token(paged: bool, raw: bool, reply: &ReplyPlan<'_>, has_outs: bool) -> TokenStream2 {
     let forms = quote!(::ruststream::runtime::forms);
     match (paged, reply, has_outs) {
+        (true, ReplyPlan::None, false) if raw => quote!(#forms::RawBatch),
         (true, ReplyPlan::None, false) => quote!(#forms::Batch),
         (true, ReplyPlan::None, true) => quote!(#forms::BatchOut),
         (true, _, false) => quote!(#forms::BatchPublishing),

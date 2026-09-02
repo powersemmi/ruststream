@@ -69,7 +69,7 @@ async fn settle(orders: &[Order]) -> HandlerOutcome {
 // --8<-- [start:raw_batch]
 /// A batch of payloads: the batch shape without the decode step.
 #[subscriber("frames")]
-async fn ingest(frames: &[&[u8]]) -> HandlerOutcome {
+async fn ingest(frames: &[Payload<'_>]) -> HandlerOutcome {
     println!("ingesting {} frames", frames.len());
     HandlerOutcome::ack()
 }
