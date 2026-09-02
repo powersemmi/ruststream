@@ -354,9 +354,12 @@ enum ConvertSends {
 
 Publishing a type the set does not name is a compile error naming the missing membership. Byte
 publishes through `raw(..)` are unaffected - bytes carry no message type to list. A type that
-carries its own wire format still belongs in the dictionary: give it `#[derive(Outgoing)]` and list
-it in `#[publishes(..)]` like any model - the document reports it under its own name with no
-payload schema, by design - and send its bytes with `out.raw(export.bytes()).publish()`.
+carries its own wire format still belongs in the dictionary, and the wire follows the type: derive
+`Serialized` next to `#[derive(Outgoing)]`, list it in `#[publishes(..)]` like any model - the
+document reports it under its own name with no payload schema, by design - and publish it through
+the same typed entry, `out.message(&export).publish()`: its bytes leave as they are, no codec runs,
+and the destination comes off the declaration. `raw(..)` remains for bytes with no message type at
+all.
 
 ### Where a message goes
 
@@ -455,7 +458,8 @@ b.after_startup(MemoryPublish, async move |publisher| {
 });
 ```
 
-Every `Publisher` gets `.message(&value)` (encoded with `DefaultCodec`) and `.raw(&bytes)` from
+Every `Publisher` gets `.message(&value)` (encoded with `DefaultCodec`; a `Serialized` value's
+bytes leave as they are) and `.raw(&bytes)` from
 `PublishExt`, which the prelude carries - so a bare policy is enough for an ordinary typed publish.
 Reach for `TypedPublisher` only when you are changing something about how the value travels:
 

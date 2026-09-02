@@ -55,7 +55,8 @@ alwaysApply: false
   `ContainsMessage` memberships, `#[derive(OutMessages)]` writes `OutMessages` over an enum's
   variants, `#[derive(Deserialized)]` writes the payload construction plus the `Input` spelling
   that puts a type on the codec-free lane, `#[derive(Serialized)]` writes `fn bytes(&self)` plus
-  the `ReplyShape` that sends a reply byte-for-byte, and `#[derive(FromRef)]` writes one `FromRef`
+  the wire spellings that send the value byte-for-byte (`MessageWire` for a typed publish,
+  `ReplyShape` for the reply position), and `#[derive(FromRef)]` writes one `FromRef`
   impl per field.
 - The one thing genuinely lost with the feature off is the attribute surface itself: nothing reads
   a clause for you, so what the attribute would have declared you write as a trait impl.
@@ -345,8 +346,9 @@ work unchanged. The reply clause becomes the body's `R` axis plus the one `.repl
 `.to(dest)` names the destination the reply type does not declare itself - and the wire follows the
 reply *type*, not the chain: a `serde::Serialize` `R` encodes through the codec, so it attaches
 `.publisher(TypedPublisher::new(policy))` (or nothing, for the broker's default), while an `R`
-implementing `Serialized` (the pair of impls `#[derive(Serialized)]` writes: `fn bytes(&self) ->
-&[u8]` plus `ReplyShape` with `type Wire = SerializedReply`) leaves byte-for-byte and attaches a
+implementing `Serialized` (the impls `#[derive(Serialized)]` writes: `fn bytes(&self) ->
+&[u8]` plus the wire spellings `MessageWire` with `type Wire = SerializedWire` and `ReplyShape`
+with `type Wire = SerializedReply`) leaves byte-for-byte and attaches a
 plain policy - `.publisher(MemoryPublish)`, or nothing for the broker's default. There is one
 `.reply()` and one publisher step for both wires. A `Serialized` page reply does not exist: page
 replies publish through the reply codec. The `Out` slot parameter becomes the `O` axis:

@@ -91,8 +91,9 @@ async fn raw_handler_receives_exact_bytes() {
 // --- the reply form: the returned bytes are republished as-is ---
 
 // --8<-- [start:raw_reply]
-/// The reply type the byte-reply form returns, with the pair of impls `#[derive(Serialized)]`
-/// writes: the bytes that leave, and the shape that routes them onto the serialized wire.
+/// The reply type the byte-reply form returns, with the impls `#[derive(Serialized)]` writes
+/// for the reply position: the bytes that leave, and the shape that routes them onto the
+/// serialized wire.
 struct Export(Vec<u8>);
 
 impl Serialized for Export {

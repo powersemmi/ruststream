@@ -5,7 +5,9 @@
 已连接的 Broker 配对。
 
 显式发布用的始终是同一个构建器：发布一个值时从 `message(..)` 进入，发布字节时从 `raw(..)` 进入，最后
-以 `publish()` 收尾。调用点必须填哪些位置（目的地、类型化的消息头、编解码器），由消息类型自己的声明
+以 `publish()` 收尾。走哪条线由值的类型决定：实现了 `serde::Serialize` 的值由编解码器编码，带
+`#[derive(Serialized)]` 的类型按字节原样发出，路径上没有编解码器。调用点必须填哪些位置
+（目的地、类型化的消息头、编解码器），由消息类型自己的声明
 决定，因此一次信息不全的发布是编译错误，而不是运行时的意外。`Publisher::publish` 仍然在底下，但它是
 Broker crate 要实现的接口（参见 [Broker 作者](../broker-authors/index.md)）；服务代码写的是构建器。
 
@@ -101,8 +103,9 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
     --8<-- "examples/manual/publishing.rs:forward"
     ```
 
-`message(&value)` 用作用域的编解码器编码（想给单次调用换一个，用 `.with_codec(..)`）；`raw(&bytes)`
-发送的是服务已经编码好的载荷，因此根本没有编解码器的位置。两者都用 `.with_headers(..)` 填上消息头
+`message(&value)` 走值自己的那条线：`Serialize` 的值用作用域的编解码器编码（想给单次调用换一个，
+用 `.with_codec(..)`），`Serialized` 的值按字节原样发出。`raw(&bytes)`
+发送的是服务已经编码好的载荷，因此根本没有编解码器的位置。它们都用 `.with_headers(..)` 填上消息头
 这一位置 - 按引用传消息自己声明的契约（`&meta`），或者按值传一张已经建好的 `HeaderMap` - 也都以
 `publish()` 收尾。
 
@@ -166,11 +169,27 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 该槽位允许发布什么，处理器若不限制第三个位置，生成的文档报告的就是这份列表。类型化地发布一个标记
 没有列出的类型是编译错误，错误会点明缺失的那条成员关系。什么都不列的标记就做不了任何类型化的发布；
 而通过
-`raw(..)` 的字节发布不受影响，字节没有可列出的消息类型。不过，自带线上格式的类型并不会被挡在词典
-之外：给它 `#[derive(Outgoing)]` 来声明目的地，再像任何模型一样列进 `#[publishes(..)]`，文档就会
-用它自己的名字收录它（按设计不带载荷 schema），而它的字节经由
-`out.raw(export.bytes()).publish()` 发出。单个无名 `Out<impl Publisher>` 的隐含
+`raw(..)` 的字节发布不受影响，字节没有可列出的消息类型。单个无名 `Out<impl Publisher>` 的隐含
 `DefaultSlot` 没有可以列类型的声明处，所以它接受每一种已声明的消息。参见[类型化的消息头](headers.md)。
+
+类型化发布走哪条线，由类型选定。实现 `serde::Serialize` 的值由 `message(&value)` 用编解码器编码，
+如上；带 `#[derive(Serialized)]` 的类型自带字节，同一个调用把它们按原样发出 - 路径上没有任何
+编解码器。其余一切都是平常的规则：给它 `#[derive(Outgoing)]`，再像任何模型一样列进
+`#[publishes(..)]`，文档就会用它自己的名字收录它（按设计不带载荷 schema），目的地取自类型的声明，
+而词典、声明的消息集合和消息头位置对它的把关与对编码模型完全一致。`raw(..)` 留给完全没有消息类型
+的字节。
+
+=== "宏"
+
+    ```rust
+    --8<-- "tests/lanes.rs:serialized_out"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:serialized_out"
+    ```
 
 ### 声明消息发往何处 { #declaring-where-a-message-goes }
 

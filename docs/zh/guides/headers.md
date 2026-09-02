@@ -125,8 +125,9 @@
 服务手上已经是编码后形态的载荷，或者无法承载声明的外部类型（比如裸的 `Vec<Frame>`），走的是字节
 入口：`out.raw(&bytes).to(dest).publish()`。它接受同样的消息头位置，且不需要编解码器；如果某个载荷
 值得拥有自己的声明，就用一个 `#[derive(Outgoing)]` 的 newtype 把它包起来。既 derive 了 `Outgoing`
-又实现了 [`Serialized`](subscribers.md#raw-subscribers) 的 newtype 是词典里的一等成员：它像任何
-模型一样声明自己的目的地和消息头，只有载荷走字节入口，写成 `out.raw(export.bytes())`。
+又 derive 了 [`Serialized`](subscribers.md#raw-subscribers) 的 newtype 是词典里的一等成员：它像任何
+模型一样声明自己的目的地和消息头，并经由同一个类型化入口发布，写成 `out.message(&export)` -
+类型把这次发布引到序列化的那条线上，字节按原样发出，而每个消息头位置照常工作。
 
 契约把这个位置填掉一次。发布者自己补上的那部分走在下面：一个为每条发出的消息都携带同一个参数的
 发布者，把该参数作为底交出来，契约的字段再逐个序列化到这层底之上 - 参见

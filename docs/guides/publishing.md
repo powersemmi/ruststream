@@ -7,7 +7,9 @@ unconnected publisher: registrations carry publish *policies* (pure declarations
 pairs them with the connected broker at startup.
 
 An explicit publish is always the same builder, entered with `message(..)` for a value and
-`raw(..)` for bytes and finished with `publish()`. Which positions the call site has to fill -
+`raw(..)` for bytes and finished with `publish()`. The wire follows the value's type: a
+`serde::Serialize` value encodes with the resolved codec, a `#[derive(Serialized)]` one leaves
+byte-for-byte with no codec on the path. Which positions the call site has to fill -
 the destination, the typed headers, the codec - is decided by what the message type declares, so
 an under-specified publish is a compile error rather than a run-time surprise. `Publisher::publish`
 still exists underneath, but as the interface a broker crate implements (see
@@ -113,11 +115,12 @@ in-process test transport.
     --8<-- "examples/manual/publishing.rs:forward"
     ```
 
-`message(&value)` encodes with the scope's codec (name another one for a single call with
-`.with_codec(..)`), `raw(&bytes)` sends a payload the service already holds encoded and has no
-codec position at all. Both fill the headers position with `.with_headers(..)` - the message's
-declared contract by reference (`&meta`), or an already-built `HeaderMap` by value - and both
-end in `publish()`.
+`message(&value)` publishes on the value's own wire: a `Serialize` value encodes with the
+scope's codec (name another one for a single call with `.with_codec(..)`), a `Serialized` one
+leaves byte-for-byte. `raw(&bytes)` sends a payload the service already holds encoded and has no
+codec position at all. All of them fill the headers position with `.with_headers(..)` - the
+message's declared contract by reference (`&meta`), or an already-built `HeaderMap` by value -
+and all end in `publish()`.
 
 The include site names the source; for the scope's own broker it is the publish policy:
 
@@ -183,13 +186,30 @@ a marker's own `#[publishes(A, B)]` list says what the slot may publish, which i
 generated document reports for a handler that leaves the position unrestricted. A typed publish
 of a type the marker does not name is a compile error naming the missing membership. A marker
 listing nothing publishes nothing typed, and byte publishes through
-`raw(..)` are unaffected - bytes carry no message type to list. A type that carries its own wire
-format is not stuck outside the dictionary, though: give it `#[derive(Outgoing)]` for its
-destination and list it in `#[publishes(..)]` like any model, and it is documented under its own
-name (with no payload schema, by design) while its bytes leave through
-`out.raw(export.bytes()).publish()`. The implicit `DefaultSlot` of a
+`raw(..)` are unaffected - bytes carry no message type to list. The implicit `DefaultSlot` of a
 single unnamed `Out<impl Publisher>` has no declaration site to list types on, so it admits
 every declared message. See [typed headers](headers.md).
+
+The wire of a typed publish is selected by the type. `message(&value)` encodes a
+`serde::Serialize` value with the resolved codec, as above; a `#[derive(Serialized)]` type
+carries its own bytes, and the same call publishes them exactly as they are - no codec anywhere
+on the path. Everything else is the ordinary rules: give the type `#[derive(Outgoing)]` and list
+it in `#[publishes(..)]` like any model, and it is documented under its own name (with no
+payload schema, by design), its declared destination resolves the publish, and the dictionary,
+a declared message set and the headers positions gate it exactly as they gate an encoded model.
+`raw(..)` remains for bytes that carry no message type at all.
+
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/lanes.rs:serialized_out"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:serialized_out"
+    ```
 
 ### Declaring where a message goes
 
