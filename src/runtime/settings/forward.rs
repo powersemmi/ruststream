@@ -101,6 +101,7 @@ where
     Src: Clone,
 {
     type Input = <Def as BatchDef>::Input;
+    type Context = <Def as BatchDef>::Context;
     type Handler = <Def as BatchDef>::Handler;
     type Source = Src;
 

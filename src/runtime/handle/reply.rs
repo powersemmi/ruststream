@@ -12,36 +12,92 @@ use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publishing::{PublishingCall, PublishingDef};
 use crate::runtime::router::{
     BatchPublishMount, IncludeDef, PublishMount, RawReplyMount, Router, RouterCommit, RouterMount,
+    forms,
 };
 use crate::runtime::settings::SubscriberBuilder;
 use crate::{Broker, FixedName, Name, OutgoingDestination, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
-    SoloPair,
+    Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
+    SoloDeserialized, SoloPair,
 };
 use super::docs::DocState;
+use super::eager::construct;
+use super::reply_slots::{SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut};
 use super::value::{
-    BareReply, DeclaredDest, EncodedReply, HandleValue, NamedDest, ReplyValue, Sealed,
+    DeclaredDest, EncodedReply, HandleValue, NamedDest, ReplyValue, Sealed, SerializedReply,
 };
 use super::verdict::{OneByOne, Paged};
 
 // ------------------------------------------------------------------------------ reply shapes
 
-/// The two shapes a reply value takes: a bare payload, or a [`Message`] pair whose headers ride
-/// the reply. Machinery behind the reply metadata; never named in user code.
-#[doc(hidden)]
+/// A reply that already carries its bytes: `Serialize` means the framework's codec does it,
+/// `Serialized` means it is already done by the user's own type.
+///
+/// A `Serialized` reply leaves the service byte-for-byte through a bare publisher - no codec
+/// runs and nothing is re-encoded - selected purely by the reply type, on the same `.reply()`
+/// chain (and the same `publish("dest")` clause) an encoded reply uses.
+///
+/// # Implementing by hand
+///
+/// `#[derive(Serialized)]` (under the `macros` feature) covers a newtype or single-field struct
+/// over a byte buffer. Any other shape is a pair of short impls: the bytes, and the
+/// [`ReplyShape`] spelling that routes the type onto the serialized wire:
+///
+/// ```
+/// use ruststream::runtime::{ReplyShape, Serialized, SerializedReply};
+///
+/// struct Export(Vec<u8>);
+///
+/// impl Serialized for Export {
+///     fn bytes(&self) -> &[u8] {
+///         &self.0
+///     }
+/// }
+///
+/// impl ReplyShape for Export {
+///     type Body = Self;
+///     type Headers = ();
+///     type Wire = SerializedReply;
+/// }
+///
+/// let export = Export(vec![7, 9]);
+/// assert_eq!(export.bytes(), &[7, 9]);
+/// ```
+pub trait Serialized {
+    /// The bytes the reply publishes, exactly as they leave on the wire.
+    fn bytes(&self) -> &[u8];
+}
+
+/// The shape and wire of a reply value: what payload it publishes, what typed header contract
+/// rides it, and whether the framework's codec serializes it.
+///
+/// Implemented for every `serde::Serialize` type and every [`Message`] pair of them (the
+/// [`EncodedReply`] wire), and per-type for [`Serialized`] replies (the [`SerializedReply`]
+/// wire) - `#[derive(Serialized)]` writes that impl, or see [`Serialized`] for the hand-written
+/// form.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a reply value",
+    note = "a reply is a `serde::Serialize` value (the reply codec encodes it), a \
+            `Message<Headers, Payload>` pair of them, or a `#[derive(Serialized)]` type (its \
+            bytes leave as they are)"
+)]
 pub trait ReplyShape: Send + Sync {
     /// The published payload type (the pair's body, or the reply itself).
+    #[doc(hidden)]
     type Body: Send + Sync;
     /// The typed header contract riding the reply (`()` when none does).
+    #[doc(hidden)]
     type Headers;
+    /// The reply's wire: [`EncodedReply`] or [`SerializedReply`].
+    type Wire;
 }
 
 impl<R: serde::Serialize + Send + Sync> ReplyShape for R {
     type Body = R;
     type Headers = ();
+    type Wire = EncodedReply;
 }
 
 impl<H, P> ReplyShape for Message<H, P>
@@ -51,6 +107,7 @@ where
 {
     type Body = P;
     type Headers = H;
+    type Wire = EncodedReply;
 }
 
 /// The reply's headers schema, produced only where headers actually ride the reply (a unit
@@ -77,6 +134,50 @@ where
     }
 }
 
+/// What one documentation state reports for one reply wire: the encoded wire reports the
+/// reply's schemas, the serialized wire has no serde model to report. Machinery behind the
+/// generated document; keyed by the wire marker so a `Serialized` reply mounts documented
+/// without a `JsonSchema` obligation.
+#[doc(hidden)]
+pub trait WireDocs<R: ReplyShape + ?Sized, Doc> {
+    /// True on the serialized wire: the missing payload schema is by design there.
+    const SERIALIZED: bool;
+
+    /// The serialized JSON Schema of the reply payload.
+    fn payload_schema() -> Option<String>;
+
+    /// The serialized JSON Schema of the typed header contract riding the reply.
+    fn headers_schema() -> Option<String>;
+}
+
+impl<R, Doc> WireDocs<R, Doc> for EncodedReply
+where
+    R: ReplyShape + ReplyHeadersSchema<Doc>,
+    Doc: DocState<R::Body>,
+{
+    const SERIALIZED: bool = false;
+
+    fn payload_schema() -> Option<String> {
+        <Doc as DocState<R::Body>>::schema()
+    }
+
+    fn headers_schema() -> Option<String> {
+        <R as ReplyHeadersSchema<Doc>>::headers_schema()
+    }
+}
+
+impl<R: ReplyShape + ?Sized, Doc> WireDocs<R, Doc> for SerializedReply {
+    const SERIALIZED: bool = true;
+
+    fn payload_schema() -> Option<String> {
+        None
+    }
+
+    fn headers_schema() -> Option<String> {
+        None
+    }
+}
+
 /// Where a wired reply goes: the chain-named subject, or the reply type's own declaration.
 #[doc(hidden)]
 pub trait ReplyDest<R>: Send + Sync {
@@ -99,31 +200,93 @@ where
     }
 }
 
-/// The reply-form token of one route on one verdict family. The bare route has no page form:
-/// the attribute admits none either.
+/// The form tokens of one reply wire on one verdict family: the sealed value-path tokens and
+/// the attribute path's builder-producing forms, with and without slots. The serialized wire
+/// has no page form: a page's replies publish through the reply codec.
 #[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this reply's wire does not mount on this input family",
+    note = "an encoded reply (`serde::Serialize`) mounts one-by-one and per page; a \
+            `Serialized` (raw-byte) reply mounts one-by-one only"
+)]
 pub trait ReplyFormFor<Fam> {
     /// The sealed mount token.
     type Form;
+    /// The sealed slot-carrying mount token.
+    type SlotForm;
+    /// The attribute path's builder-producing form.
+    type DeclaredForm;
+    /// The attribute path's builder-producing form with slots.
+    type DeclaredSlotForm;
 }
 
 impl ReplyFormFor<OneByOne> for EncodedReply {
     type Form = SealedPublishing;
+    type SlotForm = SealedPublishingOut;
+    type DeclaredForm = forms::Publishing;
+    type DeclaredSlotForm = forms::PublishingOut;
 }
 
 impl ReplyFormFor<Paged> for EncodedReply {
     type Form = SealedBatchPublishing;
+    type SlotForm = SealedBatchPublishingOut;
+    type DeclaredForm = forms::BatchPublishing;
+    type DeclaredSlotForm = forms::BatchPublishingOut;
 }
 
-impl ReplyFormFor<OneByOne> for BareReply {
+impl ReplyFormFor<OneByOne> for SerializedReply {
     type Form = SealedRawReply;
+    type SlotForm = SealedRawReplyOut;
+    type DeclaredForm = forms::RawReply;
+    type DeclaredSlotForm = forms::RawReplyOut;
+}
+
+/// The route of one reply type on one verdict family: its wire, and the form tokens that wire
+/// selects. One-by-one the reply type routes itself; per page the `Vec<Reply>` verdict routes
+/// by its element. Machinery behind `include` and the reply chain; never named in user code.
+#[doc(hidden)]
+pub trait ReplyRoute<Fam> {
+    /// The reply's wire marker.
+    type Wire: ReplyFormFor<Fam>;
+    /// See [`ReplyFormFor::Form`].
+    type Form;
+    /// See [`ReplyFormFor::SlotForm`].
+    type SlotForm;
+    /// See [`ReplyFormFor::DeclaredForm`].
+    type DeclaredForm;
+    /// See [`ReplyFormFor::DeclaredSlotForm`].
+    type DeclaredSlotForm;
+}
+
+impl<R> ReplyRoute<OneByOne> for R
+where
+    R: ReplyShape,
+    R::Wire: ReplyFormFor<OneByOne>,
+{
+    type Wire = R::Wire;
+    type Form = <R::Wire as ReplyFormFor<OneByOne>>::Form;
+    type SlotForm = <R::Wire as ReplyFormFor<OneByOne>>::SlotForm;
+    type DeclaredForm = <R::Wire as ReplyFormFor<OneByOne>>::DeclaredForm;
+    type DeclaredSlotForm = <R::Wire as ReplyFormFor<OneByOne>>::DeclaredSlotForm;
+}
+
+impl<R> ReplyRoute<Paged> for Vec<R>
+where
+    R: ReplyShape,
+    R::Wire: ReplyFormFor<Paged>,
+{
+    type Wire = R::Wire;
+    type Form = <R::Wire as ReplyFormFor<Paged>>::Form;
+    type SlotForm = <R::Wire as ReplyFormFor<Paged>>::SlotForm;
+    type DeclaredForm = <R::Wire as ReplyFormFor<Paged>>::DeclaredForm;
+    type DeclaredSlotForm = <R::Wire as ReplyFormFor<Paged>>::DeclaredSlotForm;
 }
 
 /// The mount token of a sealed single-message reply definition.
 #[derive(Debug, Clone, Copy)]
 pub struct SealedPublishing;
 
-/// The mount token of a sealed bare-byte reply definition.
+/// The mount token of a sealed serialized-reply definition.
 #[derive(Debug, Clone, Copy)]
 pub struct SealedRawReply;
 
@@ -131,27 +294,26 @@ pub struct SealedRawReply;
 #[derive(Debug, Clone, Copy)]
 pub struct SealedBatchPublishing;
 
-impl<A, R, C, H, Doc, Dest, Route, Attach> IncludeDef
-    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Route, Attach>>
+impl<A, R, C, H, Doc, Dest, Attach> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Attach>>
 where
     A: Axis,
-    Route: ReplyFormFor<A::Family>,
+    R: ReplyRoute<A::Family>,
 {
-    type Form = Route::Form;
+    type Form = R::Form;
 }
 
 // ------------------------------------------------------------------------- the solo reply def
 
-impl<A, R, C, H, Doc, Dest, Route, Attach> PublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Route, Attach>>
+impl<A, R, C, H, Doc, Dest, Attach> PublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Attach>>
 where
     A: SoloAxis,
-    R: ReplyShape + ReplyHeadersSchema<Doc>,
+    R: ReplyShape<Wire: WireDocs<R, Doc>>,
     C: Send + Sync,
     H: Send + Sync,
-    Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
+    Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Route: Send + Sync,
     Attach: Send + Sync,
 {
     type Input = A::Kind;
@@ -205,14 +367,15 @@ where
         }
         vec![
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
-                .with_payload_schema(<Doc as DocState<R::Body>>::schema())
-                .with_headers_schema(<R as ReplyHeadersSchema<Doc>>::headers_schema()),
+                .with_payload_schema(<R::Wire as WireDocs<R, Doc>>::payload_schema())
+                .with_headers_schema(<R::Wire as WireDocs<R, Doc>>::headers_schema())
+                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED),
         ]
     }
 }
 
-impl<T, R, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, H, Doc>, Dest, Route, Attach>>
+impl<T, R, C, S, H, Doc, Dest, Attach> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, H, Doc>, Dest, Attach>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = (), Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -231,14 +394,21 @@ where
     }
 }
 
-impl<R, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloBytes, R, (), C, H, Doc>, Dest, Route, Attach>>
+impl<F, R, C, S, H, Doc, Dest, Attach> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, (), C, H, Doc>, Dest, Attach>>
 where
-    Self: PublishingDef<Input = crate::runtime::RawBytes, Injections = (), Reply = R, Context = C>,
+    Self: PublishingDef<
+            Input = <SoloDeserialized<F> as Axis>::Kind,
+            Injections = (),
+            Reply = R,
+            Context = C,
+        >,
+    F: Deserialized + Send + Sync + 'static,
+    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     R: ReplyShape,
     C: Send + Sync,
     S: Send + Sync,
-    H: for<'p> Handle<Payload<'p>, R, (), C, S>,
+    H: for<'p> Handle<F::Output<'p>, R, (), C, S>,
 {
     async fn call(
         &self,
@@ -246,13 +416,13 @@ where
         _injections: &(),
         ctx: &mut Context<'_, C, S>,
     ) -> Result<R, HandlerOutcome> {
-        let payload = Payload::new(input);
-        self.0.value.body.handle(&payload, &(), ctx).await
+        let input = construct::<F, C, S>(input, ctx)?;
+        self.0.value.body.handle(&input, &(), ctx).await
     }
 }
 
-impl<Hd, P, R, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest, Route, Attach>>
+impl<Hd, P, R, C, S, H, Doc, Dest, Attach> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest, Attach>>
 where
     Self: PublishingDef<
             Input = <SoloPair<Hd, P> as Axis>::Kind,
@@ -280,15 +450,14 @@ where
 
 // ------------------------------------------------------------------------- the page reply def
 
-impl<A, R, H, Doc, Dest, Route, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), (), H, Doc>, Dest, Route, Attach>>
+impl<A, R, H, Doc, Dest, Attach> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), (), H, Doc>, Dest, Attach>>
 where
     A: PagedAxis,
-    R: ReplyShape + ReplyHeadersSchema<Doc>,
+    R: ReplyShape<Wire: WireDocs<R, Doc>>,
     H: Send + Sync,
-    Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
+    Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Route: Send + Sync,
     Attach: Send + Sync,
 {
     type Input = A::Kind;
@@ -340,8 +509,9 @@ where
         }
         vec![
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
-                .with_payload_schema(<Doc as DocState<R::Body>>::schema())
-                .with_headers_schema(<R as ReplyHeadersSchema<Doc>>::headers_schema()),
+                .with_payload_schema(<R::Wire as WireDocs<R, Doc>>::payload_schema())
+                .with_headers_schema(<R::Wire as WireDocs<R, Doc>>::headers_schema())
+                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED),
         ]
     }
 }
@@ -373,8 +543,8 @@ pub(super) fn page_reply_verdict<R>(
     }
 }
 
-impl<T, R, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), (), H, Doc>, Dest, Route, Attach>>
+impl<T, R, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), (), H, Doc>, Dest, Attach>>
 where
     Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = (), Reply = R>,
     [T]: Input<Axis = Page<T>>,
@@ -394,10 +564,8 @@ where
     }
 }
 
-impl<Hd, P, R, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<
-        ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), (), H, Doc>, Dest, Route, Attach>,
-    >
+impl<Hd, P, R, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), (), H, Doc>, Dest, Attach>>
 where
     Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = (), Reply = R>,
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
@@ -432,10 +600,10 @@ pub trait SplitAttach: Sized {
     fn split_attach(self) -> (Self::Rest, Self::Attach);
 }
 
-impl<V, Dest, Route, Attach, Src, St, DC> SplitAttach
-    for SubscriberBuilder<Sealed<ReplyValue<V, Dest, Route, Attach>>, Src, St, DC>
+impl<V, Dest, Attach, Src, St, DC> SplitAttach
+    for SubscriberBuilder<Sealed<ReplyValue<V, Dest, Attach>>, Src, St, DC>
 {
-    type Rest = SubscriberBuilder<Sealed<ReplyValue<V, Dest, Route, ()>>, Src, St, DC>;
+    type Rest = SubscriberBuilder<Sealed<ReplyValue<V, Dest, ()>>, Src, St, DC>;
     type Attach = Attach;
 
     fn split_attach(self) -> (Self::Rest, Attach) {
@@ -444,14 +612,12 @@ impl<V, Dest, Route, Attach, Src, St, DC> SplitAttach
                 value,
                 dest,
                 attach,
-                _route: route,
             } = def;
             (
                 Sealed(ReplyValue {
                     value,
                     dest,
                     attach: (),
-                    _route: route,
                 }),
                 attach,
             )

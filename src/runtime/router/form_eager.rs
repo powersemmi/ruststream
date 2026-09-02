@@ -9,7 +9,7 @@ use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::runtime::SourceSubscriber;
 use crate::runtime::batch::BatchDef;
-use crate::runtime::input::{DecodeWith, RawBytes};
+use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::subscriber_def::SubscriberDef;
 
@@ -44,16 +44,17 @@ where
     }
 }
 
-// The byte input kind decodes with `()`, so the chain's codec parameter is left unconstrained
-// and a raw mount works without any codec feature enabled.
-impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
-    for forms::RawSubscribing
+// The self-deserializing input kind decodes with `()`, so the chain's codec parameter is left
+// unconstrained and the mount works without any codec feature enabled.
+impl<B, Routes, RouteCodec, RouteLayers, Def, F>
+    RouterMount<B, Routes, RouteCodec, RouteLayers, Def> for forms::RawSubscribing
 where
     B: Broker + 'static,
-    Def: SubscriberDef<Input = RawBytes>,
+    Def: SubscriberDef<Input = Provided<F>>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
     Def::Handler: 'static,
+    F: Send + Sync + 'static,
 {
     type Out = IncludedRouter<B, Def::Source, Def, (), RouteCodec, RouteLayers, Routes>;
 
@@ -90,17 +91,19 @@ where
     }
 }
 
-// A raw batch decodes nothing, so the chain's codec parameter stays unconstrained here too.
-impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
-    for forms::RawBatch
+// A self-deserializing batch decodes nothing, so the chain's codec parameter stays
+// unconstrained here too.
+impl<B, Routes, RouteCodec, RouteLayers, Def, F>
+    RouterMount<B, Routes, RouteCodec, RouteLayers, Def> for forms::RawBatch
 where
     B: Broker + 'static,
-    Def: BatchDef<Input = RawBytes>,
+    Def: BatchDef<Input = Provided<F>>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Handler: 'static,
+    F: Send + Sync + 'static,
 {
-    type Out = IncludedRawBatchRouter<B, Def::Source, Def, RouteCodec, RouteLayers, Routes>;
+    type Out = IncludedRawBatchRouter<B, Def::Source, Def, F, RouteCodec, RouteLayers, Routes>;
 
     fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         let source = def.source();

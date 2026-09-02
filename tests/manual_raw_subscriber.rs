@@ -1,19 +1,21 @@
 //! The macro-free counterpart of `tests/raw_subscriber.rs`: the raw handler forms written out as
-//! named types. The plain form is a body over `Payload<'_>`; the byte-reply form declares
-//! `Vec<u8>` as its reply and wires it with `.reply().to(..).publisher(Bare(..))`, which is what
-//! the `publish_raw(..)` clause would have emitted - the input kind is read off the body's own
-//! parameter either way.
+//! named types, including the lane traits the derives would have written. The plain form is a
+//! body over a `Deserialized` payload view; the byte-reply form declares a `Serialized` type as
+//! its reply and wires it with `.reply().to(..).publisher(..)` - the wire is read off the two
+//! message types either way, on this path exactly as on the attribute's.
 //!
-//! The codec-free path is what the plain and the byte-reply sections pin: raw bytes on the input
+//! The codec-free path is what the plain and the byte-reply sections pin: bytes on the input
 //! side mean no `Codec` bound reaches the mount, so this file also builds with every codec
 //! feature off (the typed-input module below is the one exception, and it is gated).
 #![cfg(all(feature = "memory", feature = "testing"))]
 
+use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::sync::Mutex;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
+use ruststream::runtime::{Input, SerializedReply, SoloDeserialized};
 use ruststream::testing::TestApp;
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
@@ -24,19 +26,37 @@ const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
 static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 
 // --8<-- [start:raw]
-/// The raw form by hand. `Handle<Payload<'_>>` is what the attribute implements for a `&[u8]`
-/// parameter: the input spelling itself tells the mount to skip the codec, and the adapter lends
-/// the delivery's payload rather than decoding it.
+/// The payload view the raw bodies below take, with the pair of impls `#[derive(Deserialized)]`
+/// writes: the construction that borrows the delivery's bytes, and the input spelling that
+/// routes `&Frame<'_>` onto the codec-free lane.
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
+
+/// The raw form by hand. `Handle<Frame<'_>>` is what the attribute implements for a
+/// `&Frame<'_>` parameter: the input type itself tells the mount to skip the codec, and the
+/// adapter lends the delivery's payload rather than decoding it.
 struct OnFrame;
 
-impl<'p> Handle<Payload<'p>> for OnFrame {
+impl<'p> Handle<Frame<'p>> for OnFrame {
     fn handle(
         &self,
-        frame: &Payload<'p>,
+        frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        FRAMES.lock().expect("frame log").push(frame.to_vec());
+        FRAMES.lock().expect("frame log").push(frame.0.to_vec());
         ready(Ok(()))
     }
 }
@@ -71,22 +91,38 @@ async fn raw_handler_receives_exact_bytes() {
 // --- the reply form: the returned bytes are republished as-is ---
 
 // --8<-- [start:raw_reply]
-/// The byte-reply form by hand: a body over `Payload<'_>` declaring `Vec<u8>` as its reply, so
-/// bytes in and bytes out. The publisher step's `Bare(..)` form is what picks the bare-publisher
-/// commit, so the reply leaves without a codec, and the body's `Err` arm is the reply the
-/// attribute lets a handler skip.
+/// The reply type the byte-reply form returns, with the pair of impls `#[derive(Serialized)]`
+/// writes: the bytes that leave, and the shape that routes them onto the serialized wire.
+struct Export(Vec<u8>);
+
+impl Serialized for Export {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl ReplyShape for Export {
+    type Body = Self;
+    type Headers = ();
+    type Wire = SerializedReply;
+}
+
+/// The byte-reply form by hand: a body over `Frame<'_>` declaring `Export` as its reply, so
+/// bytes in and bytes out. The reply type is what picks the codec-free commit, so the reply
+/// leaves as it was returned, and the body's `Err` arm is the reply the attribute lets a
+/// handler skip.
 struct Relay;
 
-impl<'p> Handle<Payload<'p>, Vec<u8>> for Relay {
+impl<'p> Handle<Frame<'p>, Export> for Relay {
     fn handle(
         &self,
-        frame: &Payload<'p>,
+        frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
-        let mut reply = frame.to_vec();
+    ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
+        let mut reply = frame.0.to_vec();
         reply.reverse();
-        ready(Ok(reply))
+        ready(Ok(Export(reply)))
     }
 }
 // --8<-- [end:raw_reply]
@@ -94,10 +130,10 @@ impl<'p> Handle<Payload<'p>, Vec<u8>> for Relay {
 /// The far end of the relay, so the round trip is observable as a delivery, not just a publish.
 struct RelayCapture;
 
-impl<'p> Handle<Payload<'p>> for RelayCapture {
+impl<'p> Handle<Frame<'p>> for RelayCapture {
     fn handle(
         &self,
-        _frame: &Payload<'p>,
+        _frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
@@ -112,7 +148,7 @@ async fn raw_reply_round_trips_exact_bytes() {
             subscriber("relay-in", Relay)
                 .reply()
                 .to("relay-out")
-                .publisher(Bare(MemoryPublish))
+                .publisher(MemoryPublish)
                 .build(),
         );
         b.include(subscriber("relay-out", RelayCapture).build());
@@ -140,7 +176,7 @@ async fn raw_reply_round_trips_exact_bytes() {
         .settled(HandlerOutcome::ack());
 }
 
-// --- publish_raw with a TYPED input: decode with the scope codec, reply bytes as-is ---
+// --- a Serialized reply with a TYPED input: decode with the scope codec, reply bytes as-is ---
 
 #[cfg(feature = "json")]
 mod typed_in {
@@ -151,6 +187,8 @@ mod typed_in {
     use ruststream::testing::TestApp;
     use serde::Deserialize;
 
+    use super::{Export, Frame};
+
     #[derive(Debug, Deserialize, schemars::JsonSchema)]
     struct Wrap {
         id: u32,
@@ -159,18 +197,18 @@ mod typed_in {
     // --8<-- [start:raw_reply_typed]
     /// The gateway shape: a structured message in, a self-produced wire format out. Only the
     /// body's input parameter changes from the byte-reply form above - `&Wrap` instead of
-    /// `&Payload<'_>`, which is what selects the decode - so the decode codec is resolved from the
+    /// `&Frame<'_>`, which is what selects the decode - so the decode codec is resolved from the
     /// mount while the reply still leaves unencoded.
     struct Gateway;
 
-    impl Handle<Wrap, Vec<u8>> for Gateway {
+    impl Handle<Wrap, Export> for Gateway {
         fn handle(
             &self,
             wrap: &Wrap,
             _outs: &(),
             _ctx: &mut Context<'_>,
-        ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
-            ready(Ok(wrap.id.to_be_bytes().to_vec()))
+        ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
+            ready(Ok(Export(wrap.id.to_be_bytes().to_vec())))
         }
     }
     // --8<-- [end:raw_reply_typed]
@@ -178,20 +216,16 @@ mod typed_in {
     /// Asserts inside the delivery that the reply bytes arrived untouched.
     struct GatewayCapture;
 
-    impl<'p> Handle<Payload<'p>> for GatewayCapture {
+    impl<'p> Handle<Frame<'p>> for GatewayCapture {
         fn handle(
             &self,
-            frame: &Payload<'p>,
+            frame: &Frame<'p>,
             _outs: &(),
             _ctx: &mut Context<'_>,
         ) -> impl Future<Output = Result<(), HandlerOutcome>> {
             // The adapter builds this future inside the dispatcher's unwind guard, so a failed
             // assertion is caught like any other handler panic.
-            assert_eq!(
-                &frame[..],
-                7_u32.to_be_bytes(),
-                "the reply bytes arrive as-is"
-            );
+            assert_eq!(frame.0, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
             ready(Ok(()))
         }
     }
@@ -205,7 +239,7 @@ mod typed_in {
                     subscriber("gateway-in", Gateway)
                         .reply()
                         .to("gateway-out")
-                        .publisher(Bare(MemoryPublish))
+                        .publisher(MemoryPublish)
                         .build(),
                 );
                 b.include(subscriber("gateway-out", GatewayCapture).build());

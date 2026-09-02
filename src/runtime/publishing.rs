@@ -57,7 +57,7 @@ pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     message = "`{Self}` cannot be encoded as a reply",
     note = "an encoded reply is a `serde::Serialize` value (derive it), or a \
             `Message<Headers, Payload>` pair whose halves are; reply bytes that must leave \
-            unencoded take the bare wire instead (`.publisher(Bare(policy))`)"
+            unencoded ride a `#[derive(Serialized)]` reply type instead"
 )]
 pub trait EncodeReply: Send + Sync {
     /// Delivers `self` through the typed reply stack.
@@ -147,10 +147,11 @@ where
     }
 }
 
-/// The byte wiring: a bare [`Publisher`] sends an `AsRef<[u8]>` reply unencoded.
+/// The byte wiring: a bare [`Publisher`] sends a [`Serialized`](super::Serialized) reply's own
+/// bytes, unencoded.
 impl<Reply, DeliveryCx, Pipeline, Bare> ReplySink<Reply, DeliveryCx, Pipeline> for Bare
 where
-    Reply: AsRef<[u8]> + Sync,
+    Reply: super::Serialized + Sync,
     DeliveryCx: Sync,
     Pipeline: Send + Sync,
     Bare: Publisher,
@@ -164,7 +165,7 @@ where
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
-        self.publish(OutgoingMessage::new(name, reply.as_ref()))
+        self.publish(OutgoingMessage::new(name, reply.bytes()))
             .await
     }
 }

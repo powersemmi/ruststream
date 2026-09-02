@@ -17,10 +17,15 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Buffered, Name, OutMessages, OutSlot, Outgoing, Publisher, TransactionalPublisher, nonzero,
-    subscriber,
+    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher,
+    TransactionalPublisher, nonzero, subscriber,
 };
 use serde::{Deserialize, Serialize};
+
+/// The payload view the byte-level body below takes, next to its typed header contract. Its
+/// own lane is the codec-free one, unlike the serde `Frame` message model further down.
+#[derive(Deserialized)]
+struct RawFrame<'a>(&'a [u8]);
 
 #[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
 struct Chunk {
@@ -299,8 +304,8 @@ async fn header_contract_violation_follows_decode_policy() {
 // --- raw input composes with Headers: bytes body, typed header contract ---
 
 #[subscriber("frames", on_failure(decode = skip))]
-async fn frame(payload: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
-    assert!(!payload.is_empty());
+async fn frame(payload: &RawFrame<'_>, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
+    assert!(!payload.0.is_empty());
     assert_eq!(meta.chunk_no, 3);
     HandlerOutcome::ack()
 }

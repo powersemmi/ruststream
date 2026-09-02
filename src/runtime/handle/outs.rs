@@ -85,10 +85,10 @@ use crate::{
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
-    SoloPair,
+    Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
+    SoloDeserialized, SoloPair,
 };
-use super::eager::{settle_page, settle_solo};
+use super::eager::{construct, settle_page, settle_solo};
 use super::value::{HandleValue, Sealed};
 
 // ------------------------------------------------------------------------------------- slots
@@ -621,12 +621,15 @@ where
     }
 }
 
-impl<C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<SoloBytes, (), Outs<E>, C, H, Doc>>
+impl<F, C, S, H, Doc, E> InjectCall<S>
+    for Sealed<HandleValue<SoloDeserialized<F>, (), Outs<E>, C, H, Doc>>
 where
-    Self: InjectDef<Input = crate::runtime::RawBytes, Context = C, Injections = Outs<E>>,
+    Self: InjectDef<Input = <SoloDeserialized<F> as Axis>::Kind, Context = C, Injections = Outs<E>>,
+    F: Deserialized + Send + Sync + 'static,
+    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     C: Send + Sync,
     S: Send + Sync,
-    H: for<'p> Handle<Payload<'p>, (), Outs<E>, C, S>,
+    H: for<'p> Handle<F::Output<'p>, (), Outs<E>, C, S>,
     E: Send + Sync,
 {
     async fn call(
@@ -635,8 +638,11 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
     ) -> HandlerOutcome {
-        let payload = Payload::new(input);
-        settle_solo(self.0.body.handle(&payload, injections, ctx).await)
+        let input = match construct::<F, C, S>(input, ctx) {
+            Ok(input) => input,
+            Err(outcome) => return outcome,
+        };
+        settle_solo(self.0.body.handle(&input, injections, ctx).await)
     }
 }
 

@@ -9,6 +9,7 @@ use crate::runtime::slot::WithSource;
 
 use super::{
     BatchInjectMount, BatchPublishMount, CommitVia, IncludeSlots, InjectMount, PublishMount,
+    RawReplyMount,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -35,6 +36,13 @@ where
 /// the default codec.
 pub type IncludePublishing<'s, B, Layers, C, State, Pipeline, Def, Source> =
     IncludeWith<'s, PublishMount, B, Layers, C, State, Pipeline, Def, Source>;
+
+/// The builder [`BrokerScope::include`](crate::runtime::BrokerScope::include) returns for a
+/// `publish("dest")` definition whose reply type is [`Serialized`](crate::runtime::Serialized).
+///
+/// The reply bytes leave as they are through a bare publisher.
+pub type IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, Source> =
+    IncludeWith<'s, RawReplyMount, B, Layers, C, State, Pipeline, Def, Source>;
 
 /// The builder [`BrokerScope::include`] returns for a handler with
 /// [`Out`](crate::runtime::Out) parameters: the attachment is the slot tuple, with no

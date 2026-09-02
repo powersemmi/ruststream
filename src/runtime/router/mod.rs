@@ -35,7 +35,6 @@ pub use builders::{
 };
 #[doc(hidden)]
 pub use builders::{RouterCommit, RouterSlotCommit};
-pub use mount::DefaultBareReply;
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]
@@ -50,7 +49,7 @@ pub(crate) use mount::{
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
-use crate::runtime::batch::{BatchDef, RawBatch, TypedBatch};
+use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -77,6 +76,7 @@ pub(crate) type IncludedRouter<B, S, D, C, RC, RL, R> =
 pub(crate) type BatchTypedRoute<B, S, D, C> = BatchRoute<
     S,
     TypedBatch<SourceMessage<B, S>, <D as BatchDef>::Input, C, <D as BatchDef>::Handler>,
+    <D as BatchDef>::Context,
 >;
 
 /// The router that mounting a [`BatchDef`] `D` on source `S` (decoded with `C`) onto `R`
@@ -84,13 +84,18 @@ pub(crate) type BatchTypedRoute<B, S, D, C> = BatchRoute<
 pub(crate) type IncludedBatchRouter<B, S, D, C, RC, RL, R> =
     Router<B, (BatchTypedRoute<B, S, D, C>, R), RC, RL>;
 
-/// The route a raw [`BatchDef`] `D` mounted on source `S` becomes: no codec is involved, so the
-/// adapter carries only the message type and the handler.
-type RawBatchRoute<B, S, D> =
-    BatchRoute<S, RawBatch<SourceMessage<B, S>, <D as BatchDef>::Handler>>;
+/// The route a self-deserializing [`BatchDef`] `D` mounted on source `S` becomes: no codec is
+/// involved, so the adapter carries the message type, the element family `F` and the handler.
+type DeserializedBatchRoute<B, S, D, F> = BatchRoute<
+    S,
+    DeserializedBatch<SourceMessage<B, S>, F, <D as BatchDef>::Handler>,
+    <D as BatchDef>::Context,
+>;
 
-/// The router that mounting a raw [`BatchDef`] `D` on source `S` onto `R` produces.
-type IncludedRawBatchRouter<B, S, D, RC, RL, R> = Router<B, (RawBatchRoute<B, S, D>, R), RC, RL>;
+/// The router that mounting a self-deserializing [`BatchDef`] `D` on source `S` onto `R`
+/// produces.
+type IncludedRawBatchRouter<B, S, D, F, RC, RL, R> =
+    Router<B, (DeserializedBatchRoute<B, S, D, F>, R), RC, RL>;
 
 /// The router that mounting an injected definition `D` on source `S` (decoded with `C`,
 /// resolving its startup injections against the attachment `E`) onto `R` produces.

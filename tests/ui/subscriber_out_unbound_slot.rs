@@ -1,6 +1,9 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
-use ruststream::{OutSlot, Publisher, subscriber};
+use ruststream::{Deserialized, OutSlot, Publisher, subscriber};
+
+#[derive(Deserialized)]
+struct Chunk<'a>(&'a [u8]);
 
 #[derive(OutSlot)]
 struct Encoded;
@@ -10,11 +13,11 @@ struct Audit;
 
 #[subscriber("chunks")]
 async fn transcode(
-    chunk: &[u8],
+    chunk: &Chunk<'_>,
     Out(_encoded): Out<impl Publisher, Encoded>,
     Out(_audit): Out<impl Publisher, Audit>,
 ) -> HandlerOutcome {
-    let _ = chunk;
+    let _ = chunk.0;
     HandlerOutcome::ack()
 }
 

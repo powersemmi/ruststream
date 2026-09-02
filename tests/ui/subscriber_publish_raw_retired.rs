@@ -6,8 +6,9 @@ struct Order {
     id: u32,
 }
 
-// One reply, one destination: the encoded and the raw reply clause are mutually exclusive.
-#[subscriber("orders", publish("a"), publish_raw("b"))]
+// The reply's wire follows the reply type now, so the retired clause points at its
+// replacement instead of reading as an unknown keyword.
+#[subscriber("orders", publish_raw("orders-wire"))]
 async fn handle(order: &Order) -> Vec<u8> {
     order.id.to_be_bytes().to_vec()
 }

@@ -14,10 +14,14 @@ use std::time::Duration;
 use common::{Order, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
 use ruststream::runtime::{
-    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, Payload, PublishExt, Router,
-    RustStream, SubscriberSettings,
+    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, PublishExt, Router, RustStream,
+    SubscriberSettings,
 };
-use ruststream::{nonzero, subscriber};
+use ruststream::{Deserialized, nonzero, subscriber};
+
+/// The payload view the raw batch body below takes, one element per delivery in the page.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
 
 static NAMED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
@@ -246,11 +250,11 @@ static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 /// A batch of payloads: the typed batch without the decode step, borrowed from the batch's own
 /// messages.
 #[subscriber("frames")]
-async fn ingest(frames: &[Payload<'_>]) -> HandlerOutcome {
+async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
     FRAMES
         .lock()
         .unwrap()
-        .extend(frames.iter().map(|f| f.to_vec()));
+        .extend(frames.iter().map(|f| f.0.to_vec()));
     HandlerOutcome::ack()
 }
 

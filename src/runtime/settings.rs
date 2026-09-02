@@ -43,7 +43,7 @@ use crate::{Buffered, FromName, StartAt, Unnamed};
 
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
-use super::input::{Decoded, DecodedPair, RawBytes};
+use super::input::{Decoded, DecodedPair, Provided};
 use super::router::{IncludeDef, InputCodec};
 
 /// A setting the attribute left out, still fillable at the mount site.
@@ -265,8 +265,9 @@ where
     }
 }
 
-// A byte input decodes with `()` whatever the chain named: the override has nothing to apply to.
-impl<Surface, C: Codec> DefinitionInputCodec<RawBytes, Surface> for C {
+// A self-deserializing input decodes with `()` whatever the chain named: the override has
+// nothing to apply to.
+impl<F, Surface, C: Codec> DefinitionInputCodec<Provided<F>, Surface> for C {
     type Codec = ();
 
     fn resolve(&self, _surface: &Surface) {}

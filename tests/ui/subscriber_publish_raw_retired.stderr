@@ -1,0 +1,5 @@
+error: publish_raw(..) is retired: the reply's wire follows the reply type - use publish("dest") and return a #[derive(Serialized)] type to publish its bytes as they are
+  --> tests/ui/subscriber_publish_raw_retired.rs:11:24
+   |
+11 | #[subscriber("orders", publish_raw("orders-wire"))]
+   |                        ^^^^^^^^^^^

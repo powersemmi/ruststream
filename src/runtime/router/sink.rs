@@ -90,8 +90,10 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     }
 
     /// Erases a source and its batch handler into a starter driving
-    /// [`BatchSubscriber::batches`]; the subscription opens against the connected broker.
-    pub(crate) fn push_subscribe_batch<S, H>(
+    /// [`BatchSubscriber::batches`]; the subscription opens against the connected broker. `Cx`
+    /// is the definition's subscription-scoped batch context, passed explicitly because the
+    /// adapter handlers are generic over it.
+    pub(crate) fn push_subscribe_batch<S, H, Cx>(
         &mut self,
         source: S,
         handler: H,
@@ -102,7 +104,8 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
         SourceMessage<B, S>: Send + 'static,
-        H: BatchHandler<SourceMessage<B, S>, State> + 'static,
+        Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + 'static,
+        H: BatchHandler<SourceMessage<B, S>, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -114,7 +117,9 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
                     let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_batch_dispatch(
+                    // Turbofish: the adapter handlers are generic over the batch context, so
+                    // the pushed definition's own context names it.
+                    Ok(spawn_batch_dispatch::<_, _, Cx, _>(
                         subscriber, handler, token, name, state, delivery, failure, workers,
                     ))
                 })
@@ -170,7 +175,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     /// The batch counterpart of [`push_injected_workers`](Self::push_injected_workers): the
     /// factory resolves the injections off the opened subscriber, then the loop drives
     /// [`BatchSubscriber::batches`].
-    pub(crate) fn push_injected_batch<Source, MakeHandler, HandlerFut, NewHandler>(
+    pub(crate) fn push_injected_batch<Source, MakeHandler, HandlerFut, NewHandler, HandlerCx>(
         &mut self,
         source: Source,
         make_handler: MakeHandler,
@@ -183,7 +188,8 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         SourceMessage<B, Source>: Send + 'static,
         MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
         HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
-        NewHandler: BatchHandler<SourceMessage<B, Source>, State> + 'static,
+        HandlerCx: crate::BuildBatchContext<SourceMessage<B, Source>> + Send + 'static,
+        NewHandler: BatchHandler<SourceMessage<B, Source>, HandlerCx, State> + 'static,
     {
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
@@ -196,7 +202,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                     let (subscriber, handler) =
                         make_handler(Arc::clone(&connected), subscriber).await?;
                     let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_batch_dispatch(
+                    Ok(spawn_batch_dispatch::<_, _, HandlerCx, _>(
                         subscriber,
                         Arc::new(handler),
                         token,

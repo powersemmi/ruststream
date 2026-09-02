@@ -15,16 +15,17 @@
 //! ```
 //! use ruststream::prelude::*;
 //!
-//! async fn handle(order: &[u8], ctx: &mut Context<'_>) -> HandlerOutcome {
+//! async fn handle(order: &str, ctx: &mut Context<'_>) -> HandlerOutcome {
 //!     let _ = (order.len(), ctx.name());
 //!     HandlerOutcome::ack()
 //! }
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, Bare, Context, Ctx, DefaultSlot, FailurePolicies, FailurePolicy, FromRef, Handle,
-    HandlerOutcome, Headers, Message, Out, Outs, Payload, Publish, PublishExt, Router, RouterDef,
-    RunningApp, RustStream, Slot, State, SubscriberSettings, TypedPublisher, Workers, subscriber,
+    App, AppInfo, Context, Ctx, DefaultSlot, Deserialized, FailurePolicies, FailurePolicy, FromRef,
+    Handle, HandlerOutcome, Headers, Message, Out, Outs, Publish, PublishExt, ReplyShape, Router,
+    RouterDef, RunningApp, RustStream, Serialized, Slot, State, SubscriberSettings, TypedPublisher,
+    Workers, subscriber,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
@@ -36,9 +37,9 @@ pub use crate::{
 // The counting macro every `workers(..)` chain writes.
 pub use crate::nonzero;
 
-// The derives sharing a name with their trait (`MessageInfo`, `OutSlot`, `FromRef`) come in with
-// the re-exports above. `Outgoing` is the exception: the derive lives at the crate root while
-// the publish pipeline's message type of the same name lives in `runtime`, so a service that
-// writes a publish transform imports that one explicitly.
+// The derives sharing a name with their trait (`MessageInfo`, `OutSlot`, `FromRef`,
+// `Deserialized`, `Serialized`) come in with the re-exports above. `Outgoing` is the exception:
+// the derive lives at the crate root while the publish pipeline's message type of the same name
+// lives in `runtime`, so a service that writes a publish transform imports that one explicitly.
 #[cfg(feature = "macros")]
-pub use crate::{FromRef, Outgoing, app, subscriber};
+pub use crate::{Deserialized, FromRef, Outgoing, Serialized, app, subscriber};

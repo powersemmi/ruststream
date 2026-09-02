@@ -1,14 +1,18 @@
-//! Eager mount forms: plain, raw, and plain batch.
+//! Eager mount forms: plain, self-deserializing, and the two batch shapes.
 
-use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, Subscriber,
+    SubscriptionSource,
+};
 
+use crate::runtime::SliceHandler;
 use crate::runtime::batch::BatchDef;
+use crate::runtime::handle::Deserialized;
 use crate::runtime::handler::Handler;
-use crate::runtime::input::{DecodeWith, InputKind, RawBytes};
+use crate::runtime::input::{DecodeWith, InputKind, Provided};
 use crate::runtime::middleware::Layer;
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
-use crate::runtime::{RawSliceHandler, SliceHandler};
 
 use super::{IncludeMount, forms};
 use crate::runtime::app::scope::BrokerScope;
@@ -56,15 +60,15 @@ where
 }
 
 // ---------------------------------------------------------------------------------------------
-// Raw subscribing: eager, no builder, and no codec anywhere - the byte input kind decodes with
-// `()`, so the scope codec parameter `C` is left unconstrained and the mount works without any
-// codec feature.
+// Self-deserializing subscribing: eager, no builder, and no codec anywhere - the input kind
+// decodes with `()`, so the scope codec parameter `C` is left unconstrained and the mount works
+// without any codec feature.
 
-impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+impl<'s, B, Layers, C, State, Pipeline, Def, F> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
     for forms::RawSubscribing
 where
     B: Broker + 'static,
-    Def: SubscriberDef<Input = RawBytes>,
+    Def: SubscriberDef<Input = Provided<F>>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
@@ -73,11 +77,12 @@ where
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
         + 'static,
+    F: Send + Sync + 'static,
     State: Send + Sync + 'static,
     Layers: Layer<
         Typed<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
-            RawBytes,
+            Provided<F>,
             (),
             Def::Handler,
         >,
@@ -107,7 +112,12 @@ where
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
     Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, C>>,
-    Def::Handler: SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
+    Def::Context: BuildBatchContext<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+        > + Send
+        + Sync
+        + 'static,
+    Def::Handler: SliceHandler<<Def::Input as InputKind>::Owned, Def::Context, State> + 'static,
     State: Send + Sync + 'static,
 {
     type Out = ();
@@ -120,17 +130,23 @@ where
 }
 
 // ---------------------------------------------------------------------------------------------
-// Raw batch: eager, and no codec anywhere - the handler borrows the batch's payloads as they
-// arrived, so the scope codec parameter `C` is left unconstrained.
+// Self-deserializing batch: eager, and no codec anywhere - each element constructs itself from
+// its delivery's payload, so the scope codec parameter `C` is left unconstrained.
 
-impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
+impl<'s, B, Layers, C, State, Pipeline, Def, F> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
     for forms::RawBatch
 where
     B: Broker + 'static,
-    Def: BatchDef<Input = RawBytes>,
+    Def: BatchDef<Input = Provided<F>>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
-    Def::Handler: RawSliceHandler<State> + 'static,
+    Def::Context: BuildBatchContext<
+            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
+        > + Send
+        + Sync
+        + 'static,
+    Def::Handler: for<'p> SliceHandler<F::Output<'p>, Def::Context, State> + 'static,
+    F: Deserialized + Send + Sync + 'static,
     State: Send + Sync + 'static,
 {
     type Out = ();

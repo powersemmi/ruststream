@@ -4,8 +4,11 @@
 
 use std::marker::PhantomData;
 
-use crate::runtime::batch::{BatchDef, BatchResult, RawSliceHandler, SliceHandler};
+use tracing::warn;
+
+use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
 use crate::runtime::context::Context;
+use crate::runtime::failure::FailurePolicy;
 use crate::runtime::handler::{Handler, HandlerOutcome};
 use crate::runtime::router::IncludeDef;
 use crate::runtime::subscriber_def::SubscriberDef;
@@ -13,10 +16,44 @@ use crate::{Name, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
-    SoloPair,
+    Axis, AxisDocs, Deserialized, Input, Message, Page, PageDeserialized, PagePair, PagedAxis,
+    Solo, SoloAxis, SoloDeserialized, SoloPair,
 };
 use super::value::{HandleValue, Sealed};
+
+/// Constructs one [`Deserialized`] input from a delivery's payload; a failed construction is
+/// settled by the subscriber's decode policy, exactly as a codec decode failure is.
+pub(crate) fn construct<'p, F, C, S>(
+    payload: &'p [u8],
+    ctx: &mut Context<'_, C, S>,
+) -> Result<F::Output<'p>, HandlerOutcome>
+where
+    F: Deserialized,
+{
+    match F::from_payload(payload) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %ctx.name(),
+                message_type = std::any::type_name::<F>(),
+                error = %err,
+                "payload construction failed",
+            );
+            #[cfg(any(feature = "testing", feature = "otel"))]
+            ctx.mark_decode_failed();
+            Err(match ctx.decode_policy() {
+                FailurePolicy::FailFast => {
+                    ctx.fail_fast(&format!("payload construction failed: {err}"));
+                    HandlerOutcome::drop()
+                }
+                other => other
+                    .settlement()
+                    .map_or_else(HandlerOutcome::drop, Into::into),
+            })
+        }
+    }
+}
 
 /// The dispatch adapter of a single-delivery body: awaits the verdict and settles by it.
 ///
@@ -57,15 +94,21 @@ where
     }
 }
 
-impl<C, S, H> Handler<[u8], C, S> for SoloBody<SoloBytes, C, H>
+impl<F, C, S, H> Handler<[u8], C, S> for SoloBody<SoloDeserialized<F>, C, H>
 where
+    F: Deserialized + Send + Sync + 'static,
+    // Pinning the axis is what normalizes the generic output's verdict family.
+    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     C: Send + Sync,
     S: Send + Sync,
-    H: for<'p> Handle<Payload<'p>, (), (), C, S>,
+    H: for<'p> Handle<F::Output<'p>, (), (), C, S>,
 {
     async fn handle(&self, msg: &[u8], ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
-        let payload = Payload::new(msg);
-        settle_solo(self.body.handle(&payload, &(), ctx).await)
+        let input = match construct::<F, C, S>(msg, ctx) {
+            Ok(input) => input,
+            Err(outcome) => return outcome,
+        };
+        settle_solo(self.body.handle(&input, &(), ctx).await)
     }
 }
 
@@ -202,14 +245,15 @@ fn extend_settles(settles: &mut Vec<HandlerOutcome>, outcome: BatchResult, chunk
     }
 }
 
-impl<T, S, H> SliceHandler<T, S> for PageBody<Page<T>, H>
+impl<T, C, S, H> SliceHandler<T, C, S> for PageBody<Page<T>, H>
 where
     [T]: Input<Axis = Page<T>>,
     T: Send + Sync + 'static,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[T], (), (), (), S>,
+    H: Handle<[T], (), (), C, S>,
 {
-    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, (), S>) -> BatchResult {
+    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
         match self.cap {
             None => {
                 let verdict = self.body.handle(batch, &(), ctx).await;
@@ -228,18 +272,19 @@ where
     }
 }
 
-impl<Hd, P, S, H> SliceHandler<Message<Hd, P>, S> for PageBody<PagePair<Hd, P>, H>
+impl<Hd, P, C, S, H> SliceHandler<Message<Hd, P>, C, S> for PageBody<PagePair<Hd, P>, H>
 where
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[Message<Hd, P>], (), (), (), S>,
+    H: Handle<[Message<Hd, P>], (), (), C, S>,
 {
     async fn handle_slice(
         &self,
         batch: &[Message<Hd, P>],
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
         match self.cap {
             None => {
@@ -259,18 +304,21 @@ where
     }
 }
 
-impl<S, H> RawSliceHandler<S> for PageBody<super::axis::PageBytes, H>
+// The elements were already constructed by the dispatch adapter, borrowing the deliveries'
+// payloads, so this cell only chunks and settles like the decoded one. The element is a fresh
+// parameter (`T`, one lifetime instantiation of the family's output) because a projection with
+// a free lifetime cannot head an impl; the pinned-axis bound is what ties it back to `F` and
+// normalizes the verdict family.
+impl<T, F, C, S, H> SliceHandler<T, C, S> for PageBody<PageDeserialized<F>, H>
 where
+    T: Send + Sync,
+    F: Deserialized + Send + Sync + 'static,
+    [T]: Input<Axis = PageDeserialized<F>>,
+    C: Send + Sync,
     S: Send + Sync,
-    H: for<'p> Handle<[Payload<'p>], (), (), (), S>,
+    H: Handle<[T], (), (), C, S>,
 {
-    async fn handle_slice(
-        &self,
-        batch: &[Payload<'_>],
-        ctx: &mut Context<'_, (), S>,
-    ) -> BatchResult {
-        // The dispatcher's page already carries the payload views, so nothing is rebuilt here
-        // and the payload bytes stay in the broker's buffers.
+    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
         match self.cap {
             None => {
                 let verdict = self.body.handle(batch, &(), ctx).await;
@@ -289,12 +337,13 @@ where
     }
 }
 
-impl<A, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), (), H, Doc>>
+impl<A, C, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), C, H, Doc>>
 where
     A: PagedAxis,
     Doc: AxisDocs<A>,
 {
     type Input = A::Kind;
+    type Context = C;
     type Handler = PageBody<A, H>;
     // See `SubscriberDef::Source` above: the builder carries the real source.
     type Source = Unnamed<Name>;

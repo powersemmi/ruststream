@@ -431,14 +431,20 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
     /// use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
     /// use ruststream::testing::TestApp;
-    /// use ruststream::{OutSlot, Publisher, subscriber};
+    /// use ruststream::{Deserialized, OutSlot, Publisher, subscriber};
+    ///
+    /// #[derive(Deserialized)]
+    /// struct Chunk<'a>(&'a [u8]);
     ///
     /// #[derive(OutSlot)]
     /// struct Encoded;
     ///
     /// #[subscriber("chunks")]
-    /// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerOutcome {
-    ///     if out.raw(chunk).to("encoded").publish().await.is_err() {
+    /// async fn transcode(
+    ///     chunk: &Chunk<'_>,
+    ///     Out(out): Out<impl Publisher, Encoded>,
+    /// ) -> HandlerOutcome {
+    ///     if out.raw(chunk.0).to("encoded").publish().await.is_err() {
     ///         return HandlerOutcome::retry();
     ///     }
     ///     HandlerOutcome::ack()
@@ -839,12 +845,15 @@ impl<'a> BrokerHandle<'a> {
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-    /// use ruststream::subscriber;
     /// use ruststream::testing::TestApp;
+    /// use ruststream::{Deserialized, subscriber};
+    ///
+    /// #[derive(Deserialized)]
+    /// struct Frame<'a>(&'a [u8]);
     ///
     /// #[subscriber("frames")]
-    /// async fn handle(frame: &[u8]) -> HandlerOutcome {
-    ///     let _ = frame.len();
+    /// async fn handle(frame: &Frame<'_>) -> HandlerOutcome {
+    ///     let _ = frame.0.len();
     ///     HandlerOutcome::ack()
     /// }
     ///

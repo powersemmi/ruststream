@@ -250,6 +250,7 @@ struct BareBatch;
 
 impl BatchDef for BareBatch {
     type Input = Decoded<u32>;
+    type Context = ();
     type Handler = ();
     type Source = Name;
 
@@ -459,32 +460,52 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     );
 }
 
-/// A batch handler over undecoded payloads, for the raw batch adapter below.
+/// A self-deserializing element, for the deserialized batch adapter below: a view over the
+/// payload that rejects an empty one, so the construction-failure path is exercisable.
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = crate::codec::CodecError;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        if payload.is_empty() {
+            return Err(crate::codec::CodecError::Decode(Box::from("empty frame")));
+        }
+        Ok(Frame(payload))
+    }
+}
+
+impl crate::runtime::Input for Frame<'_> {
+    type Axis = crate::runtime::SoloDeserialized<Frame<'static>>;
+}
+
+/// A batch handler over self-constructed payload views, for the adapter below.
 struct Frames(Arc<Mutex<Vec<Vec<u8>>>>);
 
-impl RawSliceHandler for Frames {
+impl<'p> SliceHandler<Frame<'p>> for Frames {
     fn handle_slice(
         &self,
-        batch: &[Payload<'_>],
+        batch: &[Frame<'p>],
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = BatchResult> {
         self.0
             .lock()
             .unwrap()
-            .extend(batch.iter().map(|frame| frame.to_vec()));
+            .extend(batch.iter().map(|frame| frame.0.to_vec()));
         ready(BatchResult::Uniform(HandlerOutcome::ack()))
     }
 }
 
 #[tokio::test]
-async fn a_raw_batch_lends_the_payloads_and_settles_the_deliveries() {
+async fn a_deserialized_batch_lends_the_payloads_and_settles_the_deliveries() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("raw-batch");
     publish_payloads(&broker, "raw-batch", &[b"one", b"two"]).await;
 
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let handler = RawBatch::over(Frames(Arc::clone(&seen)));
-    assert!(format!("{handler:?}").contains("RawBatch"));
+    let handler = DeserializedBatch::<_, Frame<'static>, _>::over(Frames(Arc::clone(&seen)));
+    assert!(format!("{handler:?}").contains("DeserializedBatch"));
 
     let state = ();
     let delivery = Delivery::empty();
@@ -500,9 +521,9 @@ async fn a_raw_batch_lends_the_payloads_and_settles_the_deliveries() {
 }
 
 #[tokio::test]
-async fn an_empty_raw_batch_reaches_no_handler() {
+async fn an_empty_deserialized_batch_reaches_no_handler() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let handler = RawBatch::over(Frames(Arc::clone(&seen)));
+    let handler = DeserializedBatch::<_, Frame<'static>, _>::over(Frames(Arc::clone(&seen)));
 
     let state = ();
     let delivery = Delivery::empty();
@@ -513,4 +534,29 @@ async fn an_empty_raw_batch_reaches_no_handler() {
         .await;
 
     assert!(seen.lock().unwrap().is_empty());
+}
+
+/// An element whose construction fails is settled by the decode policy and never reaches the
+/// page; the constructed rest does, exactly like a codec decode failure on the typed path.
+#[tokio::test]
+async fn a_failed_construction_is_settled_and_the_rest_reach_the_page() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("raw-batch");
+    publish_payloads(&broker, "raw-batch", &[b"one", b"", b"two"]).await;
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let handler = DeserializedBatch::<_, Frame<'static>, _>::over(Frames(Arc::clone(&seen)))
+        .with_decode(FailurePolicy::Drop);
+
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
+    let batch = pull_batch(&mut sub).await;
+    handler.handle_batch(batch, &mut ctx).await;
+
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        [b"one".to_vec(), b"two".to_vec()],
+    );
 }

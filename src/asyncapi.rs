@@ -587,9 +587,10 @@ fn add_outgoing(
         .payload_schema
         .as_deref()
         .and_then(|json| serde_json::from_str::<Value>(json).ok());
-    // A publish_raw reply is deliberately schema-free; a typed model without a schema is a
-    // documentation gap worth flagging at generation time.
-    if payload.is_none() && outgoing.message_type != "bytes" {
+    // A serialized-wire message is deliberately schema-free (its bytes are its own wire
+    // format); a typed model without a schema is a documentation gap worth flagging at
+    // generation time.
+    if payload.is_none() && !outgoing.serialized && outgoing.message_type != "bytes" {
         warn!(
             target: "ruststream::asyncapi",
             channel = %outgoing.channel,

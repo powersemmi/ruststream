@@ -13,7 +13,7 @@ use crate::runtime::slot::{HasSlots, InitSlots};
 
 use super::{
     BatchPublishInjectMount, BatchPublishMount, CommitVia, IncludeMount, IncludeSlotsWithReply,
-    PublishInjectMount, PublishMount, RawReplyInjectMount,
+    PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
 };
 
 /// Implements the scope mount of one sealed reply token: split the attach off and commit it
@@ -39,7 +39,7 @@ macro_rules! sealed_reply_scope_mount {
 
 sealed_reply_scope_mount! {
     SealedPublishing => PublishMount,
-    SealedRawReply => PublishMount,
+    SealedRawReply => RawReplyMount,
     SealedBatchPublishing => BatchPublishMount,
 }
 

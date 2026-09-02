@@ -732,6 +732,84 @@ impl crate::BuildContext<MemoryMessage> for MemoryContext {
     }
 }
 
+/// The in-memory broker's subscription-scoped page context: the subscription's own seeker,
+/// shared by every delivery of the page.
+///
+/// The runtime builds one per dispatched page from the page's first delivery (see
+/// [`BuildBatchContext`](crate::BuildBatchContext)), and a page body reads it by key -
+/// [`SeekHandle`] - through `ctx.context(..)`. Per-delivery data (a [`Position`]) has no place
+/// here: a page spans many deliveries, so the position a body reacts to rides the elements
+/// themselves (a `&[Message<H, T>]` page reads it off each element's header contract), and
+/// keeping this a separate type from [`MemoryContext`] is what rejects a page body asking for
+/// per-delivery fields at compile time.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::Seeker;
+/// use ruststream::memory::{MemoryBatchContext, MemoryPosition, SeekHandle};
+/// use ruststream::prelude::*;
+/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// # struct Job { id: u64 }
+///
+/// struct Replayer;
+///
+/// impl Handle<[Job], (), (), MemoryBatchContext> for Replayer {
+///     async fn handle(
+///         &self,
+///         page: &[Job],
+///         _outs: &(),
+///         ctx: &mut Context<'_, MemoryBatchContext>,
+///     ) -> Result<(), Vec<HandlerOutcome>> {
+///         // A page that saw the rewind marker repositions the whole subscription once it is
+///         // settled; the next page opens at the target.
+///         if page.iter().any(|job| job.id == u64::MAX)
+///             && ctx
+///                 .context(SeekHandle)
+///                 .seek(MemoryPosition::start())
+///                 .await
+///                 .is_err()
+///         {
+///             return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+///         }
+///         Ok(())
+///     }
+/// }
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct MemoryBatchContext {
+    seeker: MemorySeeker,
+}
+
+impl crate::BuildBatchContext<MemoryMessage> for MemoryBatchContext {
+    /// # Panics
+    ///
+    /// Panics on a request-reply inbox message, which is not a subscription delivery; no
+    /// dispatch loop (and therefore no page context) ever builds off one.
+    fn build(first: &MemoryMessage) -> Self {
+        Self {
+            // A clone of the subscription's pre-minted handle: reference-count bumps only,
+            // nothing allocated per page.
+            seeker: first
+                .seek
+                .as_deref()
+                .expect("a page context builds only off subscription deliveries")
+                .clone(),
+        }
+    }
+}
+
+impl crate::Field<MemoryBatchContext> for SeekHandle {
+    type Value<'a> = &'a MemorySeeker;
+
+    fn get(self, src: &MemoryBatchContext) -> &MemorySeeker {
+        &src.seeker
+    }
+}
+
 /// The key reading this delivery's [`MemoryPosition`] out of [`MemoryContext`].
 ///
 /// # Examples

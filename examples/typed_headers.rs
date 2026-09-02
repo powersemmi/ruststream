@@ -12,7 +12,7 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
-use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 // The header contracts: flat structs whose fields name headers. On the wire every value is a
@@ -62,9 +62,14 @@ struct Events;
 // destinations come from each type's declaration, headers from its contract - `Progress`
 // publishes bare, `ChunkDone` does not compile without `.with_headers(&meta)`.
 // --8<-- [start:handler]
+/// The body keeps the chunk as bytes, so the input is a type of its own rather than a decoded
+/// model: the derive gives the newtype the delivery's payload as it arrives.
+#[derive(Deserialized)]
+struct Chunk<'a>(&'a [u8]);
+
 #[subscriber("chunks.raw")]
 async fn convert(
-    chunk: &[u8],
+    chunk: &Chunk<'_>,
     Headers(meta): Headers<ChunkMeta>,
     Out(events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
 ) -> HandlerOutcome {
@@ -83,7 +88,7 @@ async fn convert(
     };
     let done_meta = DoneMeta {
         task_id: meta.task_id,
-        duration_ms: chunk.len() as u64,
+        duration_ms: chunk.0.len() as u64,
     };
     if events
         .message(&done)

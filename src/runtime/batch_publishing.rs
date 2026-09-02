@@ -169,7 +169,8 @@ impl<D: BatchPublishingDef, C, R, PP> std::fmt::Debug for BatchPublishingHandler
     }
 }
 
-impl<M, D, C, R, PP, S> BatchHandler<M, S> for BatchPublishingHandler<D, C, R, PP>
+// The batch publishing forms keep the unit batch context for now; see `BatchDef::Context`.
+impl<M, D, C, R, PP, S> BatchHandler<M, (), S> for BatchPublishingHandler<D, C, R, PP>
 where
     M: IncomingMessage,
     D: BatchPublishingCall<S>,
@@ -184,7 +185,7 @@ where
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
         let subscription = ctx.name().to_owned();
         let (values, accepted) =
-            decode_batch::<M, D::Input, C, S>(batch, &self.codec, self.decode, ctx).await;
+            decode_batch::<M, D::Input, C, (), S>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }

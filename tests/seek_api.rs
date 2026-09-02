@@ -18,9 +18,13 @@ use tokio::sync::Notify;
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, SeekHandle};
 use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{Publisher, Seeker, subscriber};
+use ruststream::{Deserialized, Publisher, Seeker, subscriber};
 
 use common::{Event, payload};
+
+/// The payload view the byte-level handler below takes: the delivery's bytes, borrowed.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
 
 /// Jumps forward when the producer marks a poison region: everything queued before the
 /// resume point is skipped without dropping the subscription.
@@ -202,8 +206,8 @@ static FRAMES_PUBLISHED: Notify = Notify::const_new();
 /// A raw handler with the seek key: the input axis lets the byte-level form compose with a
 /// broker context field, borrowing the payload with no decode and no copy.
 #[subscriber("seek.frames")]
-async fn raw_work(frame: &[u8], Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
-    if frame == b"poison" {
+async fn raw_work(frame: &Frame<'_>, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
+    if frame.0 == b"poison" {
         // The marker frame: resume from the third entry once the whole run is in the log.
         FRAMES_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {

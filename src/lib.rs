@@ -71,7 +71,7 @@ pub use capability::{
     Transaction, TransactionalPublisher,
 };
 pub use error::AckError;
-pub use field::{BuildContext, ContextField, Field, FieldMut};
+pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use headers::HeaderMap;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
@@ -140,6 +140,23 @@ pub use ruststream_macros::OutSlot;
 /// Available with the `macros` feature.
 #[cfg(feature = "macros")]
 pub use ruststream_macros::OutMessages;
+
+/// Derive macro for a self-deserializing input type
+/// ([`Deserialized`](runtime::Deserialized)): a newtype or single-field struct over `&'a [u8]`
+/// gains the construction and the [`Input`](runtime::Input) spelling; the page spelling
+/// (`&[Frame<'_>]`) follows from it.
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::Deserialized;
+
+/// Derive macro for a self-serialized reply type ([`Serialized`](runtime::Serialized)): a
+/// newtype or single-field struct over a byte buffer gains the bytes accessor and the
+/// [`ReplyShape`](runtime::ReplyShape) spelling that routes it onto the serialized wire.
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::Serialized;
 
 // The trait shares the derive's name at the root (the serde pattern), so one import serves
 // both the `#[derive(OutSlot)]` and a broker's blanket impl bound.
@@ -218,6 +235,28 @@ pub mod __private {
         #[must_use]
         pub fn schema_json(&self) -> Option<String> {
             serde_json::to_string(&schemars::schema_for!(T)).ok()
+        }
+    }
+
+    /// The trait fallback for the serialized-wire marker: chosen for any `T` that does not
+    /// implement [`Serialized`](crate::runtime::Serialized).
+    pub trait NoSerializedProbe {
+        /// Returns `false` (the probed type encodes through a codec, or is no message at all).
+        fn serialized_wire(&self) -> bool;
+    }
+
+    impl<T> NoSerializedProbe for Probe<T> {
+        fn serialized_wire(&self) -> bool {
+            false
+        }
+    }
+
+    impl<T: crate::runtime::Serialized> Probe<T> {
+        /// Returns `true`: the probed type carries its own wire bytes (inherent; preferred
+        /// over the trait fallback).
+        #[must_use]
+        pub fn serialized_wire(&self) -> bool {
+            true
         }
     }
 

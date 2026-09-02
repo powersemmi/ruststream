@@ -5,14 +5,14 @@ use std::marker::PhantomData;
 
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::{BatchDef, RawBatch, TypedBatch, batch_metadata};
+use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch, batch_metadata};
 use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
-use crate::runtime::input::{DecodeWith, RawBytes};
+use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::PublishPipeline;
@@ -269,6 +269,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    _context: PhantomData,
                 },
                 self.routes,
             ),
@@ -278,23 +279,24 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Mounts a raw batch definition on `source`: the handler borrows the batch's payloads as
-    /// they arrived, so no codec takes part.
-    pub(super) fn mount_raw_batch<Source, Def>(
+    /// Mounts a self-deserializing batch definition on `source`: each element constructs itself
+    /// from its delivery's payload, so no codec takes part.
+    pub(super) fn mount_raw_batch<Source, Def, F>(
         self,
         source: Source,
         def: Def,
-    ) -> IncludedRawBatchRouter<B, Source, Def, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef<Input = RawBytes>,
+        Def: BatchDef<Input = Provided<F>>,
         Def::Handler: 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = RawBatch::over(def.into_handler());
+        let handler =
+            DeserializedBatch::<_, F, _>::over(def.into_handler()).with_decode(policies.decode);
         Router {
             routes: (
                 BatchRoute {
@@ -303,6 +305,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    _context: PhantomData,
                 },
                 self.routes,
             ),

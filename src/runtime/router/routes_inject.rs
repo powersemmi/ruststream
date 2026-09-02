@@ -179,7 +179,8 @@ where
             policies,
             workers,
         } = self;
-        sink.push_injected_batch(
+        // The injected batch forms keep the unit batch context for now; see `BatchDef::Context`.
+        sink.push_injected_batch::<_, _, _, _, ()>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)

@@ -12,17 +12,14 @@ use syn::{
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
 /// descriptor constructor `Type::new(..)` / `Type { .. }`), plus optional `publish("topic")`
-/// (the encoded reply destination), `publish_raw("topic")` (the reply is published as raw
-/// bytes), `workers(n[, by_key])` (the dispatch concurrency), and `start_at(<position>)` (the
-/// subscription opens at that position) clauses, in any order. The subscription form (single,
-/// raw, batch) is never spelled here: it is inferred from the payload parameter's type.
+/// (the reply destination; the reply type decides its wire), `workers(n[, by_key])` (the
+/// dispatch concurrency), and `start_at(<position>)` (the subscription opens at that position)
+/// clauses, in any order. The subscription form (single, batch) is never spelled here: it is
+/// inferred from the payload parameter's type.
 pub(crate) struct SubscriberArgs {
     pub(crate) source: SourceArg,
     /// The `publish(..)` destination: a string literal, or a `&'static str` constant.
     pub(crate) publish: Option<Expr>,
-    /// The `publish_raw(..)` destination (the reply bytes go out unencoded): a string literal,
-    /// or a `&'static str` constant.
-    pub(crate) publish_raw: Option<Expr>,
     pub(crate) workers: Option<WorkersArg>,
     pub(crate) on_failure: Option<FailureArg>,
     /// The `start_at(<position>)` clause: a broker position constructor the subscription is
@@ -44,6 +41,8 @@ pub(crate) enum SourceArg {
 
 /// The clause keywords, so a leading one is not mistaken for a source expression: they parse as
 /// expressions too (`workers(4)` is a call).
+// `publish_raw` stays in the peek list although the clause is retired, so a leading one still
+// reaches the curated error instead of parsing as a source expression.
 const CLAUSES: &[&str] = &[
     "on_failure",
     "publish",
@@ -190,7 +189,6 @@ impl Parse for SubscriberArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let (source, named_here) = parse_source(input)?;
         let mut publish = None;
-        let mut publish_raw = None;
         let mut workers = None;
         let mut on_failure = None;
         let mut start_at = None;
@@ -219,12 +217,13 @@ impl Parse for SubscriberArgs {
                 parenthesized!(content in input);
                 publish = Some(content.parse()?);
             } else if keyword == "publish_raw" {
-                if publish_raw.is_some() {
-                    return Err(Error::new(keyword.span(), "duplicate publish_raw(..)"));
-                }
-                let content;
-                parenthesized!(content in input);
-                publish_raw = Some(content.parse()?);
+                // The clause is retired, not unknown: point straight at its replacement.
+                return Err(Error::new(
+                    keyword.span(),
+                    "publish_raw(..) is retired: the reply's wire follows the reply type - use \
+                     publish(\"dest\") and return a #[derive(Serialized)] type to publish its \
+                     bytes as they are",
+                ));
             } else if keyword == "start_at" {
                 if start_at.is_some() {
                     return Err(Error::new(keyword.span(), "duplicate start_at(..)"));
@@ -249,16 +248,14 @@ impl Parse for SubscriberArgs {
             } else {
                 return Err(Error::new(
                     keyword.span(),
-                    "expected `publish(\"reply-topic\")`, `publish_raw(\"reply-topic\")`, \
-                     `workers(n[, by_key])`, `on_failure(panic = .., decode = ..)`, or \
-                     `start_at(<position>)`",
+                    "expected `publish(\"reply-topic\")`, `workers(n[, by_key])`, \
+                     `on_failure(panic = .., decode = ..)`, or `start_at(<position>)`",
                 ));
             }
         }
         Ok(Self {
             source,
             publish,
-            publish_raw,
             workers,
             on_failure,
             start_at,

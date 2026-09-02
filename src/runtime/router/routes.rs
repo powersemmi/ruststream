@@ -44,14 +44,18 @@ pub struct HandleRoute<S, H> {
 
 /// One batch-subscription registration: a source plus the batch handler consuming its batches.
 /// An implementation detail of [`Router`](crate::runtime::Router)'s registration list.
+///
+/// `Cx` is the broker's subscription-scoped batch context the handler reads, carried explicitly
+/// because the adapter handlers are generic over it.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct BatchRoute<S, H> {
+pub struct BatchRoute<S, H, Cx = ()> {
     pub(super) source: S,
     pub(super) handler: H,
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
+    pub(super) _context: PhantomData<fn() -> Cx>,
 }
 
 /// One mountable registration: applies the global blanket layer to its handler and registers it.
@@ -76,7 +80,7 @@ impl<S, H, Cx> RouteMeta for SubscribeRoute<S, H, Cx> {
     }
 }
 
-impl<S, H> RouteMeta for BatchRoute<S, H> {
+impl<S, H, Cx> RouteMeta for BatchRoute<S, H, Cx> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         out.push(self.meta.clone());
     }
@@ -110,14 +114,15 @@ where
     }
 }
 
-impl<B, S, H, State> MountRoute<B, State> for BatchRoute<S, H>
+impl<B, S, H, Cx, State> MountRoute<B, State> for BatchRoute<S, H, Cx>
 where
     B: Broker + 'static,
     S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: BatchSubscriber + Send + 'static,
     SourceMessage<B, S>: Send + 'static,
+    Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + 'static,
     State: Send + Sync + 'static,
-    H: BatchHandler<SourceMessage<B, S>, State> + 'static,
+    H: BatchHandler<SourceMessage<B, S>, Cx, State> + 'static,
 {
     fn mount_one<G, PP>(self, _global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
     where
@@ -126,7 +131,7 @@ where
     {
         // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
         // nor the router's own layers apply to batch registrations.
-        sink.push_subscribe_batch(
+        sink.push_subscribe_batch::<_, _, Cx>(
             self.source,
             self.handler,
             self.meta,

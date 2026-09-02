@@ -124,7 +124,9 @@ impl<Def: BatchInjectDef, DecodeCodec> std::fmt::Debug for BatchInjectHandler<De
     }
 }
 
-impl<Msg, Def, DecodeCodec, State> BatchHandler<Msg, State> for BatchInjectHandler<Def, DecodeCodec>
+// The injected batch forms keep the unit batch context for now; see `BatchDef::Context`.
+impl<Msg, Def, DecodeCodec, State> BatchHandler<Msg, (), State>
+    for BatchInjectHandler<Def, DecodeCodec>
 where
     Msg: IncomingMessage,
     Def: BatchInjectCall<State>,
@@ -135,7 +137,7 @@ where
 {
     async fn handle_batch(&self, batch: Vec<Msg>, ctx: &mut Context<'_, (), State>) {
         let subscription = ctx.name().to_owned();
-        let (values, accepted) = decode_batch::<Msg, Def::Input, DecodeCodec, State>(
+        let (values, accepted) = decode_batch::<Msg, Def::Input, DecodeCodec, (), State>(
             batch,
             &self.codec,
             self.decode,

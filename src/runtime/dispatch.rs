@@ -484,7 +484,7 @@ fn log_worker_exit(joined: Result<(), tokio::task::JoinError>) {
 /// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-pub(crate) fn spawn_batch_dispatch<S, H, St>(
+pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: CancellationToken,
@@ -497,7 +497,8 @@ pub(crate) fn spawn_batch_dispatch<S, H, St>(
 where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
-    H: BatchHandler<S::Message, St> + 'static,
+    H: BatchHandler<S::Message, C, St> + 'static,
+    C: crate::BuildBatchContext<S::Message> + Send + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -515,8 +516,12 @@ where
                     Some(Ok(batch)) => {
                         let batch: Vec<S::Message> = batch.into_iter().collect();
                         if workers.is_sequential() {
-                            run_batch(&*handler, batch, &name, &state, &delivery, &hooks, &failure)
-                                .await;
+                            // Turbofish: the adapter handlers are generic over the batch
+                            // context, so the spawn's own parameter names it.
+                            run_batch::<_, _, C, _>(
+                                &*handler, batch, &name, &state, &delivery, &hooks, &failure,
+                            )
+                            .await;
                         } else {
                             let handler = Arc::clone(&handler);
                             let name = Arc::clone(&name);
@@ -525,7 +530,7 @@ where
                             let hooks = hooks.clone();
                             let failure = failure.clone();
                             tasks.spawn(async move {
-                                run_batch(
+                                run_batch::<_, _, C, _>(
                                     &*handler, batch, &name, &state, &delivery, &hooks, &failure,
                                 )
                                 .await;
@@ -669,7 +674,7 @@ async fn dispatch<H, M, C, St>(
 /// (see the batch decode path for per-element decode handling). Ungated `after_settle` hooks run
 /// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-async fn run_batch<H, M, St>(
+async fn run_batch<H, M, C, St>(
     handler: &H,
     batch: Vec<M>,
     name: &str,
@@ -678,14 +683,20 @@ async fn run_batch<H, M, St>(
     hooks: &TaskTracker,
     failure: &DispatchFailure,
 ) where
-    H: BatchHandler<M, St>,
+    H: BatchHandler<M, C, St>,
     M: IncomingMessage,
+    C: crate::BuildBatchContext<M> + Send,
     St: Send + Sync,
 {
+    // A page with no deliveries has nothing to settle and no first delivery to build a context
+    // from; nothing to do.
+    let Some(first) = batch.first() else { return };
     let empty = HeaderMap::new();
-    // A batch has no single broker message, so its per-delivery context is unit (`C = ()`); the
-    // shared app state is threaded the same way as on the single-message path.
-    let mut ctx = Context::new(name, &empty, state, (), delivery)
+    // A batch spans many deliveries, so its context carries only subscription-scoped data,
+    // built from the first delivery; the shared app state is threaded the same way as on the
+    // single-message path.
+    let cx = C::build(first);
+    let mut ctx = Context::new(name, &empty, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness's slot scope attributes `Out` publishes to their slot.

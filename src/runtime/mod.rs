@@ -37,16 +37,16 @@ pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as crate::Subscrib
 
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchOut, IncludeBatchPublishing,
-    IncludeBatchPublishingOut, IncludeOut, IncludePublishing, IncludePublishingOut, IncludeSlots,
-    IncludeSlotsWithReply, IncludeWith, RunningApp, RustStream, RustStreamError, Setup, SlotCommit,
-    Wired,
+    IncludeBatchPublishingOut, IncludeOut, IncludePublishing, IncludePublishingOut,
+    IncludeRawReply, IncludeRawReplyOut, IncludeSlots, IncludeSlotsWithReply, IncludeWith,
+    RunningApp, RustStream, RustStreamError, Setup, SlotCommit, Wired,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.
-pub(crate) use batch::{RawSliceHandler, SliceHandler};
+pub(crate) use batch::SliceHandler;
 #[doc(hidden)]
 pub use batch::{page_verdict, uniform_page};
 pub use context::{After, Context};
@@ -58,21 +58,20 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
-    Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
-    HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBytes, PagePair, Paged, PagedAxis,
-    Probed, ProbedDocs, ProbedReplyDef, ReplyPublisherForm, ReplyValue, Sealed, Solo, SoloAxis,
-    SoloBytes, SoloPair, VerdictFamily, probed_def, probed_reply_def,
+    Axis, AxisDocs, DeclaredDest, DefaultReplyAttach, DocState, Docs, HandleValue, IsDocumented,
+    NamedDest, OneByOne, Page, PagePair, Paged, PagedAxis, Probed, ProbedDocs, ProbedReplyDef,
+    ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
-    Bare, Documentable, Documented, Handle, Input, IntoSource, Message, Outs, Payload, Publish,
-    Slot, Undocumented, ValueBuilder, Verdict, subscriber,
+    Deserialized, Documentable, Documented, EncodedReply, Handle, Input, IntoSource, Message, Outs,
+    PageDeserialized, Publish, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
+    Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
-    EntryMarkers, OutPos, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape,
-    ReplySlotFormFor, SealedBatchPublishing, SealedBatchPublishingOut, SealedPublishing,
-    SealedPublishingOut, SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach,
-    UnbuiltDefinition,
+    EntryMarkers, OutPos, ReplyAttach, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute,
+    SealedBatchPublishing, SealedBatchPublishingOut, SealedPublishing, SealedPublishingOut,
+    SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach, UnbuiltDefinition, WireDocs,
 };
 #[doc(hidden)]
 pub use handler::IntoOutcome;
@@ -83,7 +82,10 @@ pub use handler::{Handler, HandlerOutcome};
 #[allow(unused_imports)]
 pub(crate) use handler::HandlerResult;
 pub use inject::Out;
-pub(crate) use input::RawBytes;
+// Public and hidden: a hand-written low-level def (`SubscriberDef` / `BatchDef`) names its
+// input kind, and the self-deserializing one is how such a def opts onto the byte transport.
+#[doc(hidden)]
+pub use input::Provided;
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::ConnectedLifecycle;
 #[doc(hidden)]
@@ -111,14 +113,13 @@ pub(crate) use publish::message_of;
 pub(crate) use publish::raw_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
-pub use router::{
-    DefaultBareReply, IncludeDef, Router, RouterBatchOut, RouterBatchPublishing,
-    RouterBatchPublishingOut, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterRawReply, RouterRawReplyOut, RouterSink, RouterSlots,
-    RouterSlotsWithReply, RouterWith, forms,
-};
 #[doc(hidden)]
 pub use router::{DefaultReply, RouterCommit, RouterMount, RouterSlotCommit};
+pub use router::{
+    IncludeDef, Router, RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterDef,
+    RouterHandlers, RouterOut, RouterPublishing, RouterPublishingOut, RouterRawReply,
+    RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
+};
 pub use settings::{
     AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,

@@ -7,11 +7,13 @@
 /// A plain subscriber (`#[subscriber("in")]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Subscribing;
-/// A raw-bytes subscriber (a `#[subscriber]` handler taking `&[u8]`): no decode, no codec.
+/// A self-deserializing subscriber (a handler taking a
+/// [`Deserialized`](crate::runtime::Deserialized) input): no decode, no codec.
 #[derive(Debug, Clone, Copy)]
 pub struct RawSubscribing;
-/// A byte-reply subscriber (`#[subscriber("in", publish_raw("out"))]`, on a byte or a typed
-/// input): the reply bytes go out as-is through a bare publisher.
+/// A byte-reply subscriber (a `publish("out")` handler whose reply type is
+/// [`Serialized`](crate::runtime::Serialized), on any input): the reply bytes go out as-is
+/// through a bare publisher.
 #[derive(Debug, Clone, Copy)]
 pub struct RawReply;
 /// A reply-publishing subscriber (`#[subscriber("in", publish("out"))]`).
@@ -34,7 +36,8 @@ pub struct RawReplyOut;
 /// A batch subscriber (a handler taking `&[T]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
-/// A raw batch subscriber (a handler taking `&[Payload<'_>]`): a batch with no decode step.
+/// A self-deserializing batch subscriber (a handler taking a page of
+/// [`Deserialized`](crate::runtime::Deserialized) elements): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
 /// A batch reply-publishing subscriber (a `&[T]` handler with `publish("out")`).

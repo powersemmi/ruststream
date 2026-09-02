@@ -1,15 +1,15 @@
 error[E0277]: not every Out slot of this handler is bound
-  --> tests/ui/subscriber_out_unbound_slot.rs:25:58
+  --> tests/ui/subscriber_out_unbound_slot.rs:28:58
    |
-25 |         b.include(transcode).out(Encoded, MemoryPublish).build();
+28 |         b.include(transcode).out(Encoded, MemoryPublish).build();
    |                                                          ^^^^^ the attachment still contains a `MissingSlot<..>` naming the unbound slot
    |
    = help: the trait `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<transcode, Name, (Open, Open, Open)>>` is not implemented for `(ruststream::runtime::WithSource<MemoryPublish>, ruststream::runtime::MissingSlot<Audit>)`
    = note: bind each remaining slot with .out(marker, policy) before .build()
    = help: the following other types implement trait `ruststream::runtime::SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>`:
-             `(DefaultBareReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::RawReplyInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>, ruststream::runtime::WithSource<A2>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`

@@ -18,7 +18,15 @@ use common::{Event, connected, expect_id, observed_memory, payload};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, SeekHandle};
 use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, Router, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{Broker, OutSlot, Publisher, Seeker, subscriber};
+use ruststream::{Broker, Deserialized, OutSlot, Publisher, Seeker, Serialized, subscriber};
+
+/// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
+/// The reply those bodies return: its bytes leave on the wire as they are.
+#[derive(Serialized)]
+struct Export(Vec<u8>);
 
 // ---------------------------------------------------------------------------------------------
 // Out slots: the single-slot shorthand, named slots, and the batch counterpart.
@@ -68,12 +76,12 @@ struct Audit;
 
 #[subscriber("rp.slots.in")]
 async fn transcode(
-    chunk: &[u8],
+    chunk: &Frame<'_>,
     Out(encoded): Out<impl Publisher, Encoded>,
     Out(audit): Out<impl Publisher, Audit>,
 ) -> HandlerOutcome {
     if encoded
-        .raw(chunk)
+        .raw(chunk.0)
         .to("rp.slots.encoded")
         .publish()
         .await
@@ -81,7 +89,7 @@ async fn transcode(
     {
         return HandlerOutcome::retry();
     }
-    let receipt = chunk.len().to_be_bytes();
+    let receipt = chunk.0.len().to_be_bytes();
     if audit
         .raw(&receipt)
         .to("rp.slots.audit")
@@ -215,12 +223,12 @@ async fn a_router_defaults_the_reply_publisher_on_mount() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[subscriber("rp.raw.in", publish_raw("rp.raw.out"))]
-async fn echo_frame(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[subscriber("rp.raw.in", publish("rp.raw.out"))]
+async fn echo_frame(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 
-/// The byte-reply form: its reply travels a bare publisher, so it is its own route on a router.
+/// The byte-reply form: its reply leaves unencoded, so it is its own route on a router.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_the_byte_reply_form() {
     let router = Router::<MemoryBroker>::new().include(echo_frame).build();
@@ -237,19 +245,19 @@ async fn a_router_mounts_the_byte_reply_form() {
     tb.settle().await.expect("settle");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.raw.out")
+        .published::<Export>("rp.raw.out")
         .assert_called_once()
         .with_raw(b"frame");
 }
 
-#[subscriber("rp.raw.on.in", publish_raw("rp.raw.on.out"))]
-async fn echo_frame_on(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[subscriber("rp.raw.on.in", publish("rp.raw.on.out"))]
+async fn echo_frame_on(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 
-/// The same form with an explicit bare policy instead of the default.
+/// The same form with an explicit publish policy instead of the broker default.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_takes_an_explicit_bare_reply_policy() {
+async fn a_router_takes_an_explicit_serialized_reply_policy() {
     let router = Router::<MemoryBroker>::new()
         .include(echo_frame_on)
         .publisher(MemoryPublish);
@@ -266,7 +274,7 @@ async fn a_router_takes_an_explicit_bare_reply_policy() {
     tb.settle().await.expect("settle");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.raw.on.out")
+        .published::<Export>("rp.raw.on.out")
         .assert_called_once()
         .with_raw(b"frame");
 }
@@ -313,15 +321,15 @@ async fn a_router_composes_a_default_reply_with_out_slots() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[subscriber("rp.audit.in", publish_raw("rp.audit.out"))]
-async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
+#[subscriber("rp.audit.in", publish("rp.audit.out"))]
+async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Export {
     audit
-        .raw(frame)
+        .raw(frame.0)
         .to("rp.audit.copy")
         .publish()
         .await
         .expect("the slot publisher is live");
-    frame.to_vec()
+    Export(frame.0.to_vec())
 }
 
 /// The byte-reply form with an `Out` slot, reply side defaulted.
@@ -344,11 +352,11 @@ async fn a_router_composes_a_byte_reply_with_out_slots() {
     tb.settle().await.expect("settle");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.audit.out")
+        .published::<Export>("rp.audit.out")
         .assert_called_once()
         .with_raw(b"frame");
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.audit.copy")
+        .published::<Export>("rp.audit.copy")
         .assert_called_once()
         .with_raw(b"frame");
 }

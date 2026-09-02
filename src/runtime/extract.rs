@@ -243,7 +243,7 @@ where
 /// }
 ///
 /// // In a handler:
-/// // async fn handle(chunk: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome
+/// // async fn handle(chunk: &Chunk<'_>, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome
 /// let Headers(meta) = Headers(ChunkMeta { task_id: 7, chunk_no: 3 });
 /// assert_eq!(meta.chunk_no, 3);
 /// ```

@@ -15,82 +15,8 @@ use crate::parse::{
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
-    reject_reply_combinations(args)?;
     let parts = handler_parts(args, func)?;
-    reject_shape_combinations(args, func, &parts)?;
     Ok(unified::expand(args, &parts, func)?.into())
-}
-
-/// The combinations that are wrong before the signature is even read: two reply clauses at once.
-fn reject_reply_combinations(args: &SubscriberArgs) -> syn::Result<()> {
-    if let (Some(_), Some(publish_raw)) = (&args.publish, &args.publish_raw) {
-        return Err(Error::new_spanned(
-            publish_raw,
-            "publish(..) and publish_raw(..) are mutually exclusive: one reply, one destination",
-        ));
-    }
-    Ok(())
-}
-
-/// The combinations the inferred shape rules out: an encoded reply off undecoded bytes (the reply
-/// of a raw handler is bytes), a byte reply off a batch, a decode policy where nothing is
-/// materialized, and the injection parameters the raw batch form does not carry yet.
-fn reject_shape_combinations(
-    args: &SubscriberArgs,
-    func: &ItemFn,
-    parts: &HandlerParts<'_>,
-) -> syn::Result<()> {
-    let raw_input = matches!(parts.shape, Shape::Raw | Shape::RawBatch);
-    let batched = matches!(parts.shape, Shape::Batch | Shape::RawBatch);
-    if raw_input && let Some(publish) = &args.publish {
-        return Err(Error::new_spanned(
-            publish,
-            "the reply of a raw handler is bytes and is never encoded; use \
-             publish_raw(\"dest\") instead of publish(..)",
-        ));
-    }
-    if batched && let Some(publish_raw) = &args.publish_raw {
-        return Err(Error::new_spanned(
-            publish_raw,
-            "publish_raw(..) is not supported together with a batch handler yet; publish per \
-             message or use the encoded batch reply form",
-        ));
-    }
-    if parts.shape == Shape::RawBatch {
-        if !parts.outs.is_empty() {
-            return Err(Error::new_spanned(
-                &func.sig,
-                "a raw batch handler does not take Out parameters yet; take the batch as \
-                 `&[T]` for the decoded form, or the payload as `&[u8]` per delivery",
-            ));
-        }
-        if let Some(publish) = &args.publish {
-            return Err(Error::new_spanned(
-                publish,
-                "a raw batch handler has no reply form yet; publish from the body",
-            ));
-        }
-    }
-    // With a Headers parameter the decode policy still has a job on a raw handler: it
-    // settles a header contract that fails to parse.
-    let has_from_headers = func
-        .sig
-        .inputs
-        .iter()
-        .any(|arg| matches!(arg, FnArg::Typed(pt) if from_headers_ty(&pt.ty).is_some()));
-    if raw_input
-        && let Some(failure) = &args.on_failure
-        && failure.decode.is_some()
-        && !has_from_headers
-    {
-        return Err(Error::new_spanned(
-            func.sig.inputs.first(),
-            "on_failure(decode = ..) does not apply to an undecoded payload: this handler takes \
-             the bytes as delivered and declares no Headers parameter; keep only \
-             on_failure(panic = ..)",
-        ));
-    }
-    Ok(())
 }
 
 /// The pieces of the handler shared by every expansion form, extracted from the signature.
@@ -455,7 +381,7 @@ fn failure_step(args: &SubscriberArgs) -> TokenStream2 {
 /// and a batch pairs each element with its own contract through the `Message<H, P>` input
 /// instead.
 fn reject_batch_headers(shape: Shape, extractors: &[(&Pat, &Type)]) -> syn::Result<()> {
-    if matches!(shape, Shape::Batch | Shape::RawBatch)
+    if shape == Shape::Batch
         && let Some((_, ty)) = extractors
             .iter()
             .find(|(_, ty)| from_headers_ty(ty).is_some())
@@ -470,13 +396,12 @@ fn reject_batch_headers(shape: Shape, extractors: &[(&Pat, &Type)]) -> syn::Resu
     Ok(())
 }
 
-/// The expression capturing the headers schema for the unified emission: the same selection as
-/// [`headers_schema_method`], evaluated into the probed docs instead of a def method, plus the
-/// pair input's own contract (`Message<H, P>` documents `H`).
+/// The expression capturing the headers schema for the unified emission: the `Headers<T>`
+/// extractor's contract when one is declared, the pair input's own contract (`Message<H, P>`
+/// documents `H`), else the input type's declared header contract probe.
 fn headers_schema_expr(
-    shape: Shape,
     extractors: &[(&Pat, &Type)],
-    input_ty: &Type,
+    input_static: &TokenStream2,
     pair: Option<(&Type, &Type)>,
 ) -> TokenStream2 {
     if let Some((headers, _)) = pair {
@@ -491,13 +416,10 @@ fn headers_schema_expr(
         .find_map(|(_, ty)| from_headers_ty(ty))
         .map_or_else(
             || {
-                if matches!(shape, Shape::Raw | Shape::RawBatch) {
-                    return quote!(::core::option::Option::None);
-                }
                 quote! {{
                     #[allow(unused_imports)]
                     use ::ruststream::__private::NoHeadersSchemaProbe as _;
-                    ::ruststream::__private::Probe::<#input_ty>::new().headers_schema_json()
+                    ::ruststream::__private::Probe::<#input_static>::new().headers_schema_json()
                 }}
             },
             |contract| {
@@ -540,6 +462,11 @@ fn outgoing_entry(channel: &TokenStream2, message_ty: &TokenStream2) -> TokenStr
                 #[allow(unused_imports)]
                 use ::ruststream::__private::NoHeadersSchemaProbe as _;
                 ::ruststream::__private::Probe::<#message_ty>::new().headers_schema_json()
+            })
+            .with_serialized({
+                #[allow(unused_imports)]
+                use ::ruststream::__private::NoSerializedProbe as _;
+                ::ruststream::__private::Probe::<#message_ty>::new().serialized_wire()
             }),
         );
     }
@@ -568,7 +495,7 @@ fn workers_step(args: &SubscriberArgs, handler: &Ident, shape: Shape) -> syn::Re
     };
     let count = workers_count(count, handler)?;
     if let Some(marker) = by_key {
-        if matches!(shape, Shape::Batch | Shape::RawBatch) {
+        if shape == Shape::Batch {
             return Err(Error::new(
                 marker.span(),
                 "by_key lanes order single messages per key; they do not apply to a batch \
@@ -714,40 +641,47 @@ fn body_decl(body: &Type) -> syn::Result<Option<BodyDecl<'_>>> {
 }
 
 /// What the handler consumes per invocation, read off its message parameter - the attribute
-/// carries no form clause: `&T` is one decoded message, `&[u8]` one delivery's payload as
-/// delivered, `&[T]` a whole decoded batch, and `&[Payload<'_>]` a batch of payloads (the
-/// manual path's own raw page element).
-///
-/// A batch of `u8` values is not a thing anyone means, so `&[u8]` reads as the payload.
+/// carries no form clause: `&T` is one message, `&[T]` a whole page of them. Which lane the
+/// element rides (the codec, or its own `Deserialized` construction) is the type's own
+/// business, so the shape stops at the slice question.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Shape {
     Single,
-    Raw,
     Batch,
-    RawBatch,
 }
 
-/// Resolves the message parameter's referent into the handler's shape and the type the
-/// definition carries as its input (the element for a batch; the byte types for the raw shapes,
-/// which never emit it). The mapping is purely syntactic, over the type's own tokens: an alias
-/// hiding a slice reads as a single decoded message.
-fn resolve_shape(reference: &syn::TypeReference) -> (Shape, &Type) {
+/// Resolves the message parameter's referent into the handler's shape and the element type. The
+/// mapping is purely syntactic, over the type's own tokens: an alias hiding a slice reads as a
+/// single message. A bare byte slice is rejected with the derive that names the lane.
+fn resolve_shape(reference: &syn::TypeReference) -> syn::Result<(Shape, &Type)> {
     let elem = &*reference.elem;
-    // A page of raw payloads: the element is the same `Payload` view the manual path's page
-    // body takes, so the byte-level batch costs nothing over the wrapped one.
-    if let Type::Slice(slice) = elem
-        && is_payload(&slice.elem)
-    {
-        return (Shape::RawBatch, &slice.elem);
+    if is_u8_slice(elem) {
+        return Err(Error::new_spanned(
+            elem,
+            "a payload's bytes take a named type: #[derive(Deserialized)] on a newtype over \
+             the payload view (struct Frame<'a>(&'a [u8]);) and take `&Frame<'_>`",
+        ));
     }
     match elem {
-        byte_slice if is_u8_slice(byte_slice) => (Shape::Raw, byte_slice),
-        Type::Slice(slice) => (Shape::Batch, &slice.elem),
-        other => (Shape::Single, other),
+        Type::Slice(slice) => {
+            if is_u8_slice(&slice.elem)
+                || matches!(&*slice.elem, Type::Reference(r) if is_u8_slice(&r.elem))
+            {
+                return Err(Error::new_spanned(
+                    &slice.elem,
+                    "a page of payloads takes a named element type: #[derive(Deserialized)] on \
+                     a newtype over the payload view (struct Frame<'a>(&'a [u8]);) and take \
+                     `&[Frame<'_>]`",
+                ));
+            }
+            Ok((Shape::Batch, &slice.elem))
+        }
+        other => Ok((Shape::Single, other)),
     }
 }
 
-/// True when `ty` is syntactically `[u8]`, the only message parameter shape the raw form takes.
+/// True when `ty` is syntactically `[u8]`, the byte-slice spelling the input rule rejects in
+/// favor of a named `Deserialized` type.
 fn is_u8_slice(ty: &Type) -> bool {
     if let Type::Slice(slice) = ty
         && let Type::Path(TypePath {
@@ -759,17 +693,34 @@ fn is_u8_slice(ty: &Type) -> bool {
     false
 }
 
-/// True when `ty` is syntactically the `Payload` view (the last path segment `Payload`), like
-/// the `Ctx<K>` probe above.
-fn is_payload(ty: &Type) -> bool {
-    if let Type::Path(TypePath {
-        qself: None, path, ..
-    }) = ty
-        && let Some(segment) = path.segments.last()
-    {
-        return segment.ident == "Payload";
+/// Rewrites every elided lifetime (`'_`) in `ty` to `lifetime`, reporting whether any was
+/// found. How a lifetime-carrying input (a `Deserialized` view) is spelled at each position:
+/// the emitted impl introduces its own lifetime for the `In` axis, and the definition's
+/// lifetime-free projections take the `'static` representative.
+fn subst_elided_lifetime(ty: &Type, lifetime: &str) -> (Type, bool) {
+    use syn::visit_mut::VisitMut;
+
+    struct Subst {
+        lifetime: syn::Lifetime,
+        found: bool,
     }
-    false
+
+    impl VisitMut for Subst {
+        fn visit_lifetime_mut(&mut self, node: &mut syn::Lifetime) {
+            if node.ident == "_" {
+                *node = self.lifetime.clone();
+                self.found = true;
+            }
+        }
+    }
+
+    let mut subst = Subst {
+        lifetime: syn::Lifetime::new(lifetime, proc_macro2::Span::call_site()),
+        found: false,
+    };
+    let mut rewritten = ty.clone();
+    subst.visit_type_mut(&mut rewritten);
+    (rewritten, subst.found)
 }
 
 /// Dissects the handler's first parameter into the message pattern, the shape, the input type,
@@ -793,7 +744,7 @@ fn message_param(func: &ItemFn) -> syn::Result<MessageParam<'_>> {
             "the message parameter must be a reference `&T`",
         ));
     };
-    let (shape, input_ty) = resolve_shape(reference);
+    let (shape, input_ty) = resolve_shape(reference)?;
     Ok((pat, shape, input_ty, message_pair_args(input_ty)))
 }
 
@@ -933,19 +884,13 @@ fn batch_reply_body<'a>(
 fn publishing_reply<'a>(
     func: &'a ItemFn,
     block: &syn::Block,
-    bare: bool,
 ) -> syn::Result<(&'a Type, TokenStream2)> {
     let declared_ty = match &func.sig.output {
         ReturnType::Type(_, ty) => &**ty,
         ReturnType::Default => {
             return Err(Error::new_spanned(
                 &func.sig,
-                if bare {
-                    "a publish_raw handler must return the reply bytes: Vec<u8>, or \
-                     Result<Vec<u8>, HandlerOutcome>"
-                } else {
-                    "a publishing handler must return the reply value"
-                },
+                "a publishing handler must return the reply value",
             ));
         }
     };

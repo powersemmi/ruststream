@@ -52,8 +52,9 @@ pub struct PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
 }
 
 /// One reply-publishing registration whose reply leaves byte-for-byte through a bare publisher
-/// (the `publish_raw("dest")` form). See [`PublishingRoute`]: the app's publish pipeline is not
-/// known when the registration is made, so each route names the wiring its replies travel.
+/// (a [`Serialized`](crate::runtime::Serialized) reply type). See [`PublishingRoute`]: the
+/// app's publish pipeline is not known when the registration is made, so each route names the
+/// wiring its replies travel.
 #[doc(hidden)]
 pub struct RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) source: Source,
@@ -210,7 +211,7 @@ where
     Def: PublishingCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Reply: AsRef<[u8]> + Send + Sync + 'static,
+    Def::Reply: crate::runtime::Serialized + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     // `DecodeWith` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.
@@ -322,7 +323,9 @@ where
             policies,
             workers,
         } = self;
-        sink.push_injected_batch(
+        // The batch publishing forms keep the unit batch context for now; see
+        // `BatchDef::Context`.
+        sink.push_injected_batch::<_, _, _, _, ()>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = publisher

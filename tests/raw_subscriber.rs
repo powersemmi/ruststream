@@ -1,6 +1,6 @@
-//! Integration tests for the raw form, which the macro reads off a `&[u8]` payload parameter:
-//! the handler receives each delivery's payload bytes untouched, with no codec anywhere on the
-//! path.
+//! Integration tests for the raw form, which the macro reads off a `Deserialized` payload
+//! parameter: the handler receives each delivery's payload bytes untouched, with no codec
+//! anywhere on the path.
 //!
 //! The codec-free path itself is additionally pinned by a feature-stripped compile:
 //! `cargo check --no-default-features --features macros,memory,testing --test raw_subscriber`
@@ -18,12 +18,22 @@ use ruststream::memory::{
 use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Router, RustStream, State};
 use ruststream::testing::TestApp;
 use ruststream::{
-    BuildContext, ContextField, FromRef, IncomingMessage, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, subscriber,
+    BuildContext, ContextField, Deserialized, FromRef, IncomingMessage, OutgoingMessage, PairError,
+    PublishPolicy, Publisher, Serialized, subscriber,
 };
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
+
+/// The named payload view every byte-lane handler below takes: the delivery's bytes, borrowed
+/// straight out of the broker's buffer.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
+/// The named reply the byte-lane handlers return: its bytes leave on the wire as they are, with
+/// no codec in between.
+#[derive(Serialized)]
+struct Export(Vec<u8>);
 
 // --- the plain form: the handler sees the exact published bytes ---
 
@@ -31,8 +41,8 @@ static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 
 // --8<-- [start:raw]
 #[subscriber("frames")]
-async fn on_frame(frame: &[u8]) -> HandlerOutcome {
-    FRAMES.lock().expect("frame log").push(frame.to_vec());
+async fn on_frame(frame: &Frame<'_>) -> HandlerOutcome {
+    FRAMES.lock().expect("frame log").push(frame.0.to_vec());
     HandlerOutcome::ack()
 }
 // --8<-- [end:raw]
@@ -62,19 +72,19 @@ async fn raw_handler_receives_exact_bytes() {
     );
 }
 
-// --- the byte reply form: publish_raw("dest") republishes the returned bytes as-is ---
+// --- the byte reply form: a Serialized reply republishes the returned bytes as-is ---
 
 // --8<-- [start:raw_reply]
-#[subscriber("relay-in", publish_raw("relay-out"))]
-async fn relay(frame: &[u8]) -> Vec<u8> {
-    let mut reply = frame.to_vec();
+#[subscriber("relay-in", publish("relay-out"))]
+async fn relay(frame: &Frame<'_>) -> Export {
+    let mut reply = frame.0.to_vec();
     reply.reverse();
-    reply
+    Export(reply)
 }
 // --8<-- [end:raw_reply]
 
 #[subscriber("relay-out")]
-async fn relay_capture(_frame: &[u8]) -> HandlerOutcome {
+async fn relay_capture(_frame: &Frame<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
@@ -109,13 +119,13 @@ async fn raw_reply_round_trips_exact_bytes() {
 
 // --- without .publisher(..) the reply commits with the broker's default publish policy ---
 
-#[subscriber("relay-default-in", publish_raw("relay-default-out"))]
-async fn relay_default(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[subscriber("relay-default-in", publish("relay-default-out"))]
+async fn relay_default(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 
 #[subscriber("relay-default-out")]
-async fn relay_default_capture(_frame: &[u8]) -> HandlerOutcome {
+async fn relay_default_capture(_frame: &Frame<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
@@ -143,16 +153,16 @@ async fn raw_reply_defaults_to_the_brokers_publish_policy() {
 
 // --- the Result form: Err skips the publish and settles by the returned HandlerOutcome ---
 
-#[subscriber("relay-checked-in", publish_raw("relay-checked-out"))]
-async fn relay_checked(frame: &[u8]) -> Result<Vec<u8>, HandlerOutcome> {
-    if frame.is_empty() {
+#[subscriber("relay-checked-in", publish("relay-checked-out"))]
+async fn relay_checked(frame: &Frame<'_>) -> Result<Export, HandlerOutcome> {
+    if frame.0.is_empty() {
         return Err(HandlerOutcome::drop());
     }
-    Ok(frame.to_vec())
+    Ok(Export(frame.0.to_vec()))
 }
 
 #[subscriber("relay-checked-out")]
-async fn relay_checked_capture(_frame: &[u8]) -> HandlerOutcome {
+async fn relay_checked_capture(_frame: &Frame<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
@@ -234,13 +244,13 @@ impl PublishPolicy<ConnectedMemoryBroker> for FlakyPublish {
     }
 }
 
-#[subscriber("relay-flaky-in", publish_raw("relay-flaky-out"))]
-async fn relay_flaky(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[subscriber("relay-flaky-in", publish("relay-flaky-out"))]
+async fn relay_flaky(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 
 #[subscriber("relay-flaky-out")]
-async fn relay_flaky_capture(_frame: &[u8]) -> HandlerOutcome {
+async fn relay_flaky_capture(_frame: &Frame<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
@@ -280,15 +290,15 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
     );
 }
 
-// --- publish_raw with a TYPED input: decode with the scope codec, reply bytes as-is ---
+// --- a Serialized reply with a TYPED input: decode with the scope codec, reply bytes as-is ---
 
 #[cfg(feature = "json")]
 mod typed_in {
     use serde::Deserialize;
 
     use super::{
-        AppInfo, FRAME, HandlerOutcome, MemoryBroker, MemoryPublish, RustStream, TestApp,
-        subscriber,
+        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, MemoryPublish, RustStream,
+        TestApp, subscriber,
     };
 
     #[derive(Debug, Deserialize)]
@@ -298,24 +308,24 @@ mod typed_in {
 
     // --8<-- [start:raw_reply_typed]
     /// The gateway shape: a structured message in, a self-produced wire format out.
-    #[subscriber("gateway-in", publish_raw("gateway-out"))]
-    async fn gateway(wrap: &Wrap) -> Vec<u8> {
-        wrap.id.to_be_bytes().to_vec()
+    #[subscriber("gateway-in", publish("gateway-out"))]
+    async fn gateway(wrap: &Wrap) -> Export {
+        Export(wrap.id.to_be_bytes().to_vec())
     }
     // --8<-- [end:raw_reply_typed]
 
     /// The Result form keeps ack control: an odd id skips the publish and drops.
-    #[subscriber("gateway-checked-in", publish_raw("gateway-checked-out"))]
-    async fn gateway_checked(wrap: &Wrap) -> Result<Vec<u8>, HandlerOutcome> {
+    #[subscriber("gateway-checked-in", publish("gateway-checked-out"))]
+    async fn gateway_checked(wrap: &Wrap) -> Result<Export, HandlerOutcome> {
         if wrap.id % 2 == 1 {
             return Err(HandlerOutcome::drop());
         }
-        Ok(wrap.id.to_be_bytes().to_vec())
+        Ok(Export(wrap.id.to_be_bytes().to_vec()))
     }
 
     #[subscriber("gateway-out")]
-    async fn gateway_capture(frame: &[u8]) -> HandlerOutcome {
-        assert_eq!(frame, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
+    async fn gateway_capture(frame: &Frame<'_>) -> HandlerOutcome {
+        assert_eq!(frame.0, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
         HandlerOutcome::ack()
     }
 
@@ -392,12 +402,12 @@ struct CountState {
 
 #[subscriber("frames-state")]
 async fn with_state(
-    frame: &[u8],
+    frame: &Frame<'_>,
     ctx: &mut Context,
     State(bytes_seen): State<Arc<AtomicUsize>>,
 ) -> HandlerOutcome {
     assert_eq!(ctx.name(), "frames-state");
-    bytes_seen.fetch_add(frame.len(), Ordering::Relaxed);
+    bytes_seen.fetch_add(frame.0.len(), Ordering::Relaxed);
     HandlerOutcome::ack()
 }
 
@@ -462,7 +472,7 @@ impl ContextField for FrameLen {
 static SEEN_LEN: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("frames-meta")]
-async fn measured(_frame: &[u8], Ctx(len): Ctx<FrameLen>) -> HandlerOutcome {
+async fn measured(_frame: &Frame<'_>, Ctx(len): Ctx<FrameLen>) -> HandlerOutcome {
     SEEN_LEN.store(len, Ordering::Relaxed);
     HandlerOutcome::ack()
 }
@@ -490,8 +500,8 @@ async fn ctx_extractor_projects_the_context_under_raw() {
 // --- workers(..) and on_failure(panic = ..) keep working on the raw form ---
 
 #[subscriber("frames-workers", workers(2), on_failure(panic = drop))]
-async fn tolerant(frame: &[u8]) -> HandlerOutcome {
-    assert_ne!(frame, b"boom", "poison frame");
+async fn tolerant(frame: &Frame<'_>) -> HandlerOutcome {
+    assert_ne!(frame.0, b"boom", "poison frame");
     HandlerOutcome::ack()
 }
 
@@ -531,8 +541,8 @@ async fn workers_and_panic_policy_apply_to_raw() {
 static ROUTED: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("routed-raw")]
-async fn routed(frame: &[u8]) -> HandlerOutcome {
-    ROUTED.fetch_add(frame.len(), Ordering::Relaxed);
+async fn routed(frame: &Frame<'_>) -> HandlerOutcome {
+    ROUTED.fetch_add(frame.0.len(), Ordering::Relaxed);
     HandlerOutcome::ack()
 }
 
@@ -558,9 +568,9 @@ async fn router_mounts_raw_definitions() {
     assert_eq!(ROUTED.load(Ordering::Relaxed), FRAME.len());
 }
 
-#[subscriber("routed-relay-in", publish_raw("routed-relay-out"))]
-async fn routed_relay(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[subscriber("routed-relay-in", publish("routed-relay-out"))]
+async fn routed_relay(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 
 /// The byte-reply form on a router, next to the scope-mounted one above: both mounts resolve
@@ -583,7 +593,7 @@ async fn router_mounts_a_byte_reply_definition() {
         .expect("publish");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("routed-relay-out")
+        .published::<Export>("routed-relay-out")
         .assert_called_once()
         .with_raw(FRAME);
 }
@@ -607,8 +617,8 @@ mod scope_codec {
     static TYPED_ID: AtomicUsize = AtomicUsize::new(0);
 
     #[subscriber("mixed-raw")]
-    async fn raw_side(frame: &[u8]) -> HandlerOutcome {
-        RAW_BYTES.lock().expect("raw log").push(frame.to_vec());
+    async fn raw_side(frame: &Frame<'_>) -> HandlerOutcome {
+        RAW_BYTES.lock().expect("raw log").push(frame.0.to_vec());
         HandlerOutcome::ack()
     }
 
@@ -673,7 +683,7 @@ mod asyncapi_listing {
 
     /// Consumes raw frames.
     #[subscriber("frames-doc")]
-    async fn documented(_frame: &[u8]) {}
+    async fn documented(_frame: &Frame<'_>) {}
 
     #[test]
     fn raw_channel_is_listed_without_a_schema() {

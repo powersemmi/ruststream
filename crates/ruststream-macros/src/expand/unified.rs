@@ -16,7 +16,7 @@ use crate::parse::SubscriberArgs;
 
 use super::{
     BodyDecl, HandlerParts, OutParam, Shape, batch_reply_body, extractor_preds, extractor_prelude,
-    headers_schema_expr, outgoing_entry, publishing_reply, where_clause,
+    headers_schema_expr, outgoing_entry, publishing_reply, subst_elided_lifetime, where_clause,
 };
 
 /// The `Body` position of one `Out` parameter's arena entry: the declared message set as a
@@ -30,18 +30,14 @@ fn body_ty(bodies: Option<&BodyDecl<'_>>) -> TokenStream2 {
 }
 
 /// The reply clause of one handler, with the body already normalized to the `Result` shape.
+/// Which wire the reply travels (the reply codec, or its own bytes) is the reply type's
+/// business, so the plan carries no route.
 enum ReplyPlan<'a> {
     /// No reply: the body settles and nothing is published.
     None,
-    /// An encoded reply (`publish("dest")`): the reply value serializes through the reply
-    /// publisher's codec.
-    Encoded {
-        topic: &'a Expr,
-        ty: TokenStream2,
-        body: TokenStream2,
-    },
-    /// A bare byte reply (`publish_raw("dest")`): the returned bytes leave as they are.
-    Bare {
+    /// A reply (`publish("dest")`): the returned value publishes to the topic, on the wire its
+    /// type selects.
+    Publish {
         topic: &'a Expr,
         ty: TokenStream2,
         body: TokenStream2,
@@ -58,7 +54,7 @@ impl ReplyPlan<'_> {
     fn r_tokens(&self, paged: bool) -> TokenStream2 {
         match self {
             Self::None => quote!(()),
-            Self::Encoded { ty, .. } | Self::Bare { ty, .. } => {
+            Self::Publish { ty, .. } => {
                 if paged {
                     quote!(::std::vec::Vec<#ty>)
                 } else {
@@ -89,8 +85,7 @@ pub(super) fn expand(
         ..
     } = parts;
     let shape = *shape;
-    let paged = matches!(shape, Shape::Batch | Shape::RawBatch);
-    let raw = matches!(shape, Shape::Raw | Shape::RawBatch);
+    let paged = shape == Shape::Batch;
 
     // ------------------------------------------------------------------------- the input axis
     let InputAxis {
@@ -99,20 +94,16 @@ pub(super) fn expand(
         input_arg,
         lifetime,
         input_binding,
-    } = input_axis(shape, input_ty, pat, parts.pair);
+    } = input_axis(shape, input_ty, pat);
 
     // ------------------------------------------------------------------------- the reply plan
     let reply = reply_plan(args, func, block, paged)?;
     let r_tokens = reply.r_tokens(paged);
 
     // -------------------------------------------------------------- the context and state axes
-    // A batch definition's context is always `()` (a page spans many deliveries); the solo
-    // forms carry the handler's named or `Ctx`-projected context type.
-    let ctx_ty = if paged {
-        quote!(())
-    } else {
-        parts.ctx_ty.clone()
-    };
+    // The handler's named or `Ctx`-projected context type, on the solo and page forms alike: a
+    // page context is subscription-scoped data (see `BuildBatchContext` in the core crate).
+    let ctx_ty = parts.ctx_ty.clone();
     let (state_param, state_in_ctx, state_bound) = match state_ty {
         Some(state_ty) => (quote!(), quote!(#state_ty), None),
         None => (
@@ -170,10 +161,10 @@ pub(super) fn expand(
     };
 
     // -------------------------------------------------------------------- the captured docs
-    let docs_expr = probed_docs_expr(parts, &reply, raw);
+    let docs_expr = probed_docs_expr(parts, &reply);
 
     // ------------------------------------------------------- the definition and its mounting
-    let wiring = definition_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty, raw);
+    let wiring = definition_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty);
 
     Ok(quote! {
         #[derive(Clone, Copy)]
@@ -187,9 +178,10 @@ pub(super) fn expand(
 }
 
 /// The input-axis pieces of one handler: the `In` spelling of the `Handle` impl, its
-/// lifetime-free axis marker, the emitted input parameter (with the user's pattern in place
-/// where the types match exactly), the impl's lifetime intro, and the rebinding that hands the
-/// user's declared pattern the input where they do not.
+/// lifetime-free axis marker (projected off the type through `Input`, which is what makes the
+/// lane the type's own business), the emitted input parameter (with the user's pattern in
+/// place where the types match exactly), the impl's lifetime intro, and the rebinding that
+/// hands the user's declared pattern the input where they do not.
 struct InputAxis {
     in_ty: TokenStream2,
     axis: TokenStream2,
@@ -198,66 +190,46 @@ struct InputAxis {
     input_binding: TokenStream2,
 }
 
-fn input_axis(
-    shape: Shape,
-    input_ty: &syn::Type,
-    pat: &Pat,
-    pair: Option<(&syn::Type, &syn::Type)>,
-) -> InputAxis {
+fn input_axis(shape: Shape, input_ty: &syn::Type, pat: &Pat) -> InputAxis {
+    // A `Deserialized` view's elided lifetime (`&Frame<'_>`) becomes the impl's own lifetime in
+    // the `In` position and the `'static` representative in the lifetime-free projections.
+    let (in_elem, borrows) = subst_elided_lifetime(input_ty, "'__rs");
+    let (static_elem, _) = subst_elided_lifetime(input_ty, "'static");
+    let lifetime = if borrows { quote!('__rs,) } else { quote!() };
     match shape {
         // The declared `&T` parameter is the trait's own input type, so the user's pattern
-        // stays in parameter position and no rebinding exists to lint about. A
-        // `Message<H, P>`-shaped input selects the pair axis: the core decodes the payload and
-        // the header contract in one stage, under one decode policy.
+        // stays in parameter position when nothing was rewritten, and no rebinding exists to
+        // lint about; a rewritten (borrowing) input rebinds off a named parameter. A
+        // `_`-prefixed pattern makes that rebinding look effect-free to the lint, which is
+        // exactly what it is.
         Shape::Single => InputAxis {
-            in_ty: quote!(#input_ty),
-            axis: pair.map_or_else(
-                || quote!(::ruststream::runtime::Solo<#input_ty>),
-                |(headers, payload)| quote!(::ruststream::runtime::SoloPair<#headers, #payload>),
-            ),
-            input_arg: quote!(#pat: &#input_ty),
-            lifetime: quote!(),
-            input_binding: quote!(),
-        },
-        // The wrapper derefs to `&[u8]`, so the user's declared `&[u8]` parameter rebinds by
-        // coercion at zero cost; a `_`-prefixed pattern makes that rebinding look effect-free
-        // to the lint, which is exactly what it is.
-        Shape::Raw => InputAxis {
-            in_ty: quote!(::ruststream::runtime::Payload<'__rs>),
-            axis: quote!(::ruststream::runtime::SoloBytes),
-            input_arg: quote!(__rs_input: &::ruststream::runtime::Payload<'__rs>),
-            lifetime: quote!('__rs,),
-            input_binding: quote! {
-                #[allow(clippy::no_effect_underscore_binding)]
-                let #pat: &[u8] = __rs_input;
+            in_ty: quote!(#in_elem),
+            axis: quote!(<#static_elem as ::ruststream::runtime::Input>::Axis),
+            input_arg: if borrows {
+                quote!(__rs_input: &#in_elem)
+            } else {
+                quote!(#pat: &#in_elem)
+            },
+            lifetime,
+            input_binding: if borrows {
+                quote! {
+                    #[allow(clippy::no_effect_underscore_binding)]
+                    let #pat = __rs_input;
+                }
+            } else {
+                quote!()
             },
         },
         // The page rebinds off a named parameter so the page length stays reachable whatever
-        // the user's pattern is. A `Message<H, P>` element selects the pair axis, like the
-        // single form above.
+        // the user's pattern is.
         Shape::Batch => InputAxis {
-            in_ty: quote!([#input_ty]),
-            axis: pair.map_or_else(
-                || quote!(::ruststream::runtime::Page<#input_ty>),
-                |(headers, payload)| quote!(::ruststream::runtime::PagePair<#headers, #payload>),
-            ),
-            input_arg: quote!(__rs_input: &[#input_ty]),
-            lifetime: quote!(),
+            in_ty: quote!([#in_elem]),
+            axis: quote!(<[#static_elem] as ::ruststream::runtime::Input>::Axis),
+            input_arg: quote!(__rs_input: &[#in_elem]),
+            lifetime,
             input_binding: quote! {
                 #[allow(clippy::no_effect_underscore_binding)]
                 let #pat = __rs_input;
-            },
-        },
-        // The raw page rebinds off a named parameter like the decoded one; the rebinding is
-        // ascribed through the user's own `Payload` path, so their import stays used.
-        Shape::RawBatch => InputAxis {
-            in_ty: quote!([::ruststream::runtime::Payload<'__rs>]),
-            axis: quote!(::ruststream::runtime::PageBytes),
-            input_arg: quote!(__rs_input: &[::ruststream::runtime::Payload<'__rs>]),
-            lifetime: quote!('__rs,),
-            input_binding: quote! {
-                #[allow(clippy::no_effect_underscore_binding)]
-                let #pat: &[#input_ty] = __rs_input;
             },
         },
     }
@@ -271,27 +243,19 @@ fn reply_plan<'a>(
     block: &syn::Block,
     paged: bool,
 ) -> syn::Result<ReplyPlan<'a>> {
-    if let Some(topic) = &args.publish_raw {
-        let (ty, body) = publishing_reply(func, block, true)?;
-        return Ok(ReplyPlan::Bare {
-            topic,
-            ty: quote!(#ty),
-            body,
-        });
-    }
     let Some(topic) = &args.publish else {
         return Ok(ReplyPlan::None);
     };
     Ok(if paged {
         let (elem, body) = batch_reply_body(func, block)?;
-        ReplyPlan::Encoded {
+        ReplyPlan::Publish {
             topic,
             ty: quote!(#elem),
             body,
         }
     } else {
-        let (ty, body) = publishing_reply(func, block, false)?;
-        ReplyPlan::Encoded {
+        let (ty, body) = publishing_reply(func, block)?;
+        ReplyPlan::Publish {
             topic,
             ty: quote!(#ty),
             body,
@@ -310,20 +274,17 @@ fn definition_wiring(
     axis: &TokenStream2,
     r_tokens: &TokenStream2,
     ctx_ty: &TokenStream2,
-    raw: bool,
 ) -> TokenStream2 {
     let HandlerParts {
         name,
         source_expr,
         outs,
-        shape,
         settings_chain,
         settings_source_ty,
         settings_state_ty,
         ..
     } = parts;
-    let paged = matches!(shape, Shape::Batch | Shape::RawBatch);
-    let form = form_token(paged, raw, reply, !outs.is_empty());
+    let form = form_token(axis, r_tokens, reply, !outs.is_empty());
     let doc_state = quote!(::ruststream::runtime::Probed);
     let sealed_ty = |o: &TokenStream2| {
         let plain = quote! {
@@ -331,27 +292,18 @@ fn definition_wiring(
         };
         match reply {
             ReplyPlan::None => quote!(::ruststream::runtime::Sealed<#plain>),
-            ReplyPlan::Encoded { .. } => quote! {
+            ReplyPlan::Publish { .. } => quote! {
                 ::ruststream::runtime::Sealed<::ruststream::runtime::ReplyValue<
                     #plain,
                     ::ruststream::runtime::NamedDest,
-                    ::ruststream::runtime::EncodedReply,
                     ::ruststream::runtime::DefaultReply,
-                >>
-            },
-            ReplyPlan::Bare { .. } => quote! {
-                ::ruststream::runtime::Sealed<::ruststream::runtime::ReplyValue<
-                    #plain,
-                    ::ruststream::runtime::NamedDest,
-                    ::ruststream::runtime::BareReply,
-                    ::ruststream::runtime::DefaultBareReply,
                 >>
             },
         }
     };
     let def_expr = match reply {
         ReplyPlan::None => quote!(::ruststream::runtime::probed_def(self, #docs_expr)),
-        ReplyPlan::Encoded { topic, .. } | ReplyPlan::Bare { topic, .. } => {
+        ReplyPlan::Publish { topic, .. } => {
             quote!(::ruststream::runtime::probed_reply_def(self, #docs_expr, #topic))
         }
     };
@@ -504,27 +456,25 @@ fn verdict_pieces(
                     },
                 }
             }
-            ReplyPlan::Encoded { ty, body, .. } | ReplyPlan::Bare { ty, body, .. } => {
-                VerdictPieces {
-                    verdict_ty: quote! {
-                        ::core::result::Result<::std::vec::Vec<#ty>, ::std::vec::Vec<#outcome>>
-                    },
-                    page_len,
-                    reject: quote! {
-                        return ::core::result::Result::Err(::ruststream::runtime::uniform_page(
-                            ::core::convert::Into::<#outcome>::into(__rs_err),
-                            __rs_page_len,
-                        ))
-                    },
-                    glue: quote! {
-                        let __rs_replies: ::core::result::Result<::std::vec::Vec<#ty>, #outcome> =
-                            { #body };
-                        __rs_replies.map_err(|__rs_uniform| {
-                            ::ruststream::runtime::uniform_page(__rs_uniform, __rs_page_len)
-                        })
-                    },
-                }
-            }
+            ReplyPlan::Publish { ty, body, .. } => VerdictPieces {
+                verdict_ty: quote! {
+                    ::core::result::Result<::std::vec::Vec<#ty>, ::std::vec::Vec<#outcome>>
+                },
+                page_len,
+                reject: quote! {
+                    return ::core::result::Result::Err(::ruststream::runtime::uniform_page(
+                        ::core::convert::Into::<#outcome>::into(__rs_err),
+                        __rs_page_len,
+                    ))
+                },
+                glue: quote! {
+                    let __rs_replies: ::core::result::Result<::std::vec::Vec<#ty>, #outcome> =
+                        { #body };
+                    __rs_replies.map_err(|__rs_uniform| {
+                        ::ruststream::runtime::uniform_page(__rs_uniform, __rs_page_len)
+                    })
+                },
+            },
         }
     } else {
         let reject = quote! {
@@ -545,36 +495,36 @@ fn verdict_pieces(
                     ))
                 },
             },
-            ReplyPlan::Encoded { ty, body, .. } | ReplyPlan::Bare { ty, body, .. } => {
-                VerdictPieces {
-                    verdict_ty: quote!(::core::result::Result<#ty, #outcome>),
-                    page_len: quote!(),
-                    reject,
-                    glue: body.clone(),
-                }
-            }
+            ReplyPlan::Publish { ty, body, .. } => VerdictPieces {
+                verdict_ty: quote!(::core::result::Result<#ty, #outcome>),
+                page_len: quote!(),
+                reject,
+                glue: body.clone(),
+            },
         }
     }
 }
 
-/// The mount form token of one unified handler: the same vocabulary the old emission used, so
-/// every include-site chain (`.publisher(..)`, `.out(marker, ..)`, `.build()`) keeps compiling
-/// unchanged.
-fn form_token(paged: bool, raw: bool, reply: &ReplyPlan<'_>, has_outs: bool) -> TokenStream2 {
-    let forms = quote!(::ruststream::runtime::forms);
-    match (paged, reply, has_outs) {
-        (true, ReplyPlan::None, false) if raw => quote!(#forms::RawBatch),
-        (true, ReplyPlan::None, false) => quote!(#forms::Batch),
-        (true, ReplyPlan::None, true) => quote!(#forms::BatchOut),
-        (true, _, false) => quote!(#forms::BatchPublishing),
-        (true, _, true) => quote!(#forms::BatchPublishingOut),
-        (false, ReplyPlan::None, false) if raw => quote!(#forms::RawSubscribing),
-        (false, ReplyPlan::None, false) => quote!(#forms::Subscribing),
-        (false, ReplyPlan::None, true) => quote!(#forms::Out),
-        (false, ReplyPlan::Bare { .. }, false) => quote!(#forms::RawReply),
-        (false, ReplyPlan::Bare { .. }, true) => quote!(#forms::RawReplyOut),
-        (false, ReplyPlan::Encoded { .. }, false) => quote!(#forms::Publishing),
-        (false, ReplyPlan::Encoded { .. }, true) => quote!(#forms::PublishingOut),
+/// The mount form token of one unified handler, projected off the types: the input's axis
+/// carries the eager and slot forms, and a reply routes by its own type's wire - so the
+/// emission never decides a lane. The vocabulary is the same the include-site chains
+/// (`.publisher(..)`, `.out(marker, ..)`, `.build()`) always dispatched on.
+fn form_token(
+    axis: &TokenStream2,
+    r_tokens: &TokenStream2,
+    reply: &ReplyPlan<'_>,
+    has_outs: bool,
+) -> TokenStream2 {
+    let route = quote! {
+        <#r_tokens as ::ruststream::runtime::ReplyRoute<
+            <#axis as ::ruststream::runtime::Axis>::Family,
+        >>
+    };
+    match (reply, has_outs) {
+        (ReplyPlan::None, false) => quote!(<#axis as ::ruststream::runtime::Axis>::EagerForm),
+        (ReplyPlan::None, true) => quote!(<#axis as ::ruststream::runtime::Axis>::SlotForm),
+        (ReplyPlan::Publish { .. }, false) => quote!(#route::DeclaredForm),
+        (ReplyPlan::Publish { .. }, true) => quote!(#route::DeclaredSlotForm),
     }
 }
 
@@ -650,43 +600,43 @@ fn arena_binding(pat: &Pat, marker: &TokenStream2) -> TokenStream2 {
 
 /// The probe-captured metadata expression of one unified handler: everything the definition
 /// traits used to report through per-def method overrides, evaluated at the expansion site's
-/// concrete types and carried into the sealed definition as data.
-fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>, raw: bool) -> TokenStream2 {
+/// concrete types and carried into the sealed definition as data. The probes degrade per type
+/// (a type without `JsonSchema` or `MessageInfo` contributes nothing), so a `Deserialized`
+/// input and a `Serialized` reply are probed like any other type and report their names.
+fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>) -> TokenStream2 {
     let HandlerParts {
         input_ty,
         pair,
         description,
         extractors,
         outs,
-        shape,
         ..
     } = parts;
     let none = quote!(::core::option::Option::None);
     // The pair input's payload half is what the schema and message metadata describe; its
-    // contract half feeds the headers schema below.
+    // contract half feeds the headers schema below. Probes take the lifetime-free
+    // representative of a borrowing input.
     let payload_ty = pair.map_or(*input_ty, |(_, payload)| payload);
-    let (input_schema, message_name, message_description) = if raw {
-        (none.clone(), none.clone(), none.clone())
-    } else {
-        (
-            quote! {{
-                #[allow(unused_imports)]
-                use ::ruststream::__private::NoSchemaProbe as _;
-                ::ruststream::__private::Probe::<#payload_ty>::new().schema_json()
-            }},
-            quote! {{
-                #[allow(unused_imports)]
-                use ::ruststream::__private::NoMessageProbe as _;
-                ::ruststream::__private::Probe::<#payload_ty>::new().message_name()
-            }},
-            quote! {{
-                #[allow(unused_imports)]
-                use ::ruststream::__private::NoMessageProbe as _;
-                ::ruststream::__private::Probe::<#payload_ty>::new().message_description()
-            }},
-        )
-    };
-    let headers_schema = headers_schema_expr(*shape, extractors, input_ty, *pair);
+    let (payload_static, _) = super::subst_elided_lifetime(payload_ty, "'static");
+    let payload_static = quote!(#payload_static);
+    let (input_schema, message_name, message_description) = (
+        quote! {{
+            #[allow(unused_imports)]
+            use ::ruststream::__private::NoSchemaProbe as _;
+            ::ruststream::__private::Probe::<#payload_static>::new().schema_json()
+        }},
+        quote! {{
+            #[allow(unused_imports)]
+            use ::ruststream::__private::NoMessageProbe as _;
+            ::ruststream::__private::Probe::<#payload_static>::new().message_name()
+        }},
+        quote! {{
+            #[allow(unused_imports)]
+            use ::ruststream::__private::NoMessageProbe as _;
+            ::ruststream::__private::Probe::<#payload_static>::new().message_description()
+        }},
+    );
+    let headers_schema = headers_schema_expr(extractors, &payload_static, *pair);
 
     // The reply entry (probed like the old `outgoing()` override) plus each slot's declared
     // set - the parameter's narrowed list when it names one (each member reporting itself
@@ -700,16 +650,7 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>, raw: bool) 
     } else {
         let reply_entry = match reply {
             ReplyPlan::None => quote!(),
-            ReplyPlan::Encoded { topic, ty, .. } => outgoing_entry(&quote!(#topic), ty),
-            // A publish_raw reply is bytes: no schema, no MessageInfo metadata to probe. The
-            // explicit &'static str binding keeps a wrongly-typed destination expression a
-            // plain type error instead of a trait-bound failure inside the metadata builder.
-            ReplyPlan::Bare { topic, .. } => quote! {
-                __rs_outgoing.push(::ruststream::runtime::OutgoingMessageMetadata::new(
-                    { let __rs_channel: &'static str = #topic; __rs_channel },
-                    "bytes",
-                ));
-            },
+            ReplyPlan::Publish { topic, ty, .. } => outgoing_entry(&quote!(#topic), ty),
         };
         let slots = outs.iter().map(|out| {
             let marker = &out.marker;

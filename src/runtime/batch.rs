@@ -28,7 +28,7 @@ use crate::IncomingMessage;
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handle::Payload;
+use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::HandlerMetadata;
@@ -158,47 +158,32 @@ pub fn uniform_page(outcome: HandlerOutcome, page_len: usize) -> Vec<HandlerOutc
     note = "a batch handler takes (&[T], &mut Context) and returns an IntoBatchResult value; \
             per-element header contracts ride a `&[Message<H, T>]` body instead"
 )]
-pub trait SliceHandler<T, S = ()>: Send + Sync {
-    /// Handles one decoded batch, with the per-batch [`Context`] carrying the typed app state `S`.
+pub trait SliceHandler<T, C = (), S = ()>: Send + Sync {
+    /// Handles one decoded batch, with the per-page [`Context`] carrying the broker's
+    /// subscription-scoped context `C` and the typed app state `S`.
     fn handle_slice(
         &self,
         batch: &[T],
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = BatchResult> + Send;
 }
 
-impl<T, F, Fut, S> SliceHandler<T, S> for F
+impl<T, F, Fut, C, S> SliceHandler<T, C, S> for F
 where
-    F: Fn(&[T], &mut Context<'_, (), S>) -> Fut + Send + Sync,
+    F: Fn(&[T], &mut Context<'_, C, S>) -> Fut + Send + Sync,
     Fut: Future + Send,
     Fut::Output: IntoBatchResult,
 {
     fn handle_slice(
         &self,
         batch: &[T],
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = BatchResult> + Send {
         // Build the inner future before the async block so the returned future does not hold
         // `&[T]` (which would demand `T: Sync` for it to be `Send`).
         let fut = (self)(batch, ctx);
         async move { fut.await.into_batch_result() }
     }
-}
-
-/// A handler invoked with one whole batch of undecoded payloads.
-///
-/// The byte-level counterpart of [`SliceHandler`], selected by a `&[Payload<'_>]` message
-/// parameter: a raw batch is the typed batch without the decode step, so the handler sees the
-/// payloads as borrowed views into the batch's own messages, which the dispatcher holds for the
-/// duration of the call. Nothing is copied, and the settlement rules are the batch path's.
-pub trait RawSliceHandler<S = ()>: Send + Sync {
-    /// Handles one batch of payloads, with the per-batch [`Context`] carrying the typed app
-    /// state `S`.
-    fn handle_slice(
-        &self,
-        batch: &[Payload<'_>],
-        ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = BatchResult> + Send;
 }
 
 /// A batch handler definition produced by a `&[T]`-taking `#[subscriber]` handler.
@@ -208,10 +193,17 @@ pub trait RawSliceHandler<S = ()>: Send + Sync {
 /// [`BatchSubscriber::batches`](crate::BatchSubscriber::batches) instead of
 /// [`Subscriber::stream`](crate::Subscriber::stream).
 pub trait BatchDef: Sized {
-    /// The input kind of one batch element ([`Decoded<T>`](super::Decoded); the byte kind does
-    /// not batch - a borrowed multi-payload view has no owned form to lend it from). The handler
-    /// consumes a slice of the kind's owned decode product, `&[T]`.
+    /// The input kind of one batch element ([`Decoded<T>`](super::Decoded) for a `serde`
+    /// element, [`Provided<F>`](super::Provided) for a
+    /// [`Deserialized`](crate::runtime::Deserialized) one). The handler consumes a slice of the
+    /// elements, `&[T]`.
     type Input: InputKind;
+
+    /// The broker's typed subscription-scoped context the page's handler reads by key (`()`
+    /// when the handler names none). Built once per page from its first delivery (see
+    /// [`BuildBatchContext`](crate::BuildBatchContext)): a page spans many deliveries, so only
+    /// data every delivery of the subscription shares belongs here.
+    type Context;
 
     /// The concrete handler type over batches of the element type.
     ///
@@ -290,12 +282,12 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
 
 /// The dispatch-side consumer of one raw batch: decode, run the handler, settle every delivery.
 /// The batch counterpart of [`Handler`](super::Handler) at the raw-message level.
-pub(crate) trait BatchHandler<M, S = ()>: Send + Sync {
+pub(crate) trait BatchHandler<M, C = (), S = ()>: Send + Sync {
     /// Consumes one batch of raw deliveries, acknowledging each of them.
     fn handle_batch(
         &self,
         batch: Vec<M>,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = ()> + Send;
 }
 
@@ -365,19 +357,20 @@ impl<M, Input, DecodeCodec, Inner> fmt::Debug for TypedBatch<M, Input, DecodeCod
     }
 }
 
-impl<M, Input, DecodeCodec, Inner, S> BatchHandler<M, S>
+impl<M, Input, DecodeCodec, Inner, C, S> BatchHandler<M, C, S>
     for TypedBatch<M, Input, DecodeCodec, Inner>
 where
     M: IncomingMessage,
     Input: DecodeWith<DecodeCodec>,
     DecodeCodec: Send + Sync,
-    Inner: SliceHandler<Input::Owned, S>,
+    Inner: SliceHandler<Input::Owned, C, S>,
+    C: Send + Sync,
     S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
         let subscription = ctx.name().to_owned();
         let (values, accepted) =
-            decode_batch::<M, Input, DecodeCodec, S>(batch, &self.codec, self.decode, ctx).await;
+            decode_batch::<M, Input, DecodeCodec, C, S>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
             return;
         }
@@ -387,55 +380,145 @@ where
     }
 }
 
-/// The batch adapter of the byte input kind: no codec, no decode, no rejections.
+/// The batch adapter of the self-deserializing input kind: no codec runs; each element of the
+/// page constructs itself from its delivery's payload
+/// ([`Deserialized`](crate::runtime::Deserialized)), borrowing it.
 ///
-/// Every delivery reaches the handler, as a borrowed payload view; the [`BatchResult`] settles
-/// the deliveries behind those views exactly as on the typed path.
-pub struct RawBatch<M, Inner> {
+/// An element whose construction fails is settled by the `decode` [`FailurePolicy`] and never
+/// reaches the handler, exactly as a codec decode failure on the typed path; the rest reach the
+/// body as one page, and the returned [`BatchResult`] settles the deliveries behind it.
+pub struct DeserializedBatch<M, F, Inner> {
     inner: Inner,
-    _phantom: PhantomData<fn(M)>,
+    decode: FailurePolicy,
+    _phantom: PhantomData<fn(M, F)>,
 }
 
-impl<M, Inner> RawBatch<M, Inner> {
+impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
     /// Builds the adapter over the batch handler, like [`TypedBatch::over`].
     #[must_use]
     pub(crate) fn over(inner: Inner) -> Self {
         Self {
             inner,
+            decode: FailurePolicy::Drop,
             _phantom: PhantomData,
         }
     }
-}
 
-impl<M, Inner> fmt::Debug for RawBatch<M, Inner> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RawBatch").finish_non_exhaustive()
+    /// Sets the policy applied when an element's construction fails.
+    #[must_use]
+    pub(crate) fn with_decode(mut self, decode: FailurePolicy) -> Self {
+        self.decode = decode;
+        self
     }
 }
 
-impl<M, Inner, S> BatchHandler<M, S> for RawBatch<M, Inner>
+impl<M, F, Inner> fmt::Debug for DeserializedBatch<M, F, Inner> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DeserializedBatch")
+            .field("decode", &self.decode)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M, F, Inner, C, S> BatchHandler<M, C, S> for DeserializedBatch<M, F, Inner>
 where
     M: IncomingMessage,
-    Inner: RawSliceHandler<S>,
+    F: Deserialized + Send + Sync + 'static,
+    Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
+    C: Send + Sync,
     S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
         let subscription = ctx.name().to_owned();
         if batch.is_empty() {
             return;
         }
-        #[cfg(feature = "otel")]
-        record_batch_size(&subscription, batch.len());
         let tasks = ctx.tasks().clone();
-        // The views borrow the deliveries, so they are gone before the batch is settled.
-        let result = {
-            let payloads: Vec<Payload<'_>> = batch
-                .iter()
-                .map(|msg| Payload::new(msg.payload()))
-                .collect();
-            self.inner.handle_slice(&payloads, ctx).await
+        // The constructed values borrow the deliveries' payloads, so the deliveries stay owned
+        // by `batch` and the values are dropped before anything settles. Rejections are settled
+        // after the page runs, which keeps the accepted values contiguous with no second pass.
+        let mut values = Vec::with_capacity(batch.len());
+        // (index into `batch`, its settlement); empty on the happy path, so nothing allocates.
+        let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
+        for (index, msg) in batch.iter().enumerate() {
+            match F::from_payload(msg.payload()) {
+                Ok(value) => values.push(value),
+                Err(err) => {
+                    warn!(
+                        target: "ruststream::dispatch",
+                        subscription = %subscription,
+                        message_type = std::any::type_name::<F>(),
+                        error = %err,
+                        "payload construction failed",
+                    );
+                    let outcome =
+                        rejection(&err, "batch payload construction failed", self.decode, ctx);
+                    rejected.push((index, outcome));
+                }
+            }
+        }
+        #[cfg(feature = "otel")]
+        if !values.is_empty() {
+            record_batch_size(&subscription, values.len());
+        }
+        let result = if values.is_empty() {
+            BatchResult::PerElement(Vec::new())
+        } else {
+            self.inner.handle_slice(&values, ctx).await
         };
-        settle_batch(batch, result, &subscription, &tasks).await;
+        drop(values);
+        settle_split_batch(batch, rejected, result, &subscription, &tasks).await;
+    }
+}
+
+/// Settles a page whose rejected elements were deferred past the handler call: each rejected
+/// index settles by its recorded outcome, and the accepted remainder settles by the handler's
+/// [`BatchResult`] in order, exactly as [`settle_batch`] applies it.
+async fn settle_split_batch<M: IncomingMessage>(
+    batch: Vec<M>,
+    rejected: Vec<(usize, HandlerResult)>,
+    result: BatchResult,
+    subscription: &str,
+    tasks: &TaskTracker,
+) {
+    if rejected.is_empty() {
+        return settle_batch(batch, result, subscription, tasks).await;
+    }
+    let accepted_len = batch.len() - rejected.len();
+    let per_element = match result {
+        // Fan the uniform outcome out over the accepted elements only; the rejects keep their
+        // own settlements.
+        BatchResult::Uniform(outcome) => uniform_page(outcome, accepted_len),
+        BatchResult::PerElement(results) => {
+            if results.len() != accepted_len {
+                error!(
+                    target: "ruststream::dispatch",
+                    subscription = %subscription,
+                    expected = accepted_len,
+                    returned = results.len(),
+                    "per-element outcome count does not match the batch; \
+                     retrying the unmatched remainder",
+                );
+            }
+            results
+        }
+    };
+    let mut accepted_results = per_element.into_iter();
+    let mut rejected = rejected.into_iter().peekable();
+    for (index, msg) in batch.into_iter().enumerate() {
+        if rejected.peek().is_some_and(|(at, _)| *at == index) {
+            let (_, outcome) = rejected.next().expect("peeked");
+            settle(msg, outcome, subscription).await;
+            continue;
+        }
+        let mut result = accepted_results
+            .next()
+            .unwrap_or_else(HandlerOutcome::retry);
+        let after = result.take_after();
+        settle(msg, result.outcome(), subscription).await;
+        if let Some(after) = after {
+            tasks.spawn(after);
+        }
     }
 }
 
@@ -531,16 +614,17 @@ fn record_batch_size(destination: &str, len: usize) {
 /// across an `.await` would wrongly require `Context: Sync`.
 // The `&mut` is for Send-ness, not mutation (only `&self` methods are called), so the lint fires.
 #[allow(clippy::needless_pass_by_ref_mut)]
-pub(crate) async fn decode_batch<M, Input, DecodeCodec, S>(
+pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S>(
     batch: Vec<M>,
     codec: &DecodeCodec,
     decode: FailurePolicy,
-    ctx: &mut Context<'_, (), S>,
+    ctx: &mut Context<'_, C, S>,
 ) -> (Vec<Input::Owned>, Vec<M>)
 where
     M: IncomingMessage,
     Input: DecodeWith<DecodeCodec>,
     DecodeCodec: Sync,
+    C: Send + Sync,
     S: Send + Sync,
 {
     let subscription = ctx.name().to_owned();
@@ -578,11 +662,11 @@ where
 /// Shared by the payload decode and the header contract, which are the same class of bad external
 /// input. Not `async`: the outcome is decided before the delivery is settled, so the borrowed
 /// error never crosses an await.
-fn rejection<S>(
+fn rejection<C, S>(
     err: &impl fmt::Display,
     reason: &str,
     decode: FailurePolicy,
-    ctx: &Context<'_, (), S>,
+    ctx: &Context<'_, C, S>,
 ) -> HandlerResult {
     match decode {
         FailurePolicy::FailFast => {

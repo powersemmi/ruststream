@@ -19,5 +19,5 @@ error[E0308]: mismatched types
 note: function defined here
  --> src/runtime/handle/value.rs
   |
-  | pub fn probed_reply_def<A, R, O, C, H, Route, Attach>(
+  | pub fn probed_reply_def<A, R, O, C, H>(
   |        ^^^^^^^^^^^^^^^^

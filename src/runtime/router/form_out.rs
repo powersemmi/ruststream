@@ -33,8 +33,8 @@ use super::builders::{
     RouterSlotCommit, RouterSlots, RouterSlotsWithReply,
 };
 use super::mount::{
-    BatchInjectMount, BatchPublishInjectMount, DefaultBareReply, DefaultReply, InjectMount,
-    MountCodec, PublishInjectMount, RawReplyInjectMount, RouterMount,
+    BatchInjectMount, BatchPublishInjectMount, DefaultReply, InjectMount, MountCodec,
+    PublishInjectMount, RawReplyInjectMount, RouterMount,
 };
 use super::{
     BatchInjectedRouter, BatchPublishingRouter, InjectedRouter, PublishingRouter, RawReplyRouter,
@@ -110,7 +110,7 @@ macro_rules! slot_reply_form {
 
 slot_reply_form! {
     forms::PublishingOut => DefaultReply as RouterPublishingOut,
-    forms::RawReplyOut => DefaultBareReply as RouterRawReplyOut,
+    forms::RawReplyOut => DefaultReply as RouterRawReplyOut,
     forms::BatchPublishingOut => DefaultReply as RouterBatchPublishingOut,
 }
 
@@ -437,9 +437,11 @@ macro_rules! impl_default_typed_reply_slot_commit {
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 impl_default_typed_reply_slot_commit!(PublishInjectMount, BatchPublishInjectMount);
 
+// The serialized wire's default next to the slot tuple: the broker's plain policy taken bare,
+// with no codec demand, keyed by the raw mount token.
 impl<B, Routes, RouteCodec, RouteLayers, Def, Slots>
     RouterSlotCommit<RawReplyInjectMount, B, Routes, RouteCodec, RouteLayers, Def>
-    for (DefaultBareReply, Slots)
+    for (DefaultReply, Slots)
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,

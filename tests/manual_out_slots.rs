@@ -8,11 +8,31 @@
 //! body's own parameter, so the raw-input one needs nothing else.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
+use std::convert::Infallible;
+
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::prelude::*;
+use ruststream::runtime::{Input, SoloDeserialized};
 use ruststream::testing::TestApp;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, PairError};
 use serde::{Deserialize, Serialize};
+
+// `#[derive(Deserialized)]` by hand: the payload view the slot-publishing body takes, and the
+// input spelling that routes it onto the codec-free lane.
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
 
 /// The message the slot publishes carry; it declares no name, so each call site names one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -49,14 +69,14 @@ type TranscodeSlots<EncodedPub, AuditPub, EncA, EncB> =
     Outs<(Slot<Encoded, EncodedPub, EncA>, Slot<Audit, AuditPub, EncB>)>;
 
 impl<'p, EncodedPub, AuditPub, EncA, EncB>
-    Handle<Payload<'p>, (), TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>> for Transcode
+    Handle<Frame<'p>, (), TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>> for Transcode
 where
     Slot<Encoded, EncodedPub, EncA>: Publish,
     Slot<Audit, AuditPub, EncB>: Publish,
 {
     async fn handle(
         &self,
-        chunk: &Payload<'p>,
+        chunk: &Frame<'p>,
         outs: &TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
@@ -64,7 +84,7 @@ where
         headers.insert("source", "slots.in");
         if outs
             .get(Encoded)
-            .raw(&chunk[..])
+            .raw(chunk.0)
             .with_headers(headers)
             .to("slots.encoded")
             .publish()
@@ -73,7 +93,7 @@ where
         {
             return Err(HandlerOutcome::retry());
         }
-        let receipt = chunk.len().to_be_bytes();
+        let receipt = chunk.0.len().to_be_bytes();
         if outs
             .get(Audit)
             .raw(&receipt)
