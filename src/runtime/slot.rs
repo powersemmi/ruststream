@@ -445,7 +445,7 @@ pub trait BindSlots<C: ConnectedBroker, Sources>: Sized {
     /// The publisher-applied definition type.
     type Bound;
 
-    /// The extra tuple [`FromStartup`](super::FromStartup) resolves the injections against:
+    /// The extra tuple the startup resolution (`FromStartup`) resolves the injections against:
     /// the sources, padded to the injection tuple's arity.
     type Extra;
 

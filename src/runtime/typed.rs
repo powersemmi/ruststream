@@ -44,8 +44,8 @@ pub struct Typed<M, Input, DecodeCodec, Inner> {
 }
 
 impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
-    /// Builds the adapter for any input kind: [`Decoded<T>`] decodes with `codec`,
-    /// [`RawBytes`](super::RawBytes) ignores it (pass `()`) and lends the payload itself.
+    /// Builds the adapter for any input kind: `Decoded<T>` decodes with `codec`, the
+    /// self-deserializing `Provided<F>` ignores it (pass `()`) and lends the payload itself.
     #[must_use]
     pub fn over(codec: DecodeCodec, inner: Inner) -> Self
     where
