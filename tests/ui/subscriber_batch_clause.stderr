@@ -1,5 +1,0 @@
-error: the batch(..) clause is retired: the subscription form is inferred from the payload type - write the source alone (#[subscriber("frames")]) and take the whole batch as `&[T]` (`&[&[u8]]` for undecoded payloads)
-  --> tests/ui/subscriber_batch_clause.rs:11:14
-   |
-11 | #[subscriber(batch("orders"))]
-   |              ^^^^^

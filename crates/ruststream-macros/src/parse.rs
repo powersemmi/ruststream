@@ -43,11 +43,8 @@ pub(crate) enum SourceArg {
 }
 
 /// The clause keywords, so a leading one is not mistaken for a source expression: they parse as
-/// expressions too (`workers(4)` is a call). The retired `batch` / `raw` form keywords stay
-/// recognized here so writing one reaches its retirement error instead of parsing as a source.
+/// expressions too (`workers(4)` is a call).
 const CLAUSES: &[&str] = &[
-    "batch",
-    "raw",
     "on_failure",
     "publish",
     "publish_raw",
@@ -207,21 +204,7 @@ impl Parse for SubscriberArgs {
             }
             need_comma = true;
             let keyword: Ident = input.parse()?;
-            if keyword == "raw" {
-                return Err(Error::new(
-                    keyword.span(),
-                    "the `raw` clause is retired: the subscription form is inferred from the \
-                     payload type - take the payload as `&[u8]` (`&[&[u8]]` for a batch of \
-                     payloads)",
-                ));
-            } else if keyword == "batch" {
-                return Err(Error::new(
-                    keyword.span(),
-                    "the batch(..) clause is retired: the subscription form is inferred from \
-                     the payload type - write the source alone (#[subscriber(\"frames\")]) and \
-                     take the whole batch as `&[T]` (`&[&[u8]]` for undecoded payloads)",
-                ));
-            } else if keyword == "on_failure" {
+            if keyword == "on_failure" {
                 if on_failure.is_some() {
                     return Err(Error::new(keyword.span(), "duplicate on_failure(..)"));
                 }
