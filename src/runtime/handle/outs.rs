@@ -58,6 +58,7 @@
 //! reference to it.
 
 use std::fmt;
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::time::Duration;
 
@@ -73,7 +74,9 @@ use crate::runtime::publish::{
     HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of,
 };
 use crate::runtime::router::IncludeDef;
-use crate::runtime::slot::{BindSlots, HasSlots, OutSlot, PublishedThrough, SlotPublisher};
+use crate::runtime::slot::{
+    BindSlots, ContainsMessage, HasSlots, OutSlot, PublishedThrough, SlotPublisher,
+};
 use crate::{
     CallerName, Connected, ConnectedBroker, HeaderMap, Name, OutgoingDestination, OutgoingMessage,
     OwnedTransactions, PairError, PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
@@ -100,12 +103,17 @@ use super::value::{HandleValue, Sealed};
 /// any broker-defined capability trait alike, so a body pins the entry to the broker's concrete
 /// live type (or bounds `W` with the broker's trait) and calls it directly. A publisher-shaped
 /// entry additionally offers the typed and raw publish builders through [`Publish`].
-pub struct Slot<M, W, E> {
+///
+/// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
+/// `#[subscriber]` parameter's third `Out` position narrows it; [`message`](Self::message)
+/// checks it at compile time (see [`ContainsMessage`]).
+pub struct Slot<M, W, E, Body = ()> {
     wired: SlotPublisher<W, M>,
     codec: E,
+    _declared: PhantomData<fn() -> Body>,
 }
 
-impl<M, W, E> fmt::Debug for Slot<M, W, E> {
+impl<M, W, E, Body> fmt::Debug for Slot<M, W, E, Body> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Slot").finish_non_exhaustive()
     }
@@ -116,7 +124,7 @@ impl<M, W, E> fmt::Debug for Slot<M, W, E> {
 // entry itself (`Publish::message`, the delegated core capabilities) keep the slot's
 // test-capture attribution; calls reaching the live value through this `Deref` leave through
 // the unwrapped value and bypass it, like a settled owned transaction's buffer.
-impl<M, W, E> Deref for Slot<M, W, E> {
+impl<M, W, E, Body> Deref for Slot<M, W, E, Body> {
     type Target = W;
 
     fn deref(&self) -> &W {
@@ -156,7 +164,7 @@ pub trait Publish: Send + Sync {
     fn encode_codec(&self) -> &Self::EncodeCodec;
 }
 
-impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync> Publish for Slot<M, W, E> {
+impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Body> Publish for Slot<M, W, E, Body> {
     type Leaf = SlotPublisher<W, M>;
     type EncodeCodec = E;
 
@@ -169,13 +177,15 @@ impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync> Publish for Slot<M, W, E>
     }
 }
 
-impl<M: OutSlot, W, E> Slot<M, W, E> {
+impl<M: OutSlot, W, E, Body> Slot<M, W, E, Body> {
     /// Starts a typed publish through the slot, encoded with the include site's codec. The
     /// message type has to be in the marker's `#[publishes(..)]` dictionary (see
-    /// [`PublishedThrough`](crate::runtime::PublishedThrough)).
+    /// [`PublishedThrough`](crate::runtime::PublishedThrough)) and, when the entry carries a
+    /// declared message set, in that set (see
+    /// [`ContainsMessage`](crate::runtime::ContainsMessage)).
     // The builder is spelled through the `Publish` projections (not `W` and `E` directly) so a
     // body generic over the entry needs only its declared `Slot<..>: Publish` bound to publish.
-    pub fn message<'a, T>(
+    pub fn message<'a, T, Index>(
         &'a self,
         value: &'a T,
     ) -> PublishBuilder<
@@ -187,14 +197,15 @@ impl<M: OutSlot, W, E> Slot<M, W, E> {
     >
     where
         Self: Publish,
+        Body: ContainsMessage<T, Index>,
         T: OutgoingDestination + PublishedThrough<M>,
     {
         message_of(self.leaf(), value, self.encode_codec())
     }
 
     /// Starts a byte publish through the slot: the payload travels as it is, to the destination
-    /// named with `to(..)`. The dictionary does not restrict this path - bytes carry no message
-    /// type.
+    /// named with `to(..)`. Neither the dictionary nor a declared message set restricts this
+    /// path - bytes carry no message type.
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
@@ -210,7 +221,7 @@ impl<M: OutSlot, W, E> Slot<M, W, E> {
 // The core capability vocabulary is also delegated on the entry itself (not only through
 // Deref), so an entry passes into generic positions demanding the capability and a direct
 // `publish` / `request` keeps the slot's test-capture attribution.
-impl<M: OutSlot, W: Publisher, E: Send + Sync> Publisher for Slot<M, W, E> {
+impl<M: OutSlot, W: Publisher, E: Send + Sync, Body> Publisher for Slot<M, W, E, Body> {
     type Error = W::Error;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
@@ -222,8 +233,8 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync> Publisher for Slot<M, W, E> {
     }
 }
 
-impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync> TransactionalPublisher
-    for Slot<M, W, E>
+impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Body> TransactionalPublisher
+    for Slot<M, W, E, Body>
 {
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
         self.wired.begin_transaction().await
@@ -238,7 +249,9 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync> TransactionalPublish
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync> OwnedTransactions for Slot<M, W, E> {
+impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Body> OwnedTransactions
+    for Slot<M, W, E, Body>
+{
     type Transaction = W::Transaction;
 
     async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
@@ -246,7 +259,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync> OwnedTransactions for Slo
     }
 }
 
-impl<M: OutSlot, W: RequestReply, E: Send + Sync> RequestReply for Slot<M, W, E> {
+impl<M: OutSlot, W: RequestReply, E: Send + Sync, Body> RequestReply for Slot<M, W, E, Body> {
     type Reply = W::Reply;
 
     async fn request(
@@ -262,8 +275,8 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync> RequestReply for Slot<M, W, E>
 /// stores the live value under the include site's encode codec. A failing pair surfaces at
 /// startup with the slot's name; an unbound slot never gets this far (the include site does not
 /// compile).
-impl<B, Sub, Policy, E, M> FromStartup<B, Sub, (Policy, E)>
-    for Slot<M, <Policy as PublishPolicy<Connected<B>>>::Live, E>
+impl<B, Sub, Policy, E, M, Body> FromStartup<B, Sub, (Policy, E)>
+    for Slot<M, <Policy as PublishPolicy<Connected<B>>>::Live, E, Body>
 where
     B: crate::Broker,
     Sub: Sync,
@@ -285,6 +298,7 @@ where
         Ok(Self {
             wired: SlotPublisher::new(live),
             codec,
+            _declared: PhantomData,
         })
     }
 }
@@ -341,12 +355,12 @@ pub struct OutPos<const N: usize>;
 
 macro_rules! impl_select_slot {
     ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
-        impl<M, W, E $(, $before)* $(, $after)*> SelectSlot<M, OutPos<$pos>>
-            for ($($before,)* Slot<M, W, E>, $($after,)*)
+        impl<M, W, E, Body $(, $before)* $(, $after)*> SelectSlot<M, OutPos<$pos>>
+            for ($($before,)* Slot<M, W, E, Body>, $($after,)*)
         {
-            type Picked = Slot<M, W, E>;
+            type Picked = Slot<M, W, E, Body>;
 
-            fn pick(&self) -> &Slot<M, W, E> {
+            fn pick(&self) -> &Slot<M, W, E, Body> {
                 #[allow(non_snake_case)]
                 let ($($before,)* picked, $($after,)*) = self;
                 $(let _ = $before;)*
@@ -396,8 +410,8 @@ pub trait EntryMarkers {
 }
 
 macro_rules! impl_entry_markers {
-    ($(($($m:ident: $w:ident / $e:ident),+))+) => {$(
-        impl<$($m: OutSlot, $w, $e),+> EntryMarkers for ($(Slot<$m, $w, $e>,)+) {
+    ($(($($m:ident: $w:ident / $e:ident / $b:ident),+))+) => {$(
+        impl<$($m: OutSlot, $w, $e, $b),+> EntryMarkers for ($(Slot<$m, $w, $e, $b>,)+) {
             type Markers = ($($m,)+);
 
             fn outgoing() -> Vec<OutgoingMessageMetadata> {
@@ -410,9 +424,9 @@ macro_rules! impl_entry_markers {
 }
 
 impl_entry_markers! {
-    (M0: W0 / E0)
-    (M0: W0 / E0, M1: W1 / E1)
-    (M0: W0 / E0, M1: W1 / E1, M2: W2 / E2)
+    (M0: W0 / E0 / B0)
+    (M0: W0 / E0 / B0, M1: W1 / E1 / B1)
+    (M0: W0 / E0 / B0, M1: W1 / E1 / B1, M2: W2 / E2 / B2)
 }
 
 // -------------------------------------------------------------------- the slot definitions
@@ -435,13 +449,13 @@ where
 /// its marker's paired live value, so the definition is its own bound form and the body's
 /// capability bounds are checked right here.
 macro_rules! impl_bind_slots {
-    ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
-        impl<Conn, A, C, H, Doc, $($m, $p, $e),+> BindSlots<Conn, ($(($p, $e),)+)>
+    ($(($($m:ident / $p:ident: $e:ident / $b:ident),+))+) => {$(
+        impl<Conn, A, C, H, Doc, $($m, $p, $e, $b),+> BindSlots<Conn, ($(($p, $e),)+)>
             for Sealed<
                 HandleValue<
                     A,
                     (),
-                    Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e>,)+)>,
+                    Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e, $b>,)+)>,
                     C,
                     H,
                     Doc,
@@ -465,9 +479,9 @@ macro_rules! impl_bind_slots {
 }
 
 impl_bind_slots! {
-    (M0 / P0: E0)
-    (M0 / P0: E0, M1 / P1: E1)
-    (M0 / P0: E0, M1 / P1: E1, M2 / P2: E2)
+    (M0 / P0: E0 / B0)
+    (M0 / P0: E0 / B0, M1 / P1: E1 / B1)
+    (M0 / P0: E0 / B0, M1 / P1: E1 / B1, M2 / P2: E2 / B2)
 }
 
 impl<A, C, H, Doc, E> InjectDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>

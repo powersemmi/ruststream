@@ -22,8 +22,8 @@ help: the following other types implement trait `RequestReply`
    |
   ::: src/runtime/handle/outs.rs
    |
-   |   impl<M: OutSlot, W: RequestReply, E: Send + Sync> RequestReply for Slot<M, W, E> {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Slot<M, W, E>`
+   |   impl<M: OutSlot, W: RequestReply, E: Send + Sync, Body> RequestReply for Slot<M, W, E, Body> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Slot<M, W, E, Body>`
    |
   ::: src/memory/capability.rs
    |

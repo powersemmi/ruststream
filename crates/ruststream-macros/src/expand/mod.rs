@@ -28,17 +28,11 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
     Ok(body.into())
 }
 
-/// Whether a handler keeps the definition-trait emission: the combinations the unified value
-/// rails cannot express without losing a feature.
-///
-/// - `Seek(..)` parameters: the injected seeker is minted from the subscription's `Seekable`
-///   capability at startup; the context-axis seek resolves through `SeekableMessage` per
-///   delivery, a different broker obligation, so a silent switch would change what brokers must
-///   implement for existing handlers.
-/// - An `Out` parameter's declared message set (the third position): the arena's [`Slot`] entry
-///   carries no per-parameter dictionary, so the compile-time narrowing would be lost.
+/// Whether a handler keeps the definition-trait emission: only `Seek(..)` parameters do - the
+/// injected seeker is minted from the subscription's `Seekable` capability at startup, a
+/// broker obligation the unified value rails do not express.
 fn uses_legacy(parts: &HandlerParts<'_>) -> bool {
-    parts.seek.is_some() || parts.outs.iter().any(|out| out.bodies.is_some())
+    parts.seek.is_some()
 }
 
 /// The combinations that are wrong before the signature is even read: two reply clauses at once.
@@ -91,16 +85,13 @@ fn reject_shape_combinations(
             ));
         }
     }
-    // The pair input rides the unified rails only; the combinations below keep the legacy
+    // The pair input rides the unified rails only; a Seek parameter keeps the legacy
     // definition-trait emission, whose input kind decodes the payload alone.
-    if parts.pair.is_some()
-        && (parts.seek.is_some() || parts.outs.iter().any(|out| out.bodies.is_some()))
-    {
+    if parts.pair.is_some() && parts.seek.is_some() {
         return Err(Error::new_spanned(
             parts.input_ty,
-            "a `Message<H, P>` input does not combine with `Seek` or a declared `Out` message \
-             set yet; a single-message handler can take the contract as a `Headers<T>` \
-             parameter instead",
+            "a `Message<H, P>` input does not combine with `Seek` yet; a single-message \
+             handler can take the contract as a `Headers<T>` parameter instead",
         ));
     }
     // With a Headers parameter the decode policy still has a job on a raw handler: it

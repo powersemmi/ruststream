@@ -15,9 +15,19 @@ use syn::{Expr, Ident, ItemFn, Pat};
 use crate::parse::SubscriberArgs;
 
 use super::{
-    HandlerParts, OutParam, Shape, batch_reply_body, extractor_preds, extractor_prelude,
+    BodyDecl, HandlerParts, OutParam, Shape, batch_reply_body, extractor_preds, extractor_prelude,
     headers_schema_expr, outgoing_entry, publishing_reply, where_clause,
 };
+
+/// The `Body` position of one `Out` parameter's arena entry: the declared message set as a
+/// type, or the unrestricted `()`.
+fn body_ty(bodies: Option<&BodyDecl<'_>>) -> TokenStream2 {
+    match bodies {
+        None => quote!(()),
+        Some(BodyDecl::List(bodies)) => quote!((#(#bodies,)*)),
+        Some(BodyDecl::Set(set)) => quote!(#set),
+    }
+}
 
 /// The reply clause of one handler, with the body already normalized to the `Result` shape.
 enum ReplyPlan<'a> {
@@ -403,11 +413,13 @@ fn slot_binding_impls(
         .zip(policies.iter().zip(&codecs))
         .map(|(out, (policy, codec))| {
             let marker = &out.marker;
+            let body = body_ty(out.bodies.as_ref());
             quote! {
                 ::ruststream::runtime::Slot<
                     #marker,
                     <#policy as ::ruststream::PublishPolicy<__RsConn>>::Live,
                     #codec,
+                    #body,
                 >
             }
         })
@@ -598,7 +610,8 @@ impl ArenaPieces {
             let codec = Ident::new(&format!("__RsOutE{index}"), name.span());
             let marker = &out.marker;
             let capability = out.bounds;
-            entries.push(quote!(::ruststream::runtime::Slot<#marker, #wired, #codec>));
+            let body = body_ty(out.bodies.as_ref());
+            entries.push(quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #body>));
             // The dispatch machinery shares the arena across worker tasks, so Send + Sync are
             // structural; the codec bound is what the entry's typed publishes encode with.
             bounds.push(quote! {
@@ -675,10 +688,14 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>, raw: bool) 
     };
     let headers_schema = headers_schema_expr(*shape, extractors, input_ty, *pair);
 
-    // The reply entry (probed like the old `outgoing()` override) plus each slot marker's whole
-    // dictionary; a slot-only handler leaves the capture empty and the sealed definition
-    // reports the markers' dictionaries itself, which is the same declaration.
-    let outgoing = if reply.is_none() {
+    // The reply entry (probed like the old `outgoing()` override) plus each slot's declared
+    // set - the parameter's narrowed list when it names one (each member reporting itself
+    // through `OutMessages`, which is also what rejects a non-set-defining type right here),
+    // the marker's whole dictionary otherwise. A handler with no reply and no narrowed slot
+    // leaves the capture empty and the sealed definition reports the markers' dictionaries
+    // itself, which is the same declaration.
+    let narrowed = outs.iter().any(|out| out.bodies.is_some());
+    let outgoing = if reply.is_none() && !narrowed {
         none
     } else {
         let reply_entry = match reply {
@@ -696,8 +713,25 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>, raw: bool) 
         };
         let slots = outs.iter().map(|out| {
             let marker = &out.marker;
-            quote! {
-                __rs_outgoing.extend(<#marker as ::ruststream::runtime::OutSlot>::outgoing());
+            match &out.bodies {
+                None => quote! {
+                    __rs_outgoing.extend(<#marker as ::ruststream::runtime::OutSlot>::outgoing());
+                },
+                Some(BodyDecl::List(bodies)) => {
+                    let entries = bodies.iter().map(|body| {
+                        quote! {
+                            __rs_outgoing.extend(
+                                <#body as ::ruststream::runtime::OutMessages<#marker>>::outgoing(),
+                            );
+                        }
+                    });
+                    quote!(#(#entries)*)
+                }
+                Some(BodyDecl::Set(set)) => quote! {
+                    __rs_outgoing.extend(
+                        <#set as ::ruststream::runtime::OutMessages<#marker>>::outgoing(),
+                    );
+                },
             }
         });
         quote! {
