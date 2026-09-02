@@ -9,7 +9,7 @@
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::runtime::SourceSubscriber;
-use crate::runtime::batch::{BatchDef, BatchWithHeadersDef};
+use crate::runtime::batch::BatchDef;
 use crate::runtime::batch_inject::BatchInjectDef;
 use crate::runtime::inject::InjectDef;
 use crate::runtime::input::{DecodeWith, RawBytes};
@@ -19,8 +19,8 @@ use crate::runtime::subscriber_def::SubscriberDef;
 use super::builder::Router;
 use super::mount::RouterMount;
 use super::{
-    BatchInjectedRouter, IncludedBatchRouter, IncludedBatchWithHeadersRouter,
-    IncludedRawBatchRouter, IncludedRouter, InjectedRouter, forms,
+    BatchInjectedRouter, IncludedBatchRouter, IncludedRawBatchRouter, IncludedRouter,
+    InjectedRouter, forms,
 };
 
 impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
@@ -140,33 +140,6 @@ where
     fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         let source = def.source();
         router.mount_raw_batch(source, def)
-    }
-}
-
-impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
-    for forms::BatchWithHeaders
-where
-    B: Broker + 'static,
-    Def: BatchWithHeadersDef + MountsWith<<Def as BatchDef>::Input, RouteCodec>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec>>,
-    Def::Handler: 'static,
-{
-    type Out = IncludedBatchWithHeadersRouter<
-        B,
-        Def::Source,
-        Def,
-        DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec>,
-        RouteCodec,
-        RouteLayers,
-        Routes,
-    >;
-
-    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-        let codec = def.mounted_codec(&router.codec);
-        let source = def.source();
-        router.mount_batch_with_headers(source, def, codec)
     }
 }
 

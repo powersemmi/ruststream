@@ -39,14 +39,10 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
 ///   carries no per-parameter dictionary, so the compile-time narrowing would be lost.
 /// - The raw batch shape: the arena page axis wraps each payload, and rebinding `&[&[u8]]`
 ///   from it would add a second per-page allocation the old emission never paid.
-/// - A batch reading per-element header contracts (`Headers<Vec<_>>`): the contracts are
-///   parsed by the decode adapter next to the payloads; a page body's signature carries no
-///   per-element header source to rebuild them from.
 fn uses_legacy(parts: &HandlerParts<'_>) -> bool {
     parts.seek.is_some()
         || parts.outs.iter().any(|out| out.bodies.is_some())
         || parts.shape == Shape::RawBatch
-        || (parts.shape == Shape::Batch && batch_headers_param(&parts.extractors).is_some())
 }
 
 /// The combinations that are wrong before the signature is even read: two reply clauses at once.
@@ -99,6 +95,18 @@ fn reject_shape_combinations(
             ));
         }
     }
+    // The pair input rides the unified rails only; the combinations below keep the legacy
+    // definition-trait emission, whose input kind decodes the payload alone.
+    if parts.pair.is_some()
+        && (parts.seek.is_some() || parts.outs.iter().any(|out| out.bodies.is_some()))
+    {
+        return Err(Error::new_spanned(
+            parts.input_ty,
+            "a `Message<H, P>` input does not combine with `Seek` or a declared `Out` message \
+             set yet; a single-message handler can take the contract as a `Headers<T>` \
+             parameter instead",
+        ));
+    }
     // With a Headers parameter the decode policy still has a job on a raw handler: it
     // settles a header contract that fails to parse.
     let has_from_headers = func
@@ -128,6 +136,9 @@ struct HandlerParts<'a> {
     block: &'a syn::Block,
     pat: &'a Pat,
     input_ty: &'a Type,
+    /// The `(H, P)` arguments of a `Message<H, P>`-shaped input, when the input has that shape:
+    /// the core decodes the payload and the header contract in one stage.
+    pair: Option<(&'a Type, &'a Type)>,
     description: TokenStream2,
     source_ty: TokenStream2,
     source_expr: TokenStream2,
@@ -301,14 +312,16 @@ fn from_headers_ty(ty: &Type) -> Option<&Type> {
     Some(contract)
 }
 
-/// The element type of a `Vec<T>`-shaped type, when the type has that shape. A batch handler's
-/// header contract arrives as one per element, so its parameter is spelled `Headers<Vec<T>>`.
-fn vec_inner_ty(ty: &Type) -> Option<&Type> {
+/// The `(H, P)` arguments of a `Message<H, P>`-shaped type, when the type has that shape.
+/// Purely syntactic (the last path segment `Message` with exactly two type arguments), like the
+/// `Ctx<K>` probe below: an alias hiding the pair reads as a plain payload type and fails on
+/// its missing `Deserialize` impl instead.
+fn message_pair_args(ty: &Type) -> Option<(&Type, &Type)> {
     let Type::Path(path) = ty else {
         return None;
     };
     let segment = path.path.segments.last()?;
-    if segment.ident != "Vec" {
+    if segment.ident != "Message" {
         return None;
     }
     let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
@@ -318,23 +331,12 @@ fn vec_inner_ty(ty: &Type) -> Option<&Type> {
         syn::GenericArgument::Type(ty) => Some(ty),
         _ => None,
     });
-    let element = types.next()?;
+    let headers = types.next()?;
+    let payload = types.next()?;
     if types.next().is_some() {
         return None;
     }
-    Some(element)
-}
-
-/// The per-element header contract of a batch handler: the `H` of a `Headers<Vec<H>>`
-/// parameter, with the parameter's pattern so the expansion can rebind it.
-fn batch_headers_param<'a>(
-    extractors: &[(&'a Pat, &'a Type)],
-) -> Option<(&'a Pat, &'a Type, &'a Type)> {
-    extractors.iter().find_map(|(pat, ty)| {
-        let contract = from_headers_ty(ty)?;
-        let element = vec_inner_ty(contract)?;
-        Some((*pat, *ty, element))
-    })
+    Some((headers, payload))
 }
 
 /// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
@@ -528,42 +530,35 @@ fn failure_step(args: &SubscriberArgs) -> TokenStream2 {
 }
 
 /// Renders the def's `headers_schema()` override, rejecting `Headers` on batch forms (a
-/// header contract is per-delivery; a batch spans many deliveries with as many header maps).
+/// header contract is per-delivery; a batch pairs each element with its own contract through
+/// the `Message<H, P>` input instead).
 ///
 /// The schema source: a `Headers<T>` parameter wins (its contract is what the runtime
 /// actually enforces); otherwise the input type's `#[message(headers(..))]` contract, when it
 /// declares one. Both use the same autoref-specialization probes as the payload schema. A raw
 /// handler has no typed input to carry a contract, so without a `Headers` parameter it
-/// emits nothing.
+/// emits nothing. The pair input never reaches this method: it rides the unified rails, whose
+/// capture is [`headers_schema_expr`].
 fn headers_schema_method(
     shape: Shape,
     extractors: &[(&Pat, &Type)],
     input_ty: &Type,
 ) -> syn::Result<TokenStream2> {
-    let batch = matches!(shape, Shape::Batch | Shape::RawBatch);
-    if batch
+    if matches!(shape, Shape::Batch | Shape::RawBatch)
         && let Some((_, ty)) = extractors
             .iter()
             .find(|(_, ty)| from_headers_ty(ty).is_some())
-        && batch_headers_param(extractors).is_none()
     {
         return Err(Error::new_spanned(
             ty,
-            "headers are per-delivery and a batch spans many deliveries: take the per-element \
-             contracts as a vector, Headers<Vec<_>>",
+            "headers are per-delivery: a batch pairs each element with its contract - take the \
+             page as `&[Message<H, T>]` and read `element.headers` (`Headers<..>` extraction \
+             stays on the single-message forms)",
         ));
     }
-    // On a batch form the contract is declared per element, so the schema describes the element.
     let method = extractors
         .iter()
         .find_map(|(_, ty)| from_headers_ty(ty))
-        .map(|contract| {
-            if batch {
-                vec_inner_ty(contract).unwrap_or(contract)
-            } else {
-                contract
-            }
-        })
         .map_or_else(
             || {
                 if matches!(shape, Shape::Raw | Shape::RawBatch) {
@@ -591,13 +586,21 @@ fn headers_schema_method(
 }
 
 /// The expression capturing the headers schema for the unified emission: the same selection as
-/// [`headers_schema_method`], evaluated into the probed docs instead of a def method. The batch
-/// per-element contract never reaches here (that combination keeps the legacy emission).
+/// [`headers_schema_method`], evaluated into the probed docs instead of a def method, plus the
+/// pair input's own contract (`Message<H, P>` documents `H`).
 fn headers_schema_expr(
     shape: Shape,
     extractors: &[(&Pat, &Type)],
     input_ty: &Type,
+    pair: Option<(&Type, &Type)>,
 ) -> TokenStream2 {
+    if let Some((headers, _)) = pair {
+        return quote! {{
+            #[allow(unused_imports)]
+            use ::ruststream::__private::NoSchemaProbe as _;
+            ::ruststream::__private::Probe::<#headers>::new().schema_json()
+        }};
+    }
     extractors
         .iter()
         .find_map(|(_, ty)| from_headers_ty(ty))
@@ -898,7 +901,9 @@ fn is_u8_slice(ty: &Type) -> bool {
     false
 }
 
-fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
+/// Dissects the handler's first parameter into the message pattern, the shape, the input type,
+/// and the optional `Message<H, P>` pair arguments.
+fn message_param(func: &ItemFn) -> syn::Result<MessageParam<'_>> {
     let first = func.sig.inputs.first().ok_or_else(|| {
         Error::new_spanned(
             &func.sig,
@@ -918,6 +923,15 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         ));
     };
     let (shape, input_ty) = resolve_shape(reference);
+    Ok((pat, shape, input_ty, message_pair_args(input_ty)))
+}
+
+/// What [`message_param`] dissects: the pattern, the shape, the input type, and the pair
+/// arguments when the input is `Message<H, P>`-shaped.
+type MessageParam<'a> = (&'a Pat, Shape, &'a Type, Option<(&'a Type, &'a Type)>);
+
+fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
+    let (pat, shape, input_ty, pair) = message_param(func)?;
     let description = doc_description(&func.attrs);
     let (source_ty, source_expr) = source_tokens(&args.source)?;
     // `start_at(<position>)` decorates the source with the core `StartAt` wrapper, so the
@@ -1004,6 +1018,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         block: &func.block,
         pat,
         input_ty,
+        pair,
         description,
         source_ty,
         source_expr,

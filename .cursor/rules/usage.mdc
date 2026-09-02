@@ -507,8 +507,9 @@ async fn handle(order: &Order, Ctx(partition): Ctx<Partition>) -> HandlerOutcome
 
 `Headers<T>` parses the delivery headers into a flat contract struct before the body runs; a
 missing or unparsable header settles the delivery by `on_failure(decode = ..)` (drop by default).
-On a batch the contract arrives one per element: `Headers<Vec<T>>`. The untyped `name -> bytes`
-map itself is `HeaderMap` (`ctx.headers()`), and `Headers` is only the extractor.
+On a batch the page pairs each element with its contract: take `&[Message<H, T>]` and read
+`element.headers`. The untyped `name -> bytes` map itself is `HeaderMap` (`ctx.headers()`), and
+`Headers` is only the extractor.
 
 ```rust
 use ruststream::prelude::*;

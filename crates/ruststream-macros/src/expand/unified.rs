@@ -89,7 +89,7 @@ pub(super) fn expand(
         input_arg,
         lifetime,
         input_binding,
-    } = input_axis(shape, input_ty, pat);
+    } = input_axis(shape, input_ty, pat, parts.pair);
 
     // ------------------------------------------------------------------------- the reply plan
     let reply = reply_plan(args, func, block, paged)?;
@@ -188,13 +188,23 @@ struct InputAxis {
     input_binding: TokenStream2,
 }
 
-fn input_axis(shape: Shape, input_ty: &syn::Type, pat: &Pat) -> InputAxis {
+fn input_axis(
+    shape: Shape,
+    input_ty: &syn::Type,
+    pat: &Pat,
+    pair: Option<(&syn::Type, &syn::Type)>,
+) -> InputAxis {
     match shape {
         // The declared `&T` parameter is the trait's own input type, so the user's pattern
-        // stays in parameter position and no rebinding exists to lint about.
+        // stays in parameter position and no rebinding exists to lint about. A
+        // `Message<H, P>`-shaped input selects the pair axis: the core decodes the payload and
+        // the header contract in one stage, under one decode policy.
         Shape::Single => InputAxis {
             in_ty: quote!(#input_ty),
-            axis: quote!(::ruststream::runtime::Solo<#input_ty>),
+            axis: pair.map_or_else(
+                || quote!(::ruststream::runtime::Solo<#input_ty>),
+                |(headers, payload)| quote!(::ruststream::runtime::SoloPair<#headers, #payload>),
+            ),
             input_arg: quote!(#pat: &#input_ty),
             lifetime: quote!(),
             input_binding: quote!(),
@@ -213,10 +223,14 @@ fn input_axis(shape: Shape, input_ty: &syn::Type, pat: &Pat) -> InputAxis {
             },
         },
         // The page rebinds off a named parameter so the page length stays reachable whatever
-        // the user's pattern is.
+        // the user's pattern is. A `Message<H, P>` element selects the pair axis, like the
+        // single form above.
         Shape::Batch => InputAxis {
             in_ty: quote!([#input_ty]),
-            axis: quote!(::ruststream::runtime::Page<#input_ty>),
+            axis: pair.map_or_else(
+                || quote!(::ruststream::runtime::Page<#input_ty>),
+                |(headers, payload)| quote!(::ruststream::runtime::PagePair<#headers, #payload>),
+            ),
             input_arg: quote!(__rs_input: &[#input_ty]),
             lifetime: quote!(),
             input_binding: quote! {
@@ -616,6 +630,7 @@ fn arena_binding(pat: &Pat, marker: &TokenStream2) -> TokenStream2 {
 fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>, raw: bool) -> TokenStream2 {
     let HandlerParts {
         input_ty,
+        pair,
         description,
         extractors,
         outs,
@@ -623,6 +638,9 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>, raw: bool) 
         ..
     } = parts;
     let none = quote!(::core::option::Option::None);
+    // The pair input's payload half is what the schema and message metadata describe; its
+    // contract half feeds the headers schema below.
+    let payload_ty = pair.map_or(*input_ty, |(_, payload)| payload);
     let (input_schema, message_name, message_description) = if raw {
         (none.clone(), none.clone(), none.clone())
     } else {
@@ -630,21 +648,21 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>, raw: bool) 
             quote! {{
                 #[allow(unused_imports)]
                 use ::ruststream::__private::NoSchemaProbe as _;
-                ::ruststream::__private::Probe::<#input_ty>::new().schema_json()
+                ::ruststream::__private::Probe::<#payload_ty>::new().schema_json()
             }},
             quote! {{
                 #[allow(unused_imports)]
                 use ::ruststream::__private::NoMessageProbe as _;
-                ::ruststream::__private::Probe::<#input_ty>::new().message_name()
+                ::ruststream::__private::Probe::<#payload_ty>::new().message_name()
             }},
             quote! {{
                 #[allow(unused_imports)]
                 use ::ruststream::__private::NoMessageProbe as _;
-                ::ruststream::__private::Probe::<#input_ty>::new().message_description()
+                ::ruststream::__private::Probe::<#payload_ty>::new().message_description()
             }},
         )
     };
-    let headers_schema = headers_schema_expr(*shape, extractors, input_ty);
+    let headers_schema = headers_schema_expr(*shape, extractors, input_ty, *pair);
 
     // The reply entry (probed like the old `outgoing()` override) plus each slot marker's whole
     // dictionary; a slot-only handler leaves the capture empty and the sealed definition

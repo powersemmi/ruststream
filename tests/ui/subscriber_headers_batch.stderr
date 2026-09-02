@@ -1,7 +1,7 @@
-error: headers are per-delivery and a batch spans many deliveries: take the per-element contracts as a vector, Headers<Vec<_>>
-  --> tests/ui/subscriber_headers_batch.rs:17:50
+error: headers are per-delivery: a batch pairs each element with its contract - take the page as `&[Message<H, T>]` and read `element.headers` (`Headers<..>` extraction stays on the single-message forms)
+  --> tests/ui/subscriber_headers_batch.rs:18:50
    |
-17 | async fn bill(_orders: &[Order], Headers(_meta): Headers<Meta>) -> HandlerOutcome {
+18 | async fn bill(_orders: &[Order], Headers(_meta): Headers<Meta>) -> HandlerOutcome {
    |                                                  ^^^^^^^^^^^^^
 
 warning: unused imports: `HandlerOutcome` and `Headers`

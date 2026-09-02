@@ -14,7 +14,7 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Out, Router, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
     Buffered, Name, OutMessages, OutSlot, Outgoing, Publisher, TransactionalPublisher, nonzero,
@@ -416,9 +416,8 @@ mod generic_message_derives {
     struct Fixed<const N: usize>([u8; N]);
 }
 
-/// Records the shape of each batch invocation: the payload slice next to the header vector, so
-/// the test can assert they line up element for element.
-/// One batch invocation: the payload sequence numbers next to the header contracts behind them.
+/// Records the shape of each batch invocation: the payload sequence numbers next to the header
+/// contracts behind them, so the test can assert they line up element for element.
 type BatchShape = (Vec<u64>, Vec<(u64, u32)>);
 
 static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec::new());
@@ -427,11 +426,14 @@ static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec
 // per-element alignment is actually exercised across more than one element. The wait bound stays
 // at its 10 ms default: a longer one would only make the suite wait for the tail batch.
 #[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2)))]
-async fn bulk(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
+async fn bulk(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
     let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
     seen.push((
-        chunks.iter().map(|chunk| chunk.seq).collect(),
-        meta.iter().map(|m| (m.task_id, m.chunk_no)).collect(),
+        chunks.iter().map(|chunk| chunk.body.seq).collect(),
+        chunks
+            .iter()
+            .map(|chunk| (chunk.headers.task_id, chunk.headers.chunk_no))
+            .collect(),
     ));
     drop(seen);
     HandlerOutcome::ack()
@@ -507,10 +509,10 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
 static ROUTED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
 
 #[subscriber("chunks.routed")]
-async fn routed(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
+async fn routed(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
     let mut seen = ROUTED_SEEN.lock().expect("the test holds no poisoned lock");
-    for (chunk, meta) in chunks.iter().zip(&meta) {
-        seen.push((chunk.seq, meta.chunk_no));
+    for chunk in chunks {
+        seen.push((chunk.body.seq, chunk.headers.chunk_no));
     }
     drop(seen);
     HandlerOutcome::ack()
@@ -547,5 +549,48 @@ async fn the_router_path_carries_the_batch_header_contract() {
         .expect("the test holds no poisoned lock")
         .clone();
     assert_eq!(seen, vec![(5, 9)]);
+    tb.shutdown().await.expect("shutdown");
+}
+
+/// What the solo pair-input handler saw: the `Message` axis works at the single-message shape
+/// too (the `Headers<T>` extractor stays the recommended spelling there).
+static PAIRED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
+
+#[subscriber("chunks.paired")]
+async fn paired(chunk: &Message<ChunkMeta, Chunk>) -> HandlerOutcome {
+    PAIRED_SEEN
+        .lock()
+        .expect("the test holds no poisoned lock")
+        .push((chunk.body.seq, chunk.headers.chunk_no));
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_single_message_handler_takes_the_message_pair_input() {
+    let app = RustStream::new(AppInfo::new("typed-headers-pair", "1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(paired);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("start");
+    let broker = tb.broker::<MemoryBroker>();
+
+    let meta = ChunkMeta {
+        task_id: 2,
+        chunk_no: 8,
+        trace: None,
+    };
+    broker
+        .publish_with_headers("chunks.paired", &Chunk { seq: 3 }, &meta)
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    let seen = PAIRED_SEEN
+        .lock()
+        .expect("the test holds no poisoned lock")
+        .clone();
+    assert_eq!(seen, vec![(3, 8)]);
     tb.shutdown().await.expect("shutdown");
 }

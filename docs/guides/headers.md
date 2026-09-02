@@ -42,11 +42,11 @@ header, unparsable value) never reaches the body - the delivery settles by the s
 
 `Headers` composes with a byte body (`&[u8]`, typed headers) and with every other extractor.
 
-On a batch handler the headers stay per-delivery, so the parameter takes one contract per
-element: `Headers<Vec<T>>`. `meta[i]` belongs to `chunks[i]`, and the two line up by
-construction - an element whose payload or headers fail to materialize is settled by the same
-`on_failure(decode = ..)` policy and never reaches the handler, exactly as on the single-message
-path. The bare `Headers<T>` is rejected there, naming the vector form.
+On a batch handler the headers stay per-delivery, so the page pairs each element with its own
+contract: the input is `&[Message<H, T>]`, and `element.headers` sits next to `element.body`.
+The pairing holds by construction - an element whose payload or headers fail to materialize is
+settled by the same `on_failure(decode = ..)` policy and never reaches the handler, exactly as
+on the single-message path. A `Headers<..>` parameter is rejected there, naming the pair input.
 
 === "Macros"
 
@@ -61,8 +61,8 @@ path. The bare `Headers<T>` is rejected there, naming the vector form.
     ```
 
 Mounting reads the same as every other form and on both surfaces: `b.include(bulk)` on a broker
-scope, `Router::include` on the router path. The contract type travels in the route, and the
-definition's own form token is what picks that route.
+scope, `Router::include` on the router path. The contract type travels in the input axis, so
+the ordinary batch route decodes it next to each payload.
 
 When one channel carries messages whose headers differ per event kind, keep the standard
 extractor out of it and write your own [`FromContext`] extractor: read the discriminator

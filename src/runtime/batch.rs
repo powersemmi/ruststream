@@ -16,6 +16,9 @@ use std::{fmt, future::Future, marker::PhantomData};
 use opentelemetry::metrics::Histogram;
 #[cfg(feature = "otel")]
 use opentelemetry::{KeyValue, global};
+// Only the test-only `typed_batch` constructor still names the bound directly; the adapters
+// reach decoding through `DecodeWith`.
+#[cfg(test)]
 use serde::de::DeserializeOwned;
 use tokio_util::task::TaskTracker;
 use tracing::{error, warn};
@@ -182,33 +185,14 @@ pub fn uniform_page(outcome: HandlerOutcome, page_len: usize) -> Vec<HandlerOutc
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a batch handler over `{T}`",
-    note = "a batch handler declaring Headers<Vec<_>> implements SliceHandlerWithHeaders \
-            instead: mount it with include(..), which picks that form from the definition"
+    note = "a batch handler takes (&[T], &mut Context) and returns an IntoBatchResult value; \
+            per-element header contracts ride a `&[Message<H, T>]` body instead"
 )]
 pub trait SliceHandler<T, S = ()>: Send + Sync {
     /// Handles one decoded batch, with the per-batch [`Context`] carrying the typed app state `S`.
     fn handle_slice(
         &self,
         batch: &[T],
-        ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = BatchResult> + Send;
-}
-
-/// A handler invoked with one whole decoded batch and the typed headers of its elements.
-///
-/// The counterpart of [`SliceHandler`] for a batch handler that declares
-/// `Headers(meta): Headers<Vec<H>>`. Headers are per-delivery, so the batch gets one
-/// contract per element: `headers[i]` belongs to `batch[i]`. The two slices are aligned by
-/// construction, because an element whose payload or headers fail to materialize is settled by
-/// the decode policy and never reaches the handler.
-pub trait SliceHandlerWithHeaders<T, H, S = ()>: Send + Sync {
-    /// Handles one decoded batch alongside its per-element header contracts. The contracts move
-    /// into the handler as the `Vec` the parameter declares; the payload stays a borrowed slice,
-    /// as on the plain batch path.
-    fn handle_slice(
-        &self,
-        batch: &[T],
-        headers: Vec<H>,
         ctx: &mut Context<'_, (), S>,
     ) -> impl Future<Output = BatchResult> + Send;
 }
@@ -321,16 +305,6 @@ pub trait BatchDef: Sized {
     fn into_handler(self) -> Self::Handler;
 }
 
-/// A batch definition whose handler also reads a typed header contract per element.
-///
-/// Adds the contract type to [`BatchDef`]; everything else (source, workers, failure policies,
-/// schemas) is inherited. Implemented by `#[subscriber]` for a `&[T]` handler that declares
-/// `Headers(meta): Headers<Vec<H>>`.
-pub trait BatchWithHeadersDef: BatchDef {
-    /// The header contract parsed from each element's headers.
-    type Headers: DeserializeOwned + Send + Sync + 'static;
-}
-
 /// Builds the registration metadata for a batch definition mounted under `name`.
 pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetadata {
     let mut meta = HandlerMetadata::raw(name).with_def_details(
@@ -439,82 +413,6 @@ where
         }
         let tasks = ctx.tasks().clone();
         let result = self.inner.handle_slice(&values, ctx).await;
-        settle_batch(accepted, result, &subscription, &tasks).await;
-    }
-}
-
-/// The decode adapter for batch handlers that also read a typed header contract per element.
-///
-/// The [`TypedBatch`] counterpart for the `Headers(meta): Headers<Vec<H>>` form: each
-/// element must both decode and satisfy the header contract to reach the handler, so the payload
-/// slice and the header slice stay index-aligned.
-pub struct TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner> {
-    codec: DecodeCodec,
-    inner: Inner,
-    decode: FailurePolicy,
-    _phantom: PhantomData<fn(M, Input, HeaderContract)>,
-}
-
-impl<M, Input, DecodeCodec, HeaderContract, Inner>
-    TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
-{
-    /// Builds the adapter, like [`TypedBatch::over`].
-    #[must_use]
-    pub(crate) fn over(codec: DecodeCodec, inner: Inner) -> Self
-    where
-        Input: DecodeWith<DecodeCodec>,
-    {
-        Self {
-            codec,
-            inner,
-            decode: FailurePolicy::Drop,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Sets the policy applied when an element fails to decode or to satisfy the contract.
-    #[must_use]
-    pub(crate) fn with_decode(mut self, decode: FailurePolicy) -> Self {
-        self.decode = decode;
-        self
-    }
-}
-
-impl<M, Input, DecodeCodec, HeaderContract, Inner> fmt::Debug
-    for TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TypedBatchWithHeaders")
-            .field("decode", &self.decode)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<M, Input, DecodeCodec, HeaderContract, Inner, S> BatchHandler<M, S>
-    for TypedBatchWithHeaders<M, Input, DecodeCodec, HeaderContract, Inner>
-where
-    M: IncomingMessage,
-    Input: DecodeWith<DecodeCodec>,
-    DecodeCodec: Send + Sync,
-    HeaderContract: DeserializeOwned + Send + Sync,
-    Inner: SliceHandlerWithHeaders<Input::Owned, HeaderContract, S>,
-    S: Send + Sync,
-{
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
-        let subscription = ctx.name().to_owned();
-        let (values, contracts, accepted) = decode_batch_with_headers::<
-            M,
-            Input,
-            DecodeCodec,
-            HeaderContract,
-            S,
-        >(batch, &self.codec, self.decode, ctx)
-        .await;
-        if accepted.is_empty() {
-            return;
-        }
-        let tasks = ctx.tasks().clone();
-        let result = self.inner.handle_slice(&values, contracts, ctx).await;
         settle_batch(accepted, result, &subscription, &tasks).await;
     }
 }
@@ -720,70 +618,6 @@ fn rejection<S>(
         }
         other => other.settlement().unwrap_or_else(HandlerResult::drop),
     }
-}
-
-/// Decodes each element and parses its headers into `H`, keeping the two products aligned: an
-/// element that fails either step is settled by the decode policy and dropped from both.
-// The exclusive borrow is what keeps the returned future `Send`: a shared `&Context` would demand
-// `Sync` from the post-settle hooks it carries, which are boxed futures.
-#[allow(clippy::needless_pass_by_ref_mut)]
-pub(crate) async fn decode_batch_with_headers<M, Input, DecodeCodec, H, S>(
-    batch: Vec<M>,
-    codec: &DecodeCodec,
-    decode: FailurePolicy,
-    ctx: &mut Context<'_, (), S>,
-) -> (Vec<Input::Owned>, Vec<H>, Vec<M>)
-where
-    M: IncomingMessage,
-    Input: DecodeWith<DecodeCodec>,
-    DecodeCodec: Sync,
-    H: DeserializeOwned,
-    S: Send + Sync,
-{
-    let subscription = ctx.name().to_owned();
-    let mut values = Vec::with_capacity(batch.len());
-    let mut contracts = Vec::with_capacity(batch.len());
-    let mut accepted = Vec::with_capacity(batch.len());
-    for msg in batch {
-        let value = match Input::decode(codec, msg.payload(), msg.headers()) {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %subscription,
-                    message_type = Input::input_label(),
-                    error = %err,
-                    "codec decode failed",
-                );
-                let outcome = rejection(&err, "batch decode failed", decode, ctx);
-                settle(msg, outcome, &subscription).await;
-                continue;
-            }
-        };
-        match msg.headers().to_typed::<H>() {
-            Ok(contract) => {
-                values.push(value);
-                contracts.push(contract);
-                accepted.push(msg);
-            }
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %subscription,
-                    headers_type = std::any::type_name::<H>(),
-                    error = %err,
-                    "typed header extraction failed",
-                );
-                let outcome = rejection(&err, "batch header extraction failed", decode, ctx);
-                settle(msg, outcome, &subscription).await;
-            }
-        }
-    }
-    #[cfg(feature = "otel")]
-    if !accepted.is_empty() {
-        record_batch_size(&subscription, values.len());
-    }
-    (values, contracts, accepted)
 }
 
 /// Applies one settlement to one delivery's own `ack` / `nack`.

@@ -50,9 +50,7 @@ pub(crate) use mount::{
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
-use crate::runtime::batch::{
-    BatchDef, BatchWithHeadersDef, RawBatch, TypedBatch, TypedBatchWithHeaders,
-};
+use crate::runtime::batch::{BatchDef, RawBatch, TypedBatch};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -93,24 +91,6 @@ type RawBatchRoute<B, S, D> =
 
 /// The router that mounting a raw [`BatchDef`] `D` on source `S` onto `R` produces.
 type IncludedRawBatchRouter<B, S, D, RC, RL, R> = Router<B, (RawBatchRoute<B, S, D>, R), RC, RL>;
-
-/// The route a [`BatchWithHeadersDef`] `D` mounted on source `S` (decoded with `C`) becomes: the
-/// element contracts are parsed by the adapter, so the route type differs only in that adapter.
-type BatchWithHeadersTypedRoute<B, S, D, C> = BatchRoute<
-    S,
-    TypedBatchWithHeaders<
-        SourceMessage<B, S>,
-        <D as BatchDef>::Input,
-        C,
-        <D as BatchWithHeadersDef>::Headers,
-        <D as BatchDef>::Handler,
-    >,
->;
-
-/// The router that mounting a [`BatchWithHeadersDef`] `D` on source `S` (decoded with `C`) onto
-/// `R` produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
-type IncludedBatchWithHeadersRouter<B, S, D, C, RC, RL, R> =
-    Router<B, (BatchWithHeadersTypedRoute<B, S, D, C>, R), RC, RL>;
 
 /// The router that mounting an injected definition `D` on source `S` (decoded with `C`,
 /// resolving its startup injections against the attachment `E`) onto `R` produces.

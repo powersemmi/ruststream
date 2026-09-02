@@ -12,7 +12,8 @@ struct Meta {
     task_id: u64,
 }
 
-// Headers are per-delivery; a batch spans many deliveries with as many header maps.
+// Headers are per-delivery; on a batch each element pairs with its own contract through the
+// `Message<H, T>` input, and the error names that replacement.
 #[subscriber("orders")]
 async fn bill(_orders: &[Order], Headers(_meta): Headers<Meta>) -> HandlerOutcome {
     HandlerOutcome::ack()

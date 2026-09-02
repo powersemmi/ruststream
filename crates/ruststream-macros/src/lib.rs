@@ -95,7 +95,10 @@ use parse::{SubscriberArgs, doc_description};
 /// for the whole batch (`HandlerOutcome`, `()`, `Result<_, E>`), or a per-element
 /// `Vec<HandlerOutcome>` to settle element `i` of the slice with outcome `i`, each element
 /// carrying its own optional `and_after` continuation. A `&[&[u8]]` parameter is the same shape
-/// without the decode step.
+/// without the decode step. A `&[Message<H, T>]` parameter pairs each element with its typed
+/// header contract: the core decodes both under the subscriber's decode policy, and the body
+/// reads `element.headers` next to `element.body` (the single-message counterpart stays the
+/// `Headers<T>` extractor parameter).
 ///
 /// Combining a batch handler with `publish(..)` produces a batch reply definition: the handler
 /// returns `Vec<Reply>` (or

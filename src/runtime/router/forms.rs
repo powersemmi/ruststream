@@ -43,10 +43,6 @@ pub struct Batch;
 /// A raw batch subscriber (a handler taking `&[&[u8]]`): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
-/// A batch subscriber reading a typed header contract per element
-/// (a handler taking `&[T]` with a `Headers<Vec<H>>` parameter).
-#[derive(Debug, Clone, Copy)]
-pub struct BatchWithHeaders;
 /// A batch reply-publishing subscriber (a `&[T]` handler with `publish("out")`).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishing;

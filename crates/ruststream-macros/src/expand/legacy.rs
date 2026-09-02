@@ -1,7 +1,7 @@
 //! The retained definition-trait emission, kept point-wise for the combinations the unified
 //! value rails cannot express without losing a feature (see `uses_legacy` in the parent
-//! module): `Seek(..)` parameters, an `Out` parameter's declared message set, the raw batch
-//! shape, and a batch reading per-element header contracts.
+//! module): `Seek(..)` parameters, an `Out` parameter's declared message set, and the raw
+//! batch shape.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -10,9 +10,8 @@ use syn::{Expr, Ident, ItemFn, Pat, ReturnType, Type};
 use crate::parse::SubscriberArgs;
 
 use super::{
-    BodyDecl, HandlerParts, OutParam, Shape, batch_headers_param, batch_reply_body,
-    extractor_preds, extractor_prelude, extractor_where, outgoing_entry, publishing_reply,
-    where_clause,
+    BodyDecl, HandlerParts, OutParam, Shape, batch_reply_body, extractor_preds, extractor_prelude,
+    extractor_where, outgoing_entry, publishing_reply, where_clause,
 };
 
 /// Expands one legacy-path handler; the parent dispatcher guarantees the combination is one of
@@ -27,8 +26,9 @@ pub(super) fn expand(
         Shape::RawBatch => expand_raw_batch(parts, func),
         Shape::Batch => match &args.publish {
             Some(reply_topic) => expand_batch_publishing(parts, func, reply_topic)?,
-            None if injected => expand_batch_injected(parts, func),
-            None => expand_batch(parts, func),
+            // A plain batch handler always takes the unified path; only the injection and
+            // reply combinations reach the legacy one.
+            None => expand_batch_injected(parts, func),
         },
         // The input axis is a flag, not a form, so the byte input composes with every
         // single-message form.
@@ -306,163 +306,6 @@ fn expand_batch_publishing(
             }
         }
     })
-}
-
-/// The pieces that distinguish a batch handler reading a per-element header contract from a plain
-/// one: the handler trait, the extra argument carrying the contracts, the binding that rebuilds
-/// the declared parameter, the include form, and the extra def impl.
-fn batch_handler_shape(
-    headers_param: Option<(&Pat, &Type, &Type)>,
-    input_ty: &Type,
-    state_in_ctx: &TokenStream2,
-    name: &Ident,
-) -> (
-    TokenStream2,
-    TokenStream2,
-    TokenStream2,
-    TokenStream2,
-    TokenStream2,
-) {
-    match headers_param {
-        Some((headers_pat, headers_ty, element_ty)) => (
-            quote!(::ruststream::runtime::SliceHandlerWithHeaders<
-                #input_ty,
-                #element_ty,
-                #state_in_ctx,
-            >),
-            quote!(__rs_headers: ::std::vec::Vec<#element_ty>,),
-            quote!(let #headers_pat: #headers_ty = ::ruststream::runtime::Headers(__rs_headers);),
-            quote!(::ruststream::runtime::forms::BatchWithHeaders),
-            quote! {
-                impl ::ruststream::runtime::BatchWithHeadersDef for #name {
-                    type Headers = #element_ty;
-                }
-            },
-        ),
-        None => (
-            quote!(::ruststream::runtime::SliceHandler<#input_ty, #state_in_ctx>),
-            quote!(),
-            quote!(),
-            quote!(::ruststream::runtime::forms::Batch),
-            quote!(),
-        ),
-    }
-}
-
-fn expand_batch(parts: &HandlerParts<'_>, func: &ItemFn) -> TokenStream2 {
-    let HandlerParts {
-        vis,
-        name,
-        block,
-        pat,
-        input_ty,
-        description,
-        source_ty,
-        source_expr,
-        input_schema,
-        message_meta,
-        ctx_param,
-        ctx_ty: _,
-        state_ty,
-        extractors,
-        outs: _,
-        seek: _,
-        headers_schema,
-        ..
-    } = parts;
-
-    // Pin the body's type to the declared return type before the `IntoBatchResult` conversion:
-    // the trait has several impls, so an open-ended tail like `.collect()` cannot infer through
-    // the conversion alone.
-    let outcome_ty = match &func.sig.output {
-        ReturnType::Type(_, ty) => quote!(#ty),
-        ReturnType::Default => quote!(()),
-    };
-
-    // A batch handler that names a state type is bound to it, one that names none is generic over
-    // the state, so it mounts on an app with any state type.
-    let (impl_generics, state_in_ctx) = match &state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty)),
-        None => (
-            quote!(<__RsState: ::core::marker::Send + ::core::marker::Sync>),
-            quote!(__RsState),
-        ),
-    };
-    // The batch context is always `()`; extractors resolve against it. A `Headers<Vec<H>>`
-    // parameter is the exception: the decode adapter parses one contract per element next to the
-    // payload, so it is bound from the handler's own argument instead of through `FromContext`.
-    let unit_ctx = quote!(());
-    let headers_param = batch_headers_param(extractors);
-    let rest: Vec<(&Pat, &Type)> = extractors
-        .iter()
-        .filter(|(pat, _)| {
-            headers_param.is_none_or(|(headers_pat, _, _)| !std::ptr::eq(*pat, headers_pat))
-        })
-        .copied()
-        .collect();
-    let extractors = &rest[..];
-    let where_clause = extractor_where(extractors, &unit_ctx, &state_in_ctx);
-    let prelude = extractor_prelude(
-        extractors,
-        ctx_param,
-        &unit_ctx,
-        &state_in_ctx,
-        &quote!(
-            return ::ruststream::runtime::IntoBatchResult::into_batch_result(
-                ::core::convert::Into::<::ruststream::runtime::HandlerOutcome>::into(__rs_err),
-            )
-        ),
-    );
-
-    let (handler_trait, headers_arg, headers_binding, form, headers_def) =
-        batch_handler_shape(headers_param, input_ty, &state_in_ctx, name);
-    let declaration = declaration(parts, &form);
-
-    quote! {
-            #[derive(Clone, Copy)]
-            #[allow(non_camel_case_types)]
-            #vis struct #name;
-
-            impl #impl_generics #handler_trait for #name
-                #where_clause
-            {
-                async fn handle_slice(
-                    &self,
-                    #pat: &[#input_ty],
-                    #headers_arg
-                    #ctx_param: &mut ::ruststream::runtime::Context<'_, (), #state_in_ctx>,
-                ) -> ::ruststream::runtime::BatchResult {
-                    #prelude
-                    #headers_binding
-                    let outcome: #outcome_ty = (async move #block).await;
-                    ::ruststream::runtime::IntoBatchResult::into_batch_result(outcome)
-                }
-            }
-
-            #declaration
-
-            #headers_def
-
-            impl ::ruststream::runtime::BatchDef for #name {
-                type Input = ::ruststream::runtime::Decoded<#input_ty>;
-                type Handler = Self;
-                type Source = #source_ty;
-
-                fn source(&self) -> Self::Source { #source_expr }
-
-                fn description(&self) -> ::core::option::Option<&str> {
-                    #description
-                }
-
-                #input_schema
-
-            #headers_schema
-
-                #message_meta
-
-                fn into_handler(self) -> Self { self }
-            }
-    }
 }
 
 /// The raw batch form: a handler taking `&[&[u8]]`.

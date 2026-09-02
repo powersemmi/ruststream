@@ -429,7 +429,7 @@ fn server_security_lands_in_components_and_refs() {
 #[cfg(all(feature = "macros", feature = "json"))]
 mod typed_headers_spec {
     use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Out, RustStream};
+    use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
     use ruststream::schemars::JsonSchema;
     use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
@@ -495,6 +495,19 @@ mod typed_headers_spec {
         Response { ok: true }
     }
 
+    #[derive(Deserialize, JsonSchema)]
+    struct Report {
+        #[allow(dead_code)]
+        percent: u8,
+    }
+
+    // The batch counterpart of the `Headers` contract: the pair input's contract half feeds the
+    // receive message's headers schema.
+    #[subscriber("chunks.bulk")]
+    async fn bulk(_reports: &[Message<ChunkMeta, Report>]) -> HandlerOutcome {
+        HandlerOutcome::ack()
+    }
+
     #[test]
     fn receive_headers_schema_and_send_operations() {
         let app = RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(
@@ -502,6 +515,7 @@ mod typed_headers_spec {
             |b| {
                 b.include(convert).out(Events, MemoryPublish).build();
                 b.include(respond);
+                b.include(bulk);
             },
         );
         let spec = build_spec(&app);
@@ -513,6 +527,17 @@ mod typed_headers_spec {
             headers["properties"].get("task_id").is_some()
                 && headers["properties"].get("chunk_no").is_some(),
             "got: {headers}"
+        );
+
+        // The batch pair input does the same for the page's element: its contract half is the
+        // receive message's headers schema, its payload half the payload schema.
+        let report = &spec.components.messages["Report"];
+        assert!(report.payload.is_some());
+        let batch_headers = report.headers.as_ref().expect("pair headers schema");
+        assert!(
+            batch_headers["properties"].get("task_id").is_some()
+                && batch_headers["properties"].get("chunk_no").is_some(),
+            "got: {batch_headers}"
         );
 
         // The slot's listed types become send operations on the channels they declare.

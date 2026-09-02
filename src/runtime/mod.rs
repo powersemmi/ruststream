@@ -44,8 +44,7 @@ pub use app::{
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 pub use batch::{
-    BatchDef, BatchResult, BatchWithHeadersDef, IntoBatchResult, RawBatch, RawSliceHandler,
-    SliceHandler, SliceHandlerWithHeaders, TypedBatch, TypedBatchWithHeaders,
+    BatchDef, BatchResult, IntoBatchResult, RawBatch, RawSliceHandler, SliceHandler, TypedBatch,
 };
 #[doc(hidden)]
 pub use batch::{page_verdict, uniform_page};

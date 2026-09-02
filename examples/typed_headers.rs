@@ -9,7 +9,7 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Out, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
@@ -124,16 +124,18 @@ async fn status(req: &StatusRequest) -> StatusReply {
 }
 // --8<-- [end:reply]
 
-// Headers stay per-delivery on a batch too, so the contracts arrive as one per element: the two
-// slices line up index for index, and an element failing either the payload decode or the
-// contract is settled by the decode policy instead of reaching the handler.
+// Headers stay per-delivery on a batch too, so the page pairs each element with its own
+// contract: a `Message<ChunkMeta, Progress>` element carries its decoded headers next to its
+// payload, and an element failing either the payload decode or the contract is settled by the
+// decode policy instead of reaching the handler.
 // --8<-- [start:batch]
 #[subscriber("chunks.bulk")]
-async fn bulk(reports: &[Progress], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
-    for (report, meta) in reports.iter().zip(&meta) {
+async fn bulk(reports: &[Message<ChunkMeta, Progress>]) -> HandlerOutcome {
+    for report in reports {
+        let meta = &report.headers;
         println!(
             "task {}: chunk {} of {} at {}%",
-            meta.task_id, meta.chunk_no, meta.chunks_total, report.percent,
+            meta.task_id, meta.chunk_no, meta.chunks_total, report.body.percent,
         );
     }
     HandlerOutcome::ack()
