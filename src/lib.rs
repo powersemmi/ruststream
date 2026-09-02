@@ -150,9 +150,10 @@ pub use ruststream_macros::OutMessages;
 #[cfg(feature = "macros")]
 pub use ruststream_macros::Deserialized;
 
-/// Derive macro for a self-serialized reply type ([`Serialized`](runtime::Serialized)): a
-/// newtype or single-field struct over a byte buffer gains the bytes accessor and the
-/// [`ReplyShape`](runtime::ReplyShape) spelling that routes it onto the serialized wire.
+/// Derive macro for a self-serialized outgoing type ([`Serialized`](runtime::Serialized)): a
+/// newtype or single-field struct over a byte buffer gains the bytes accessor and the wire
+/// spellings that route it onto the serialized wire ([`MessageWire`](runtime::MessageWire) for
+/// a typed publish, [`ReplyShape`](runtime::ReplyShape) for the reply position).
 ///
 /// Available with the `macros` feature.
 #[cfg(feature = "macros")]

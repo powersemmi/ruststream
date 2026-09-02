@@ -140,8 +140,10 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
 }
 
 impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
-    /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with this publisher's
-    /// codec: `publisher.message(&done).publish().await?`.
+    /// Starts a typed publish of a `#[derive(Outgoing)]` value:
+    /// `publisher.message(&done).publish().await?`. The value's type picks its wire
+    /// ([`MessageWire`](super::MessageWire)): a `serde::Serialize` value encodes with this
+    /// publisher's codec, a [`Serialized`](super::Serialized) one leaves byte-for-byte.
     ///
     /// Which positions the call site still has to fill comes from the message type's
     /// declaration; see [`PublishBuilder`]. The static [`PublishTransform`](super::PublishTransform)

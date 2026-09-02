@@ -32,43 +32,9 @@ use super::verdict::{OneByOne, Paged};
 
 // ------------------------------------------------------------------------------ reply shapes
 
-/// A reply that already carries its bytes: `Serialize` means the framework's codec does it,
-/// `Serialized` means it is already done by the user's own type.
-///
-/// A `Serialized` reply leaves the service byte-for-byte through a bare publisher - no codec
-/// runs and nothing is re-encoded - selected purely by the reply type, on the same `.reply()`
-/// chain (and the same `publish("dest")` clause) an encoded reply uses.
-///
-/// # Implementing by hand
-///
-/// `#[derive(Serialized)]` (under the `macros` feature) covers a newtype or single-field struct
-/// over a byte buffer. Any other shape is a pair of short impls: the bytes, and the
-/// [`ReplyShape`] spelling that routes the type onto the serialized wire:
-///
-/// ```
-/// use ruststream::runtime::{ReplyShape, Serialized, SerializedReply};
-///
-/// struct Export(Vec<u8>);
-///
-/// impl Serialized for Export {
-///     fn bytes(&self) -> &[u8] {
-///         &self.0
-///     }
-/// }
-///
-/// impl ReplyShape for Export {
-///     type Body = Self;
-///     type Headers = ();
-///     type Wire = SerializedReply;
-/// }
-///
-/// let export = Export(vec![7, 9]);
-/// assert_eq!(export.bytes(), &[7, 9]);
-/// ```
-pub trait Serialized {
-    /// The bytes the reply publishes, exactly as they leave on the wire.
-    fn bytes(&self) -> &[u8];
-}
+// The self-serialized vocabulary lives with the publish builder (the general wire seam serves
+// every typed surface); re-exported here so the reply seam keeps reading as one module.
+pub use crate::runtime::publish::Serialized;
 
 /// The shape and wire of a reply value: what payload it publishes, what typed header contract
 /// rides it, and whether the framework's codec serializes it.

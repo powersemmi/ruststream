@@ -594,14 +594,15 @@ pub fn derive_deserialized(item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derives a self-serialized reply type (`Serialized` in the core crate): `Serialize` means
+/// Derives a self-serialized outgoing type (`Serialized` in the core crate): `Serialize` means
 /// the framework's codec does it, `Serialized` means it is already done by the user's own
 /// type.
 ///
 /// Covers the obvious shape - a newtype or single-field struct over an owned byte buffer - and
-/// emits the bytes accessor plus the `ReplyShape` spelling that routes the type onto the
-/// serialized wire, so a handler returning it publishes those bytes as they are. Any other
-/// shape implements the traits by hand; the pair of impls is on the core trait's rustdoc.
+/// emits the bytes accessor plus the wire spellings that route the type onto the serialized
+/// wire (`MessageWire` for a typed publish, `ReplyShape` for the reply position), so a handler
+/// returning it - or passing it to `message(..)` - publishes those bytes as they are. Any other
+/// shape implements the traits by hand; the impls are on the core trait's rustdoc.
 ///
 /// ```ignore
 /// #[derive(Serialized)]

@@ -178,7 +178,10 @@ impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Body> Publish for Slot<M,
 }
 
 impl<M: OutSlot, W, E, Body> Slot<M, W, E, Body> {
-    /// Starts a typed publish through the slot, encoded with the include site's codec. The
+    /// Starts a typed publish through the slot, on the message type's own wire
+    /// ([`MessageWire`](crate::runtime::MessageWire)): a `serde::Serialize` value encodes with
+    /// the include site's codec, a [`Serialized`](crate::runtime::Serialized) one carries its
+    /// bytes and they leave as they are. The
     /// message type has to be in the marker's `#[publishes(..)]` dictionary (see
     /// [`PublishedThrough`](crate::runtime::PublishedThrough)) and, when the entry carries a
     /// declared message set, in that set (see

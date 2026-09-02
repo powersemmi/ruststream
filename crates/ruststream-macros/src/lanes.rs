@@ -1,7 +1,7 @@
 //! The lane derives: `Deserialized` (a self-deserializing input) and `Serialized` (a
-//! self-serialized reply).
+//! self-serialized outgoing value - a reply, or a typed publish).
 //!
-//! Both are sugar over a pair of short public-trait impls (see the core traits' rustdoc for the
+//! Both are sugar over short public-trait impls (see the core traits' rustdoc for the
 //! hand-written form); the derives cover the obvious shapes - a newtype or single-field struct
 //! over the bytes.
 
@@ -128,8 +128,8 @@ pub(crate) fn derive_serialized(input: &DeriveInput) -> syn::Result<TokenStream2
         return Err(Error::new_spanned(
             &input.generics,
             "#[derive(Serialized)] covers an owned buffer type with no generic parameters; \
-             implement `Serialized` (and `ReplyShape`) by hand for a generic shape - see the \
-             trait's rustdoc",
+             implement `Serialized` (and its wire spellings) by hand for a generic shape - see \
+             the trait's rustdoc",
         ));
     }
     Ok(quote! {
@@ -137,6 +137,10 @@ pub(crate) fn derive_serialized(input: &DeriveInput) -> syn::Result<TokenStream2
             fn bytes(&self) -> &[u8] {
                 &self.#accessor
             }
+        }
+
+        impl ::ruststream::runtime::MessageWire for #name {
+            type Wire = ::ruststream::runtime::SerializedWire;
         }
 
         impl ::ruststream::runtime::ReplyShape for #name {
