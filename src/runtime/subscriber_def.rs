@@ -100,6 +100,7 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.deserialized = <D::Input as InputKind>::DESERIALIZED;
     meta
 }
 

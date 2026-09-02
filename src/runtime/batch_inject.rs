@@ -105,6 +105,7 @@ pub(crate) fn batch_inject_metadata<D: BatchInjectDef>(name: String, def: &D) ->
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.deserialized = <D::Input as InputKind>::DESERIALIZED;
     meta.outgoing = def.outgoing();
     meta
 }

@@ -128,6 +128,10 @@ pub struct HandlerMetadata {
     /// `publish("dest")` form, and every entry of an `Out` slot's `#[publishes(..)]`
     /// dictionary. Feeds the `AsyncAPI` `send` operations.
     pub outgoing: Vec<OutgoingMessageMetadata>,
+    /// True when the input rides the self-deserializing lane
+    /// ([`Deserialized`](crate::runtime::Deserialized)): the payload has no serde model, so
+    /// the missing schema is by design rather than a documentation gap.
+    pub deserialized: bool,
 }
 
 impl HandlerMetadata {
@@ -145,6 +149,7 @@ impl HandlerMetadata {
             message_name: None,
             message_description: None,
             outgoing: Vec::new(),
+            deserialized: false,
         }
     }
 
@@ -164,6 +169,7 @@ impl HandlerMetadata {
             message_name: None,
             message_description: None,
             outgoing: Vec::new(),
+            deserialized: false,
         }
     }
 

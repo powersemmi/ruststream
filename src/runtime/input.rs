@@ -25,6 +25,10 @@ use crate::codec::{Codec, CodecError};
             a `Deserialized` one"
 )]
 pub trait InputKind: Send + Sync + 'static {
+    /// True on the self-deserializing lane: the input has no serde model, so its missing JSON
+    /// Schema is by design rather than a documentation gap.
+    const DESERIALIZED: bool = false;
+
     /// The owned decode product, held by the adapter across the call.
     type Owned: Send + Sync;
 
@@ -108,6 +112,8 @@ impl<F> std::fmt::Debug for Provided<F> {
 }
 
 impl<F: Send + Sync + 'static> InputKind for Provided<F> {
+    const DESERIALIZED: bool = true;
+
     type Owned = ();
     type Target = [u8];
 

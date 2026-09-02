@@ -277,6 +277,7 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.deserialized = <D::Input as InputKind>::DESERIALIZED;
     meta
 }
 

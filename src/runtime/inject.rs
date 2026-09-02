@@ -237,6 +237,7 @@ pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMet
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.deserialized = <D::Input as InputKind>::DESERIALIZED;
     meta.outgoing = def.outgoing();
     meta
 }
