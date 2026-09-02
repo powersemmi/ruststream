@@ -42,8 +42,8 @@ pub type IncludePublishing<'s, B, Layers, C, State, Pipeline, Def, Source> =
 pub type IncludeOut<'s, B, Layers, C, State, Pipeline, Def, Slots> =
     IncludeSlots<'s, InjectMount, B, Layers, C, State, Pipeline, Def, Slots>;
 
-/// The builder [`BrokerScope::include`] returns for a `batch(.., publish("dest"))`
-/// definition.
+/// The builder [`BrokerScope::include`] returns for a batch publishing (`&[T]` +
+/// `publish("dest")`) definition.
 ///
 /// The attachment is the batch reply source: a typed stack, or its
 /// [`transactional`](crate::runtime::TypedPublisher::transactional) form for one transaction per batch.

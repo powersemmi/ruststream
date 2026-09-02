@@ -29,7 +29,7 @@ struct Encoded;
 struct Audit;
 
 /// Two slots in one handler; no broker publisher type appears anywhere in the signature.
-#[subscriber("slots.in", raw)]
+#[subscriber("slots.in")]
 async fn transcode(
     chunk: &[u8],
     Out(encoded): Out<impl Publisher, Encoded>,

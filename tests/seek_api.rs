@@ -200,7 +200,7 @@ static FRAMES_PUBLISHED: Notify = Notify::const_new();
 
 /// A raw handler with an injected seeker: the input axis lets the byte-level form compose
 /// with startup injections, borrowing the payload with no decode and no copy.
-#[subscriber("seek.frames", raw)]
+#[subscriber("seek.frames")]
 async fn raw_work(frame: &[u8], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
     if frame == b"poison" {
         // The marker frame: resume from the third entry once the whole run is in the log.
@@ -258,7 +258,7 @@ static REPLAY_DONE: Notify = Notify::const_new();
 /// A batch handler with an injected seeker: the batch form composes with startup injections.
 /// The tail marker (id 2) triggers one replay of the log from the second entry on; the guard
 /// keeps the redelivered marker from seeking again.
-#[subscriber(batch("seek.pages"))]
+#[subscriber("seek.pages")]
 async fn page_work(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
     let seen_twice = {
         let mut ids = PAGE_IDS.lock().unwrap();
@@ -369,7 +369,7 @@ static PAGE_REPLAYED: AtomicBool = AtomicBool::new(false);
 /// A batch publishing handler with an injected seeker: the batch reply form composes with
 /// startup injections. The tail marker triggers one replay of the log suffix, so the replies
 /// repeat it.
-#[subscriber(batch("seek.ledger"), publish("seek.ledger.receipts"))]
+#[subscriber("seek.ledger", publish("seek.ledger.receipts"))]
 async fn ledger(
     events: &[Event],
     Seek(seeker): Seek<MemorySeeker>,

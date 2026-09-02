@@ -154,10 +154,11 @@ b.include(subscriber("audit", Receive).codec(CborCodec).build());
 ## Raw bytes
 
 `Payload<'_>` is the raw input spelling: the wrapper derefs to `&[u8]` and borrows the delivery's
-bytes, so the payload arrives undecoded and no codec is involved. This is the shape
-`#[subscriber(.., raw)]` produces, and the only subscriber form available with no codec feature at
-all (`[Payload<'_>]` is its page counterpart). The spelling is a wrapper rather than `[u8]` because
-`[u8]` is also a page of decoded `u8` elements, and coherence cannot split the two.
+bytes, so the payload arrives undecoded and no codec is involved. This is the shape a `&[u8]`
+payload parameter under `#[subscriber]` produces, and the only subscriber form available with no
+codec feature at all (`[Payload<'_>]` is its page counterpart). The spelling is a wrapper rather
+than `[u8]` because `[u8]` is also a page of decoded `u8` elements, and coherence cannot split the
+two.
 
 ```rust
 struct Ingest;

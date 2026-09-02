@@ -34,7 +34,7 @@ async fn reconcile(payment: &Payment) -> HandlerOutcome {
 // --8<-- [start:batch_retry_after]
 /// Selective outcomes carry per-element delays: settled payments ack immediately, pending ones
 /// come back in thirty seconds without holding up the rest of the page.
-#[subscriber(batch("payments"))]
+#[subscriber("payments")]
 async fn reconcile_page(payments: &[Payment]) -> Vec<HandlerOutcome> {
     payments
         .iter()

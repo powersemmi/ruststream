@@ -7,11 +7,11 @@
 /// A plain subscriber (`#[subscriber("in")]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Subscribing;
-/// A raw-bytes subscriber (`#[subscriber("in", raw)]`): no decode, no codec.
+/// A raw-bytes subscriber (a `#[subscriber]` handler taking `&[u8]`): no decode, no codec.
 #[derive(Debug, Clone, Copy)]
 pub struct RawSubscribing;
-/// A byte-reply subscriber (`#[subscriber("in", publish_raw("out"))]`, with or without
-/// `raw` on the input side): the reply bytes go out as-is through a bare publisher.
+/// A byte-reply subscriber (`#[subscriber("in", publish_raw("out"))]`, on a byte or a typed
+/// input): the reply bytes go out as-is through a bare publisher.
 #[derive(Debug, Clone, Copy)]
 pub struct RawReply;
 /// A reply-publishing subscriber (`#[subscriber("in", publish("out"))]`).
@@ -44,10 +44,10 @@ pub struct Batch;
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
 /// A batch subscriber reading a typed header contract per element
-/// (`#[subscriber(batch("in"))]` with a `Headers<Vec<H>>` parameter).
+/// (a handler taking `&[T]` with a `Headers<Vec<H>>` parameter).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchWithHeaders;
-/// A batch reply-publishing subscriber (`#[subscriber(batch("in"), publish("out"))]`).
+/// A batch reply-publishing subscriber (a `&[T]` handler with `publish("out")`).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishing;
 /// A batch subscriber whose startup injections need a publisher attachment (an `Out`

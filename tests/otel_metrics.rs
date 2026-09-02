@@ -460,7 +460,7 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
 /// Elements the batch handler has consumed so far, to wait on without sleeping.
 static BATCHED_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber(batch("otel.batches"))]
+#[subscriber("otel.batches")]
 async fn absorb(orders: &[Order]) -> HandlerOutcome {
     BATCHED_ELEMENTS.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()

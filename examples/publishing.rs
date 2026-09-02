@@ -211,7 +211,7 @@ impl PublishLayer for AuditPublish {
 
 // --8<-- [start:batch_publishing]
 /// Confirms a whole page of orders; the replies become visible atomically on commit.
-#[subscriber(batch("orders"), publish("confirmations"))]
+#[subscriber("orders", publish("confirmations"))]
 async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerOutcome> {
     if orders.is_empty() {
         return Err(HandlerOutcome::drop()); // nothing published, whole batch settled

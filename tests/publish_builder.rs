@@ -267,7 +267,7 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
 
 /// The batch publishing path carries the builder too: the reply travels its own wiring while
 /// the handler's own publishes go through the slot, in one handler.
-#[subscriber(batch("jobs.bulk"), publish("jobs.settled"))]
+#[subscriber("jobs.bulk", publish("jobs.settled"))]
 async fn settle(
     jobs: &[Job],
     Out(out): Out<impl Publisher, Events, Progress>,

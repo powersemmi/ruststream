@@ -13,7 +13,7 @@ struct Meta {
 }
 
 // Headers are per-delivery; a batch spans many deliveries with as many header maps.
-#[subscriber(batch("orders"))]
+#[subscriber("orders")]
 async fn bill(_orders: &[Order], Headers(_meta): Headers<Meta>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }

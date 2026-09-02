@@ -34,8 +34,9 @@ where
 pub type IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
     IncludeSlotsWithReply<'s, PublishInjectMount, B, Layers, C, State, Pipeline, Def, Reply, Slots>;
 
-/// The builder [`BrokerScope::include`] returns for a `batch(.., publish("dest"))`
-/// definition whose handler also takes [`Out`](crate::runtime::Out) parameters.
+/// The builder [`BrokerScope::include`] returns for a batch publishing (`&[T]` +
+/// `publish("dest")`) definition whose handler also takes [`Out`](crate::runtime::Out)
+/// parameters.
 pub type IncludeBatchPublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
     IncludeSlotsWithReply<
         's,

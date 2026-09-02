@@ -587,7 +587,7 @@ impl<C> PublishTransform<C> for Envelope {
     }
 }
 
-#[subscriber("cov.audit.in", raw, publish_raw("cov.audit.out"))]
+#[subscriber("cov.audit.in", publish_raw("cov.audit.out"))]
 async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
     audit
         .raw(frame)

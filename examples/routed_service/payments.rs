@@ -37,7 +37,7 @@ pub(crate) async fn process_payment(
 // --8<-- [start:batch]
 // This handler ignores the app state, so it omits the `Context` parameter and stays generic over
 // the state; it still mounts alongside the stateful `process_payment` handler on the same router.
-#[subscriber(batch("clearings"), publish("settlements"))]
+#[subscriber("clearings", publish("settlements"))]
 pub(crate) async fn settle(clearings: &[Clearing]) -> Vec<Settlement> {
     clearings
         .iter()

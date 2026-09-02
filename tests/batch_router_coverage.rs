@@ -26,7 +26,7 @@ async fn brc_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber(batch("brc-batch-in"), publish("brc-out"))]
+#[subscriber("brc-batch-in", publish("brc-out"))]
 async fn brc_batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }

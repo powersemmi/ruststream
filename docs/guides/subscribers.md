@@ -538,7 +538,7 @@ emitting a wire format the handler produced itself:
     --8<-- "tests/manual_raw_subscriber.rs:raw_reply_typed"
     ```
 
-The encoded `publish(..)` clause under `raw` is rejected (a raw handler's reply is bytes -
+The encoded `publish(..)` clause on a `&[u8]` handler is rejected (a raw handler's reply is bytes -
 `publish_raw` is the fix the error names), as is combining both reply clauses on one handler.
 
 ## Worker pools

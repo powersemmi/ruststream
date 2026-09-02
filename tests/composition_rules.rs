@@ -23,7 +23,7 @@ use ruststream::{Buffered, Name, nonzero, subscriber};
 static TX_HANDLED: AtomicUsize = AtomicUsize::new(0);
 
 /// Each batch's replies go out in one transaction; the pool runs the batches concurrently.
-#[subscriber(batch("tx-in"), publish("tx-out"), workers(2))]
+#[subscriber("tx-in", publish("tx-out"), workers(2))]
 async fn tx_confirm(orders: &[Order]) -> Vec<Receipt> {
     TX_HANDLED.fetch_add(orders.len(), Ordering::SeqCst);
     orders.iter().map(|o| Receipt { id: o.id }).collect()
@@ -77,9 +77,9 @@ static BUF_SEEN: AtomicUsize = AtomicUsize::new(0);
 static BUF_BATCHES: AtomicUsize = AtomicUsize::new(0);
 
 /// Client-side batching under a pool: the size cap or deadline (not the pool) closes a batch.
-#[subscriber(batch(Buffered::<Name>::new(Name::new("buf-in"))
+#[subscriber(Buffered::<Name>::new(Name::new("buf-in"))
     .max_size(nonzero!(2))
-    .max_wait(Duration::from_millis(10))), workers(2))]
+    .max_wait(Duration::from_millis(10)), workers(2))]
 async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
     BUF_SEEN.fetch_add(orders.len(), Ordering::SeqCst);
     BUF_BATCHES.fetch_add(1, Ordering::SeqCst);

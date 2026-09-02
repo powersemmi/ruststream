@@ -1,5 +1,6 @@
-//! Integration tests for the raw `#[subscriber(.., raw)]` form: the handler receives each
-//! delivery's payload bytes untouched, with no codec anywhere on the path.
+//! Integration tests for the raw form, which the macro reads off a `&[u8]` payload parameter:
+//! the handler receives each delivery's payload bytes untouched, with no codec anywhere on the
+//! path.
 //!
 //! The codec-free path itself is additionally pinned by a feature-stripped compile:
 //! `cargo check --no-default-features --features macros,memory,testing --test raw_subscriber`
@@ -29,7 +30,7 @@ const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
 static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 
 // --8<-- [start:raw]
-#[subscriber("frames", raw)]
+#[subscriber("frames")]
 async fn on_frame(frame: &[u8]) -> HandlerOutcome {
     FRAMES.lock().expect("frame log").push(frame.to_vec());
     HandlerOutcome::ack()
@@ -61,10 +62,10 @@ async fn raw_handler_receives_exact_bytes() {
     );
 }
 
-// --- the reply form: raw, publish_raw("dest") republishes the returned bytes as-is ---
+// --- the byte reply form: publish_raw("dest") republishes the returned bytes as-is ---
 
 // --8<-- [start:raw_reply]
-#[subscriber("relay-in", raw, publish_raw("relay-out"))]
+#[subscriber("relay-in", publish_raw("relay-out"))]
 async fn relay(frame: &[u8]) -> Vec<u8> {
     let mut reply = frame.to_vec();
     reply.reverse();
@@ -72,7 +73,7 @@ async fn relay(frame: &[u8]) -> Vec<u8> {
 }
 // --8<-- [end:raw_reply]
 
-#[subscriber("relay-out", raw)]
+#[subscriber("relay-out")]
 async fn relay_capture(_frame: &[u8]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
@@ -108,12 +109,12 @@ async fn raw_reply_round_trips_exact_bytes() {
 
 // --- without .publisher(..) the reply commits with the broker's default publish policy ---
 
-#[subscriber("relay-default-in", raw, publish_raw("relay-default-out"))]
+#[subscriber("relay-default-in", publish_raw("relay-default-out"))]
 async fn relay_default(frame: &[u8]) -> Vec<u8> {
     frame.to_vec()
 }
 
-#[subscriber("relay-default-out", raw)]
+#[subscriber("relay-default-out")]
 async fn relay_default_capture(_frame: &[u8]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
@@ -142,7 +143,7 @@ async fn raw_reply_defaults_to_the_brokers_publish_policy() {
 
 // --- the Result form: Err skips the publish and settles by the returned HandlerOutcome ---
 
-#[subscriber("relay-checked-in", raw, publish_raw("relay-checked-out"))]
+#[subscriber("relay-checked-in", publish_raw("relay-checked-out"))]
 async fn relay_checked(frame: &[u8]) -> Result<Vec<u8>, HandlerOutcome> {
     if frame.is_empty() {
         return Err(HandlerOutcome::drop());
@@ -150,7 +151,7 @@ async fn relay_checked(frame: &[u8]) -> Result<Vec<u8>, HandlerOutcome> {
     Ok(frame.to_vec())
 }
 
-#[subscriber("relay-checked-out", raw)]
+#[subscriber("relay-checked-out")]
 async fn relay_checked_capture(_frame: &[u8]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
@@ -233,12 +234,12 @@ impl PublishPolicy<ConnectedMemoryBroker> for FlakyPublish {
     }
 }
 
-#[subscriber("relay-flaky-in", raw, publish_raw("relay-flaky-out"))]
+#[subscriber("relay-flaky-in", publish_raw("relay-flaky-out"))]
 async fn relay_flaky(frame: &[u8]) -> Vec<u8> {
     frame.to_vec()
 }
 
-#[subscriber("relay-flaky-out", raw)]
+#[subscriber("relay-flaky-out")]
 async fn relay_flaky_capture(_frame: &[u8]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
@@ -312,7 +313,7 @@ mod typed_in {
         Ok(wrap.id.to_be_bytes().to_vec())
     }
 
-    #[subscriber("gateway-out", raw)]
+    #[subscriber("gateway-out")]
     async fn gateway_capture(frame: &[u8]) -> HandlerOutcome {
         assert_eq!(frame, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
         HandlerOutcome::ack()
@@ -389,7 +390,7 @@ struct CountState {
     bytes_seen: Arc<AtomicUsize>,
 }
 
-#[subscriber("frames-state", raw)]
+#[subscriber("frames-state")]
 async fn with_state(
     frame: &[u8],
     ctx: &mut Context,
@@ -460,7 +461,7 @@ impl ContextField for FrameLen {
 
 static SEEN_LEN: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber("frames-meta", raw)]
+#[subscriber("frames-meta")]
 async fn measured(_frame: &[u8], Ctx(len): Ctx<FrameLen>) -> HandlerOutcome {
     SEEN_LEN.store(len, Ordering::Relaxed);
     HandlerOutcome::ack()
@@ -488,7 +489,7 @@ async fn ctx_extractor_projects_the_context_under_raw() {
 
 // --- workers(..) and on_failure(panic = ..) keep working on the raw form ---
 
-#[subscriber("frames-workers", raw, workers(2), on_failure(panic = drop))]
+#[subscriber("frames-workers", workers(2), on_failure(panic = drop))]
 async fn tolerant(frame: &[u8]) -> HandlerOutcome {
     assert_ne!(frame, b"boom", "poison frame");
     HandlerOutcome::ack()
@@ -529,7 +530,7 @@ async fn workers_and_panic_policy_apply_to_raw() {
 
 static ROUTED: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber("routed-raw", raw)]
+#[subscriber("routed-raw")]
 async fn routed(frame: &[u8]) -> HandlerOutcome {
     ROUTED.fetch_add(frame.len(), Ordering::Relaxed);
     HandlerOutcome::ack()
@@ -557,7 +558,7 @@ async fn router_mounts_raw_definitions() {
     assert_eq!(ROUTED.load(Ordering::Relaxed), FRAME.len());
 }
 
-#[subscriber("routed-relay-in", raw, publish_raw("routed-relay-out"))]
+#[subscriber("routed-relay-in", publish_raw("routed-relay-out"))]
 async fn routed_relay(frame: &[u8]) -> Vec<u8> {
     frame.to_vec()
 }
@@ -605,7 +606,7 @@ mod scope_codec {
     static RAW_BYTES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
     static TYPED_ID: AtomicUsize = AtomicUsize::new(0);
 
-    #[subscriber("mixed-raw", raw)]
+    #[subscriber("mixed-raw")]
     async fn raw_side(frame: &[u8]) -> HandlerOutcome {
         RAW_BYTES.lock().expect("raw log").push(frame.to_vec());
         HandlerOutcome::ack()
@@ -671,7 +672,7 @@ mod asyncapi_listing {
     use ruststream::asyncapi::build_spec;
 
     /// Consumes raw frames.
-    #[subscriber("frames-doc", raw)]
+    #[subscriber("frames-doc")]
     async fn documented(_frame: &[u8]) {}
 
     #[test]

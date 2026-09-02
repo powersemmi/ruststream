@@ -8,7 +8,7 @@ struct Encoded;
 #[derive(OutSlot)]
 struct Audit;
 
-#[subscriber("chunks", raw)]
+#[subscriber("chunks")]
 async fn transcode(
     chunk: &[u8],
     Out(_encoded): Out<impl Publisher, Encoded>,

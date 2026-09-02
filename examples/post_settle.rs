@@ -32,7 +32,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 /// Per-element settlement: id 0 retries with no continuation, every other order acks and schedules
 /// its own follow-up. The continuation rides with the element, so a batch settles each message and
 /// its side effect independently.
-#[subscriber(batch("orders"))]
+#[subscriber("orders")]
 async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()

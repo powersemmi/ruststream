@@ -11,14 +11,13 @@ use syn::{
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
-/// descriptor constructor `Type::new(..)` / `Type { .. }`), optionally wrapped in `batch(..)`
-/// to consume whole batches, plus optional `publish("topic")` (the encoded reply destination),
-/// `publish_raw("topic")` (the reply is published as raw bytes), `workers(n[, by_key])` (the
-/// dispatch concurrency), `start_at(<position>)` (the subscription opens at that position),
-/// and `raw` (the handler takes the payload bytes, undecoded) clauses, in any order.
+/// descriptor constructor `Type::new(..)` / `Type { .. }`), plus optional `publish("topic")`
+/// (the encoded reply destination), `publish_raw("topic")` (the reply is published as raw
+/// bytes), `workers(n[, by_key])` (the dispatch concurrency), and `start_at(<position>)` (the
+/// subscription opens at that position) clauses, in any order. The subscription form (single,
+/// raw, batch) is never spelled here: it is inferred from the payload parameter's type.
 pub(crate) struct SubscriberArgs {
     pub(crate) source: SourceArg,
-    pub(crate) batch: bool,
     /// The `publish(..)` destination: a string literal, or a `&'static str` constant.
     pub(crate) publish: Option<Expr>,
     /// The `publish_raw(..)` destination (the reply bytes go out unencoded): a string literal,
@@ -29,8 +28,6 @@ pub(crate) struct SubscriberArgs {
     /// The `start_at(<position>)` clause: a broker position constructor the subscription is
     /// sought to before the first delivery.
     pub(crate) start_at: Option<Expr>,
-    /// The `raw` flag keyword, kept as the parsed [`Ident`] so combination errors can point at it.
-    pub(crate) raw: Option<Ident>,
 }
 
 /// The subscription the attribute fixes. The kind is always fixed here (the definition and the
@@ -46,8 +43,10 @@ pub(crate) enum SourceArg {
 }
 
 /// The clause keywords, so a leading one is not mistaken for a source expression: they parse as
-/// expressions too (`workers(4)` is a call, `raw` a path).
+/// expressions too (`workers(4)` is a call). The retired `batch` / `raw` form keywords stay
+/// recognized here so writing one reaches its retirement error instead of parsing as a source.
 const CLAUSES: &[&str] = &[
+    "batch",
     "raw",
     "on_failure",
     "publish",
@@ -192,13 +191,12 @@ impl Parse for FailureArg {
 
 impl Parse for SubscriberArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let (source, batch, named_here) = parse_source(input)?;
+        let (source, named_here) = parse_source(input)?;
         let mut publish = None;
         let mut publish_raw = None;
         let mut workers = None;
         let mut on_failure = None;
         let mut start_at = None;
-        let mut raw = None;
         let mut need_comma = named_here;
         while !input.is_empty() {
             if need_comma {
@@ -210,10 +208,19 @@ impl Parse for SubscriberArgs {
             need_comma = true;
             let keyword: Ident = input.parse()?;
             if keyword == "raw" {
-                if raw.is_some() {
-                    return Err(Error::new(keyword.span(), "duplicate `raw`"));
-                }
-                raw = Some(keyword);
+                return Err(Error::new(
+                    keyword.span(),
+                    "the `raw` clause is retired: the subscription form is inferred from the \
+                     payload type - take the payload as `&[u8]` (`&[&[u8]]` for a batch of \
+                     payloads)",
+                ));
+            } else if keyword == "batch" {
+                return Err(Error::new(
+                    keyword.span(),
+                    "the batch(..) clause is retired: the subscription form is inferred from \
+                     the payload type - write the source alone (#[subscriber(\"frames\")]) and \
+                     take the whole batch as `&[T]` (`&[&[u8]]` for undecoded payloads)",
+                ));
             } else if keyword == "on_failure" {
                 if on_failure.is_some() {
                     return Err(Error::new(keyword.span(), "duplicate on_failure(..)"));
@@ -260,55 +267,34 @@ impl Parse for SubscriberArgs {
                 return Err(Error::new(
                     keyword.span(),
                     "expected `publish(\"reply-topic\")`, `publish_raw(\"reply-topic\")`, \
-                     `workers(n[, by_key])`, `on_failure(panic = .., decode = ..)`, \
-                     `start_at(<position>)`, or `raw`",
+                     `workers(n[, by_key])`, `on_failure(panic = .., decode = ..)`, or \
+                     `start_at(<position>)`",
                 ));
             }
         }
         Ok(Self {
             source,
-            batch,
             publish,
             publish_raw,
             workers,
             on_failure,
             start_at,
-            raw,
         })
     }
 }
 
-/// Parses the leading source argument, if the attribute opens on one. Reports the subscription,
-/// whether the retiring `batch(..)` wrapper was there, and whether anything was consumed (which
-/// decides if the first clause needs a separating comma).
+/// Parses the leading source argument, if the attribute opens on one. Reports the subscription
+/// and whether anything was consumed (which decides if the first clause needs a separating
+/// comma).
 ///
 /// An empty attribute, or one opening on a clause, leaves the subscription unnamed: it is the
 /// by-name source with its value left out, the shortest of the source forms.
-fn parse_source(input: ParseStream) -> syn::Result<(SourceArg, bool, bool)> {
+fn parse_source(input: ParseStream) -> syn::Result<(SourceArg, bool)> {
     if input.is_empty() || peeks_clause(input) {
-        return Ok((SourceArg::OpenName, false, false));
+        return Ok((SourceArg::OpenName, false));
     }
-    let mut batch = false;
-    let mut expr: Expr = input.parse()?;
-    // `batch(<source>)` is a marker around the usual source argument, not a constructor: unwrap
-    // it and remember the form. A real constructor is never a bare one-segment call: free
-    // functions are rejected by `source_tokens`.
-    if let Expr::Call(call) = &expr
-        && let Expr::Path(ExprPath {
-            path, qself: None, ..
-        }) = &*call.func
-        && path.is_ident("batch")
-    {
-        if call.args.len() != 1 {
-            return Err(Error::new_spanned(
-                call,
-                "batch(..) takes exactly one source argument",
-            ));
-        }
-        batch = true;
-        expr = call.args[0].clone();
-    }
-    Ok((source_arg(expr), batch, true))
+    let expr: Expr = input.parse()?;
+    Ok((source_arg(expr), true))
 }
 
 /// Classifies a parsed source expression: a bare type path names the kind and leaves the value

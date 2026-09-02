@@ -107,8 +107,8 @@ impl Handle<[Order]> for Reconcile {
 
 // --8<-- [start:batch_mount]
 /// Batches dispatch per page rather than per delivery, and the page input is the whole
-/// declaration: the mount demands a batching subscriber of the source, exactly as a `batch(..)`
-/// attribute would.
+/// declaration: the mount demands a batching subscriber of the source, exactly as a `&[T]`
+/// handler under `#[subscriber]` would.
 fn batch_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
         .include(subscriber("orders", SettlePage).build())

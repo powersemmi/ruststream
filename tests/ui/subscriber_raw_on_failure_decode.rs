@@ -1,7 +1,9 @@
 use ruststream::subscriber;
 
-// There is no decode step under `raw`, so a decode failure policy is meaningless.
-#[subscriber("frames", raw, on_failure(decode = drop))]
-async fn handle(frame: &[u8]) {}
+// A `&[u8]` payload has no decode step, so a decode failure policy is meaningless.
+#[subscriber("frames", on_failure(decode = drop))]
+async fn handle(frame: &[u8]) {
+    let _ = frame.len();
+}
 
 fn main() {}

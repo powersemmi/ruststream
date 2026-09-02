@@ -135,7 +135,7 @@ async fn by_key_lanes_preserve_per_key_order() {
 static PAGES: AtomicUsize = AtomicUsize::new(0);
 
 /// Batch form composing with a pool: up to two pages in flight.
-#[subscriber(batch("pages"), workers(2))]
+#[subscriber("pages", workers(2))]
 async fn settle(orders: &[Order]) -> HandlerOutcome {
     PAGES.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()

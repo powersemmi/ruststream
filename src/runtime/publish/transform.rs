@@ -96,8 +96,8 @@ impl<C, Inner: PublishTransform<C>, Outer: PublishTransform<C>> PublishTransform
     }
 }
 
-/// A static publish transform that runs only on a `#[subscriber(batch(..), publish(..))]` handler's
-/// replies, not on single-message replies.
+/// A static publish transform that runs only on a batch publishing (`&[T]` + `publish(..)`)
+/// handler's replies, not on single-message replies.
 ///
 /// The batch counterpart of [`PublishTransform`], kept a distinct trait so a transform that belongs to
 /// the batch path only (a header marking a reply as batched, a per-batch sampling decision) cannot

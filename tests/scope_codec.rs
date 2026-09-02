@@ -31,13 +31,13 @@ async fn plain_on(_o: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber(batch("sc-batch"))]
+#[subscriber("sc-batch")]
 async fn batch(orders: &[Order]) -> HandlerOutcome {
     BATCH.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
-#[subscriber(batch("sc-batch-on"))]
+#[subscriber("sc-batch-on")]
 async fn batch_on(orders: &[Order]) -> HandlerOutcome {
     BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
@@ -53,12 +53,12 @@ async fn relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber(batch("sc-bpin"), publish("sc-bpout"))]
+#[subscriber("sc-bpin", publish("sc-bpout"))]
 async fn batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("sc-bpin-on"), publish("sc-bpout-on"))]
+#[subscriber("sc-bpin-on", publish("sc-bpout-on"))]
 async fn batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -158,7 +158,7 @@ async fn d_plain_on(_o: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber(batch("d-batch-on"))]
+#[subscriber("d-batch-on")]
 async fn d_batch_on(orders: &[Order]) -> HandlerOutcome {
     D_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
@@ -169,7 +169,7 @@ async fn d_relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber(batch("d-bpin-on"), publish("d-bpout-on"))]
+#[subscriber("d-bpin-on", publish("d-bpout-on"))]
 async fn d_batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }

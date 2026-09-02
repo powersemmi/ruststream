@@ -68,7 +68,7 @@ struct Encoded;
 #[derive(OutSlot)]
 struct Audit;
 
-#[subscriber("rp.slots.in", raw)]
+#[subscriber("rp.slots.in")]
 async fn transcode(
     chunk: &[u8],
     Out(encoded): Out<impl Publisher, Encoded>,
@@ -120,7 +120,7 @@ async fn a_router_binds_named_out_slots_by_marker() {
     tb.out::<Audit>().assert_called_once();
 }
 
-#[subscriber(batch("rp.page.in"))]
+#[subscriber("rp.page.in")]
 async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for event in events {
         if out
@@ -192,7 +192,7 @@ async fn a_router_mounts_a_seek_parameter() {
 // exception), so a batch handler signals through a notify permit instead.
 static PAGE_SEEN: Notify = Notify::const_new();
 
-#[subscriber(batch(MemorySource::new("rp.seek.page")))]
+#[subscriber(MemorySource::new("rp.seek.page"))]
 async fn rewind_page(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
     if events.is_empty() && seeker.seek(MemoryPosition::start()).await.is_err() {
         return HandlerOutcome::retry();
@@ -251,7 +251,7 @@ async fn a_router_defaults_the_reply_publisher_on_mount() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[subscriber("rp.raw.in", raw, publish_raw("rp.raw.out"))]
+#[subscriber("rp.raw.in", publish_raw("rp.raw.out"))]
 async fn echo_frame(frame: &[u8]) -> Vec<u8> {
     frame.to_vec()
 }
@@ -278,7 +278,7 @@ async fn a_router_mounts_the_byte_reply_form() {
         .with_raw(b"frame");
 }
 
-#[subscriber("rp.raw.on.in", raw, publish_raw("rp.raw.on.out"))]
+#[subscriber("rp.raw.on.in", publish_raw("rp.raw.on.out"))]
 async fn echo_frame_on(frame: &[u8]) -> Vec<u8> {
     frame.to_vec()
 }
@@ -349,7 +349,7 @@ async fn a_router_composes_a_default_reply_with_out_slots() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[subscriber("rp.audit.in", raw, publish_raw("rp.audit.out"))]
+#[subscriber("rp.audit.in", publish_raw("rp.audit.out"))]
 async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
     audit
         .raw(frame)
@@ -389,7 +389,7 @@ async fn a_router_composes_a_byte_reply_with_out_slots() {
         .with_raw(b"frame");
 }
 
-#[subscriber(batch("rp.ledger.in"), publish("rp.ledger.receipts"))]
+#[subscriber("rp.ledger.in", publish("rp.ledger.receipts"))]
 async fn settle_page(
     events: &[Event],
     Out(out): Out<impl Publisher>,
@@ -476,7 +476,7 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
 // ---------------------------------------------------------------------------------------------
 // The batch reply terminal, and the metadata every new route kind contributes.
 
-#[subscriber(batch("rp.batch.in"), publish("rp.batch.out"))]
+#[subscriber("rp.batch.in", publish("rp.batch.out"))]
 async fn bulk_relay(events: &[Event]) -> Vec<Event> {
     events
         .iter()

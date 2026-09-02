@@ -167,7 +167,7 @@ static BATCH_NOTIFY: Notify = Notify::const_new();
 
 /// A batch handler: the ungated after_settle hook fires once per batch; the outcome-gated one is
 /// dropped on the batch path (per-element outcomes make a single gate ill-defined).
-#[subscriber(batch("batched"))]
+#[subscriber("batched")]
 async fn handle_batch(orders: &[Order], ctx: &mut Context) -> HandlerOutcome {
     let _ = orders.len();
     ctx.after_settle(async {

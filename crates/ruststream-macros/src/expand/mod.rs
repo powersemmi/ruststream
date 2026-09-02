@@ -853,12 +853,11 @@ fn split_seek<'a>(
     Ok(seek)
 }
 
-/// What the handler consumes per invocation, read off its message parameter rather than declared
-/// in the attribute: `&T` is one decoded message, `&[u8]` one delivery's payload as delivered,
-/// `&[T]` a whole decoded batch, and `&[&[u8]]` a batch of payloads.
+/// What the handler consumes per invocation, read off its message parameter - the attribute
+/// carries no form clause: `&T` is one decoded message, `&[u8]` one delivery's payload as
+/// delivered, `&[T]` a whole decoded batch, and `&[&[u8]]` a batch of payloads.
 ///
-/// A batch of `u8` values is not a thing anyone means, so `&[u8]` reads as the payload; spelling
-/// `batch(..)` in the attribute says otherwise.
+/// A batch of `u8` values is not a thing anyone means, so `&[u8]` reads as the payload.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Shape {
     Single,
@@ -869,51 +868,21 @@ enum Shape {
 
 /// Resolves the message parameter's referent into the handler's shape and the type the
 /// definition carries as its input (the element for a batch; `[u8]` for the byte shapes, which
-/// never emit it). Each misuse gets an error naming the fix.
-fn resolve_shape<'a>(
-    args: &SubscriberArgs,
-    reference: &'a syn::TypeReference,
-) -> syn::Result<(Shape, &'a Type)> {
+/// never emit it). The mapping is purely syntactic, over the type's own tokens: an alias hiding
+/// a slice reads as a single decoded message.
+fn resolve_shape(reference: &syn::TypeReference) -> (Shape, &Type) {
     let elem = &*reference.elem;
-    // A slice of byte slices is a batch of payloads whatever the clauses say: no other reading
-    // of that parameter exists.
+    // A slice of byte slices only reads one way: a batch of payloads.
     if let Type::Slice(slice) = elem
         && let Type::Reference(inner) = &*slice.elem
         && is_u8_slice(&inner.elem)
     {
-        return Ok((Shape::RawBatch, &inner.elem));
-    }
-    if args.raw.is_some() {
-        if args.batch {
-            return Err(Error::new_spanned(
-                elem,
-                "a raw batch handler takes the batch's payloads as a slice of byte slices: \
-                 `&[&[u8]]`",
-            ));
-        }
-        return match elem {
-            byte_slice if is_u8_slice(byte_slice) => Ok((Shape::Raw, byte_slice)),
-            other => Err(Error::new_spanned(
-                other,
-                "a raw subscriber receives the payload bytes: make the message parameter \
-                 `&[u8]` (or `&[&[u8]]` for a batch of payloads), or drop `raw` to decode into \
-                 a typed value",
-            )),
-        };
-    }
-    if args.batch {
-        return match elem {
-            Type::Slice(slice) => Ok((Shape::Batch, &slice.elem)),
-            other => Err(Error::new_spanned(
-                other,
-                "a batch handler takes the whole batch as a slice: `&[T]`",
-            )),
-        };
+        return (Shape::RawBatch, &inner.elem);
     }
     match elem {
-        byte_slice if is_u8_slice(byte_slice) => Ok((Shape::Raw, byte_slice)),
-        Type::Slice(slice) => Ok((Shape::Batch, &slice.elem)),
-        other => Ok((Shape::Single, other)),
+        byte_slice if is_u8_slice(byte_slice) => (Shape::Raw, byte_slice),
+        Type::Slice(slice) => (Shape::Batch, &slice.elem),
+        other => (Shape::Single, other),
     }
 }
 
@@ -948,7 +917,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
             "the message parameter must be a reference `&T`",
         ));
     };
-    let (shape, input_ty) = resolve_shape(args, reference)?;
+    let (shape, input_ty) = resolve_shape(reference);
     let description = doc_description(&func.attrs);
     let (source_ty, source_expr) = source_tokens(&args.source)?;
     // `start_at(<position>)` decorates the source with the core `StartAt` wrapper, so the

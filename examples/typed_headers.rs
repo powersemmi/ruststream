@@ -62,7 +62,7 @@ struct Events;
 // destinations come from each type's declaration, headers from its contract - `Progress`
 // publishes bare, `ChunkDone` does not compile without `.with_headers(&meta)`.
 // --8<-- [start:handler]
-#[subscriber("chunks.raw", raw)]
+#[subscriber("chunks.raw")]
 async fn convert(
     chunk: &[u8],
     Headers(meta): Headers<ChunkMeta>,
@@ -128,7 +128,7 @@ async fn status(req: &StatusRequest) -> StatusReply {
 // slices line up index for index, and an element failing either the payload decode or the
 // contract is settled by the decode policy instead of reaching the handler.
 // --8<-- [start:batch]
-#[subscriber(batch("chunks.bulk"))]
+#[subscriber("chunks.bulk")]
 async fn bulk(reports: &[Progress], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
     for (report, meta) in reports.iter().zip(&meta) {
         println!(

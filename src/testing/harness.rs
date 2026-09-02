@@ -436,7 +436,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// #[derive(OutSlot)]
     /// struct Encoded;
     ///
-    /// #[subscriber("chunks", raw)]
+    /// #[subscriber("chunks")]
     /// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerOutcome {
     ///     if out.raw(chunk).to("encoded").publish().await.is_err() {
     ///         return HandlerOutcome::retry();
@@ -842,7 +842,7 @@ impl<'a> BrokerHandle<'a> {
     /// use ruststream::subscriber;
     /// use ruststream::testing::TestApp;
     ///
-    /// #[subscriber("frames", raw)]
+    /// #[subscriber("frames")]
     /// async fn handle(frame: &[u8]) -> HandlerOutcome {
     ///     let _ = frame.len();
     ///     HandlerOutcome::ack()

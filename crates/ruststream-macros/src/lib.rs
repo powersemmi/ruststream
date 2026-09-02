@@ -67,7 +67,7 @@ use parse::{SubscriberArgs, doc_description};
 /// // publisher attached at the include site (b.include(mirror).publisher(policy), or the
 /// // broker's default publish policy without the call) - no codec on either side. Returning
 /// // Result<Vec<u8>, HandlerOutcome> gives the same explicit ack control as the typed form.
-/// #[subscriber("frames", raw, publish_raw("frames-out"))]
+/// #[subscriber("frames", publish_raw("frames-out"))]
 /// async fn mirror(frame: &[u8]) -> Vec<u8> { frame.to_vec() }
 ///
 /// // publish_raw also composes with a typed input (the gateway shape): the input decodes with
@@ -385,7 +385,7 @@ pub fn derive_from_ref(item: TokenStream) -> TokenStream {
 /// #[publishes(ChunkDone, Progress)]
 /// struct Events;
 ///
-/// #[subscriber("chunks", raw)]
+/// #[subscriber("chunks")]
 /// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerOutcome {
 ///     /* ... */
 /// }

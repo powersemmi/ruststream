@@ -298,7 +298,7 @@ async fn header_contract_violation_follows_decode_policy() {
 
 // --- raw input composes with Headers: bytes body, typed header contract ---
 
-#[subscriber("frames", raw, on_failure(decode = skip))]
+#[subscriber("frames", on_failure(decode = skip))]
 async fn frame(payload: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
     assert!(!payload.is_empty());
     assert_eq!(meta.chunk_no, 3);
@@ -426,7 +426,7 @@ static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec
 // A size-capped buffer, so a batch closes on the cap rather than on delivery timing and the
 // per-element alignment is actually exercised across more than one element. The wait bound stays
 // at its 10 ms default: a longer one would only make the suite wait for the tail batch.
-#[subscriber(batch(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2))))]
+#[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2)))]
 async fn bulk(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
     let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
     seen.push((
@@ -506,7 +506,7 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
 /// What the router-mounted handler saw, so the Router path is proven to carry the contracts too.
 static ROUTED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
 
-#[subscriber(batch("chunks.routed"))]
+#[subscriber("chunks.routed")]
 async fn routed(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
     let mut seen = ROUTED_SEEN.lock().expect("the test holds no poisoned lock");
     for (chunk, meta) in chunks.iter().zip(&meta) {
