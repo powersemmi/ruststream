@@ -20,8 +20,8 @@ mod capability;
 
 use capability::SeekControl;
 pub use capability::{
-    MemoryPosition, MemoryRequester, MemorySeeker, MemoryTransaction, PARTITION_KEY_HEADER,
-    RequestError,
+    MemoryContext, MemoryPosition, MemoryRequester, MemorySeeker, MemoryTransaction,
+    PARTITION_KEY_HEADER, Position, RequestError, SeekHandle,
 };
 
 use std::{

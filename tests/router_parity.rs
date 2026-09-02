@@ -15,10 +15,8 @@ mod common;
 
 use common::{Event, connected, expect_id, observed_memory, payload};
 
-use tokio::sync::Notify;
-
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, Router, RustStream, Seek};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, SeekHandle};
+use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{Broker, OutSlot, Publisher, Seeker, subscriber};
 
@@ -159,10 +157,10 @@ async fn a_router_mounts_a_batch_out_slot() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Startup injections that need no attachment: a Seek parameter, single and batch.
+// A broker context key: the seek handle rides the delivery context, read by the Ctx extractor.
 
 #[subscriber(MemorySource::new("rp.seek.in"))]
-async fn rewind(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
+async fn rewind(event: &Event, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     if event.id == 0 && seeker.seek(MemoryPosition::start()).await.is_err() {
         return HandlerOutcome::retry();
     }
@@ -170,7 +168,7 @@ async fn rewind(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutco
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_mounts_a_seek_parameter() {
+async fn a_router_mounts_a_seek_key_reader() {
     let router = Router::<MemoryBroker>::new().include(rewind);
     let app = RustStream::new(AppInfo::new("rp-seek", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -186,40 +184,6 @@ async fn a_router_mounts_a_seek_parameter() {
     tb.broker::<MemoryBroker>()
         .subscriber("rp.seek.in")
         .assert_called_once();
-}
-
-// The harness's per-subscriber assertions ride the per-message path (the documented middleware
-// exception), so a batch handler signals through a notify permit instead.
-static PAGE_SEEN: Notify = Notify::const_new();
-
-#[subscriber(MemorySource::new("rp.seek.page"))]
-async fn rewind_page(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
-    if events.is_empty() && seeker.seek(MemoryPosition::start()).await.is_err() {
-        return HandlerOutcome::retry();
-    }
-    PAGE_SEEN.notify_one();
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_mounts_a_batch_seek_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-
-    let router = Router::<MemoryBroker>::new().include(rewind_page);
-    let app = RustStream::new(AppInfo::new("rp-seek-page", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
-
-    ingress
-        .raw(&payload(1))
-        .to("rp.seek.page")
-        .publish()
-        .await
-        .expect("publish");
-    PAGE_SEEN.notified().await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -511,7 +475,6 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
 fn every_new_route_kind_reports_its_metadata_in_registration_order() {
     let router = Router::<MemoryBroker>::new()
         .include(rewind)
-        .include(rewind_page)
         .include(echo_frame)
         .build()
         .include(relay)
@@ -522,13 +485,7 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
     assert_eq!(
         names,
-        [
-            "rp.seek.in",
-            "rp.seek.page",
-            "rp.raw.in",
-            "rp.reply.in",
-            "rp.batch.in"
-        ]
+        ["rp.seek.in", "rp.raw.in", "rp.reply.in", "rp.batch.in"]
     );
 }
 

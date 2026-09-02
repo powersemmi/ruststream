@@ -1,7 +1,7 @@
 //! Repositioning live subscriptions without the `macros` feature: `start_at(..)` is a settings
-//! step chained on the mount, and the seeker rides the broker context axis - a body that declares
-//! `SeekContext<MemorySeeker>` reads its position and repositions its subscription straight
-//! through `Context`.
+//! step chained on the mount, and the seeker rides the broker context axis - a body that
+//! declares the in-memory broker's `MemoryContext` reads its position and its reposition handle
+//! by key, straight through `Context`.
 //!
 //! ```text
 //! cargo run --example manual_seek --no-default-features --features memory,json
@@ -11,7 +11,8 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
+use ruststream::Seeker;
+use ruststream::memory::{MemoryBroker, MemoryContext, MemoryPosition, MemorySource, SeekHandle};
 use ruststream::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -45,19 +46,25 @@ impl Handle<Job> for Record {
 /// resume point is dropped without touching the subscription itself.
 struct Work;
 
-/// The body behind the attribute's `Seek(seeker)` parameter: seeking is the broker context axis
-/// of `Handle`, so declaring `SeekContext<MemorySeeker>` is the whole declaration - the runtime
-/// builds one per delivery off the subscription, and `ctx.seek(..)` repositions it.
-impl Handle<Job, (), (), SeekContext<MemorySeeker>> for Work {
+/// The body behind the attribute's `Ctx(seeker)` parameter: seeking is the broker context axis
+/// of `Handle`, so declaring the broker's own `MemoryContext` is the whole declaration - the
+/// runtime builds one per delivery off the subscription, and the `SeekHandle` key reads the
+/// reposition handle out of it.
+impl Handle<Job, (), (), MemoryContext> for Work {
     async fn handle(
         &self,
         job: &Job,
         _outs: &(),
-        ctx: &mut Context<'_, SeekContext<MemorySeeker>>,
+        ctx: &mut Context<'_, MemoryContext>,
     ) -> Result<(), HandlerOutcome> {
         if job.id == 999 {
             // The poison marker carries the resume point: skip to the fourth log entry.
-            if ctx.seek(MemoryPosition::sequence(3)).await.is_err() {
+            if ctx
+                .context(SeekHandle)
+                .seek(MemoryPosition::sequence(3))
+                .await
+                .is_err()
+            {
                 return Err(HandlerOutcome::retry());
             }
             return Ok(());
@@ -81,8 +88,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --8<-- [start:mount]
-    // Both mount plainly: the seek body's context is built off its own subscription right after
-    // it opens, and the chained start position seeks the audit one before its first delivery.
+    // Both mount plainly: the seek body's context is built off its own subscription per
+    // delivery, and the chained start position seeks the audit one before its first delivery.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
         b.include(subscriber(MemorySource::new("jobs"), Work).build());
         b.include(

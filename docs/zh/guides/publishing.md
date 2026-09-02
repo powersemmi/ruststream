@@ -214,7 +214,7 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
     --8<-- "examples/manual/publishing.rs:declared_mount"
     ```
 
-该参数可以和每一种订阅者写法组合：与 `Seek` 参数并列、用在以字节为输入的处理器上、也用在批量处理器
+该参数可以和每一种订阅者写法组合：与 `Ctx` 提取器并列、用在以字节为输入的处理器上、也用在批量处理器
 上（`b.include(f).publisher(..)`，进来的是一整页，出去的是逐元素的目的地）。在回复写法上，也就是
 `publish(..)` / `publish_raw(..)` 以及它们的批量对应形式，`.publisher(..)` 仍然是回复自己的附加项，
 注入的发布者则用 `.out(marker, ..)` 加上收尾的 `.build()` 来附加（单个无名槽位用 `DefaultSlot`），

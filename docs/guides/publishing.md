@@ -235,7 +235,7 @@ a newtype that derives `Outgoing`, or, inside a transaction, keep the scope's
     --8<-- "examples/manual/publishing.rs:declared_mount"
     ```
 
-The parameter composes with every subscriber form: next to a `Seek` parameter, on a byte-input
+The parameter composes with every subscriber form: next to a `Ctx` extractor, on a byte-input
 handler, and on batch handlers (`b.include(f).publisher(..)` - the whole page in,
 per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
 their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected

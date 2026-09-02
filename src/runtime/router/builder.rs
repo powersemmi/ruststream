@@ -313,9 +313,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     }
 
     /// Mounts an injected definition on `source`: its startup injections (an attached publish
-    /// policy pairing into an `Out` parameter, the subscription's own seeker for a `Seek` one)
-    /// resolve right after the subscription opens, so the handler holds live handles by
-    /// construction. The shared tail of the `Seek` and `Out` forms.
+    /// policy pairing into an `Out` parameter) resolve right after the subscription opens, so
+    /// the handler holds live handles by construction. The tail of the `Out` form.
     pub(super) fn mount_inject<Source, Def, DecodeCodec, Extra>(
         self,
         source: Source,
@@ -352,8 +351,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// The batch counterpart of [`mount_inject`](Self::mount_inject): the shared tail of the
-    /// `BatchSeek` and `BatchOut` forms.
+    /// The batch counterpart of [`mount_inject`](Self::mount_inject): the tail of the
+    /// `BatchOut` form.
     pub(super) fn mount_batch_inject<Source, Def, DecodeCodec, Extra>(
         self,
         source: Source,

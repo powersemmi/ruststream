@@ -340,9 +340,9 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     }
 
     /// Mounts an injected definition: its startup injections (an attached publish policy
-    /// pairing into an `Out` parameter, the subscription's own seeker for a `Seek` parameter)
-    /// resolve right after the subscription opens, before the first delivery, so the handler
-    /// holds live handles by construction. The caller resolves the decode codec.
+    /// pairing into an `Out` parameter) resolve right after the subscription opens, before the
+    /// first delivery, so the handler holds live handles by construction. The caller resolves
+    /// the decode codec.
     pub(super) fn mount_inject<Source, Def, DecodeCodec, Extra>(
         &mut self,
         source: Source,

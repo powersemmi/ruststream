@@ -5,8 +5,11 @@ use std::future::{Future, ready};
 
 use serde::{Deserialize, Serialize};
 
+use crate::Seeker;
 use crate::codec::JsonCodec;
-use crate::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemorySource};
+use crate::memory::{
+    MemoryBroker, MemoryContext, MemoryPublish, MemoryPublisher, MemorySource, Position, SeekHandle,
+};
 use crate::nonzero;
 use crate::runtime::{
     Bare, Context, Handle, HandlerOutcome, Message, Outs, Payload, Publish, Router, RouterDef,
@@ -504,23 +507,24 @@ fn every_slot_spelling_mounts() {
 
 struct Replayer;
 
-impl Handle<Order, (), (), crate::runtime::SeekContext<crate::memory::MemorySeeker>> for Replayer {
+impl Handle<Order, (), (), MemoryContext> for Replayer {
     async fn handle(
         &self,
         order: &Order,
         _outs: &(),
-        ctx: &mut Context<'_, crate::runtime::SeekContext<crate::memory::MemorySeeker>>,
+        ctx: &mut Context<'_, MemoryContext>,
     ) -> Result<(), HandlerOutcome> {
-        let here = *ctx.position();
-        if order.id == u64::MAX && ctx.seek(here).await.is_err() {
+        let here = ctx.context(Position);
+        if order.id == u64::MAX && ctx.context(SeekHandle).seek(here).await.is_err() {
             return Err(HandlerOutcome::drop());
         }
         Ok(())
     }
 }
 
-/// The seek axis rides the broker context: position and reposition reach the body through
-/// `Context`, and a seekable source is all the mount asks for.
+/// The seek axis rides the broker context: the position and the reposition handle are plain
+/// context fields read by key, and a source whose context carries them is all the mount asks
+/// for.
 #[tokio::test]
 async fn seek_reaches_the_body_through_the_context() {
     use crate::OutgoingMessage;

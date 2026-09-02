@@ -1,7 +1,8 @@
-//! Repositioning live subscriptions with the `Seekable` capability: a `Seek` handler
-//! parameter injects the subscription's own seeker (skipping forward past a poison region),
-//! and a `StartAt` source opens a subscription at a chosen log position (replaying history
-//! into a fresh subscription, or starting from the latest).
+//! Repositioning live subscriptions through the broker's context keys: the in-memory broker
+//! publishes a `SeekHandle` key over its per-delivery context, so a handler skips forward past
+//! a poison region by reading it with the `Ctx` extractor, and a `start_at(..)` clause opens a
+//! subscription at a chosen log position (replaying history into a fresh subscription, or
+//! starting from the latest).
 //!
 //! ```text
 //! cargo run --example seek --features macros,memory,json
@@ -10,8 +11,8 @@
 use std::error::Error;
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, Seek};
+use ruststream::memory::{MemoryBroker, MemoryPosition, SeekHandle};
+use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, PublishExt, RustStream};
 use ruststream::{Seeker, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -33,9 +34,10 @@ async fn record(entry: &Job) -> HandlerOutcome {
 
 // --8<-- [start:handler]
 /// Skips forward when the producer marks a poison region: everything queued before the
-/// resume point is dropped without touching the subscription itself.
-#[subscriber(MemorySource::new("jobs"))]
-async fn work(job: &Job, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
+/// resume point is dropped without touching the subscription itself. The seeker is a broker
+/// context field - the `SeekHandle` key reads it off the delivery's context.
+#[subscriber("jobs")]
+async fn work(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     if job.id == 999 {
         // The poison marker carries the resume point: skip to the fourth log entry.
         if seeker.seek(MemoryPosition::sequence(3)).await.is_err() {
@@ -61,9 +63,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --8<-- [start:mount]
-    // Both mount plainly: the runtime mints the seek handler's seeker off its subscription
-    // right after it opens, and the start_at clause seeks the audit one before its first
-    // delivery.
+    // Both mount plainly: the seek handler's context is built off its own subscription per
+    // delivery, and the start_at clause seeks the audit one before its first delivery.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
         b.include(work);
         b.include(record);

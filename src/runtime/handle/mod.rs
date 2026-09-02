@@ -53,7 +53,6 @@ mod eager;
 mod outs;
 mod reply;
 mod reply_slots;
-mod seek;
 mod value;
 mod verdict;
 
@@ -82,7 +81,6 @@ pub use reply::{
 pub use reply_slots::{
     ReplySlotFormFor, SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut,
 };
-pub use seek::SeekContext;
 pub use value::{
     Bare, BareReply, DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented,
     NamedDest, ReplyPublisherForm, ReplyValue, Sealed, subscriber,

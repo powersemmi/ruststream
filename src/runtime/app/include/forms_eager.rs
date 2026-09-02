@@ -1,10 +1,9 @@
-//! Eager mount forms: plain, raw, attachment-free injections and plain batch.
+//! Eager mount forms: plain, raw, and plain batch.
 
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchDef;
 use crate::runtime::handler::Handler;
-use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler};
 use crate::runtime::input::{DecodeWith, InputKind, RawBytes};
 use crate::runtime::middleware::Layer;
 use crate::runtime::subscriber_def::SubscriberDef;
@@ -13,7 +12,6 @@ use crate::runtime::{RawSliceHandler, SliceHandler};
 
 use super::{IncludeMount, forms};
 use crate::runtime::app::scope::BrokerScope;
-use crate::runtime::inject::InjectDef;
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 
 // ---------------------------------------------------------------------------------------------
@@ -95,50 +93,6 @@ where
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
         let source = def.source();
         scope.mount_subscriber(source, def, ());
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Attachment-free injections: eager, no builder - a definition whose startup injections need
-// nothing from the include site (a Seek parameter without an Out one) resolves against the
-// subscription itself.
-
-impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
-    for forms::Seek
-where
-    B: Broker + 'static,
-    Def: InjectCall<State> + MountsWith<<Def as InjectDef>::Input, C> + 'static,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
-    <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
-        Send + Sync + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as InjectDef>::Input, C>>,
-    Def::Context: BuildContext<
-            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
-        > + Send
-        + Sync
-        + 'static,
-    Def::Injections: FromStartup<B, <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber, ((),)>
-        + Send
-        + Sync
-        + 'static,
-    State: Send + Sync + 'static,
-    Layers: Layer<InjectHandler<Def, DefMountCodec<Def, <Def as InjectDef>::Input, C>>>
-        + Clone
-        + Send
-        + 'static,
-    Layers::Handler: Handler<
-            <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
-            Def::Context,
-            State,
-        > + 'static,
-{
-    type Out = ();
-
-    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
-        let codec = def.mounted_codec(&scope.codec);
-        let source = def.source();
-        scope.mount_inject(source, def, codec, ((),));
     }
 }
 

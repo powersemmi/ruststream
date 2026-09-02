@@ -1,5 +1,9 @@
-//! The user-facing seek surface: a `Seek` handler parameter repositioning the subscription
+//! The user-facing seek surface: the broker's context keys repositioning the subscription
 //! from inside a delivery, and a `start_at(..)` clause choosing where it opens.
+//!
+//! The position and the reposition handle are ordinary broker context fields: the in-memory
+//! broker publishes the `SeekHandle` / `Position` keys over its [`MemoryContext`], and a
+//! handler reads them with the `Ctx` extractor like any other broker field.
 #![cfg(all(
     feature = "memory",
     feature = "macros",
@@ -9,18 +13,14 @@
 
 mod common;
 
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
-
 use tokio::sync::Notify;
 
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, RustStream, Seek};
-use ruststream::testing::{TestApp, expect_published};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, SeekHandle};
+use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, RustStream};
+use ruststream::testing::TestApp;
 use ruststream::{Publisher, Seeker, subscriber};
 
-use common::{Event, observed_memory, payload};
+use common::{Event, payload};
 
 /// Jumps forward when the producer marks a poison region: everything queued before the
 /// resume point is skipped without dropping the subscription.
@@ -30,8 +30,8 @@ use common::{Event, observed_memory, payload};
 // end-clamped seek becomes a no-op (a real CI flake).
 static JOBS_PUBLISHED: Notify = Notify::const_new();
 
-#[subscriber(MemorySource::new("seek.jobs"))]
-async fn work(job: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
+#[subscriber("seek.jobs")]
+async fn work(job: &Event, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     if job.id == 0 {
         // The producer uses id 0 as "resume from the third message".
         JOBS_PUBLISHED.notified().await;
@@ -43,7 +43,7 @@ async fn work(job: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_seek_parameter_repositions_from_inside_the_handler() {
+async fn a_seek_key_repositions_from_inside_the_handler() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
 
@@ -131,12 +131,13 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
 static COMBO_PUBLISHED: Notify = Notify::const_new();
 
 /// Forwards good events through the injected publisher and skips a poison region through the
-/// injected seeker: the two startup injections compose in one handler.
+/// context's seek handle: a startup injection and a broker context field compose in one
+/// handler.
 #[subscriber("seek.combo")]
 async fn forward_skipping(
     event: &Event,
     Out(out): Out<impl Publisher>,
-    Seek(seeker): Seek<MemorySeeker>,
+    Ctx(seeker): Ctx<SeekHandle>,
 ) -> HandlerOutcome {
     if event.id == 0 {
         // The poison marker: resume from the third message once the whole run is in the log.
@@ -160,7 +161,7 @@ async fn forward_skipping(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_out_and_a_seek_parameter_combine_in_one_handler() {
+async fn an_out_parameter_and_a_seek_key_combine_in_one_handler() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
 
@@ -198,10 +199,10 @@ async fn an_out_and_a_seek_parameter_combine_in_one_handler() {
 
 static FRAMES_PUBLISHED: Notify = Notify::const_new();
 
-/// A raw handler with an injected seeker: the input axis lets the byte-level form compose
-/// with startup injections, borrowing the payload with no decode and no copy.
+/// A raw handler with the seek key: the input axis lets the byte-level form compose with a
+/// broker context field, borrowing the payload with no decode and no copy.
 #[subscriber("seek.frames")]
-async fn raw_work(frame: &[u8], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
+async fn raw_work(frame: &[u8], Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     if frame == b"poison" {
         // The marker frame: resume from the third entry once the whole run is in the log.
         FRAMES_PUBLISHED.notified().await;
@@ -214,7 +215,7 @@ async fn raw_work(frame: &[u8], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutc
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_raw_handler_composes_with_a_seek_parameter() {
+async fn a_raw_handler_composes_with_a_seek_key() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
 
@@ -248,73 +249,13 @@ async fn a_raw_handler_composes_with_a_seek_parameter() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
-// Observed through statics: batch handlers bypass the per-message instrumentation the
-// TestApp assertions ride (the documented middleware exception), so the handler records
-// itself and signals through a notify permit.
-static PAGE_IDS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
-static REPLAYED: AtomicBool = AtomicBool::new(false);
-static REPLAY_DONE: Notify = Notify::const_new();
-
-/// A batch handler with an injected seeker: the batch form composes with startup injections.
-/// The tail marker (id 2) triggers one replay of the log from the second entry on; the guard
-/// keeps the redelivered marker from seeking again.
-#[subscriber("seek.pages")]
-async fn page_work(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
-    let seen_twice = {
-        let mut ids = PAGE_IDS.lock().unwrap();
-        ids.extend(events.iter().map(|event| event.id));
-        ids.iter().filter(|id| **id == 2).count() == 2
-    };
-    if events.iter().any(|event| event.id == 2)
-        && !REPLAYED.swap(true, Ordering::SeqCst)
-        && seeker.seek(MemoryPosition::sequence(1)).await.is_err()
-    {
-        return HandlerOutcome::retry();
-    }
-    if seen_twice {
-        REPLAY_DONE.notify_one();
-    }
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_batch_handler_composes_with_a_seek_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("pages", "0.1.0")).with_broker(broker, |b| {
-        b.include(page_work);
-    });
-    let running = app.start().await.expect("startup failed");
-
-    for id in [0u64, 1, 2] {
-        ingress
-            .raw(&payload(id))
-            .to("seek.pages")
-            .publish()
-            .await
-            .expect("publish");
-    }
-    REPLAY_DONE.notified().await;
-
-    // However the pages split, the first pass is the publish order and the replay redelivers
-    // exactly the suffix from the seek target on.
-    assert_eq!(
-        *PAGE_IDS.lock().unwrap(),
-        [0, 1, 2, 1, 2],
-        "the batch handler's seek must replay the log suffix from the target",
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
-}
-
 static GATE_PUBLISHED: Notify = Notify::const_new();
 
-/// A publishing handler with an injected seeker: the reply form composes with startup
-/// injections. The poison marker skips its own reply and repositions the subscription
-/// instead; only the post-seek event is answered.
+/// A publishing handler with the seek key: the reply form composes with a broker context
+/// field. The poison marker skips its own reply and repositions the subscription instead;
+/// only the post-seek event is answered.
 #[subscriber("seek.gate", publish("seek.gate.out"))]
-async fn gate(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> Result<Event, HandlerOutcome> {
+async fn gate(event: &Event, Ctx(seeker): Ctx<SeekHandle>) -> Result<Event, HandlerOutcome> {
     if event.id == 0 {
         // The poison marker: resume from the third message once the whole run is in the
         // log, publishing nothing.
@@ -328,7 +269,7 @@ async fn gate(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> Result<Event, 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_publishing_handler_composes_with_a_seek_parameter() {
+async fn a_publishing_handler_composes_with_a_seek_key() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
 
@@ -362,63 +303,4 @@ async fn a_publishing_handler_composes_with_a_seek_parameter() {
         .with(&Event { id: 20 });
 
     tb.shutdown().await.expect("graceful shutdown");
-}
-
-static PAGE_REPLAYED: AtomicBool = AtomicBool::new(false);
-
-/// A batch publishing handler with an injected seeker: the batch reply form composes with
-/// startup injections. The tail marker triggers one replay of the log suffix, so the replies
-/// repeat it.
-#[subscriber("seek.ledger", publish("seek.ledger.receipts"))]
-async fn ledger(
-    events: &[Event],
-    Seek(seeker): Seek<MemorySeeker>,
-) -> Result<Vec<Event>, HandlerOutcome> {
-    if events.iter().any(|event| event.id == 2)
-        && !PAGE_REPLAYED.swap(true, Ordering::SeqCst)
-        && seeker.seek(MemoryPosition::sequence(1)).await.is_err()
-    {
-        return Err(HandlerOutcome::retry());
-    }
-    Ok(events
-        .iter()
-        .map(|event| Event { id: event.id + 100 })
-        .collect())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_batch_publishing_handler_composes_with_a_seek_parameter() {
-    let (broker, ingress, observer) = observed_memory().await;
-
-    let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
-        b.include(ledger);
-    });
-    let running = app.start().await.expect("startup failed");
-
-    for id in [0u64, 1, 2] {
-        ingress
-            .raw(&payload(id))
-            .to("seek.ledger")
-            .publish()
-            .await
-            .expect("publish");
-    }
-    // However the pages split, the first pass answers the publish order and the replay
-    // re-answers exactly the suffix from the seek target on.
-    let seen = expect_published(&observer, "seek.ledger.receipts", 5, Duration::from_secs(2)).await;
-    let ids: Vec<u64> = seen
-        .iter()
-        .map(|m| {
-            serde_json::from_slice::<Event>(m.payload())
-                .expect("decodes")
-                .id
-        })
-        .collect();
-    assert_eq!(
-        ids,
-        [100, 101, 102, 101, 102],
-        "the batch publishing handler's seek must replay the suffix and re-answer it",
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }

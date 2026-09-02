@@ -60,8 +60,9 @@ a simulation of another broker's:
   constructed (`MemoryPosition::start()` / `sequence(n)`). Seeking forward skips the queued
   deliveries before the target; seeking at or past the end of the log skips everything published
   so far. The scope is one subscriber instance, and a seek through a handle aliasing a shut-down
-  bus errors with `MemoryError::ShutDown`. Inside an application, a handler reaches the seeker
-  through a `Seek` parameter (see [Seeking](../guides/subscribers.md#seeking)).
+  bus errors with `MemoryError::ShutDown`. Inside an application, the delivery context
+  (`MemoryContext`) carries the position and the seeker, read by the `Position` / `SeekHandle`
+  keys (see [Seeking](../guides/subscribers.md#seeking)).
 - **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
   `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
   reporting how many subscriber registrations the teardown dropped. Aliased handles used after the

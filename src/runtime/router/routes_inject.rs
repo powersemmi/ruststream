@@ -1,5 +1,5 @@
-//! The deferred startup-injection routes: a handler whose `Out` or `Seek` parameters are only
-//! live once the subscription is open.
+//! The deferred startup-injection routes: a handler whose `Out` parameters are only live once
+//! the subscription is open.
 //!
 //! Like the publishing routes these store the pieces rather than a built handler: the injections
 //! resolve right after the subscription opens and before the first delivery, so every injected
@@ -26,8 +26,7 @@ use super::routes::{MountRoute, RouteMeta};
 use super::sink::RouterSink;
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
-/// into an [`Out`](crate::runtime::Out) parameter, the subscription's own seeker for a
-/// [`Seek`](crate::runtime::Seek) one. An implementation detail of
+/// into an [`Out`](crate::runtime::Out) parameter. An implementation detail of
 /// [`Router`](crate::runtime::Router)'s registration list.
 ///
 /// `Extra` is the include-site attachment the injections resolve against, one element per

@@ -251,7 +251,9 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 订阅。位置由 Broker 自己拥有（在你自己的类型上提供 `KafkaPosition` 风格的构造函数）。通过
 `Positioned::position` 从一条已投递消息上捕获的位置带有钉住的契约：定位到它会精确地重新投递那一条
 消息；而构造出来的位置则保持你的位置类型所记载的语义。写清楚一次定位的作用范围（一个消费者实例，
-还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。
+还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。要让处理器主体能够定位，就把投递
+位置和订阅的 seeker 作为你的投递上下文的字段携带，并为它们发布 `ContextField` 键：内存 Broker 的
+`MemoryContext` 及其 `Position` / `SeekHandle` 键就是范本。
 
 ### 扩展 `Out` 槽位的词汇
 

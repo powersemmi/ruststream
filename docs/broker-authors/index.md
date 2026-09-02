@@ -272,7 +272,10 @@ subscription can be repositioned from outside the dispatch loop. Positions are b
 message via `Positioned::position` carries a pinned contract - seeking to it redelivers exactly
 that message - while constructed positions keep the semantics your position type documents.
 Document what one seek covers (a consumer instance, or a shared group cursor) and reset any ack
-bookkeeping the reposition invalidates.
+bookkeeping the reposition invalidates. To let handler bodies seek, carry the delivery's
+position and the subscription's seeker as fields of your per-delivery context and publish
+`ContextField` keys for them - the in-memory broker's `MemoryContext` with its `Position` /
+`SeekHandle` keys is the model.
 
 ### Extending the `Out` slot vocabulary
 

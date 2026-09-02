@@ -123,13 +123,15 @@ use parse::{SubscriberArgs, doc_description};
 /// source attached at the include site (`b.include(f).publisher(..)`); its optional third
 /// position declares the message set the handler publishes (`Out<impl Publisher, Marker,
 /// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), narrowing what
-/// the publish builder accepts on it; a `Seek(seeker): Seek<K>` parameter injects the
-/// subscription's own seeker, minted right after the subscription opens (the source's
-/// subscriber must implement the `Seekable` capability). They combine freely in one handler:
-/// with each other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
+/// the publish builder accepts on it, and the generated document reports that narrowed list as
+/// the handler's send operations. `Out` parameters combine freely in one handler: with each
+/// other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
 /// `publish_raw(..)`, and the batch publishing form). An `Out` parameter's attachment is
 /// required at the include site: `.publisher(..)` on the plain and batch forms, `.out(..)` on
-/// the reply forms (where `.publisher(..)` stays the reply's own attachment).
+/// the reply forms (where `.publisher(..)` stays the reply's own attachment). Repositioning a
+/// subscription from inside the body is not a parameter but a broker context field: the broker
+/// publishes its position and seek-handle keys, and the handler reads them with the `Ctx`
+/// extractor like any other broker field.
 ///
 /// A `start_at(<position>)` clause opens the subscription at that position instead of the
 /// broker's default, seeking before the first delivery ("start from the latest on deploy",

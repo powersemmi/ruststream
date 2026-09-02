@@ -669,7 +669,7 @@ pub struct SlotPos<const N: usize>;
 /// Implemented by `#[subscriber]` next to [`HasSlots`]: given the source tuple (in marker
 /// order), it names the fully-applied definition type - each slot's publisher is
 /// [`SlotPublisher`] over the source's [`PublishPolicy::Live`](crate::PublishPolicy::Live) - and pads the sources into the
-/// definition's injection-extra tuple (a unit for a trailing `Seek` parameter). The connected
+/// definition's injection-extra tuple. The connected
 /// broker type `C` is the pairing target the publisher types are computed against.
 pub trait BindSlots<C: ConnectedBroker, Sources>: Sized {
     /// The publisher-applied definition type.

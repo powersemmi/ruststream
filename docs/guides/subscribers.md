@@ -420,12 +420,14 @@ retried and the mismatch is logged.
 Replaying a stream after fixing a handler bug, reprocessing from a known point, skipping forward
 past a poison region: each moves a live subscription to another position without dropping it.
 Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory broker's publish
-log) implement the `Seekable` capability. Brokers without a replayable log do not, and the mount
-below fails to compile against them instead of failing at runtime.
+log) implement the `Seekable` capability and publish seek keys over their per-delivery context.
+Brokers without a replayable log ship no such keys, and the mount below fails to compile against
+them instead of failing at runtime.
 
-A handler repositions its own subscription through a `Seek` parameter. The runtime mints the
-seeker off the subscription right after it opens, so the handler always holds a live handle;
-nothing is attached at the include site:
+A handler repositions its own subscription through the broker's context keys: the delivery's
+context carries the position and a live seek handle (resolved once, when the subscription opens),
+and the handler reads them by key - the `Ctx` extractor on the attribute path, `ctx.context(..)`
+against the broker's context type on the manual one. Nothing is attached at the include site:
 
 === "Macros"
 
@@ -495,8 +497,8 @@ of the call. Nothing is copied, and the settlement rules are the batch path's.
 An `on_failure(decode = ..)` policy on either shape is a compile error - there is no decode step
 to fail, unless the handler declares a `Headers` contract, which that policy does cover.
 Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
-the injected `Out` / `Seek` parameters work unchanged on the single-delivery shape (the batch of
-payloads does not take `Out` / `Seek` yet), and a raw subscriber mounts with the
+the injected `Out` parameters work unchanged on the single-delivery shape (the batch of
+payloads does not take `Out` yet), and a raw subscriber mounts with the
 same `include` as every other definition - a scope codec, when one is set, does not apply
 to it. Raw subscribers are also the one subscriber form available with no codec feature enabled
 at all. For a custom serialization format you want *typed*

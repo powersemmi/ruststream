@@ -185,8 +185,8 @@ pub trait PublishingDef: Send + Sync {
     /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
     type Input: InputKind;
 
-    /// The tuple of startup-injected parameters ([`Out`](super::Out), [`Seek`](super::Seek),
-    /// ...; `()` when the signature carries none), resolved like
+    /// The tuple of startup-injected parameters ([`Out`](super::Out), ...; `()` when the
+    /// signature carries none), resolved like
     /// [`InjectDef::Injections`](super::InjectDef::Injections).
     type Injections;
 

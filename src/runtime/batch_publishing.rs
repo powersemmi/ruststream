@@ -37,8 +37,8 @@ pub trait BatchPublishingDef: Send + Sync {
     /// [`BatchDef::Input`](super::BatchDef::Input)). The handler consumes `&[T]`.
     type Input: InputKind;
 
-    /// The tuple of startup-injected parameters ([`Out`](super::Out), [`Seek`](super::Seek),
-    /// ...; `()` when the signature carries none), resolved like
+    /// The tuple of startup-injected parameters ([`Out`](super::Out), ...; `()` when the
+    /// signature carries none), resolved like
     /// [`InjectDef::Injections`](super::InjectDef::Injections).
     type Injections;
 

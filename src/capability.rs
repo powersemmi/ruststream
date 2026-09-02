@@ -132,20 +132,6 @@ pub trait Positioned: IncomingMessage {
     fn position(&self) -> Self::Position;
 }
 
-/// A delivery that can mint its own subscription's [`Seeker`].
-///
-/// The pair of [`Positioned`] behind the seek context
-/// ([`SeekContext`](crate::runtime::SeekContext)): the position says where this delivery sits,
-/// the seeker moves the subscription's cursor. Implemented by brokers whose messages keep a
-/// handle back to their subscription; the runtime only calls it on subscription deliveries.
-pub trait SeekableMessage: IncomingMessage {
-    /// The seeker of the subscription this message was delivered on.
-    type Seeker: Seeker;
-
-    /// Mints the subscription's seeker.
-    fn seeker(&self) -> Self::Seeker;
-}
-
 /// A publisher that supports broker-side transactions.
 ///
 /// Implementations must guarantee that messages published between [`begin_transaction`] and

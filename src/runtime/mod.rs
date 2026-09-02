@@ -66,7 +66,7 @@ pub use handle::{
 };
 pub use handle::{
     Bare, Documentable, Documented, Handle, Input, IntoSource, Message, Outs, Payload, Publish,
-    SeekContext, Slot, Undocumented, ValueBuilder, Verdict, subscriber,
+    Slot, Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
@@ -83,7 +83,7 @@ pub use handler::{Handler, HandlerOutcome};
 // build leaves this re-export unused.
 #[allow(unused_imports)]
 pub(crate) use handler::HandlerResult;
-pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out, Seek};
+pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out};
 pub use input::{DecodeWith, Decoded, InputKind, RawBytes};
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::ConnectedLifecycle;

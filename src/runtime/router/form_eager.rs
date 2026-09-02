@@ -1,5 +1,4 @@
-//! Router mounts for the forms that need no attachment: plain, raw, attachment-free injections
-//! and the two batch shapes.
+//! Router mounts for the forms that need no attachment: plain, raw, and the two batch shapes.
 //!
 //! Each resolves the subscription source from the definition itself, which is where a source
 //! belongs, and the decode codec from the definition's settings against the chain (the
@@ -10,18 +9,13 @@ use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::runtime::SourceSubscriber;
 use crate::runtime::batch::BatchDef;
-use crate::runtime::batch_inject::BatchInjectDef;
-use crate::runtime::inject::InjectDef;
 use crate::runtime::input::{DecodeWith, RawBytes};
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::subscriber_def::SubscriberDef;
 
 use super::builder::Router;
 use super::mount::RouterMount;
-use super::{
-    BatchInjectedRouter, IncludedBatchRouter, IncludedRawBatchRouter, IncludedRouter,
-    InjectedRouter, forms,
-};
+use super::{IncludedBatchRouter, IncludedRawBatchRouter, IncludedRouter, forms};
 
 impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
     for forms::Subscribing
@@ -70,35 +64,6 @@ where
 }
 
 impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
-    for forms::Seek
-where
-    B: Broker + 'static,
-    Def: InjectDef + MountsWith<<Def as InjectDef>::Input, RouteCodec> + 'static,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as InjectDef>::Input, RouteCodec>>,
-{
-    type Out = InjectedRouter<
-        B,
-        Def::Source,
-        Def,
-        DefMountCodec<Def, <Def as InjectDef>::Input, RouteCodec>,
-        ((),),
-        RouteCodec,
-        RouteLayers,
-        Routes,
-    >;
-
-    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-        let codec = def.mounted_codec(&router.codec);
-        let source = def.source();
-        // A `Seek` parameter resolves off the subscription itself, so its attachment is the unit
-        // padding rather than anything named at the include site.
-        router.mount_inject(source, def, codec, ((),))
-    }
-}
-
-impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
     for forms::Batch
 where
     B: Broker + 'static,
@@ -140,32 +105,5 @@ where
     fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         let source = def.source();
         router.mount_raw_batch(source, def)
-    }
-}
-
-impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
-    for forms::BatchSeek
-where
-    B: Broker + 'static,
-    Def: BatchInjectDef + MountsWith<<Def as BatchInjectDef>::Input, RouteCodec> + 'static,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchInjectDef>::Input, RouteCodec>>,
-{
-    type Out = BatchInjectedRouter<
-        B,
-        Def::Source,
-        Def,
-        DefMountCodec<Def, <Def as BatchInjectDef>::Input, RouteCodec>,
-        ((),),
-        RouteCodec,
-        RouteLayers,
-        Routes,
-    >;
-
-    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-        let codec = def.mounted_codec(&router.codec);
-        let source = def.source();
-        router.mount_batch_inject(source, def, codec, ((),))
     }
 }
