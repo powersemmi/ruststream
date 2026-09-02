@@ -48,9 +48,16 @@ A handler's payload type appears as a schema when it derives `JsonSchema`. RustS
 
 A type without `JsonSchema` still works as a handler payload; it contributes no schema to the
 document. Generating the document logs a `WARN` per such gap (once per handler or outgoing
-declaration, naming the subscription or channel and the type; deliberately schema-free
-raw-bytes messages are not reported), and `Spec::messages_without_schema()` lists the affected
-message components - assert it empty in a test to gate schema coverage in CI.
+declaration, naming the subscription or channel and the type), and
+`Spec::messages_without_schema()` lists the affected message components - assert it empty in a
+test to gate schema coverage in CI.
+
+A message that carries its own wire format is the deliberate exception. A
+[`Deserialized`](subscribers.md#raw-subscribers) input, an outgoing type on the serialized wire -
+a [`#[derive(Serialized)]`](subscribers.md#raw-subscribers) reply, or a `Serialized` member of a
+slot's `#[publishes(..)]` dictionary - is documented under its own name with no payload schema;
+generating the document does not warn about it and `messages_without_schema()` does not list it:
+the bytes are the format, so a schema would have nothing to say.
 
 Beyond payloads, the document also carries **headers schemas** (from a handler's
 `Headers<T>` parameter or a type's declared `headers = ..` contract) and **`send`

@@ -18,11 +18,13 @@ alwaysApply: false
 - **Level one** - stop at the body trait and mount with
   `b.include(subscriber(source, body).build())`. There is one body trait and one constructor:
   every axis of the form matrix is a defaulted parameter the impl pins, so the signature decides
-  the form and nothing else names it. `In` is the input spelling (`T` decoded, `Payload<'_>` raw
-  bytes, `Message<H, P>` a decoded payload next to its typed header contract, and `[T]` /
-  `[Payload<'_>]` / `[Message<H, P>]` for a page of each), `R` the reply type (`()` declares
-  none), `O` the injections arena (`()` declares none), `C` the broker's typed per-delivery
-  context and `S` the application state the body reads with `ctx.state()`. What the signature does
+  the form and nothing else names it. `In` is the input spelling (`T` decoded, `F<'_>` a type that
+  deserializes itself from the bytes, `Message<H, P>` a decoded payload next to its typed header
+  contract, and `[T]` / `[F<'_>]` / `[Message<H, P>]` for a page of each), `R` the reply type
+  (`()` declares none), `O` the injections arena (`()` declares none), `C` the broker's typed
+  context - per delivery on the single forms, the broker's subscription-scoped batch context
+  (`BuildBatchContext`, built once per page) on the page ones - and `S` the application state the
+  body reads with `ctx.state()`. What the signature does
   not carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
   `.on_failure`, `.buffered`, `.start_at`, `.codec`), the reply wiring (`.reply()`, `.to(dest)`,
   `.publisher(policy)`), the native page cap `.batch(n)` and the document controls
@@ -43,7 +45,7 @@ alwaysApply: false
   `.buffered`), `.publisher(..)`, `.out(marker, ..)` and `.build()`. The settings live on
   `Declared::Settings`, which must be a `SubscriberBuilder` - `SubscriberBuilder::new(def, source)`
   is public for exactly this. Implementing `IncludeDef` alone routes through the blanket
-  `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`: that serves the raw forms, but a
+  `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`: that serves the codec-free forms, but a
   decoded one resolves its codec through the builder, so a bare definition does not mount there -
   and the steps (`NameStep`, `WorkersStep`, `FailureStep`, `BufferedStep`) are implemented for
   `SubscriberBuilder`, not for a bare definition, so that route has no settings surface either.
@@ -51,16 +53,21 @@ alwaysApply: false
   right: `#[derive(Outgoing)]` writes `OutgoingDestination` plus a `MessageHeaders` contract
   (`NoHeaders` or `WithHeaders<H>`), `#[derive(OutSlot)]` writes `OutSlot` plus the
   `ContainsMessage` memberships, `#[derive(OutMessages)]` writes `OutMessages` over an enum's
-  variants, and `#[derive(FromRef)]` writes one `FromRef` impl per field.
+  variants, `#[derive(Deserialized)]` writes the payload construction plus the `Input` spelling
+  that puts a type on the codec-free lane, `#[derive(Serialized)]` writes `fn bytes(&self)` plus
+  the `ReplyShape` that sends a reply byte-for-byte, and `#[derive(FromRef)]` writes one `FromRef`
+  impl per field.
 - The one thing genuinely lost with the feature off is the attribute surface itself: nothing reads
   a clause for you, so what the attribute would have declared you write as a trait impl.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
   feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerOutcome`,
   `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (the `subscriber`
-  constructor, the body trait `Handle` with its input spellings `Message` and `Payload`, the
-  injections arena `Outs` / `Slot` / `Publish`, the seek context `SeekContext`, plus the bare-reply
-  wrapper `Bare`, `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`, `Seek`,
-  `DefaultSlot`, `RouterDef` and `nonzero!`).
+  constructor, the body trait `Handle` with its input spellings `Message` and `Deserialized`, the
+  reply traits `Serialized` / `ReplyShape`, the injections arena `Outs` / `Slot` / `Publish`, plus
+  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`,
+  `DefaultSlot`, `RouterDef` and `nonzero!`). The lane machinery the impls name -
+  `Input`, `SoloDeserialized`, `SerializedReply` - stays an explicit
+  `use ruststream::runtime::{..}`.
 - Mount with `b.include(subscriber(source, body).build())` (the portable form: the source resolves
   at startup), or `b.handle(subscriber, handler, metadata)` when you already hold an open
   subscriber. Routers have the same `include` method, so grouping still works.
@@ -153,30 +160,55 @@ b.include(subscriber("audit", Receive).codec(CborCodec).build());
 
 ## Raw bytes
 
-`Payload<'_>` is the raw input spelling: the wrapper derefs to `&[u8]` and borrows the delivery's
-bytes, so the payload arrives undecoded and no codec is involved. This is the shape a `&[u8]`
-payload parameter under `#[subscriber]` produces, and the only subscriber form available with no
-codec feature at all (`[Payload<'_>]` is its page counterpart). The spelling is a wrapper rather
-than `[u8]` because `[u8]` is also a page of decoded `u8` elements, and coherence cannot split the
-two.
+The lane is the payload type's own business, and the trait names are the mnemonic: `Deserialize`
+means the framework's codec builds the value, `Deserialized` means the type builds itself from the
+delivery's bytes. So the raw input spelling is a named type of the service's own - `Frame<'_>`
+below - and the pair of impls `#[derive(Deserialized)]` writes by hand is the construction plus
+the `Input` spelling that routes it onto the lane. No codec is involved, and this is the only
+subscriber form available with no codec feature at all. The page spelling (`[Frame<'_>]`) comes
+with those two impls; a bare `[u8]` is not an input, because it is also a page of decoded `u8`
+elements and coherence cannot split the two.
 
 ```rust
+use std::convert::Infallible;
+
+use ruststream::runtime::{Input, SoloDeserialized};
+
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
+
 struct Ingest;
 
-impl<'p> Handle<Payload<'p>> for Ingest {
+impl<'p> Handle<Frame<'p>> for Ingest {
     async fn handle(
         &self,
-        payload: &Payload<'p>,
+        frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        parse(payload);
+        parse(frame.0);
         Ok(())
     }
 }
 
 b.include(subscriber("frames", Ingest).build());
 ```
+
+A constructor that validates (a flatbuffers root, a length check) returns `Err` and the delivery
+settles by the subscriber's `on_failure(decode = ..)` policy - the same rung a codec decode
+failure lands on, so that policy is accepted on this lane.
 
 Use `b.handle(subscriber, handler, meta)` instead when the broker hands you an open subscriber
 before registration (how you obtain one is broker-specific; the in-memory broker's `subscribe` is
@@ -310,11 +342,14 @@ publisher
 
 `TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
 work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the chain -
-`.to(dest)` names the destination the reply type does not declare itself, and the publisher step
-decides the wire: the default and `.publisher(TypedPublisher::new(policy))` encode the reply
-through a codec, while `.publisher(Bare(policy))` and `.publisher(DefaultBareReply)` send an `R` of
-`Vec<u8>` as it is, the latter through the broker's default publisher. A plain unwrapped policy is
-not accepted on this chain. The `Out` slot parameter becomes the `O` axis:
+`.to(dest)` names the destination the reply type does not declare itself - and the wire follows the
+reply *type*, not the chain: a `serde::Serialize` `R` encodes through the codec, so it attaches
+`.publisher(TypedPublisher::new(policy))` (or nothing, for the broker's default), while an `R`
+implementing `Serialized` (the pair of impls `#[derive(Serialized)]` writes: `fn bytes(&self) ->
+&[u8]` plus `ReplyShape` with `type Wire = SerializedReply`) leaves byte-for-byte and attaches a
+plain policy - `.publisher(MemoryPublish)`, or nothing for the broker's default. There is one
+`.reply()` and one publisher step for both wires. A `Serialized` page reply does not exist: page
+replies publish through the reply codec. The `Out` slot parameter becomes the `O` axis:
 `Outs<(Slot<Marker, W, Enc>,)>`, where `W` is the wired live value and `Enc` the include site's
 encode codec, with the capability the body needs stated as a mandatory bound on the whole entry,
 one entry per marker.
@@ -389,8 +424,8 @@ not a definition. It also never reads the scope codec, so `with_broker_codec` an
 
 A `Router` reaches a little further without a definition: `Router::workers(Workers::pool(n))` /
 `Workers::keyed(n)` is the functional counterpart of the `workers(..)` clause (`BrokerScope` has no
-worker control at all). The batch shapes need nothing extra - `[T]` and `[Payload<'_>]` are input
-spellings of the one constructor, and both resolve the chain's codec.
+worker control at all). The batch shapes need nothing extra - `[T]` and `[Frame<'_>]` are input
+spellings of the one constructor, and the decoded one resolves the chain's codec.
 
 Every form is reachable through that one constructor, so none is locked behind the definition
 traits: the application state, the typed broker context and the injections are all axes read off

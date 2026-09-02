@@ -54,6 +54,12 @@ Decoding of the incoming request follows the scope (the scope codec set with
 `with_broker_codec`, else the default codec); the reply codec travels on the attached stack. See
 [Codecs](codecs.md#the-publish-side).
 
+One clause serves both wires, because the choice belongs to the reply type rather than to the
+clause. A `serde::Serialize` reply encodes, as above. A `#[derive(Serialized)]` reply carries
+its own bytes and leaves byte-for-byte, so it attaches a plain publish policy: there is no codec
+to name on that wire, and therefore no `TypedPublisher` to wrap it in. See
+[raw subscribers](subscribers.md#raw-subscribers).
+
 ## Controlling the acknowledgement
 
 A plain reply form always publishes and acks. Return `Result<Reply, HandlerOutcome>` instead to
@@ -177,7 +183,11 @@ a marker's own `#[publishes(A, B)]` list says what the slot may publish, which i
 generated document reports for a handler that leaves the position unrestricted. A typed publish
 of a type the marker does not name is a compile error naming the missing membership. A marker
 listing nothing publishes nothing typed, and byte publishes through
-`raw(..)` are unaffected - they carry no message type to list. The implicit `DefaultSlot` of a
+`raw(..)` are unaffected - bytes carry no message type to list. A type that carries its own wire
+format is not stuck outside the dictionary, though: give it `#[derive(Outgoing)]` for its
+destination and list it in `#[publishes(..)]` like any model, and it is documented under its own
+name (with no payload schema, by design) while its bytes leave through
+`out.raw(export.bytes()).publish()`. The implicit `DefaultSlot` of a
 single unnamed `Out<impl Publisher>` has no declaration site to list types on, so it admits
 every declared message. See [typed headers](headers.md).
 
@@ -235,10 +245,10 @@ a newtype that derives `Outgoing`, or, inside a transaction, keep the scope's
     --8<-- "examples/manual/publishing.rs:declared_mount"
     ```
 
-The parameter composes with every subscriber form: next to a `Ctx` extractor, on a byte-input
-handler, and on batch handlers (`b.include(f).publisher(..)` - the whole page in,
-per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
-their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
+The parameter composes with every subscriber form: next to a `Ctx` extractor, on a
+self-deserializing input, and on batch handlers (`b.include(f).publisher(..)` - the whole page
+in, per-element destinations out). On the reply forms - `publish(..)` and
+its batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
 publisher attaches with `.out(marker, ..)` plus the terminal `.build()` (`DefaultSlot` for a
 single unnamed slot), so a gateway can answer on a fixed destination while fanning side copies
 out through the injection:

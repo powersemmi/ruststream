@@ -149,6 +149,15 @@ downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value
 serializing it into the headers. The context is built fresh per delivery, so one delivery's values
 never leak into the next.
 
+A [batch handler](subscribers.md#batch-subscribers) gets one context per page, built off the
+page's first delivery by `BuildBatchContext`, and it carries the broker's *subscription-scoped*
+fields only - a seek handle, a stream name - which a page body names as its context type
+(`ctx: &mut Context<'_, MemoryBatchContext>` on the in-memory broker) and reads with
+`ctx.context(..)`. Per-delivery data stays out: a page spans many deliveries, so a position or a
+header rides the elements instead. The per-delivery and page context types are distinct, so a
+page body asking for the per-delivery one does not compile, and a broker with nothing
+subscription-scoped leaves pages on the `()` default.
+
 ## Context fields as parameters
 
 A field can also arrive as a handler argument, the way `State<T>` injects a state component: the

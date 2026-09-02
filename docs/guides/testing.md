@@ -78,8 +78,9 @@ single-broker apps and reports `TestError::Ambiguous` when more than one broker 
 
 Input goes in through the same publish builder the service publishes through: `message(&value)`
 encodes a `#[derive(Outgoing)]` value, `raw(bytes)` sends bytes as they are (the undecodable-payload
-case, and the only form a raw subscriber takes), `with_headers(&meta)` attaches a typed header
-contract, and `to(name)` names the subject when the value's type does not.
+case, and the way to feed a handler that
+[deserializes the bytes itself](subscribers.md#raw-subscribers)), `with_headers(&meta)` attaches
+a typed header contract, and `to(name)` names the subject when the value's type does not.
 
 ### Asserting on a handler
 

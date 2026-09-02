@@ -17,7 +17,10 @@ With no clause, a subscriber uses the built-in defaults:
   (a nack without requeue) keeps a single malformed payload from taking the consumer down, which on
   an untrusted topic would be a poison-message or denial-of-service footgun. The same policy covers
   a [typed header contract](headers.md) that fails to parse - headers are the same class of
-  external input as the payload, so one `decode` key settles both.
+  external input as the payload, so one `decode` key settles both - and a payload type that
+  deserializes itself ([`#[derive(Deserialized)]`](subscribers.md#raw-subscribers)) whose own
+  constructor rejects the bytes: a failed flatbuffers root is the same class of bad input as a
+  failed JSON parse, so it settles by the same key.
 
 === "Macros"
 

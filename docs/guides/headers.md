@@ -40,7 +40,8 @@ header, unparsable value) never reaches the body - the delivery settles by the s
     --8<-- "examples/manual/typed_headers.rs:handler"
     ```
 
-`Headers` composes with a byte body (`&[u8]`, typed headers) and with every other extractor.
+`Headers` composes with a self-deserializing body (`&Frame<'_>` next to its typed headers) and
+with every other extractor.
 
 On a batch handler the headers stay per-delivery, so the page pairs each element with its own
 contract: the input is `&[Message<H, T>]`, and `element.headers` sits next to `element.body`.
@@ -135,7 +136,11 @@ whole declaration:
 A payload the service already holds encoded, or a foreign type that cannot carry a declaration
 (a bare `Vec<Frame>`), goes out through the byte entry point:
 `out.raw(&bytes).to(dest).publish()`. It takes the same headers positions and no codec; wrap
-the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own.
+the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own. A
+newtype that both derives `Outgoing` and implements
+[`Serialized`](subscribers.md#raw-subscribers) is a first-class member of the dictionary - it
+declares its destination and headers like any model, and only its payload takes the byte entry
+point, as `out.raw(export.bytes())`.
 
 The contract fills that position once. What the publisher itself contributes travels
 underneath: a handle carrying an argument for every message it sends exposes it as a base, and

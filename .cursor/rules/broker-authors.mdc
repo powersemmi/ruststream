@@ -215,6 +215,14 @@ impl ContextField for Partition {
 }
 ```
 
+Batch subscriptions take a second, separate struct: what the whole *subscription* shares (a seek
+handle, a stream name), with `BuildBatchContext` on it - the runtime builds one per page from the
+page's first delivery - plus `Field` keys a page body reads with `ctx.context(..)`. Per-delivery
+fields stay off it (a page spans many deliveries, so a position rides the elements instead), and
+keeping the two structs apart is what enforces that: a per-delivery context does not implement
+`BuildBatchContext`, so a page body cannot name it. Nothing subscription-scoped to offer means no
+impl at all - `()` is the default.
+
 ## Conformance
 
 Routing runs against the broker's in-process transport (its **connected** form is the

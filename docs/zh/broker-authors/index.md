@@ -253,7 +253,8 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 消息；而构造出来的位置则保持你的位置类型所记载的语义。写清楚一次定位的作用范围（一个消费者实例，
 还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。要让处理器主体能够定位，就把投递
 位置和订阅的 seeker 作为你的投递上下文的字段携带，并为它们发布 `ContextField` 键：内存 Broker 的
-`MemoryContext` 及其 `Position` / `SeekHandle` 键就是范本。
+`MemoryContext` 及其 `Position` / `SeekHandle` 键就是范本。批量的那些写法通过下面的批量上下文拿到
+seeker，它只带句柄、不带位置。
 
 ### 扩展 `Out` 槽位的词汇
 
@@ -308,6 +309,14 @@ impl ContextField for Partition {
 ```
 
 没有任何单条投递字段的 Broker 用 `()`，整节都可以跳过。
+
+批量订阅另有自己的上下文，因为一批横跨多次投递：把整条*订阅*共享的东西（seek 句柄、流的名字、
+消费者组）攒成第二个结构体，在它上面实现 `BuildBatchContext` - 运行时按批构造一个值，取自该批的
+第一次投递 - 再发布若干 `Field` 键，好让批量函数体用 `ctx.context(..)` 读它。逐次投递的字段不放
+进去：位置属于某一次投递，所以由批从元素上读。把两个结构体分开，正是让这条规则在编译期成立的
+办法：投递上下文并不实现 `BuildBatchContext`，因此批量函数体无法写出它。范本是内存 Broker 的
+`MemoryBatchContext` - 订阅的 seeker，用的还是它的投递上下文所发布的那个 `SeekHandle` 键。订阅级
+上没有东西可交的 Broker 什么都不用实现，批量停在 `()` 这个默认值上。
 
 ## 异步边界上的中间件 { #middleware-on-the-async-edges }
 

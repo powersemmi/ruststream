@@ -17,9 +17,10 @@ alwaysApply: false
   `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `nonzero!` and the manual path's
   `Handle` / `subscriber` pair are all in the prelude.
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
-  payload, and its type alone picks the form: `&T` (`T: serde::Deserialize`) decodes, `&[T]` is a
-  batch, `&[u8]` takes the codec out of the path entirely, and `&[&[u8]]` is that batch shape. No
-  clause names any of this. Further parameters are extractors:
+  payload, and its type alone picks the form: `&T` is one message and `&[T]` a page, while the
+  lane is the type's own business - `T: serde::Deserialize` decodes with the codec, a
+  `#[derive(Deserialized)]` type builds itself from the raw bytes (`&Frame<'_>`, page
+  `&[Frame<'_>]`). No clause names any of this. Further parameters are extractors:
   `State<T>` injects a component of the application state, `Ctx<K>` one broker context field,
   `Headers<T>` the delivery headers parsed into a typed contract, `Out<impl Publisher, ..>` a live
   publisher. An explicit `ctx: &mut Context` parameter is optional and last; omit it unless you
@@ -207,42 +208,56 @@ supported there.
 ## Raw payloads
 
 When the payload is not a serialized value at all (a binary frame, a foreign wire format you parse
-yourself), a `&[u8]` payload parameter hands the handler each delivery's bytes exactly as the
-broker gave them. A scope codec does not apply, and this is the one subscriber form available with
-no codec feature enabled at all.
+yourself), the payload type deserializes itself and the codec stays out of the path. The mnemonic
+is in the trait names: `Deserialize` means the framework's codec builds the value, `Deserialized`
+means the type builds itself. A scope codec does not apply, and this is the one subscriber form
+available with no codec feature enabled at all. A bare `&[u8]` parameter is a compile error naming
+the derive.
 
 ```rust
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
 #[subscriber("frames")]
-async fn ingest(frame: &[u8]) -> HandlerOutcome {
-    parse(frame);
+async fn ingest(frame: &Frame<'_>) -> HandlerOutcome {
+    parse(frame.0);
     HandlerOutcome::ack()
 }
 
-// the batch shape is the same story - `&[&[u8]]` says it, and the payloads are borrowed
-// from the batch's own messages for the duration of the call, so nothing is copied
+// the form rule does not change with the lane - `&[Frame<'_>]` is the page, the spelling
+// comes with the derive, and the elements are borrowed from the batch's own messages for
+// the duration of the call, so nothing is copied
 #[subscriber("frames")]
-async fn ingest_page(frames: &[&[u8]]) -> HandlerOutcome {
+async fn ingest_page(frames: &[Frame<'_>]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 ```
 
-`on_failure(decode = ..)` on either shape is a compile error - there is no decode step to fail -
-unless the handler declares a `Headers` contract, which that policy does cover. Extractors,
-`&mut Context`, `workers(..)`, `on_failure(panic = ..)` and the injected `Out` / `Seek` parameters
-work unchanged on the single-delivery shape; the batch of payloads does not take `Out` / `Seek`
-yet.
+`on_failure(decode = ..)` applies here too: a constructor that validates (a flatbuffers root, a
+length check) returns `Err` from `from_payload` and that policy settles the delivery, the same rung
+a codec decode failure lands on. Extractors, `&mut Context`, `workers(..)`,
+`on_failure(panic = ..)` and the injected `Out` parameters work unchanged on the single-delivery
+shape; a page of frames does not take `Out` yet.
 
-A raw handler replies in kind with `publish_raw("dest")`, returning bytes. The clause is not tied
-to a raw input: on a typed handler it makes only the *reply* raw. A `publish(..)` clause on a
-`&[u8]` handler is rejected (the error names `publish_raw` as the fix), and the two reply clauses
-cannot be combined on one handler.
+There is one `publish("dest")` clause, and the reply *type* picks the wire: a `serde::Serialize`
+reply encodes through the reply codec, a `#[derive(Serialized)]` newtype leaves byte-for-byte. The
+two lanes are independent, so raw in / encoded out and decoded in / raw out (the gateway shape)
+both compile. A `Vec<u8>` reply is not a byte reply - it encodes like any `Serialize` value - and a
+`Serialized` page reply does not exist.
 
 ```rust
-#[subscriber("relay-in", publish_raw("relay-out"))]
-async fn relay(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[derive(Serialized)]
+struct Export(Vec<u8>);
+
+#[subscriber("relay-in", publish("relay-out"))]
+async fn relay(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 ```
+
+A `Serialized` reply attaches a plain publish policy at the include site
+(`b.include(relay).publisher(MemoryPublish)`, or nothing for the broker's default), where an
+encoded one wraps the policy in `TypedPublisher::new(..)`.
 
 For a custom serialization format you want *typed* handlers for, implement `Codec` instead and
 keep the typed path.
@@ -338,7 +353,10 @@ enum ConvertSends {
 ```
 
 Publishing a type the set does not name is a compile error naming the missing membership. Byte
-publishes through `raw(..)` are unaffected - they carry no message type to list.
+publishes through `raw(..)` are unaffected - bytes carry no message type to list. A type that
+carries its own wire format still belongs in the dictionary: give it `#[derive(Outgoing)]` and list
+it in `#[publishes(..)]` like any model - the document reports it under its own name with no
+payload schema, by design - and send its bytes with `out.raw(export.bytes()).publish()`.
 
 ### Where a message goes
 
@@ -532,6 +550,13 @@ When you need the raw delivery objects, take `ctx: &mut Context<'_, C, S>` as th
 
 There is no `ctx.get::<T>()` and no named-publisher registry; state is typed (`State<T>` /
 `ctx.state()`), and publishing goes through `publish(..)` replies or an `Out` parameter.
+
+On a batch handler `C` is the broker's *subscription-scoped* context, not its per-delivery one:
+name it (`ctx: &mut Context<'_, MemoryBatchContext>`) to read what the whole subscription shares -
+a seek handle, say - which the runtime builds once per page from the page's first delivery. A
+position or a header belongs to one delivery, so it rides the page's elements
+(`&[Message<H, T>]`) instead, and a page body naming the per-delivery context type does not
+compile.
 
 ## Choosing a codec
 

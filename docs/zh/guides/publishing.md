@@ -47,6 +47,11 @@ Broker crate 要实现的接口（参见 [Broker 作者](../broker-authors/index
 入站请求的解码遵循作用域（用 `with_broker_codec` 设定的作用域编解码器，没有设定则用默认编解码器）；
 回复的编解码器则随着附加上去的栈一起走。参见[编解码器](codecs.md#the-publish-side)。
 
+一个子句服务于两条线，因为这个选择属于回复的类型，而不属于子句。实现了 `serde::Serialize` 的回复
+按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此附加的是一个
+普通的发布策略：这条线上没有编解码器可命名，也就没有 `TypedPublisher` 要把它包进去。参见
+[原始字节订阅者](subscribers.md#raw-subscribers)。
+
 ## 控制确认行为
 
 普通的回复写法总是先发布再 ack。想自己掌控，就改成返回 `Result<Reply, HandlerOutcome>`：`Ok(reply)` 会
@@ -161,7 +166,10 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 该槽位允许发布什么，处理器若不限制第三个位置，生成的文档报告的就是这份列表。类型化地发布一个标记
 没有列出的类型是编译错误，错误会点明缺失的那条成员关系。什么都不列的标记就做不了任何类型化的发布；
 而通过
-`raw(..)` 的字节发布不受影响，它们没有可列出的消息类型。单个无名 `Out<impl Publisher>` 的隐含
+`raw(..)` 的字节发布不受影响，字节没有可列出的消息类型。不过，自带线上格式的类型并不会被挡在词典
+之外：给它 `#[derive(Outgoing)]` 来声明目的地，再像任何模型一样列进 `#[publishes(..)]`，文档就会
+用它自己的名字收录它（按设计不带载荷 schema），而它的字节经由
+`out.raw(export.bytes()).publish()` 发出。单个无名 `Out<impl Publisher>` 的隐含
 `DefaultSlot` 没有可以列类型的声明处，所以它接受每一种已声明的消息。参见[类型化的消息头](headers.md)。
 
 ### 声明消息发往何处 { #declaring-where-a-message-goes }
@@ -214,9 +222,9 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
     --8<-- "examples/manual/publishing.rs:declared_mount"
     ```
 
-该参数可以和每一种订阅者写法组合：与 `Ctx` 提取器并列、用在以字节为输入的处理器上、也用在批量处理器
-上（`b.include(f).publisher(..)`，进来的是一整页，出去的是逐元素的目的地）。在回复写法上，也就是
-`publish(..)` / `publish_raw(..)` 以及它们的批量对应形式，`.publisher(..)` 仍然是回复自己的附加项，
+该参数可以和每一种订阅者写法组合：与 `Ctx` 提取器并列、用在输入自己完成反序列化的处理器上、也用在
+批量处理器上（`b.include(f).publisher(..)`，进来的是一整页，出去的是逐元素的目的地）。在回复写法上，
+也就是 `publish(..)` 以及它的批量对应形式，`.publisher(..)` 仍然是回复自己的附加项，
 注入的发布者则用 `.out(marker, ..)` 加上收尾的 `.build()` 来附加（单个无名槽位用 `DefaultSlot`），
 于是一个网关可以在固定的目的地上作答，同时通过注入把副本扇出出去：
 
