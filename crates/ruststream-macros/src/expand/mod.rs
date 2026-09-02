@@ -1,9 +1,7 @@
 //! Expansion of the `#[subscriber]` forms: the handler signature is dissected into
 //! [`HandlerParts`], then one `impl Handle` plus the value-definition wiring is generated
-//! around the original function body ([`unified`]); the combinations the unified rails cannot
-//! express yet keep the definition-trait emission ([`legacy`]).
+//! around the original function body ([`unified`]).
 
-mod legacy;
 mod unified;
 
 use proc_macro::TokenStream;
@@ -20,19 +18,7 @@ pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<To
     reject_reply_combinations(args)?;
     let parts = handler_parts(args, func)?;
     reject_shape_combinations(args, func, &parts)?;
-    let body = if uses_legacy(&parts) {
-        legacy::expand(args, &parts, func)?
-    } else {
-        unified::expand(args, &parts, func)?
-    };
-    Ok(body.into())
-}
-
-/// Whether a handler keeps the definition-trait emission: only `Seek(..)` parameters do - the
-/// injected seeker is minted from the subscription's `Seekable` capability at startup, a
-/// broker obligation the unified value rails do not express.
-fn uses_legacy(parts: &HandlerParts<'_>) -> bool {
-    parts.seek.is_some()
+    Ok(unified::expand(args, &parts, func)?.into())
 }
 
 /// The combinations that are wrong before the signature is even read: two reply clauses at once.
@@ -71,10 +57,10 @@ fn reject_shape_combinations(
         ));
     }
     if parts.shape == Shape::RawBatch {
-        if !parts.outs.is_empty() || parts.seek.is_some() {
+        if !parts.outs.is_empty() {
             return Err(Error::new_spanned(
                 &func.sig,
-                "a raw batch handler does not take Out / Seek parameters yet; take the batch as \
+                "a raw batch handler does not take Out parameters yet; take the batch as \
                  `&[T]` for the decoded form, or the payload as `&[u8]` per delivery",
             ));
         }
@@ -84,15 +70,6 @@ fn reject_shape_combinations(
                 "a raw batch handler has no reply form yet; publish from the body",
             ));
         }
-    }
-    // The pair input rides the unified rails only; a Seek parameter keeps the legacy
-    // definition-trait emission, whose input kind decodes the payload alone.
-    if parts.pair.is_some() && parts.seek.is_some() {
-        return Err(Error::new_spanned(
-            parts.input_ty,
-            "a `Message<H, P>` input does not combine with `Seek` yet; a single-message \
-             handler can take the contract as a `Headers<T>` parameter instead",
-        ));
     }
     // With a Headers parameter the decode policy still has a job on a raw handler: it
     // settles a header contract that fails to parse.
@@ -127,16 +104,12 @@ struct HandlerParts<'a> {
     /// the core decodes the payload and the header contract in one stage.
     pair: Option<(&'a Type, &'a Type)>,
     description: TokenStream2,
-    source_ty: TokenStream2,
     source_expr: TokenStream2,
-    input_schema: TokenStream2,
-    message_meta: TokenStream2,
     ctx_param: TokenStream2,
     ctx_ty: TokenStream2,
     state_ty: Option<TokenStream2>,
     extractors: Vec<(&'a Pat, &'a Type)>,
     outs: Vec<OutParam<'a>>,
-    seek: Option<(&'a Pat, &'a Type)>,
     /// What the handler consumes per invocation, inferred from its message parameter.
     shape: Shape,
     /// The builder calls the attribute's settings expand into, chained onto
@@ -148,9 +121,6 @@ struct HandlerParts<'a> {
     /// Which settings the attribute fixed, as the builder's `(workers, failures, position)`
     /// state tuple.
     settings_state_ty: TokenStream2,
-    /// The `headers_schema()` def-method override lifted from the first `Headers<T>`
-    /// parameter's contract type, or empty when the handler takes none.
-    headers_schema: TokenStream2,
 }
 
 /// The per-delivery context type the handler named in its `ctx: &mut Context<'_, C>` parameter,
@@ -247,31 +217,6 @@ fn out_param_args(ty: &Type) -> Option<Vec<&Type>> {
         return None;
     }
     Some(types)
-}
-
-/// The seeker type `K` of a `Seek<K>`-shaped parameter type, when the type has that shape.
-/// Purely syntactic (the last path segment `Seek` with exactly one type argument), like the
-/// `Out<P>` probe above.
-fn seek_param_type(ty: &Type) -> Option<&Type> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Seek" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    let mut types = args.args.iter().filter_map(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
-    });
-    let seeker = types.next()?;
-    if types.next().is_some() {
-        return None;
-    }
-    Some(seeker)
 }
 
 /// The contract type `T` of a `Headers<T>`-shaped parameter type, when the type has that
@@ -442,16 +387,6 @@ fn where_clause(preds: &[TokenStream2]) -> TokenStream2 {
     quote!(where #(#preds),*)
 }
 
-/// [`extractor_preds`] rendered as a full `where` clause, for the expansions without slot
-/// bounds of their own.
-fn extractor_where(
-    extractors: &[(&Pat, &Type)],
-    ctx_ty: &TokenStream2,
-    state: &TokenStream2,
-) -> TokenStream2 {
-    where_clause(&extractor_preds(extractors, ctx_ty, state))
-}
-
 /// The `let` bindings that resolve each extractor from the context before the body runs. A failed
 /// extraction runs `reject` (a `return` settling the delivery by the rejection's
 /// `HandlerOutcome`).
@@ -516,21 +451,10 @@ fn failure_step(args: &SubscriberArgs) -> TokenStream2 {
     }
 }
 
-/// Renders the def's `headers_schema()` override, rejecting `Headers` on batch forms (a
-/// header contract is per-delivery; a batch pairs each element with its own contract through
-/// the `Message<H, P>` input instead).
-///
-/// The schema source: a `Headers<T>` parameter wins (its contract is what the runtime
-/// actually enforces); otherwise the input type's `#[message(headers(..))]` contract, when it
-/// declares one. Both use the same autoref-specialization probes as the payload schema. A raw
-/// handler has no typed input to carry a contract, so without a `Headers` parameter it
-/// emits nothing. The pair input never reaches this method: it rides the unified rails, whose
-/// capture is [`headers_schema_expr`].
-fn headers_schema_method(
-    shape: Shape,
-    extractors: &[(&Pat, &Type)],
-    input_ty: &Type,
-) -> syn::Result<TokenStream2> {
+/// Rejects a `Headers<T>` parameter on the batch forms: a header contract is per-delivery,
+/// and a batch pairs each element with its own contract through the `Message<H, P>` input
+/// instead.
+fn reject_batch_headers(shape: Shape, extractors: &[(&Pat, &Type)]) -> syn::Result<()> {
     if matches!(shape, Shape::Batch | Shape::RawBatch)
         && let Some((_, ty)) = extractors
             .iter()
@@ -543,33 +467,7 @@ fn headers_schema_method(
              stays on the single-message forms)",
         ));
     }
-    let method = extractors
-        .iter()
-        .find_map(|(_, ty)| from_headers_ty(ty))
-        .map_or_else(
-            || {
-                if matches!(shape, Shape::Raw | Shape::RawBatch) {
-                    return quote!();
-                }
-                quote! {
-                    fn headers_schema(&self) -> ::core::option::Option<::std::string::String> {
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoHeadersSchemaProbe as _;
-                        ::ruststream::__private::Probe::<#input_ty>::new().headers_schema_json()
-                    }
-                }
-            },
-            |contract| {
-                quote! {
-                    fn headers_schema(&self) -> ::core::option::Option<::std::string::String> {
-                        #[allow(unused_imports)]
-                        use ::ruststream::__private::NoSchemaProbe as _;
-                        ::ruststream::__private::Probe::<#contract>::new().schema_json()
-                    }
-                }
-            },
-        );
-    Ok(method)
+    Ok(())
 }
 
 /// The expression capturing the headers schema for the unified emission: the same selection as
@@ -815,34 +713,6 @@ fn body_decl(body: &Type) -> syn::Result<Option<BodyDecl<'_>>> {
     Ok(Some(BodyDecl::List(bodies)))
 }
 
-/// Splits the (at most one) `Seek<K>` parameter out of the extractor list, rejecting a
-/// duplicate.
-fn split_seek<'a>(
-    extractors: &mut Vec<(&'a Pat, &'a Type)>,
-) -> syn::Result<Option<(&'a Pat, &'a Type)>> {
-    let mut seek = None;
-    extractors.retain(|(pat, ty)| {
-        if let Some(seeker_ty) = seek_param_type(ty) {
-            // Only the first Seek parameter is kept; a duplicate is rejected below.
-            if seek.is_none() {
-                seek = Some((*pat, seeker_ty));
-                return false;
-            }
-        }
-        true
-    });
-    if let Some((_, dup)) = extractors
-        .iter()
-        .find(|(_, ty)| seek_param_type(ty).is_some())
-    {
-        return Err(Error::new_spanned(
-            dup,
-            "a #[subscriber] handler takes at most one Seek parameter",
-        ));
-    }
-    Ok(seek)
-}
-
 /// What the handler consumes per invocation, read off its message parameter - the attribute
 /// carries no form clause: `&T` is one decoded message, `&[u8]` one delivery's payload as
 /// delivered, `&[T]` a whole decoded batch, and `&[Payload<'_>]` a batch of payloads (the
@@ -955,33 +825,6 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         ),
     };
 
-    // Captures the input type's JSON Schema for AsyncAPI when it implements `JsonSchema` (and the
-    // `asyncapi` feature is on), via the autoref-specialization probe; `None` otherwise. The
-    // concrete input type makes the trait selection resolve at the call site.
-    let input_schema = quote! {
-        fn input_schema(&self) -> ::core::option::Option<::std::string::String> {
-            #[allow(unused_imports)]
-            use ::ruststream::__private::NoSchemaProbe as _;
-            ::ruststream::__private::Probe::<#input_ty>::new().schema_json()
-        }
-    };
-
-    // Captures the input type's `MessageInfo` name / description when it implements that trait,
-    // via the same autoref-specialization probe; `None` otherwise.
-    let message_meta = quote! {
-        fn message_name(&self) -> ::core::option::Option<&'static str> {
-            #[allow(unused_imports)]
-            use ::ruststream::__private::NoMessageProbe as _;
-            ::ruststream::__private::Probe::<#input_ty>::new().message_name()
-        }
-
-        fn message_description(&self) -> ::core::option::Option<&'static str> {
-            #[allow(unused_imports)]
-            use ::ruststream::__private::NoMessageProbe as _;
-            ::ruststream::__private::Probe::<#input_ty>::new().message_description()
-        }
-    };
-
     // Optional second handler parameter: the per-delivery `&mut Context`. If the user declares it,
     // bind it to their name; otherwise generate an ignored binding. Any later by-value parameter is
     // an extractor, resolved through `FromContext` before the body.
@@ -997,11 +840,10 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     };
     let mut extractors = collect_extractors(func, ctx_arg.is_some())?;
     let outs = split_outs(&mut extractors)?;
-    let seek = split_seek(&mut extractors)?;
     let ctx_ty = context_type(func);
     let state_ty = state_type(func);
 
-    let headers_schema = headers_schema_method(shape, &extractors, input_ty)?;
+    reject_batch_headers(shape, &extractors)?;
 
     // The attribute's settings are the builder calls a user would write at the mount site, and
     // the settings state records which of them are no longer open there. `start_at` comes last:
@@ -1021,21 +863,16 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
         input_ty,
         pair,
         description,
-        source_ty,
         source_expr,
-        input_schema,
-        message_meta,
         ctx_param,
         ctx_ty,
         state_ty,
         extractors,
         outs,
-        seek,
         shape,
         settings_chain,
         settings_source_ty,
         settings_state_ty,
-        headers_schema,
     })
 }
 
