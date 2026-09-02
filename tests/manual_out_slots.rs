@@ -12,9 +12,11 @@ use std::convert::Infallible;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{Input, SoloDeserialized};
+use ruststream::runtime::{Input, MessageWire, PublishedThrough, SerializedWire, SoloDeserialized};
 use ruststream::testing::TestApp;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, PairError};
+use ruststream::{
+    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, PairError,
+};
 use serde::{Deserialize, Serialize};
 
 // `#[derive(Deserialized)]` by hand: the payload view the slot-publishing body takes, and the
@@ -145,6 +147,92 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
     tb.broker::<MemoryBroker>()
         .published::<Event>("slots.encoded")
         .assert_called_once();
+}
+
+// --8<-- [start:serialized_out]
+/// A self-carrying model in the slot dictionary, written out: the bytes, the wire spelling
+/// that routes a typed publish onto the serialized wire, the declared destination and headers,
+/// and the membership - what `#[derive(Serialized)]`, `#[derive(Outgoing)]` and
+/// `#[publishes(..)]` would write.
+struct WireExport(Vec<u8>);
+
+impl Serialized for WireExport {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl MessageWire for WireExport {
+    type Wire = SerializedWire;
+}
+
+impl OutgoingDestination for WireExport {
+    type Form = FixedName;
+    const ADDRESS: &'static str = "slots.exports";
+}
+
+impl MessageHeaders for WireExport {
+    type Contract = NoHeaders;
+}
+
+struct Exports;
+
+impl OutSlot for Exports {
+    const NAME: &'static str = "Exports";
+}
+
+impl PublishedThrough<Exports> for WireExport {}
+
+/// One typed entry serves both wires: the type picks the lane, so `message(&wire)` publishes
+/// the bytes as they are - no codec anywhere - to the destination the declaration names.
+struct ExportChunks;
+
+impl<'p, Wired, Enc> Handle<Frame<'p>, (), Outs<(Slot<Exports, Wired, Enc>,)>> for ExportChunks
+where
+    Slot<Exports, Wired, Enc>: Publish,
+{
+    async fn handle(
+        &self,
+        frame: &Frame<'p>,
+        outs: &Outs<(Slot<Exports, Wired, Enc>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        let wire = WireExport(frame.0.to_vec());
+        if outs.get(Exports).message(&wire).publish().await.is_err() {
+            return Err(HandlerOutcome::retry());
+        }
+        Ok(())
+    }
+}
+// --8<-- [end:serialized_out]
+
+/// The serialized dictionary member leaves byte-for-byte through the slot's typed entry, at
+/// the destination its declaration names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_serialized_member_publishes_through_the_typed_entry() {
+    let app = RustStream::new(AppInfo::new("slots-wire", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(subscriber("slots.chunks", ExportChunks).build())
+                .out(Exports, MemoryPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .raw(b"chunk")
+        .to("slots.chunks")
+        .publish()
+        .await
+        .expect("raw publish");
+    tb.settle().await.expect("settle");
+
+    tb.out::<Exports>().assert_called_once().with_raw(b"chunk");
+    tb.broker::<MemoryBroker>()
+        .published::<WireExport>("slots.exports")
+        .assert_called_once()
+        .with_raw(b"chunk");
 }
 
 // --8<-- [start:extension]

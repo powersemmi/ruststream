@@ -111,38 +111,29 @@ async fn the_lanes_compose_end_to_end() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
-/// The dictionary side of a serialized out type: it declares its destination and slot
-/// membership like any model, and the handler publishes its bytes through the slot.
-#[derive(Outgoing)]
+// --8<-- [start:serialized_out]
+/// A self-carrying model in a slot dictionary: `#[derive(Serialized)]` routes it onto the
+/// serialized wire, `#[derive(Outgoing)]` declares where it goes, and `#[publishes(..)]` makes
+/// it a member like any encoded model.
+#[derive(Outgoing, Serialized)]
 #[outgoing(name = "lanes.exports")]
 struct WireExport(Vec<u8>);
-
-impl Serialized for WireExport {
-    fn bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
 
 #[derive(OutSlot)]
 #[publishes(WireExport)]
 struct Exports;
 
-/// A serialized dictionary member rides the slot's raw builder; the declared set still shows
-/// the type in the generated document under its own name.
+/// One typed entry serves both wires: the type picks the lane, so `message(&wire)` publishes
+/// the bytes as they are - no codec anywhere - to the destination the declaration names.
 #[subscriber("lanes.chunks")]
 async fn export(frame: &Frame<'_>, Out(out): Out<impl Publisher, Exports>) -> HandlerOutcome {
     let wire = WireExport(frame.0.to_vec());
-    if out
-        .raw(wire.bytes())
-        .to("lanes.exports")
-        .publish()
-        .await
-        .is_err()
-    {
+    if out.message(&wire).publish().await.is_err() {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
 }
+// --8<-- [end:serialized_out]
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_serialized_out_type_is_a_dictionary_member() {
@@ -168,4 +159,29 @@ async fn a_serialized_out_type_is_a_dictionary_member() {
         .with_raw(b"chunk");
 
     tb.shutdown().await.expect("graceful shutdown");
+}
+
+/// The typed form reports the metadata the raw seam reported: the serialized member is
+/// schema-free by design, listed under its own name, and never a coverage gap.
+#[cfg(feature = "asyncapi")]
+#[test]
+fn the_typed_form_keeps_the_serialized_metadata() {
+    use ruststream::asyncapi::build_spec;
+
+    let app =
+        RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(export).publisher(MemoryPublish);
+        });
+    let spec = build_spec(&app);
+
+    let message = &spec.components.messages["WireExport"];
+    assert!(
+        message.payload.is_none(),
+        "a serialized wire has no serde model to report"
+    );
+    assert!(spec.channels.contains_key("lanes.exports"));
+    assert!(
+        spec.messages_without_schema().is_empty(),
+        "the serialized wire is schema-free by design, not a gap"
+    );
 }

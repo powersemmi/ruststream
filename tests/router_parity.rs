@@ -18,7 +18,9 @@ use common::{Event, connected, expect_id, observed_memory, payload};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, SeekHandle};
 use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, Router, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{Broker, Deserialized, OutSlot, Publisher, Seeker, Serialized, subscriber};
+use ruststream::{
+    Broker, Deserialized, OutSlot, Outgoing, Publisher, Seeker, Serialized, subscriber,
+};
 
 /// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -124,6 +126,56 @@ async fn a_router_binds_named_out_slots_by_marker() {
 
     tb.out::<Encoded>().assert_called_once().with_raw(b"frame");
     tb.out::<Audit>().assert_called_once();
+}
+
+/// A serialized dictionary member the slot's typed entry publishes byte-for-byte, the scope
+/// counterpart being `tests/lanes.rs`.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "rp.wire.out")]
+struct WireCopy(Vec<u8>);
+
+#[derive(OutSlot)]
+#[publishes(WireCopy)]
+struct Wires;
+
+#[subscriber("rp.wire.in")]
+async fn copy_out(frame: &Frame<'_>, Out(out): Out<impl Publisher, Wires>) -> HandlerOutcome {
+    if out
+        .message(&WireCopy(frame.0.to_vec()))
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+/// The serialized wire of a slot's typed entry mounts from a router exactly as from the scope:
+/// the bytes leave as they are, at the destination the type declares.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_router_publishes_a_serialized_message_through_a_slot() {
+    let router = Router::<MemoryBroker>::new()
+        .include(copy_out)
+        .out(Wires, MemoryPublish)
+        .build();
+    let app = RustStream::new(AppInfo::new("rp-wire", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .raw(b"frame")
+        .to("rp.wire.in")
+        .publish()
+        .await
+        .expect("raw publish");
+    tb.settle().await.expect("settle");
+
+    tb.out::<Wires>().assert_called_once().with_raw(b"frame");
+    tb.broker::<MemoryBroker>()
+        .published::<WireCopy>("rp.wire.out")
+        .assert_called_once()
+        .with_raw(b"frame");
 }
 
 #[subscriber("rp.page.in")]
