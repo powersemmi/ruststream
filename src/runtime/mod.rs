@@ -43,13 +43,12 @@ pub use app::{
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
-pub use batch::{
-    BatchDef, BatchResult, IntoBatchResult, RawBatch, RawSliceHandler, SliceHandler, TypedBatch,
-};
+// The definition-trait dispatch SPI the retired legacy emission used to implement in user
+// crates is internal machinery now: the modules stay, but only what the crate's own mounts
+// reach through this path is re-exported.
+pub(crate) use batch::{RawSliceHandler, SliceHandler};
 #[doc(hidden)]
 pub use batch::{page_verdict, uniform_page};
-pub use batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
-pub use batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
@@ -60,9 +59,9 @@ pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
     Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
-    HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair, Paged,
-    PagedAxis, Probed, ProbedDocs, ProbedReplyDef, ReplyPublisherForm, ReplyValue, Sealed, Solo,
-    SoloAxis, SoloBody, SoloBytes, SoloPair, VerdictFamily, probed_def, probed_reply_def,
+    HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBytes, PagePair, Paged, PagedAxis,
+    Probed, ProbedDocs, ProbedReplyDef, ReplyPublisherForm, ReplyValue, Sealed, Solo, SoloAxis,
+    SoloBytes, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
     Bare, Documentable, Documented, Handle, Input, IntoSource, Message, Outs, Payload, Publish,
@@ -83,8 +82,8 @@ pub use handler::{Handler, HandlerOutcome};
 // build leaves this re-export unused.
 #[allow(unused_imports)]
 pub(crate) use handler::HandlerResult;
-pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out};
-pub use input::{DecodeWith, Decoded, InputKind, RawBytes};
+pub use inject::Out;
+pub(crate) use input::RawBytes;
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::ConnectedLifecycle;
 #[doc(hidden)]
@@ -112,7 +111,6 @@ pub(crate) use publish::message_of;
 pub(crate) use publish::raw_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
-pub use publishing::{EncodeReply, PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 pub use router::{
     DefaultBareReply, IncludeDef, Router, RouterBatchOut, RouterBatchPublishing,
     RouterBatchPublishingOut, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
@@ -131,7 +129,6 @@ pub use settings::{DefinitionInputCodec, MountsWith};
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
-    SlotPublisher, TypedSlot, Unrestricted,
+    SlotPublisher, Unrestricted,
 };
-pub use subscriber_def::SubscriberDef;
 pub use typed::{Typed, typed};

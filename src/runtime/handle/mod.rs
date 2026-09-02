@@ -68,8 +68,6 @@ pub use axis::{Input, Message, Payload};
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
-pub use eager::{PageBody, SoloBody};
-#[doc(hidden)]
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
 pub use outs::{Outs, Publish, Slot};
 #[doc(hidden)]

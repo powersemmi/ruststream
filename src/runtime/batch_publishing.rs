@@ -153,7 +153,7 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
 /// with a plain publisher a mid-batch failure can therefore re-publish the earlier replies on
 /// redelivery (at-least-once), while a [`Transactional`](super::Transactional) publisher never
 /// leaves them half-visible.
-pub struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = PublishIdentity> {
+pub(crate) struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: R,

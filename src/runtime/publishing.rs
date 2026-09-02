@@ -415,7 +415,7 @@ mod tests {
     struct ManualPub;
 
     impl PublishingDef for ManualPub {
-        type Input = crate::runtime::Decoded<u32>;
+        type Input = crate::runtime::input::Decoded<u32>;
         type Injections = ();
         type Reply = u32;
         type Context = ();

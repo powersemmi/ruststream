@@ -10,10 +10,11 @@
 
 use std::fmt;
 use std::future::{Future, ready};
+use std::marker::PhantomData;
 
 use tracing::warn;
 
-use crate::{Broker, Connected, IncomingMessage, PairError, PublishPolicy};
+use crate::{Broker, Connected, IncomingMessage, PairError};
 
 use super::context::Context;
 use super::dispatch::Workers;
@@ -21,7 +22,7 @@ use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
-use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
+use super::slot::DefaultSlot;
 
 /// The marker a handler signature uses to receive an injected publisher:
 /// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
@@ -35,7 +36,7 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// each with `.out(marker, policy)`, in any order.
 ///
 /// An optional third position declares the message set the handler publishes, which the publish
-/// builder ([`message`](super::TypedSlot::message), destinations from each type's
+/// builder ([`message`](super::Slot::message), destinations from each type's
 /// `#[derive(Outgoing)]` declaration) is checked against:
 ///
 /// - `Out<impl Publisher>` / `Out<impl Publisher, Events>` / `Out<impl Publisher, Events, ()>`
@@ -46,8 +47,11 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// - `Out<impl Publisher, Events, SendSet>` - a `#[derive(OutMessages)]` enum whose variants'
 ///   models are the declared set.
 ///
-/// The value is paired by the runtime at startup, so it is live by construction; handlers never
-/// see a "not connected" state. See the module docs.
+/// The value the body receives is the arena entry for the parameter's marker
+/// ([`Slot`](super::Slot)), paired by the runtime at startup, so it is live by construction;
+/// handlers never see a "not connected" state. The type itself is pure signature vocabulary:
+/// the `#[subscriber]` expansion reads the declaration and binds the entry, and no value of
+/// this type is ever constructed.
 ///
 /// # Examples
 ///
@@ -70,11 +74,10 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct Out<P, M = DefaultSlot, Body = (), EncodeCodec = ()>(
-    /// The live slot: the paired publisher plus the scope codec, pinned to the declared
-    /// message set.
-    pub TypedSlot<P, Body, M, EncodeCodec>,
-);
+pub struct Out<P, M = DefaultSlot, Body = ()>(OutVocabulary<P, M, Body>);
+
+/// The phantom carrying the [`Out`] marker's declared positions.
+type OutVocabulary<P, M, Body> = PhantomData<fn() -> (P, M, Body)>;
 
 /// A handler parameter resolved once per subscription at startup.
 ///
@@ -99,35 +102,6 @@ pub trait FromStartup<B: Broker, Sub, Extra>: Sized {
         connected: &Connected<B>,
         subscriber: &Sub,
     ) -> impl Future<Output = Result<Self, PairError>> + Send;
-}
-
-/// The injected publisher: pairs the slot's attached policy against the connected broker and
-/// wraps it with the slot identity, the include site's scope codec (what
-/// [`message`](super::TypedSlot::message) encodes with), and the declared message
-/// set. A failing pair surfaces at startup with the slot's name (an unbound slot never gets
-/// this far: the include site does not compile without a policy per slot).
-impl<B, Sub, Policy, EncodeCodec, Body, M> FromStartup<B, Sub, (Policy, EncodeCodec)>
-    for Out<SlotPublisher<Policy::Live, M>, M, Body, EncodeCodec>
-where
-    B: Broker,
-    Sub: Sync,
-    Policy: PublishPolicy<Connected<B>> + Send,
-    EncodeCodec: Send,
-    M: OutSlot,
-{
-    async fn resolve(
-        (policy, codec): (Policy, EncodeCodec),
-        connected: &Connected<B>,
-        _subscriber: &Sub,
-    ) -> Result<Self, PairError> {
-        let live = policy.pair(connected).await.map_err(|err| {
-            PairError::from_boxed(Box::from(format!(
-                "pairing the publisher for Out slot `{}` failed: {err}",
-                M::NAME,
-            )))
-        })?;
-        Ok(Self(TypedSlot::new(SlotPublisher::new(live), codec)))
-    }
 }
 
 /// A definition with no injected parameters still resolves: to nothing.

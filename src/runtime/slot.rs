@@ -18,18 +18,14 @@
 //!   compile error naming the slot.
 
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::time::Duration;
 
 use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publish::{
-    HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of,
-};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
-    CallerName, ConnectedBroker, HeaderMap, OutgoingDestination, OutgoingMessage,
-    OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
+    ConnectedBroker, HeaderMap, OutgoingMessage, OwnedTransactions, Publisher, RequestReply,
+    TransactionalPublisher,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -91,7 +87,7 @@ impl OutSlot for DefaultSlot {
 /// leave through a slot identified by `Slot`.
 ///
 /// `#[derive(OutSlot)]` emits one impl per listed type, and the publish builder's typed entry
-/// point ([`TypedSlot::message`]) requires it. That is what keeps
+/// point ([`Slot::message`](crate::runtime::Slot::message)) requires it. That is what keeps
 /// the generated document honest: an unrestricted `Out<impl Publisher, Marker>` reports the
 /// marker's dictionary as what the handler sends, so a message outside it would be a publish the
 /// document never declared.
@@ -346,232 +342,6 @@ pub trait OutMessages<M: OutSlot> {
 impl<M: OutSlot> OutMessages<M> for () {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         M::outgoing()
-    }
-}
-
-/// The live value behind an [`Out`](super::Out) parameter: the slot's publisher plus the scope
-/// codec, pinned to the parameter's declared message set.
-///
-/// The handler receives it destructured (`Out(out)`) and publishes declared messages with the
-/// builder ([`message`](Self::message) for a value, [`raw`](Self::raw) for bytes); the declared
-/// publisher capability stays reachable through `Deref` (transactions, broker-defined capability
-/// traits). You never name this type: the `#[subscriber]` macro wires it from the parameter
-/// declaration.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-/// # mod demo {
-/// use ruststream::runtime::{HandlerOutcome, Out};
-/// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
-/// use serde::{Deserialize, Serialize};
-/// # #[derive(serde::Deserialize)]
-/// # struct Event { id: u64 }
-///
-/// #[derive(Serialize, Deserialize)]
-/// struct DoneMeta {
-///     task_id: u64,
-/// }
-///
-/// #[derive(Outgoing, Serialize)]
-/// #[outgoing(name = "chunks.progress")]
-/// struct Progress {
-///     percent: u8,
-/// }
-///
-/// #[derive(Outgoing, Serialize)]
-/// #[outgoing(name = "chunks.done", headers = DoneMeta)]
-/// struct ChunkDone {
-///     output_key: String,
-/// }
-///
-/// #[derive(OutSlot)]
-/// #[publishes(ChunkDone, Progress)]
-/// struct Events;
-///
-/// #[subscriber("chunks.raw")]
-/// async fn convert(
-///     event: &Event,
-///     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-/// ) -> HandlerOutcome {
-///     // No headers contract on Progress: publish straight away.
-///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-///         return HandlerOutcome::retry();
-///     }
-///     // ChunkDone declares DoneMeta: with_headers is demanded by the contract.
-///     let done = ChunkDone { output_key: format!("out/{}", event.id) };
-///     let meta = DoneMeta { task_id: event.id };
-///     if out.message(&done).with_headers(&meta).publish().await.is_err() {
-///         return HandlerOutcome::retry();
-///     }
-///     HandlerOutcome::ack()
-/// }
-/// # }
-/// ```
-#[derive(Debug)]
-pub struct TypedSlot<P, Body, M, EncodeCodec> {
-    slot: P,
-    codec: EncodeCodec,
-    _pinned: PhantomData<fn() -> (Body, M)>,
-}
-
-impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
-    pub(crate) fn new(slot: P, codec: EncodeCodec) -> Self {
-        Self {
-            slot,
-            codec,
-            _pinned: PhantomData,
-        }
-    }
-}
-
-// The declared capability rides the publisher inside; Deref keeps its whole surface (the
-// byte-level publish, transactions, broker-defined capability traits) reachable without
-// re-delegating every trait on this wrapper.
-impl<P, Body, M, EncodeCodec> Deref for TypedSlot<P, Body, M, EncodeCodec> {
-    type Target = P;
-
-    fn deref(&self) -> &P {
-        &self.slot
-    }
-}
-
-// The core capability vocabulary is also delegated directly (not only through Deref), so an
-// injected slot passes into generic positions demanding the capability (`fn f(p: &impl
-// Publisher)`), exactly like the wrapped slot publisher itself.
-impl<P, Body, M, EncodeCodec> Publisher for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: Publisher,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    type Error = P::Error;
-
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        self.slot.publish(msg).await
-    }
-
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        self.slot.base_headers()
-    }
-}
-
-impl<P, Body, M, EncodeCodec> TransactionalPublisher for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: TransactionalPublisher,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    async fn begin_transaction(&self) -> Result<(), Self::Error> {
-        self.slot.begin_transaction().await
-    }
-
-    async fn commit(&self) -> Result<(), Self::Error> {
-        self.slot.commit().await
-    }
-
-    async fn abort(&self) -> Result<(), Self::Error> {
-        self.slot.abort().await
-    }
-}
-
-impl<P, Body, M, EncodeCodec> OwnedTransactions for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: OwnedTransactions,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    type Transaction = P::Transaction;
-
-    async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
-        self.slot.transaction().await
-    }
-}
-
-impl<P, Body, M, EncodeCodec> RequestReply for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: RequestReply,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    type Reply = P::Reply;
-
-    async fn request(
-        &self,
-        msg: OutgoingMessage<'_>,
-        timeout: Duration,
-    ) -> Result<Self::Reply, Self::Error> {
-        self.slot.request(msg, timeout).await
-    }
-}
-
-impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
-    /// Starts a typed publish through the slot, encoded with the include site's scope codec.
-    ///
-    /// The message type has to be in the marker's `#[publishes(..)]` dictionary (see
-    /// [`PublishedThrough`]) and in the parameter's declared message set; everything else - the
-    /// destination and the header contract - comes from the type's `#[derive(Outgoing)]`
-    /// declaration, so the builder demands exactly the positions that declaration leaves open
-    /// (see [`PublishBuilder`]).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-    /// # mod demo {
-    /// use ruststream::runtime::{HandlerOutcome, Out};
-    /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
-    /// use serde::Serialize;
-    /// # #[derive(serde::Deserialize)]
-    /// # struct Event { id: u64 }
-    ///
-    /// #[derive(Outgoing, Serialize)]
-    /// #[outgoing(name = "chunks.progress")]
-    /// struct Progress {
-    ///     percent: u8,
-    /// }
-    ///
-    /// #[derive(OutSlot)]
-    /// #[publishes(Progress)]
-    /// struct Events;
-    ///
-    /// #[subscriber("chunks.raw")]
-    /// async fn convert(
-    ///     event: &Event,
-    ///     Out(out): Out<impl Publisher, Events, Progress>,
-    /// ) -> HandlerOutcome {
-    ///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-    ///         return HandlerOutcome::retry();
-    ///     }
-    ///     HandlerOutcome::ack()
-    /// }
-    /// # }
-    /// ```
-    pub fn message<'a, T, Index>(
-        &'a self,
-        value: &'a T,
-    ) -> PublishBuilder<&'a P, MessageBody<'a, T>, &'a EncodeCodec, HeadersUnset, T::Form>
-    where
-        Body: ContainsMessage<T, Index>,
-        T: OutgoingDestination + PublishedThrough<M>,
-    {
-        message_of(&self.slot, value, &self.codec)
-    }
-
-    /// Starts a byte publish through the slot: the payload travels as it is, to the destination
-    /// named with `to(..)`.
-    ///
-    /// The declared message set does not restrict this path - bytes carry no message type - so
-    /// it stays the escape hatch for a payload the service already holds encoded.
-    pub fn raw<'a, B>(
-        &'a self,
-        payload: &'a B,
-    ) -> PublishBuilder<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(&self.slot, payload)
     }
 }
 

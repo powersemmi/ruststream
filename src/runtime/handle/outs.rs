@@ -182,7 +182,61 @@ impl<M: OutSlot, W, E, Body> Slot<M, W, E, Body> {
     /// message type has to be in the marker's `#[publishes(..)]` dictionary (see
     /// [`PublishedThrough`](crate::runtime::PublishedThrough)) and, when the entry carries a
     /// declared message set, in that set (see
-    /// [`ContainsMessage`](crate::runtime::ContainsMessage)).
+    /// [`ContainsMessage`](crate::runtime::ContainsMessage)); everything else - the
+    /// destination and the header contract - comes from the type's `#[derive(Outgoing)]`
+    /// declaration, so the builder demands exactly the positions that declaration leaves open.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::runtime::{HandlerOutcome, Out};
+    /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
+    /// use serde::{Deserialize, Serialize};
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Event { id: u64 }
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct DoneMeta {
+    ///     task_id: u64,
+    /// }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "chunks.progress")]
+    /// struct Progress {
+    ///     percent: u8,
+    /// }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "chunks.done", headers = DoneMeta)]
+    /// struct ChunkDone {
+    ///     output_key: String,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// #[publishes(ChunkDone, Progress)]
+    /// struct Events;
+    ///
+    /// #[subscriber("chunks.raw")]
+    /// async fn convert(
+    ///     event: &Event,
+    ///     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress)>,
+    /// ) -> HandlerOutcome {
+    ///     // No headers contract on Progress: publish straight away.
+    ///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
+    ///         return HandlerOutcome::retry();
+    ///     }
+    ///     // ChunkDone declares DoneMeta: with_headers is demanded by the contract.
+    ///     let done = ChunkDone { output_key: format!("out/{}", event.id) };
+    ///     let meta = DoneMeta { task_id: event.id };
+    ///     if out.message(&done).with_headers(&meta).publish().await.is_err() {
+    ///         return HandlerOutcome::retry();
+    ///     }
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// ```
     // The builder is spelled through the `Publish` projections (not `W` and `E` directly) so a
     // body generic over the entry needs only its declared `Slot<..>: Publish` bound to publish.
     pub fn message<'a, T, Index>(
@@ -268,6 +322,19 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Body> RequestReply for Slot<M,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
         self.wired.request(msg, timeout).await
+    }
+}
+
+#[cfg(test)]
+impl<M, W, E, Body> Slot<M, W, E, Body> {
+    /// Builds an entry directly for the crate's own unit tests; production entries are only
+    /// ever paired by the runtime at startup.
+    pub(crate) fn test_entry(wired: W, codec: E) -> Self {
+        Self {
+            wired: SlotPublisher::new(wired),
+            codec,
+            _declared: PhantomData,
+        }
     }
 }
 

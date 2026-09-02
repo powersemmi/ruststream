@@ -151,39 +151,8 @@ pub fn uniform_page(outcome: HandlerOutcome, page_len: usize) -> Vec<HandlerOutc
 ///
 /// The batch parameter is a slice: per-message broker handles stay with the dispatcher, which
 /// settles every message of the batch according to the returned [`BatchResult`] - one uniform
-/// outcome, or one outcome per element.
-///
-/// # Examples
-///
-/// Closures returning any [`IntoBatchResult`] implement `SliceHandler` automatically:
-///
-/// ```
-/// use ruststream::runtime::{Context, HandlerOutcome, SliceHandler};
-///
-/// fn assert_slice_handler<T, H: SliceHandler<T>>(_: H) {}
-///
-/// fn use_closures() {
-///     // One outcome for the whole batch.
-///     assert_slice_handler::<u32, _>(|batch: &[u32], _ctx: &mut Context| {
-///         let _ = batch.len();
-///         async { HandlerOutcome::ack() }
-///     });
-///     // One outcome per element: entries that are not ready yet retry individually.
-///     assert_slice_handler::<u32, _>(|batch: &[u32], _ctx: &mut Context| {
-///         let outcomes: Vec<HandlerOutcome> = batch
-///             .iter()
-///             .map(|n| {
-///                 if *n == 0 {
-///                     HandlerOutcome::retry()
-///                 } else {
-///                     HandlerOutcome::ack()
-///                 }
-///             })
-///             .collect();
-///         async move { outcomes }
-///     });
-/// }
-/// ```
+/// outcome, or one outcome per element. Closures over `(&[T], &mut Context)` returning any
+/// [`IntoBatchResult`] value implement it through the blanket impl below.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a batch handler over `{T}`",
     note = "a batch handler takes (&[T], &mut Context) and returns an IntoBatchResult value; \
