@@ -72,7 +72,7 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 Broker，它就报告 `TestError::Ambiguous`。
 
 输入走的是服务自己发布时用的同一个发布构建器：`message(&value)` 把带 `#[derive(Outgoing)]` 的值
-按它的类型选定的那条线发出，`with_headers(&meta)` 附上类型化的消息头契约，而当值的类型没有声明
+按它的类型选定的那种传输方式发出，`with_headers(&meta)` 附上类型化的消息头契约，而当值的类型没有声明
 目的地时，由 `to(name)` 指定 subject。本身不是模型的字节 - 用来触发解码策略的无法解码的载荷，或者
 [自己反序列化字节](subscribers.md#raw-subscribers)的处理器的输入 - 包在一个
 `#[derive(Outgoing, Serialized)]` 的 newtype 里走同一个入口，于是测试说得出自己注入的是什么，而不是
@@ -106,7 +106,7 @@ Broker，它就报告 `TestError::Ambiguous`。
 该通道的每一条消息，两者都保持原有顺序。
 
 解码用的辅助方法（`with`、`received`、`decoded`）使用默认编解码器。如果某个处理器或发布者是用别的
-编解码器挂载的（`include_with` / `with_broker_codec`），就用 `_with` / `with_codec` 变体把它显式传入：
+编解码器挂载的（`with_broker_codec`、`Router::with_codec`），就用 `_with` / `with_codec` 变体把它显式传入：
 `subscriber(name).with_codec(&CborCodec, &expected)`、`.received_with(&CborCodec)`、
 `published::<T>(name).with_codec(&CborCodec, &expected)`、`.decoded_with(&CborCodec)`；而 `with_raw` /
 `received_raw` / `messages` 与编解码器无关。

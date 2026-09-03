@@ -118,8 +118,6 @@ Broker 的发布者、一个客户端连接池：
 | `after(outcome).then(fut)` | `()` | 按结算结果过滤的[结算后钩子](#post-settle-hooks) |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | 结算后钩子的语法糖（ack 之后 / 任何结算之后） |
 
-闭包形式的处理器（底层的 `typed(codec, |msg, ctx| ...)`）总是把上下文作为第二个参数接收。
-
 ## 按投递的上下文 { #per-delivery-context }
 
 除了共享的应用状态之外，上下文还携带 Broker 按投递提供的类型化上下文，它通过**编译期 key** 读取，
@@ -131,17 +129,16 @@ Broker 的发布者、一个客户端连接池：
 --8<-- "examples/context_field.rs:field"
 ```
 
-上下文类型由 `BuildContext` 从消息构造，运行时每次投递调用一次；没有按投递字段的 Broker 使用默认的
-`()`（因此，如果一个 `#[subscriber]` 处理器既没有写出上下文类型，也没有接收
-[`Ctx` 提取器](#context-fields-as-parameters)，它看到的就是 `Context<'_>`）。中间件也可以把一个
-类型化的临时值带给下游的处理器：借助可写的 key（`FieldMut`），某一层可以 `ctx.set(KEY, value)`，
+没有按投递字段的 Broker 使用默认的 `()`。因此，如果一个 `#[subscriber]` 处理器既没有写出上下文类型，
+也没有接收 [`Ctx` 提取器](#context-fields-as-parameters)，它看到的就是 `Context<'_>`。中间件也可以把
+一个类型化的临时值带给下游的处理器：借助可写的 key（`FieldMut`），某一层可以 `ctx.set(KEY, value)`，
 处理器再用 `ctx.context(KEY)` 把它取回来。这样的值可以是一个关联 id，也可以是某一层解析出来的
 已认证用户，全程不必序列化进消息头。上下文每次投递都重新构造，所以一次投递的值绝不会泄漏到下一次。
 
-[批量处理器](subscribers.md#batch-subscribers)每批拿到一个上下文，由 `BuildBatchContext` 从该批的
-第一次投递构造，里面只带 Broker 的*订阅级*字段 - seek 句柄、流的名字 - 批量函数体把这个类型写成
-自己的上下文类型（内存 Broker 上是 `ctx: &mut Context<'_, MemoryBatchContext>`），再用
-`ctx.context(..)` 读它。逐次投递的数据不进来：一批横跨多次投递，所以位置或消息头改为随元素走。
+[批量处理器](subscribers.md#batch-subscribers)每批拿到一个上下文，里面只带 Broker 的*订阅级*字段 -
+seek 句柄、流的名字 - 批量函数体把这个类型写成自己的上下文类型（内存 Broker 上是
+`ctx: &mut Context<'_, MemoryBatchContext>`），再用 `ctx.context(..)` 读它。逐次投递的数据不进来：
+一批横跨多次投递，所以位置或消息头改为随元素走。
 逐次投递的上下文类型和批量的上下文类型互不相同，所以批量函数体去要前者是编译不过的；而订阅级上
 没有东西可交的 Broker，会让批量停在 `()` 这个默认值上。
 

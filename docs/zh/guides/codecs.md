@@ -6,7 +6,7 @@
 
 ## 内置的编解码器
 
-| 编解码器 | feature | 引入依赖 | 线上格式 |
+| 编解码器 | feature | 引入依赖 | 传输格式 |
 |---|---|---|---|
 | `JsonCodec` | `json` *（默认）* | serde_json | JSON |
 | `MsgpackCodec` | `msgpack` | rmp-serde | MessagePack |
@@ -19,8 +19,13 @@
 
 `DefaultCodec` 是一个由 feature 选出的别名：启用了 `json` 就是它，否则是 `cbor`，再否则是
 `msgpack`。当没有任何地方指定编解码器时，`include(def)` 和 `TypedPublisher::new(publisher)` 用的
-就是它；这两者都不接收编解码器参数。它只在至少启用一个编解码器 feature 时才存在；一个编解码器
-feature 都不开时，就只剩下需要显式指定编解码器的那些方法。
+就是它；这两者都不接收编解码器参数。
+
+一个编解码器 feature 都不启用时，没有任何东西能编码或解码，于是凡是会用到默认编解码器的写法都是
+编译错误，而且错误会点明几条出路：启用一个编解码器 feature、显式指定一个编解码器，或者把这个消息
+放到字节路径上。字节路径从不需要编解码器 - [`Deserialized` 输入](subscribers.md#raw-subscribers)
+从这次投递的字节里构造自己，`Serialized` 值自带字节 - 所以只讲自家传输格式的服务，一个编解码器
+feature 都不开也照样运行，什么都不会少。
 
 ## 解码用的编解码器从哪里来 { #where-the-decode-codec-comes-from }
 
@@ -83,8 +88,8 @@ feature 都不开时，就只剩下需要显式指定编解码器的那些方法
 `with_broker_codec` 设置的作用域编解码器，或路由器链上的 `Router::with_codec`，再否则是默认值）。
 回复用的编解码器则随着 `.publisher(..)` 附上的那一层传递，因此请求和回复的格式可以自由地不同。
 
-不存在按消息类型指定的编解码器（消息 trait 上没有关联的编解码器）：编解码器是挂载的属性，而不是类型
-的属性。
+编解码器是挂载的属性，而不是消息类型的属性：同一个类型可以在这个订阅上按 JSON 解码，在另一个订阅上
+按 CBOR 解码，而挂载点是唯一说明用哪一个的地方。
 
 ## 解码失败 { #decode-failures }
 
@@ -104,9 +109,6 @@ feature 都不开时，就只剩下需要显式指定编解码器的那些方法
     ```rust
     --8<-- "examples/manual/codecs.rs:decode_failure"
     ```
-
-通过底层的 `handle` SPI 注册时，`typed(codec, handler)` 返回的 `Typed` 包装器通过
-`on_decode_failure` 接收同样的策略。
 
 各个策略取值（`Drop`、`Retry`、`RetryAfter(..)`、`Skip`、`FailFast`）、默认值以及重试方面的注意事项，
 参见[失败策略](failure-policy.md)。上面这些编解码器示例出自
