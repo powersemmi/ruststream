@@ -323,13 +323,32 @@ writes it with `.with_headers(..)`, and your `publish` reads it off the outgoing
 before the wire. A value your publisher cannot read is a publish error, never a silent fallback to
 the default - the caller asked for an ordering it would not get.
 
+Whatever you name in your own prelude, keep it clear of the names `ruststream::prelude` exports.
+`Publish`, the slot trait a handler's bound names, is one of them, and a service writes both globs
+side by side. An explicit re-export beats a glob, so `pub use crate::MyPublish as Publish;` in your
+prelude silently replaces the trait with your policy struct, and the service's own
+`fn f<T: Publish>()` fails with `E0404: expected trait, found struct` pointing at code that did
+nothing wrong. Policies keep their prefixed names (`MemoryPublish`, not `Publish`). Pin it with a
+probe that stops compiling the moment a name is shadowed:
+
+<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+```rust
+// in your crate, next to your prelude: the glob a service writes, and one bound over it
+mod prelude_probe {
+    use crate::prelude::*;
+
+    #[allow(dead_code)]
+    fn probe<T: Publish>() {}
+}
+```
+
 ## Per-delivery context and `Ctx` keys
 
 A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it as a
 typed per-delivery context: a `#[non_exhaustive]` struct the subscriber names, plus `ContextField`
 key types so handlers can bind single fields as parameters with the
-[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs; values are
-owned. No type-map and no heap on the delivery path.
+[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs. No type-map
+and no heap on the delivery path.
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
 ```rust
@@ -352,6 +371,14 @@ impl ContextField for Partition {
     }
 }
 ```
+
+The sketch reads a `Copy` scalar, which owns and borrows alike. A position that is not `Copy` - a
+Pulsar message id, a Kinesis shard plus its sequence string - is read by borrowing:
+`Field::Value<'a>` is generic over the source's lifetime, so the key hands back `&'a MessageId`
+and a body reading it with `ctx.context(..)` copies nothing. Only `ContextField::Value`, the value
+behind the `Ctx<K>` extractor, has to be owned and `'static`, because extractor values bind before
+the body runs; that key clones what the borrowing one returns. A key usually implements both
+traits, one shape each.
 
 A broker with no per-delivery fields uses `()` and skips all of this.
 

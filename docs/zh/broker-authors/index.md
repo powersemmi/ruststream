@@ -295,12 +295,30 @@ seeker，它只带句柄、不带位置。
 点用 `.with_headers(..)` 写下它，而你的 `publish` 从出站的头部表里读走它，并在上线之前把它剥掉。
 你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它并不会得到。
 
+你在自己的 prelude 里取的名字，都要避开 `ruststream::prelude` 导出的名字。`Publish` 就是其中之一，
+它是处理器约束所写出的槽位 trait，而服务会把两个 glob 导入并排写在一起。显式 re-export 会盖过 glob，
+所以你的 prelude 里一句 `pub use crate::MyPublish as Publish;` 会悄悄把这个 trait 换成你的策略结构体，
+服务自己的 `fn f<T: Publish>()` 于是以 `E0404: expected trait, found struct` 失败，指向的却是一段
+毫无过错的代码。策略保留带前缀的名字（`MemoryPublish`，而不是 `Publish`）。用一个探针把这条规则钉死，
+名字一旦被遮蔽它就编译不过：
+
+<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+```rust
+// in your crate, next to your prelude: the glob a service writes, and one bound over it
+mod prelude_probe {
+    use crate::prelude::*;
+
+    #[allow(dead_code)]
+    fn probe<T: Publish>() {}
+}
+```
+
 ## 单条投递的上下文与 `Ctx` 键
 
 如果 Broker 有原生的投递元数据（一个分区、一个偏移量、一个流序号），就把它作为类型化的单条投递上下文
 暴露出来：一个由订阅者指明的 `#[non_exhaustive]` 结构体，外加若干 `ContextField` 键类型，好让处理器能
-用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是单元结构体，
-值是拥有所有权的。投递路径上既没有 type-map，也没有堆分配。
+用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是单元结构体。
+投递路径上既没有 type-map，也没有堆分配。
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
 ```rust
@@ -323,6 +341,13 @@ impl ContextField for Partition {
     }
 }
 ```
+
+这段草图读的是一个 `Copy` 标量，拥有和借用没有分别。位置类型不是 `Copy` 时（Pulsar 的消息 id、
+Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::Value<'a>` 对来源的生命周期是泛型的，
+所以键交回的是 `&'a MessageId`，用 `ctx.context(..)` 读它的主体一份都不必复制。必须拥有所有权且为
+`'static` 的只有 `ContextField::Value`，也就是 `Ctx<K>` 提取器背后的那个值，因为提取器的值在主体
+运行之前就要绑定好；这个键会把借用那个键交回的东西克隆一份。一个键通常两个 trait 都实现，各出一种
+形状。
 
 没有任何单条投递字段的 Broker 用 `()`，整节都可以跳过。
 
