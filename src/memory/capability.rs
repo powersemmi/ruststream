@@ -27,6 +27,8 @@ use super::{
     Bus, MemoryDelivery, MemoryError, MemoryMessage, MemoryOutbound, MemoryPublisher, MemoryState,
     MemorySubscriber,
 };
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::Coordinator;
 use crate::{
     BatchSubscriber, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned, Positioned,
     Publisher, RequestReply, Seekable, Seeker, Subscriber, Transaction, TransactionalPublisher,
@@ -534,6 +536,10 @@ pub struct MemorySeeker {
     // stay allocation-free on the dispatch path.
     name: Arc<str>,
     control: Arc<SeekControl>,
+    /// The harness watching this subscription, so a requested replay counts as in-flight work
+    /// from the moment the seek resolves (see [`Seeker::seek`]).
+    #[cfg(feature = "testing")]
+    coordinator: Option<Coordinator>,
 }
 
 impl fmt::Debug for MemorySeeker {
@@ -554,6 +560,8 @@ impl Seekable for MemorySubscriber {
             state: Arc::clone(&self.state),
             name: Arc::from(self.name.as_str()),
             control: Arc::clone(&self.seek),
+            #[cfg(feature = "testing")]
+            coordinator: self.coordinator.clone(),
         }
     }
 }
@@ -564,6 +572,10 @@ impl Seeker for MemorySeeker {
 
     /// Records the reposition and wakes the subscription; the stream applies it at the top of
     /// its next poll, so once this resolves the next delivery reflects the new position.
+    ///
+    /// Under a [`TestApp`](crate::testing::TestApp) the reposition counts as in-flight work
+    /// until the subscription applies it, so driving the service to a standstill waits for the
+    /// replay instead of racing the poll that produces it.
     ///
     /// # Errors
     ///
@@ -591,12 +603,23 @@ impl Seeker for MemorySeeker {
         // Watermark first (Release, paired with the Acquire load in the delivery filter), then
         // the pending target: a poll that takes the target must see its watermark.
         self.control.watermark.store(clamped, Ordering::Release);
-        *self
+        let replaced = self
             .control
             .pending
             .lock()
-            .expect("memory broker mutex poisoned") = Some(clamped);
+            .expect("memory broker mutex poisoned")
+            .replace(clamped);
         drop(bus);
+        // One in-flight token per pending reposition, released when the subscription applies it:
+        // a second seek before the first is applied replaces the target and owes nothing more.
+        #[cfg(feature = "testing")]
+        if replaced.is_none()
+            && let Some(coordinator) = &self.coordinator
+        {
+            coordinator.enqueued();
+        }
+        #[cfg(not(feature = "testing"))]
+        let _ = replaced;
         self.control.waker.wake();
         ready(Ok(()))
     }
@@ -620,6 +643,11 @@ impl MemorySubscriber {
             .expect("memory broker mutex poisoned")
             .take();
         let Some(target) = pending else { return };
+        // The seek counted itself in flight when it recorded this target; the token is released
+        // once the swap below is complete, so a quiescence wait cannot observe the gap between
+        // the request and the replay.
+        #[cfg(feature = "testing")]
+        let seek_token = SeekToken(self.coordinator.clone());
 
         let bus = self
             .state
@@ -672,6 +700,22 @@ impl MemorySubscriber {
         }
         drop(log);
         drop(bus);
+        #[cfg(feature = "testing")]
+        drop(seek_token);
+    }
+}
+
+/// The in-flight token one pending reposition holds, released when the subscription has applied
+/// it (whichever way [`apply_pending_seek`](MemorySubscriber::apply_pending_seek) returns).
+#[cfg(feature = "testing")]
+struct SeekToken(Option<Coordinator>);
+
+#[cfg(feature = "testing")]
+impl Drop for SeekToken {
+    fn drop(&mut self) {
+        if let Some(coordinator) = &self.0 {
+            coordinator.consumed();
+        }
     }
 }
 

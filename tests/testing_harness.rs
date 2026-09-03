@@ -94,7 +94,40 @@ async fn records_received_value_and_ack() {
         .received_raw();
     assert_eq!(raw.len(), 1);
 
+    // A single-message handler is handed one message at a time, which is the shape
+    // `assert_page_sizes` reports for it.
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_page_sizes(&[1]);
+
     tb.assert_running();
+}
+
+/// A page body with no cap on it: the whole page reaches it in one slice, which is what the
+/// page-size assertion reports for an uncapped registration.
+#[subscriber("uncapped")]
+async fn take_page(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders.len();
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_uncapped_page_reaches_the_body_whole() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(take_page));
+    let tb = TestApp::start(app).await.unwrap();
+
+    tb.message(&Order { id: 1 })
+        .to("uncapped")
+        .publish()
+        .await
+        .unwrap();
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("uncapped")
+        .assert_called_once()
+        .assert_page_sizes(&[1])
+        .settled(HandlerOutcome::ack());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

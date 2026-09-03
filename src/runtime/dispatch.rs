@@ -649,6 +649,7 @@ async fn dispatch<H, M, C, St>(
                 raw: Bytes::copy_from_slice(msg.payload()),
                 settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
             }],
+            body_pages: Vec::new(),
             panicked,
             decode_failed: ctx.took_decode_failed(),
         });
@@ -743,6 +744,7 @@ async fn run_batch<H, M, C, St>(
                         .into_iter()
                         .map(|raw| Delivered { raw, settle: None })
                         .collect(),
+                    body_pages: Vec::new(),
                     panicked: true,
                     decode_failed: false,
                 });

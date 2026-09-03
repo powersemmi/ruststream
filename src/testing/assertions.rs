@@ -278,6 +278,33 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
+    /// Asserts the body was handed the most recent call's deliveries in slices of exactly
+    /// `sizes`, in order.
+    ///
+    /// A page reaches the body whole - one slice, as long as the page - unless the registration
+    /// capped it with [`batch`](crate::runtime::SubscriberSettings::batch), which hands the body
+    /// chunks of at most the cap and settles each on its own. This is how a test reads that
+    /// boundary: [`assert_called_once`](Self::assert_called_once) still counts the page the
+    /// broker delivered as one call, and [`received_raw`](Self::received_raw) still lists its
+    /// elements flat. A single-message handler is handed one message at a time, so it reports
+    /// `[1]`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the subscriber was not called, or the slices differ from `sizes`.
+    pub fn assert_page_sizes(self, sizes: &[usize]) -> Self {
+        self.with_last("the page sizes", |record| {
+            let handed = record.body_page_sizes();
+            assert_eq!(
+                handed.as_slice(),
+                sizes,
+                "subscriber {:?} handed its body pages of {handed:?}",
+                self.name,
+            );
+        });
+        self
+    }
+
     /// Asserts the handler panicked on the most recent delivery.
     ///
     /// # Panics

@@ -94,6 +94,7 @@ injecting rather than dropping anonymous bytes on the subject.
 | `with(&value)` | the most recent call's sole delivery decodes to `value` (with the default codec) |
 | `with_raw(bytes)` | the most recent call's sole raw payload |
 | `settled(HandlerOutcome::ack())` | how everything the most recent call carried settled |
+| `assert_page_sizes(&[2, 1])` | the slices the body was handed the most recent call in |
 | `assert_outcome(Outcome::Drop)` | the classified outcome (ack / nack / drop / decode-failure / panic) |
 | `panicked()` | the handler panicked on the last call |
 | `assert_last_failed_to_decode()` | the payload failed to decode |
@@ -105,6 +106,11 @@ means one page arrived whatever its size, `settled(..)` covers every element of 
 expected payload (`with`, `with_raw`) report the page size rather than silently checking one
 element of it. An element the decode policy rejected before the body ran is settled by that policy
 and is not part of the page the handler saw, so it does not appear.
+
+A page reaches the body whole, which is why one page is one call. A registration that capped it
+with [`batch(n)`](subscribers.md#batch-subscribers) hands the body chunks of at most `n` instead,
+each settled on its own, and `assert_page_sizes` is where that boundary is visible: a page of three
+under `batch(2)` is still one call, of three elements, that the body saw as `[2, 1]`.
 
 `tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
 the broker's publish log: `.assert_called_once().with(&Receipt { id: 1 })`.

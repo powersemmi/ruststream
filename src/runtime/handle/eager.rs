@@ -211,6 +211,10 @@ pub(super) fn settle_page(
     chunk_len: usize,
     subscription: &str,
 ) -> BatchResult {
+    // Every page body call passes through here, capped or not, which is what lets the harness
+    // report the slices the body was handed rather than only the page the broker delivered.
+    #[cfg(feature = "testing")]
+    crate::testing::coordinator::record_body_page(chunk_len);
     match verdict {
         Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
         Err(outcomes) => {

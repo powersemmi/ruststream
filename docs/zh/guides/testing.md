@@ -88,6 +88,7 @@ Broker，它就报告 `TestError::Ambiguous`。
 | `with(&value)` | 最近一次调用的那唯一一条投递解码（用默认编解码器）之后等于 `value` |
 | `with_raw(bytes)` | 最近一次调用的那唯一一份原始载荷 |
 | `settled(HandlerOutcome::ack())` | 最近一次调用所承载的一切是怎样结算的 |
+| `assert_page_sizes(&[2, 1])` | 最近一次调用是分成哪几块交到函数体手里的 |
 | `assert_outcome(Outcome::Drop)` | 归类之后的结算结果（ack / nack / drop / 解码失败 / panic） |
 | `panicked()` | 处理器在最后一次调用上发生了 panic |
 | `assert_last_failed_to_decode()` | 载荷解码失败 |
@@ -97,6 +98,11 @@ Broker，它就报告 `TestError::Ambiguous`。
 `settled(..)` 覆盖这一页的每个元素，而 `received_raw()` 仍然逐个列出这些元素。指名一份期望载荷的
 那两个断言（`with`、`with_raw`）会报出页的大小，而不是默默去检查其中某一个元素。在处理器主体运行
 之前就被解码策略拒掉的元素，由该策略结算，因此不在处理器看到的那一页里。
+
+一页是整块交到函数体手里的，一页因此就是一次调用。用 [`batch(n)`](subscribers.md#batch-subscribers)
+设了上限的注册，交给函数体的是不超过 `n` 条的若干块，每块各自结算，而 `assert_page_sizes` 正是看
+这条分界的地方：三条一页在 `batch(2)` 之下仍然是一次调用、三个元素，只是函数体是按 `[2, 1]` 看到
+它的。
 
 `tb.broker::<B>().published::<T>(name)` 断言处理器向下游发布了什么，数据取自 Broker 的发布日志：
 `.assert_called_once().with(&Receipt { id: 1 })`。

@@ -11,6 +11,7 @@
 //!   standstill before returning: every enqueue into a subscriber increments the counter, every
 //!   completed dispatch decrements it.
 
+use std::cell::RefCell;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -40,6 +41,10 @@ tokio::task_local! {
 pub(crate) struct HarnessScope {
     coordinator: Coordinator,
     scope_id: usize,
+    /// The element counts of the slices the body was handed during this call, in order. A page
+    /// reaches the body whole unless a page cap chunks it, and the chunking sits below the
+    /// settle path, so the boundaries are reported from there and collected here.
+    body_pages: RefCell<Vec<usize>>,
 }
 
 impl HarnessScope {
@@ -47,6 +52,7 @@ impl HarnessScope {
         Self {
             coordinator,
             scope_id,
+            body_pages: RefCell::new(Vec::new()),
         }
     }
 }
@@ -68,10 +74,50 @@ pub(crate) fn record_page(name: &str, deliveries: Vec<Delivered>) {
             scope_id: scope.scope_id,
             name: name.to_owned(),
             deliveries,
+            body_pages: scope.body_pages.take(),
             panicked: false,
             decode_failed: false,
         });
     });
+}
+
+/// One page's record still owed to the harness, held from the moment the settle path captures
+/// the page until the record is pushed.
+///
+/// The settlements a page applies are what release the in-flight count, and the record is
+/// written after the last of them, so without this a [`drive`](Coordinator::drive) could return
+/// in between and a test would assert against a page that has not been recorded yet.
+pub(crate) struct PendingRecord(Option<Coordinator>);
+
+impl PendingRecord {
+    /// Takes the count against the harness driving the current dispatch task, if any.
+    pub(crate) fn new() -> Self {
+        Self(
+            HARNESS
+                .try_with(|scope| {
+                    scope.coordinator.enqueued();
+                    scope.coordinator.clone()
+                })
+                .ok(),
+        )
+    }
+}
+
+impl Drop for PendingRecord {
+    fn drop(&mut self) {
+        if let Some(coordinator) = &self.0 {
+            coordinator.consumed();
+        }
+    }
+}
+
+/// Records that the body of the page being dispatched was handed a slice of `len` elements.
+///
+/// Called once per body call by the page settle seam, which is below the recording of the page
+/// itself: a page cap chunks the page there, and the boundaries it made are what the record
+/// carries back to [`assert_page_sizes`](super::SubscriberAssertions::assert_page_sizes).
+pub(crate) fn record_body_page(len: usize) {
+    let _ = HARNESS.try_with(|scope| scope.body_pages.borrow_mut().push(len));
 }
 
 /// Runs `fut` with the harness (when one is attached) visible to the recorders above.
@@ -121,6 +167,10 @@ pub(crate) struct Record {
     /// What this call carried: exactly one delivery for a single-message handler, one per
     /// element of the page for a batch handler.
     pub(crate) deliveries: Vec<Delivered>,
+    /// The element counts of the slices the body was handed, in order. Only the page settle
+    /// seam reports them, so a call that never reached it (a single delivery, a panicking
+    /// page) leaves this empty and reads back as one slice.
+    pub(crate) body_pages: Vec<usize>,
     /// Whether the handler panicked.
     pub(crate) panicked: bool,
     /// Whether the payload failed to decode before the handler ran.
@@ -128,6 +178,17 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    /// The element counts of the slices the body was handed on this call, in order. A call that
+    /// reported none carried its deliveries in one slice, which is every call the page cap did
+    /// not chunk.
+    pub(crate) fn body_page_sizes(&self) -> Vec<usize> {
+        if self.body_pages.is_empty() {
+            vec![self.deliveries.len()]
+        } else {
+            self.body_pages.clone()
+        }
+    }
+
     /// Classifies this call into a single [`Outcome`]. Panic and decode-failure dominate the
     /// settlement (a fail-fast panic acks nothing; a skip-policy panic still records `Panicked`).
     ///
