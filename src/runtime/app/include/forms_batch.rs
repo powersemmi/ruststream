@@ -5,7 +5,10 @@ use serde::Serialize;
 // The typed default-reply commits build a `TypedPublisher`, so the codec import is gated.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-use crate::{BatchSubscriber, Broker, Connected, PublishPolicy, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, BuildBatchContext, Connected, PublishPolicy, Subscriber,
+    SubscriptionSource,
+};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::{DefaultPublish, Publisher};
 
@@ -48,6 +51,10 @@ macro_rules! impl_batch_inject_out_commit {
             SourceMessage<B, Bound::Source>: Send + 'static,
             Bound::Input: DecodeWith<DefMountCodec<Def, <Bound as BatchInjectDef>::Input, C>>,
             Bound::Injections: FromStartup<B, SourceSubscriber<B, Bound::Source>, Extra>
+                + Send
+                + Sync
+                + 'static,
+            Bound::Context: BuildBatchContext<SourceMessage<B, Bound::Source>>
                 + Send
                 + Sync
                 + 'static,
@@ -114,6 +121,7 @@ where
         + Sync
         + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Def::Source>> + Send + Sync + 'static,
     <<B::Connected as DefaultPublish>::Policy as PublishPolicy<Connected<B>>>::Live:
         Publisher + 'static,
     Pipeline: PublishPipeline + Clone + Send + 'static,
@@ -143,8 +151,9 @@ where
         + Sync
         + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Def::Source>> + Send + Sync + 'static,
     Source: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
-    BatchReply: ReplyPublisher + 'static,
+    BatchReply: ReplyPublisher<Def::Context> + 'static,
     Pipeline: PublishPipeline + Clone + Send + 'static,
     State: Send + Sync + 'static,
 {
@@ -224,8 +233,12 @@ macro_rules! impl_batch_publishing_out_commit {
                 + Sync
                 + 'static,
             Bound::Reply: Serialize + Send + Sync + 'static,
+            Bound::Context: BuildBatchContext<SourceMessage<B, Bound::Source>>
+                + Send
+                + Sync
+                + 'static,
             Source: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
-            BatchReply: ReplyPublisher + 'static,
+            BatchReply: ReplyPublisher<Bound::Context> + 'static,
             Extra: Send + Sync + 'static,
             Pipeline: PublishPipeline + Clone + Send + 'static,
             State: Send + Sync + 'static,

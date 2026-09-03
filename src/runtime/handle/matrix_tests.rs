@@ -14,11 +14,14 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::codec::JsonCodec;
-use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
+use crate::memory::{
+    ConnectedMemoryBroker, MemoryBatchContext, MemoryBroker, MemoryPosition, MemoryPublish,
+    MemoryPublisher, SeekHandle,
+};
 use crate::nonzero;
 use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
 use crate::runtime::batch_inject::BatchInjectDef;
-use crate::runtime::batch_publishing::BatchPublishingDef;
+use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
 use crate::runtime::dispatch::Delivery;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicy};
@@ -31,8 +34,10 @@ use crate::runtime::{
     Deserialized, Handle, Input, Message, Outs, Router, Slot, SoloDeserialized, TypedPublisher,
     subscriber,
 };
+use crate::testkit::batch::{publish_payloads, pull_batch};
 use crate::{
-    Broker, HeaderMap, Name, OutSlot, OutgoingMessage, PairError, PublishPolicy, Publisher, Unnamed,
+    Broker, BuildBatchContext, HeaderMap, Name, OutSlot, OutgoingMessage, PairError, PublishPolicy,
+    Publisher, Seeker, Unnamed,
 };
 
 use super::eager::{construct, settle_page};
@@ -157,6 +162,29 @@ impl Handle<Order, Confirmation> for Confirm {
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         ready(Ok(Confirmation { id: order.id }))
+    }
+}
+
+/// One confirmation per element, produced while the body reads the broker's page context: the
+/// cell where the reply axis and the context axis are named together.
+struct ConfirmPagesInContext;
+
+impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmPagesInContext {
+    async fn handle(
+        &self,
+        page: &[Order],
+        _outs: &(),
+        ctx: &mut Context<'_, MemoryBatchContext>,
+    ) -> Result<Vec<Confirmation>, Vec<HandlerOutcome>> {
+        if ctx
+            .context(SeekHandle)
+            .seek(MemoryPosition::end())
+            .await
+            .is_err()
+        {
+            return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+        }
+        Ok(confirmations(page))
     }
 }
 
@@ -487,6 +515,36 @@ fn a_page_reply_attaches_a_transactional_publisher() {
             .publisher(TypedPublisher::new(MemoryPublish).transactional())
             .build(),
     );
+}
+
+/// A replying page body reaches the broker's subscription-scoped context: the page's own
+/// definition is driven with the context the runtime builds off the page's first delivery, and
+/// the reposition handle it carries is live there.
+#[tokio::test]
+async fn a_replying_page_reads_the_brokers_page_context() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("orders");
+    publish_payloads(&broker, "orders", &[br#"{"id":1}"#, br#"{"id":2}"#]).await;
+    let page = pull_batch(&mut sub).await;
+    let cx = <MemoryBatchContext as BuildBatchContext<_>>::build(&page[0]);
+
+    let def = definition_of(
+        subscriber("orders", ConfirmPagesInContext)
+            .reply()
+            .to("confirmations")
+            .build(),
+    );
+
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("orders", &headers, &state, cx, &delivery);
+    let replies = BatchPublishingCall::<()>::call(&def, &orders(2), &(), &mut ctx)
+        .await
+        .expect("the page answers once its reposition is accepted");
+
+    let ids: Vec<u64> = replies.iter().map(|reply| reply.id).collect();
+    assert_eq!(ids, [1, 2], "one reply per element, in page order");
 }
 
 // ------------------------------------------------------------------------- the page contract

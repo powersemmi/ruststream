@@ -416,11 +416,12 @@ where
 
 // ------------------------------------------------------------------------- the page reply def
 
-impl<A, R, H, Doc, Dest, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), (), H, Doc>, Dest, Attach>>
+impl<A, R, C, H, Doc, Dest, Attach> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), C, H, Doc>, Dest, Attach>>
 where
     A: PagedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
+    C: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
@@ -428,6 +429,7 @@ where
 {
     type Input = A::Kind;
     type Injections = ();
+    type Context = C;
     type Reply = R;
     type Source = Unnamed<Name>;
 
@@ -509,43 +511,50 @@ pub(super) fn page_reply_verdict<R>(
     }
 }
 
-impl<T, R, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), (), H, Doc>, Dest, Attach>>
+impl<T, R, C, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), C, H, Doc>, Dest, Attach>>
 where
-    Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = (), Reply = R>,
+    Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = (), Context = C, Reply = R>,
     [T]: Input<Axis = Page<T>>,
     T: Send + Sync + 'static,
     R: ReplyShape,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[T], Vec<R>, (), (), S>,
+    H: Handle<[T], Vec<R>, (), C, S>,
 {
     async fn call(
         &self,
         batch: &[T],
         _injections: &(),
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, &(), ctx).await;
         page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
-impl<Hd, P, R, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), (), H, Doc>, Dest, Attach>>
+impl<Hd, P, R, C, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest, Attach>>
 where
-    Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = (), Reply = R>,
+    Self: BatchPublishingDef<
+            Input = <PagePair<Hd, P> as Axis>::Kind,
+            Injections = (),
+            Context = C,
+            Reply = R,
+        >,
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
     R: ReplyShape,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[Message<Hd, P>], Vec<R>, (), (), S>,
+    H: Handle<[Message<Hd, P>], Vec<R>, (), C, S>,
 {
     async fn call(
         &self,
         batch: &[Message<Hd, P>],
         _injections: &(),
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, &(), ctx).await;
         page_reply_verdict(verdict, batch.len(), ctx.name())

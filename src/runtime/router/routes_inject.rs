@@ -9,7 +9,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::{BatchSubscriber, Broker, BuildContext, Connected, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SubscriptionSource,
+};
 
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler};
 use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
@@ -161,6 +163,7 @@ where
     Def: BatchInjectCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
@@ -179,8 +182,7 @@ where
             policies,
             workers,
         } = self;
-        // The injected batch forms keep the unit batch context for now; see `BatchDef::Context`.
-        sink.push_injected_batch::<_, _, _, _, ()>(
+        sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)

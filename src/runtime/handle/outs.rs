@@ -655,9 +655,10 @@ where
     }
 }
 
-impl<A, H, Doc, E> BatchInjectDef for Sealed<HandleValue<A, (), Outs<E>, (), H, Doc>>
+impl<A, C, H, Doc, E> BatchInjectDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
     A: PagedAxis,
+    C: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     E: EntryMarkers + Send + Sync,
@@ -665,6 +666,7 @@ where
     type Input = A::Kind;
     type Source = Unnamed<Name>;
     type Injections = Outs<E>;
+    type Context = C;
 
     fn source(&self) -> Unnamed<Name> {
         Unnamed::new()
@@ -703,42 +705,45 @@ where
     }
 }
 
-impl<T, S, H, Doc, E> BatchInjectCall<S> for Sealed<HandleValue<Page<T>, (), Outs<E>, (), H, Doc>>
+impl<T, C, S, H, Doc, E> BatchInjectCall<S> for Sealed<HandleValue<Page<T>, (), Outs<E>, C, H, Doc>>
 where
-    Self: BatchInjectDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>>,
+    Self: BatchInjectDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>, Context = C>,
     [T]: Input<Axis = Page<T>>,
     T: Send + Sync + 'static,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[T], (), Outs<E>, (), S>,
+    H: Handle<[T], (), Outs<E>, C, S>,
     E: Send + Sync,
 {
     async fn call(
         &self,
         batch: &[T],
         injections: &Outs<E>,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
         let verdict = self.0.body.handle(batch, injections, ctx).await;
         settle_page(verdict, batch.len(), ctx.name())
     }
 }
 
-impl<Hd, P, S, H, Doc, E> BatchInjectCall<S>
-    for Sealed<HandleValue<PagePair<Hd, P>, (), Outs<E>, (), H, Doc>>
+impl<Hd, P, C, S, H, Doc, E> BatchInjectCall<S>
+    for Sealed<HandleValue<PagePair<Hd, P>, (), Outs<E>, C, H, Doc>>
 where
-    Self: BatchInjectDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>>,
+    Self:
+        BatchInjectDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>, Context = C>,
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[Message<Hd, P>], (), Outs<E>, (), S>,
+    H: Handle<[Message<Hd, P>], (), Outs<E>, C, S>,
     E: Send + Sync,
 {
     async fn call(
         &self,
         batch: &[Message<Hd, P>],
         injections: &Outs<E>,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
         let verdict = self.0.body.handle(batch, injections, ctx).await;
         settle_page(verdict, batch.len(), ctx.name())
