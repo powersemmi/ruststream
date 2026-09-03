@@ -80,7 +80,7 @@ async fn a_page_reads_its_seek_target_from_element_headers() {
     publish_entry(&broker, 2, None).await;
 
     let app = RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(broker, |b| {
-        b.include(replay.start_at(MemoryPosition::start()));
+        b.include(replay.batch(nonzero!(64)).start_at(MemoryPosition::start()));
     });
     let running = app.start().await.expect("startup failed");
 

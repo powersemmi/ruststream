@@ -14,9 +14,11 @@ use std::time::Duration;
 use common::{Event, Wire, connected, expect_id, observed_memory};
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream};
+use ruststream::runtime::{
+    AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream, SubscriberSettings,
+};
 use ruststream::testing::{Outcome, TestApp, expect_published};
-use ruststream::{Broker, Publisher, subscriber};
+use ruststream::{Broker, Publisher, nonzero, subscriber};
 
 /// The destination is computed per message: exactly the case reply publishing cannot cover and
 /// the injected publisher exists for.
@@ -137,7 +139,8 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward_page).publisher(MemoryPublish);
+        b.include(forward_page.batch(nonzero!(8)))
+            .publisher(MemoryPublish);
     });
     let running = app.start().await.expect("startup failed");
 
@@ -230,7 +233,7 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
-        b.include(settle_page)
+        b.include(settle_page.batch(nonzero!(8)))
             .out(DefaultSlot, MemoryPublish)
             .build();
     });

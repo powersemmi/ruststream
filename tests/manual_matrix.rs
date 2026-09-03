@@ -302,19 +302,25 @@ async fn a_pair_input_reaches_every_page_cell() {
     let app = RustStream::new(AppInfo::new("matrix-page", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(subscriber("matrix.mirror-page", MirrorPairPage).build())
-                .out(Analytics, MemoryPublish)
-                .build();
+            b.include(
+                subscriber("matrix.mirror-page", MirrorPairPage)
+                    .batch(nonzero!(8))
+                    .build(),
+            )
+            .out(Analytics, MemoryPublish)
+            .build();
             b.include(
                 subscriber("matrix.confirm-page", ConfirmPairPage)
                     .reply()
                     .to("matrix.page-confirmations")
+                    .batch(nonzero!(8))
                     .build(),
             );
             b.include(
                 subscriber("matrix.gateway-page", GatewayPairPage)
                     .reply()
                     .to("matrix.gateway-page-confirmations")
+                    .batch(nonzero!(8))
                     .build(),
             )
             .out(Analytics, MemoryPublish)

@@ -1,6 +1,7 @@
 //! The registration list: route types, the per-route mount trait and [`RouterDef`].
 
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 
@@ -55,6 +56,8 @@ pub struct BatchRoute<S, H, Cx = ()> {
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
+    /// The size the subscription opens its pages at, from the registration's `batch(n)`.
+    pub(super) page_size: NonZeroUsize,
     pub(super) _context: PhantomData<fn() -> Cx>,
 }
 
@@ -137,6 +140,7 @@ where
             self.meta,
             self.policies,
             self.workers,
+            self.page_size,
         );
     }
 }

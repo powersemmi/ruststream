@@ -8,8 +8,8 @@
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-use ruststream::subscriber;
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSettings};
+use ruststream::{nonzero, subscriber};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -53,6 +53,6 @@ async fn reconcile_page(payments: &[Payment]) -> Vec<HandlerOutcome> {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(reconcile);
-        b.include(reconcile_page);
+        b.include(reconcile_page.batch(nonzero!(64)));
     })
 }

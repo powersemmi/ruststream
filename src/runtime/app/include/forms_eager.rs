@@ -16,7 +16,7 @@ use crate::runtime::typed::Typed;
 
 use super::{IncludeMount, forms};
 use crate::runtime::app::scope::BrokerScope;
-use crate::runtime::settings::{DefMountCodec, MountsWith};
+use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
 
 // ---------------------------------------------------------------------------------------------
 // Plain subscribing: eager, no builder.
@@ -108,7 +108,7 @@ impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, Stat
     for forms::Batch
 where
     B: Broker + 'static,
-    Def: BatchDef + MountsWith<<Def as BatchDef>::Input, C>,
+    Def: BatchDef + PageSized + MountsWith<<Def as BatchDef>::Input, C>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
     Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, C>>,
@@ -137,7 +137,7 @@ impl<'s, B, Layers, C, State, Pipeline, Def, F> IncludeMount<'s, B, Layers, C, S
     for forms::RawBatch
 where
     B: Broker + 'static,
-    Def: BatchDef<Input = Provided<F>>,
+    Def: BatchDef<Input = Provided<F>> + PageSized,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
     Def::Context: BuildBatchContext<

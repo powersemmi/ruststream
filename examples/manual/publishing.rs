@@ -541,6 +541,7 @@ fn app() -> impl App {
                     .reply()
                     .to("confirmations")
                     .publisher(TypedPublisher::new(MemoryPublish).transactional())
+                    .batch(nonzero!(64))
                     .build(),
             );
             // --8<-- [end:batch_publishing_mount]

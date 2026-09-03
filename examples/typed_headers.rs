@@ -9,10 +9,12 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, Headers, Message, Out, RustStream, SubscriberSettings,
+};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
+use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 // The header contracts: flat structs whose fields name headers. On the wire every value is a
@@ -163,7 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         |b| {
             b.include(convert).out(Events, MemoryPublish).build();
             b.include(status);
-            b.include(bulk);
+            b.include(bulk.batch(nonzero!(2)));
         },
     );
     // --8<-- [end:mounts]

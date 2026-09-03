@@ -9,6 +9,7 @@
 use std::{
     fmt,
     future::{Future, ready},
+    num::NonZeroUsize,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -192,16 +193,17 @@ impl RequestReply for MemoryRequester {
     }
 }
 
-/// Greedy batching: a batch is the first awaited delivery plus everything already buffered, up
-/// to the [`set_batch_limit`](MemorySubscriber::set_batch_limit) cap. Partial batches ship
-/// immediately, so no deadline timer is needed.
+/// Greedy paging: a page is the first awaited delivery plus everything already buffered, up to
+/// the size the registration asked for. Partial pages ship immediately, so no deadline timer is
+/// needed - the in-memory transport has nothing to wait for.
 impl BatchSubscriber for MemorySubscriber {
     type Batch = Vec<MemoryMessage>;
 
     fn batches(
         &mut self,
+        size: NonZeroUsize,
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
-        let limit = self.batch_limit.max(1);
+        let limit = size.get();
         let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator.clone();

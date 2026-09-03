@@ -718,7 +718,7 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
     ) -> BatchResult {
-        run_page(&self.0.body, injections, self.0.page_cap, batch, ctx).await
+        run_page(&self.0.body, injections, batch, ctx).await
     }
 }
 
@@ -739,6 +739,6 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, (), S>,
     ) -> BatchResult {
-        run_page(&self.0.body, injections, self.0.page_cap, batch, ctx).await
+        run_page(&self.0.body, injections, batch, ctx).await
     }
 }

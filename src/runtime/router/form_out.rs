@@ -24,7 +24,7 @@ use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
 use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{DefMountCodec, MountsWith};
+use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 
 use super::builder::Router;
@@ -190,7 +190,7 @@ macro_rules! impl_batch_inject_out_commit {
                 Extra = Extra,
             >,
             Def: MountsWith<<Bound as BatchInjectDef>::Input, RouteCodec>,
-            Bound: BatchInjectDef + 'static,
+            Bound: BatchInjectDef + PageSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:
@@ -345,7 +345,7 @@ macro_rules! impl_publishing_out_commit {
                 Extra = Extra,
             >,
             Def: MountsWith<<Bound as BatchPublishingDef>::Input, RouteCodec>,
-            Bound: BatchPublishingDef + 'static,
+            Bound: BatchPublishingDef + PageSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:

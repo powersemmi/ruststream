@@ -12,9 +12,10 @@ use common::{Order, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::runtime::{
-    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, layers::TracingLayer,
+    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, SubscriberSettings,
+    layers::TracingLayer,
 };
-use ruststream::{Publisher, subscriber};
+use ruststream::{Publisher, nonzero, subscriber};
 
 /// Publishes an order once to each topic (the app is already started, so the subscriptions are
 /// open and every publish lands), then waits until every counter is non-zero.
@@ -79,8 +80,8 @@ async fn default_codec_router_includes_dispatch() {
     let router = Router::<MemoryBroker>::new()
         .include(ri_plain)
         .include(ri_on)
-        .include(ri_batch)
-        .include(ri_batch_on);
+        .include(ri_batch.batch(nonzero!(64)))
+        .include(ri_batch_on.batch(nonzero!(64)));
 
     let app = RustStream::new(AppInfo::new("ri", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -136,8 +137,8 @@ async fn chain_codec_router_includes_dispatch() {
         .with_codec(JsonCodec)
         .include(rc_plain)
         .include(rc_on)
-        .include(rc_batch)
-        .include(rc_batch_on);
+        .include(rc_batch.batch(nonzero!(64)))
+        .include(rc_batch_on.batch(nonzero!(64)));
 
     let app = RustStream::new(AppInfo::new("rc", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));

@@ -8,6 +8,7 @@
 //! [`publish_layer`](crate::runtime::RustStream::publish_layer) chain.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -79,6 +80,8 @@ pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
+    /// The size the subscription opens its pages at, from the registration's `batch(n)`.
+    pub(super) page_size: NonZeroUsize,
 }
 
 /// Renders the deferred routes by the registration they carry: they hold no built handler to
@@ -322,6 +325,7 @@ where
             meta,
             policies,
             workers,
+            page_size,
         } = self;
         // The batch publishing forms keep the unit batch context for now; see
         // `BatchDef::Context`.
@@ -348,6 +352,7 @@ where
             meta,
             policies,
             workers,
+            page_size,
         );
     }
 }
@@ -400,6 +405,7 @@ mod tests {
             meta: HandlerMetadata::raw("bulk-orders"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
+            page_size: crate::nonzero!(8),
         };
         let rendered = format!("{batch_publishing:?}");
         assert!(rendered.contains("BatchPublishingRoute"), "{rendered}");

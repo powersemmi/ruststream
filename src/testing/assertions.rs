@@ -278,27 +278,25 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
-    /// Asserts the body was handed the most recent call's deliveries in slices of exactly
-    /// `sizes`, in order.
+    /// Asserts the body was handed pages of exactly `sizes`, in the order they arrived.
     ///
-    /// A page reaches the body whole - one slice, as long as the page - unless the registration
-    /// capped it with [`batch`](crate::runtime::SubscriberSettings::batch), which hands the body
-    /// chunks of at most the cap and settles each on its own. This is how a test reads that
-    /// boundary: [`assert_called_once`](Self::assert_called_once) still counts the page the
-    /// broker delivered as one call, and [`received_raw`](Self::received_raw) still lists its
-    /// elements flat. A single-message handler is handed one message at a time, so it reports
-    /// `[1]`.
+    /// The page the body sees is the page the broker delivered: the mount site names the size
+    /// with [`batch`](crate::runtime::SubscriberSettings::batch) and the broker builds the pages
+    /// to it, so this is where a test reads back that it did. One call is one page, which is
+    /// what [`assert_called`](Self::assert_called) counts, while
+    /// [`received_raw`](Self::received_raw) still lists the elements flat. A single-message
+    /// handler is called per delivery, so a run of three reports `[1, 1, 1]`.
     ///
     /// # Panics
     ///
-    /// Panics if the subscriber was not called, or the slices differ from `sizes`.
+    /// Panics if the pages differ from `sizes`.
     pub fn assert_page_sizes(self, sizes: &[usize]) -> Self {
-        self.with_last("the page sizes", |record| {
-            let handed = record.body_page_sizes();
+        self.with_records(|records| {
+            let pages: Vec<usize> = records.iter().map(|r| r.deliveries.len()).collect();
             assert_eq!(
-                handed.as_slice(),
+                pages.as_slice(),
                 sizes,
-                "subscriber {:?} handed its body pages of {handed:?}",
+                "subscriber {:?} was handed pages of {pages:?}",
                 self.name,
             );
         });

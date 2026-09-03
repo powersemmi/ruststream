@@ -360,18 +360,13 @@ fn slot_binding_impls(
     def_expr: &TokenStream2,
     paged: bool,
 ) -> TokenStream2 {
-    // The include-site value is the unit struct until the slots bind, so a page cap named there
-    // has nothing to sit on yet; the runtime's wrapper carries it to the sealed definition the
-    // binding builds. Only a page handler declares the step at all.
+    // The include-site value is the unit struct until the slots bind, so the page-size step is
+    // declared on it directly; the size itself rides the settings builder either way. Only a
+    // page handler declares it, which is what keeps `.batch(..)` a compile error on a
+    // single-message body with slots.
     let caps_pages = paged.then(|| {
         quote! {
-            impl ::ruststream::runtime::CapsPages for #name {
-                type Capped = ::ruststream::runtime::CappedSlots<Self>;
-
-                fn cap_pages(self, max: ::core::num::NonZeroUsize) -> Self::Capped {
-                    ::ruststream::runtime::CappedSlots::new(self, max)
-                }
-            }
+            impl ::ruststream::runtime::CapsPages for #name {}
         }
     });
     let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();

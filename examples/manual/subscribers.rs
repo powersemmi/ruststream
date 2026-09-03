@@ -14,7 +14,6 @@
 use std::convert::Infallible;
 use std::error::Error;
 use std::future::{Future, ready};
-use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::prelude::*;
@@ -111,12 +110,12 @@ impl Handle<[Order]> for Reconcile {
 // --8<-- [start:batch_mount]
 /// Batches dispatch per page rather than per delivery, and the page input is the whole
 /// declaration: the mount demands a batching subscriber of the source, exactly as a `&[T]`
-/// handler under `#[subscriber]` would. The broker sizes its own batches; `batch(n)` caps how
-/// much of one page the body is handed at a time, and each chunk settles on its own.
+/// handler under `#[subscriber]` would. The page size is the one parameter a page mount owes the
+/// broker: at most 64 orders per call, whatever the broker builds its pages out of.
 fn batch_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
         .include(subscriber("orders", SettlePage).batch(nonzero!(64)).build())
-        .include(subscriber("orders", Reconcile).build())
+        .include(subscriber("orders", Reconcile).batch(nonzero!(64)).build())
 }
 // --8<-- [end:batch_mount]
 
@@ -242,8 +241,7 @@ impl Handle<Order> for Archive {
     }
 }
 
-/// Whether batches arrive at all is a property of the broker, so it is settled at the mount:
-/// this handler's subscription buffers client-side.
+/// How big a page is, is the mount site's word, so the size lands there with the name.
 struct Drain;
 
 impl Handle<[Order]> for Drain {
@@ -292,16 +290,8 @@ fn app() -> RustStream {
                 .build(),
         );
         // --8<-- [end:named_kind]
-        b.include(subscriber("frames", Ingest).build());
-        // --8<-- [start:batch_buffered]
-        // Client-side batching for subscriptions without native batches: close a batch at 128
-        // deliveries, or 20 ms after its first one.
-        b.include(
-            subscriber("orders", Drain)
-                .buffered(nonzero!(128), Duration::from_millis(20))
-                .build(),
-        );
-        // --8<-- [end:batch_buffered]
+        b.include(subscriber("frames", Ingest).batch(nonzero!(32)).build());
+        b.include(subscriber("orders", Drain).batch(nonzero!(128)).build());
         // --8<-- [start:builder_settings]
         b.include(
             subscriber("orders", Bill)

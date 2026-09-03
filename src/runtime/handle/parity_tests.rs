@@ -401,22 +401,19 @@ fn eager_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber(MemorySource::new("orders"), Audit).build())
         .include(subscriber("frames", Inspect).build())
         .include(subscriber("orders", Expedite).build())
+        // Every page spelling names its size, and none of them mounts without it: the decoded
+        // one, the self-deserializing one and the paired one.
         .include(subscriber("orders", SettlePage).batch(nonzero!(8)).build())
-        .include(subscriber("frames", Frames).build())
-        // The cap is a page setting, so it applies on every page spelling: the decoded one
-        // above, the self-deserializing one and the paired one.
         .include(subscriber("frames", Frames).batch(nonzero!(8)).build())
-        .include(subscriber("orders", HeaderedPage).build())
         .include(
             subscriber("orders", HeaderedPage)
                 .batch(nonzero!(8))
                 .build(),
         )
-        // The client-side buffer is the other end of the same setting, and it composes with a
-        // start position: a buffered page subscription opens where it is told to.
+        // The size composes with a start position, in either order.
         .include(
             subscriber("orders", SettlePage)
-                .buffered(nonzero!(4), std::time::Duration::from_millis(5))
+                .batch(nonzero!(4))
                 .start_at(MemoryPosition::start())
                 .build(),
         )
@@ -463,8 +460,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .build(),
         )
         .include(subscriber("frames", RawEcho).reply().to("echoes").build())
-        // The cap on a page reply: each chunk is one call answering with its own reply vector,
-        // published on its own.
+        // A page that replies names its size like any other page.
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
@@ -557,10 +553,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", PinnedMirror).build())
         .out(Analytics, MemoryPublish)
         .build()
-        .include(subscriber("orders", PageMirror).build())
-        .out(Analytics, MemoryPublish)
-        .build()
-        // The cap on a slot-carrying page: the arena rides every chunk the body is handed.
+        // A slot-carrying page names its size like any other page.
         .include(subscriber("orders", PageMirror).batch(nonzero!(8)).build())
         .out(Analytics, MemoryPublish)
         .build()
@@ -581,15 +574,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         )
         .out(Analytics, MemoryPublish)
         .build()
-        .include(
-            subscriber("orders", PageGateway)
-                .reply()
-                .to("confirmations")
-                .build(),
-        )
-        .out(Analytics, MemoryPublish)
-        .build()
-        // A page that both replies and fans out through the arena, capped.
+        // A page that both replies and fans out through the arena.
         .include(
             subscriber("orders", PageGateway)
                 .reply()
@@ -670,13 +655,9 @@ async fn a_subscriber_dispatches_end_to_end() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("orders", Audit).build());
-            b.include(
-                subscriber("orders", SettlePage)
-                    .buffered(nonzero!(4), std::time::Duration::from_millis(5))
-                    .build(),
-            );
+            b.include(subscriber("orders", SettlePage).batch(nonzero!(4)).build());
             b.include(subscriber("frames", Inspect).build());
-            b.include(subscriber("frames", Frames).build());
+            b.include(subscriber("frames", Frames).batch(nonzero!(4)).build());
             b.include(
                 subscriber("orders", Echo)
                     .reply()

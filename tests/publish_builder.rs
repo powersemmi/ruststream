@@ -9,11 +9,13 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, RustStream, TypedPublisher};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, Out, PublishExt, RustStream, SubscriberSettings, TypedPublisher,
+};
 use ruststream::testing::{TestApp, TestableBroker};
 use ruststream::{
     Broker, HeaderMap, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, Publisher,
-    Serialized, Transaction, subscriber,
+    Serialized, Transaction, nonzero, subscriber,
 };
 use serde::{Deserialize, Serialize};
 
@@ -315,7 +317,7 @@ async fn settle(
 async fn a_batch_publishing_handler_carries_the_builder() {
     let app =
         RustStream::new(AppInfo::new("bulk", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle)
+            b.include(settle.batch(nonzero!(8)))
                 .publisher(TypedPublisher::new(MemoryPublish))
                 .out(Events, MemoryPublish)
                 .build();

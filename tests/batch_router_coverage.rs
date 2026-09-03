@@ -17,9 +17,11 @@ use ruststream::memory::{
 };
 use ruststream::runtime::{
     AppInfo, Context, Handle, HandlerMetadata, HandlerOutcome, PublishExt, Router, RouterHandlers,
-    RustStream, RustStreamError, TypedPublisher, subscriber as subscriber_def,
+    RustStream, RustStreamError, SubscriberSettings, TypedPublisher, subscriber as subscriber_def,
 };
-use ruststream::{IncomingMessage, PairError, PublishPolicy, SubscriptionSource, subscriber};
+use ruststream::{
+    IncomingMessage, PairError, PublishPolicy, SubscriptionSource, nonzero, subscriber,
+};
 
 #[subscriber("brc-in", publish("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {
@@ -102,11 +104,18 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
             |_msg: &MemoryMessage, _ctx: &mut Context| async { HandlerOutcome::ack() },
             HandlerMetadata::raw("brc-meta-handle"),
         )
-        .include(subscriber_def("brc-meta-batch", MetaBatch).build())
+        .include(
+            subscriber_def("brc-meta-batch", MetaBatch)
+                .batch(nonzero!(64))
+                .build(),
+        )
         .include(brc_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
-        .include(brc_batch_relay)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .include(
+            brc_batch_relay
+                .batch(nonzero!(64))
+                .publisher(TypedPublisher::new(MemoryPublish)),
+        );
 
     assert!(format!("{router:?}").contains("Router"));
 
@@ -202,9 +211,11 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
 /// startup failure, not a per-batch one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_publishing_route_reports_a_refused_reply_publisher() {
-    let router = Router::<MemoryBroker>::new()
-        .include(brc_batch_relay)
-        .publisher(TypedPublisher::new(RefusedPublish));
+    let router = Router::<MemoryBroker>::new().include(
+        brc_batch_relay
+            .batch(nonzero!(64))
+            .publisher(TypedPublisher::new(RefusedPublish)),
+    );
 
     let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(
         MemoryBroker::new(),

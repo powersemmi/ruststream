@@ -13,12 +13,13 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
     App, AppInfo, DefaultSlot, HandlerOutcome, Out, Outgoing, PublishContext, PublishLayer,
-    PublishNext, PublishPipeline, PublishTransform, RustStream, Transactional, TypedPublisher,
+    PublishNext, PublishPipeline, PublishTransform, RustStream, SubscriberSettings, Transactional,
+    TypedPublisher,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
-use ruststream::{OutSlot, Outgoing, Publisher, TransactionalPublisher, subscriber};
+use ruststream::{OutSlot, Outgoing, Publisher, TransactionalPublisher, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -292,11 +293,15 @@ fn app() -> impl App {
             b.include(route).out(Orders, MemoryPublish).build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
-            // .transactional() marks the wiring; the pairing checks that the policy's live
+            // .batch(n) is the page size the subscription opens with, which every page mount
+            // owes. .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher implements TransactionalPublisher. Without it, each reply publishes
             // independently.
-            b.include(confirm)
-                .publisher(TypedPublisher::new(MemoryPublish).transactional());
+            b.include(
+                confirm
+                    .batch(nonzero!(64))
+                    .publisher(TypedPublisher::new(MemoryPublish).transactional()),
+            );
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

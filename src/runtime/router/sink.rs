@@ -1,6 +1,6 @@
 //! The runtime collector routers and scopes mount into: type-erased starters plus metadata.
 
-use std::{fmt, future::Future, sync::Arc};
+use std::{fmt, future::Future, num::NonZeroUsize, sync::Arc};
 
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -100,6 +100,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
+        page_size: NonZeroUsize,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
@@ -121,6 +122,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                     // the pushed definition's own context names it.
                     Ok(spawn_batch_dispatch::<_, _, Cx, _>(
                         subscriber, handler, token, name, state, delivery, failure, workers,
+                        page_size,
                     ))
                 })
             },
@@ -182,6 +184,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
+        page_size: NonZeroUsize,
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
@@ -211,6 +214,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         delivery,
                         failure,
                         workers,
+                        page_size,
                     ))
                 })
             },

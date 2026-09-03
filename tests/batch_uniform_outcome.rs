@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use common::{Order, wait_for};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
-use ruststream::subscriber;
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
+use ruststream::{nonzero, subscriber};
 
 static REFUSED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
@@ -36,7 +36,7 @@ async fn a_uniform_refusal_settles_every_element_of_the_page() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("uniform", "0.1.0"))
-        .with_broker(broker, |b| b.include(refuse));
+        .with_broker(broker, |b| b.include(refuse.batch(nonzero!(64))));
     let running = app.start().await.expect("startup failed");
 
     for id in 0..3u32 {
@@ -85,7 +85,7 @@ async fn a_uniform_ack_runs_its_attached_work_once_for_the_page() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("uniform-after", "0.1.0"))
-        .with_broker(broker, |b| b.include(accept));
+        .with_broker(broker, |b| b.include(accept.batch(nonzero!(64))));
     let running = app.start().await.expect("startup failed");
 
     publisher

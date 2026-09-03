@@ -1,14 +1,20 @@
 //! Integration tests for the batch subscriber pipeline: the form the macro reads off a `&[T]`
 //! payload parameter, batch mounting through `include`, per-element decode failures, and the
-//! `Buffered` adapter.
+//! `Buffered` adapter a broker crate gives a transport with no pages of its own.
 //!
 //! Apps come up through `start()`, which resolves only after subscriptions are open, so each
 //! message is published exactly once; the tests wait on the handlers' recorded state.
-#![cfg(feature = "macros")]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
 use std::{
+    num::NonZeroUsize,
     sync::{
         Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -17,12 +23,19 @@ use std::{
 };
 
 use common::{Order, Wire, connected, wait_for};
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{
-    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, TypedPublisher,
+use futures::Stream;
+use ruststream::memory::{
+    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPosition, MemoryPublish,
+    MemorySubscriber,
 };
-use ruststream::testing::expect_published;
-use ruststream::{Buffered, Name, nonzero, subscriber};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, SubscriberSettings, TypedPublisher,
+};
+use ruststream::testing::{TestApp, expect_published};
+use ruststream::{
+    BatchSubscriber, Buffered, BufferedSubscriber, Name, Seekable, Subscribe, Subscriber,
+    SubscriptionSource, nonzero, subscriber,
+};
 use serde::{Deserialize, Serialize};
 
 static BATCHES: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
@@ -42,8 +55,8 @@ async fn batch_macro_def_receives_batches() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(bill));
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(broker, |b| b.include(bill.batch(nonzero!(64))));
 
     let running = app.start().await.expect("startup failed");
 
@@ -92,8 +105,8 @@ async fn undecodable_elements_never_reach_the_handler() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(sift));
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(broker, |b| b.include(sift.batch(nonzero!(64))));
 
     let running = app.start().await.expect("startup failed");
 
@@ -134,10 +147,11 @@ async fn undecodable_elements_never_reach_the_handler() {
 
 static BUFFERED_SEEN: AtomicUsize = AtomicUsize::new(0);
 
-/// A handler mounted on a `Buffered`-wrapped source directly in the macro. The macro recovers
-/// the source type from the constructor path, so a generic source spells its parameter
-/// (turbofish).
-#[subscriber(Buffered::<Name>::new(Name::new("events")).max_size(nonzero!(2)))]
+/// A handler mounted on a `Buffered`-wrapped source directly in the macro: the adapter a broker
+/// crate gives a page-less transport, spelled here by hand. The macro recovers the source type
+/// from the constructor path, so a generic source spells its parameter (turbofish), and the page
+/// size still comes from the mount site.
+#[subscriber(Buffered::<Name>::new(Name::new("events")))]
 async fn drain(events: &[Order]) -> HandlerOutcome {
     BUFFERED_SEEN.fetch_add(events.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
@@ -149,7 +163,7 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
     let publisher = broker.publisher();
 
     // Mounted through the Router path to cover the batch form there as well.
-    let router = Router::<MemoryBroker>::new().include(drain);
+    let router = Router::<MemoryBroker>::new().include(drain.batch(nonzero!(2)));
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
@@ -168,6 +182,111 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
     .await;
 
     running.shutdown().await.expect("graceful shutdown failed");
+}
+
+// --8<-- [start:buffered_capability]
+/// What a broker crate writes when its transport has no pages of its own: the subscriber it
+/// already has, wrapped in the core's client-side buffer, and `BatchSubscriber` delegated to it.
+/// The deadline that closes a partial page is the broker's own choice; the page size is not -
+/// it arrives per subscription, as the argument of `batches`.
+struct TrickleSubscriber(BufferedSubscriber<MemorySubscriber>);
+
+impl TrickleSubscriber {
+    fn new(inner: MemorySubscriber) -> Self {
+        Self(BufferedSubscriber::new(inner).max_wait(Duration::from_millis(5)))
+    }
+}
+
+impl Subscriber for TrickleSubscriber {
+    type Message = <MemorySubscriber as Subscriber>::Message;
+    type Error = <MemorySubscriber as Subscriber>::Error;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        self.0.stream()
+    }
+}
+
+impl BatchSubscriber for TrickleSubscriber {
+    type Batch = Vec<<MemorySubscriber as Subscriber>::Message>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, Self::Error>> + Send + '_ {
+        self.0.batches(size)
+    }
+}
+
+/// Buffering does not move the subscription, so every other capability reaches through the
+/// wrapper unchanged - here the seeker, which is what lets a page subscription open at a
+/// position even where the pages are assembled on the client.
+impl Seekable for TrickleSubscriber {
+    type Seeker = <MemorySubscriber as Seekable>::Seeker;
+
+    fn seeker(&self) -> Self::Seeker {
+        self.0.seeker()
+    }
+}
+
+/// The broker's own subscription descriptor, opening the paging subscriber above.
+#[derive(Clone)]
+struct Trickle {
+    name: &'static str,
+}
+
+impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
+    type Subscriber = TrickleSubscriber;
+
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn subscribe(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> Result<TrickleSubscriber, MemoryError> {
+        Ok(TrickleSubscriber::new(
+            Subscribe::subscribe(connected, self.name).await?,
+        ))
+    }
+}
+// --8<-- [end:buffered_capability]
+
+/// A page handler on that broker: nothing in the mount says the pages are assembled on the
+/// client, which is the point - the size is the one word the mount site has either way.
+#[subscriber(Trickle { name: "trickle" })]
+async fn sip(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders.len();
+    HandlerOutcome::ack()
+}
+
+/// A transport with no native pages still honours the size the registration named, because the
+/// adapter it delegates to is what applies it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delegating_broker_honours_the_page_size() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("trickle")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("trickle", "0.1.0")).with_broker(broker, |b| {
+        b.include(sip.batch(nonzero!(2)).start_at(MemoryPosition::start()));
+    });
+    let tb = TestApp::start(app).await.expect("harness start");
+    tb.settle().await.expect("the replayed pages settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("trickle")
+        .assert_page_sizes(&[2, 1])
+        .settled(HandlerOutcome::ack());
+
+    tb.shutdown().await.expect("shutdown failed");
 }
 
 static SETTLED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -195,7 +314,7 @@ async fn per_element_outcomes_retry_individually() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
-        .with_broker(broker, |b| b.include(reconcile));
+        .with_broker(broker, |b| b.include(reconcile.batch(nonzero!(64))));
 
     let running = app.start().await.expect("startup failed");
 
@@ -270,7 +389,7 @@ async fn batch_replies_publish_transactionally() {
 
     let replies = TypedPublisher::new(MemoryPublish).transactional();
     let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(broker, |b| {
-        b.include(confirm).publisher(replies);
+        b.include(confirm.batch(nonzero!(64)).publisher(replies));
     });
 
     let running = app.start().await.expect("startup failed");
@@ -298,7 +417,7 @@ fn batch_publishing_def_records_metadata() {
     let broker = MemoryBroker::new();
     let replies = TypedPublisher::new(MemoryPublish);
     let app = RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-        b.include(audit).publisher(replies);
+        b.include(audit.batch(nonzero!(64)).publisher(replies));
     });
 
     assert_eq!(app.handlers().len(), 1);
@@ -313,8 +432,8 @@ fn batch_publishing_def_records_metadata() {
 #[test]
 fn batch_def_records_metadata() {
     let broker = MemoryBroker::new();
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(bill));
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(broker, |b| b.include(bill.batch(nonzero!(64))));
 
     assert_eq!(app.handlers().len(), 1);
     assert_eq!(app.handlers()[0].name, "orders");
@@ -350,7 +469,7 @@ async fn batch_handler_reads_typed_state() {
 
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
         .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
-        .with_broker(broker, |b| b.include(scale));
+        .with_broker(broker, |b| b.include(scale.batch(nonzero!(64))));
 
     let running = app.start().await.expect("startup failed");
 

@@ -10,7 +10,7 @@ use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 use crate::runtime::SourceSubscriber;
 use crate::runtime::batch::BatchDef;
 use crate::runtime::input::{DecodeWith, Provided};
-use crate::runtime::settings::{DefMountCodec, MountsWith};
+use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
 use crate::runtime::subscriber_def::SubscriberDef;
 
 use super::builder::Router;
@@ -68,7 +68,7 @@ impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec,
     for forms::Batch
 where
     B: Broker + 'static,
-    Def: BatchDef + MountsWith<<Def as BatchDef>::Input, RouteCodec>,
+    Def: BatchDef + PageSized + MountsWith<<Def as BatchDef>::Input, RouteCodec>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec>>,
@@ -97,7 +97,7 @@ impl<B, Routes, RouteCodec, RouteLayers, Def, F>
     RouterMount<B, Routes, RouteCodec, RouteLayers, Def> for forms::RawBatch
 where
     B: Broker + 'static,
-    Def: BatchDef<Input = Provided<F>>,
+    Def: BatchDef<Input = Provided<F>> + PageSized,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Handler: 'static,

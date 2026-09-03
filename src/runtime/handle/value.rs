@@ -4,7 +4,6 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
-use std::num::NonZeroUsize;
 
 use crate::runtime::publish::{Transactional, TypedPublisher};
 use crate::runtime::router::DefaultReply;
@@ -66,13 +65,25 @@ type UndocumentedReplyChain<A, R, O, C, H, Dest, Attach, Src, State, DC> =
 type SealedReplyChain<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC> =
     SealedChain<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Attach>, Src, State, DC>;
 
+/// The sealed chain [`publisher`](SubscriberBuilder::publisher) hands back on the attribute
+/// path: the same wrapped attachment, under the seal the expansion already applied.
+type WiredSealedReplyChain<A, R, O, C, H, Doc, Dest, Wire, Fam, Src, State, DC> = SealedChain<
+    ReplyValue<
+        HandleValue<A, R, O, C, H, Doc>,
+        Dest,
+        <Wire as ReplyAttach<<R as ReplyRoute<Fam>>::Wire>>::Attach,
+    >,
+    Src,
+    State,
+    DC,
+>;
+
 /// The definition under construction: what [`subscriber`] returns, wrapped in the settings
 /// builder. You never name this type; chain on it and seal with
 /// [`build`](SubscriberBuilder::build).
 pub struct HandleValue<A, R, O, C, H, Doc = Documented> {
     pub(super) body: H,
     pub(super) docs: Docs,
-    pub(super) page_cap: Option<NonZeroUsize>,
     pub(super) _axes: HandleAxes<A, R, O, C, Doc>,
 }
 
@@ -83,18 +94,11 @@ impl<A, R, O, C, H, Doc> fmt::Debug for HandleValue<A, R, O, C, H, Doc> {
 }
 
 impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
-    /// Records the page cap the settings step named.
-    fn with_page_cap(mut self, max: NonZeroUsize) -> Self {
-        self.page_cap = Some(max);
-        self
-    }
-
     /// Rewraps the value at another documentation state, keeping everything else.
     fn with_doc<NewDoc>(self) -> HandleValue<A, R, O, C, H, NewDoc> {
         HandleValue {
             body: self.body,
             docs: self.docs,
-            page_cap: self.page_cap,
             _axes: PhantomData,
         }
     }
@@ -110,7 +114,7 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
 /// [`buffered`](crate::runtime::SubscriberSettings::buffered), ...), the reply wiring
 /// ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to),
-/// [`publisher`](SubscriberBuilder::publisher)), the page cap
+/// [`publisher`](SubscriberBuilder::publisher)), the page size
 /// ([`batch`](crate::runtime::SubscriberSettings::batch)) and the documentation opt-out
 /// ([`undocumented`](SubscriberBuilder::undocumented)) - and
 /// [`build`](SubscriberBuilder::build) seals the definition for
@@ -156,7 +160,6 @@ where
         HandleValue {
             body,
             docs: Docs::default(),
-            page_cap: None,
             _axes: PhantomData,
         },
         source.into_source(),
@@ -178,7 +181,6 @@ pub fn probed_def<A, R, O, C, H>(
     Sealed(HandleValue {
         body,
         docs: docs.into_docs(),
-        page_cap: None,
         _axes: PhantomData,
     })
 }
@@ -310,7 +312,7 @@ impl<V, Dest, Attach> ReplyValue<V, Dest, Attach> {
 #[derive(Debug, Clone, Copy)]
 pub struct UnbuiltDefinition;
 
-// The settings chain (`.workers(..)`, `.buffered(..)`, ...) rides the `Declared` blanket over
+// The settings chain (`.workers(..)`, `.batch(..)`, ...) rides the `Declared` blanket over
 // `IncludeDef`, so the unsealed values carry the diagnostic form token: settings chain freely,
 // and a mount before `.build()` names the missing step.
 impl<A, R, O, C, H, Doc> crate::runtime::router::IncludeDef for HandleValue<A, R, O, C, H, Doc> {
@@ -331,61 +333,26 @@ impl<V> fmt::Debug for Sealed<V> {
     }
 }
 
-// The cap rides the definition, on every page form: the reply axis and the injections arena are
-// free here, because each of them reads the cap back where its own pages are dispatched - the
-// settling forms chunk in the body adapter, the replying ones in the publishing dispatcher, so
-// that each chunk's replies leave on their own.
+// Which definitions may name a page size: every page form, with the reply axis and the
+// injections arena free, because the size is the subscription's parameter and none of those
+// axes changes how a page is opened. The size itself rides the settings builder, not the
+// definition; this only says the step belongs here.
 //
 // The three page spellings are named one by one rather than through a `PagedAxis` bound on one
 // impl: a bound inside a matching impl is what the compiler reports back, and the axis marker's
 // name is machinery. With no impl matching a single-message definition, the missing `CapsPages`
 // carries the message instead.
-impl<T, R, O, C, H, Doc> CapsPages for HandleValue<Page<T>, R, O, C, H, Doc> {
-    type Capped = Self;
+impl<T, R, O, C, H, Doc> CapsPages for HandleValue<Page<T>, R, O, C, H, Doc> {}
 
-    fn cap_pages(self, max: NonZeroUsize) -> Self {
-        self.with_page_cap(max)
-    }
-}
+impl<F, R, O, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, R, O, C, H, Doc> {}
 
-impl<F, R, O, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, R, O, C, H, Doc> {
-    type Capped = Self;
+impl<Hd, P, R, O, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, R, O, C, H, Doc> {}
 
-    fn cap_pages(self, max: NonZeroUsize) -> Self {
-        self.with_page_cap(max)
-    }
-}
+// The reply wiring and the seal are transparent to the step, so the attribute path sizes the
+// very definition the `subscriber(..)` chain does.
+impl<V: CapsPages, Dest, Attach> CapsPages for ReplyValue<V, Dest, Attach> {}
 
-impl<Hd, P, R, O, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, R, O, C, H, Doc> {
-    type Capped = Self;
-
-    fn cap_pages(self, max: NonZeroUsize) -> Self {
-        self.with_page_cap(max)
-    }
-}
-
-// The reply wiring wraps the value it caps, so the step reaches through it.
-impl<V: CapsPages, Dest, Attach> CapsPages for ReplyValue<V, Dest, Attach> {
-    type Capped = ReplyValue<V::Capped, Dest, Attach>;
-
-    fn cap_pages(self, max: NonZeroUsize) -> Self::Capped {
-        ReplyValue {
-            value: self.value.cap_pages(max),
-            dest: self.dest,
-            attach: self.attach,
-        }
-    }
-}
-
-// The seal is transparent to the step, so the attribute path caps the very definition the
-// `subscriber(..)` chain does.
-impl<V: CapsPages> CapsPages for Sealed<V> {
-    type Capped = Sealed<V::Capped>;
-
-    fn cap_pages(self, max: NonZeroUsize) -> Self::Capped {
-        Sealed(self.0.cap_pages(max))
-    }
-}
+impl<V: CapsPages> CapsPages for Sealed<V> {}
 
 // ------------------------------------------------------------------ steps on the plain chain
 
@@ -505,6 +472,44 @@ impl<A, R, O, C, H, Doc, Dest, Attach: DefaultReplyAttach, Src, State, DC>
             value: def.value,
             dest: def.dest,
             attach: wire.into_attach(),
+        })
+    }
+}
+
+impl<A, R, O, C, H, Doc, Dest, Attach: DefaultReplyAttach, Src, State, DC>
+    SubscriberBuilder<
+        Sealed<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Attach>>,
+        Src,
+        State,
+        DC,
+    >
+{
+    /// See [`publisher`](SubscriberBuilder::publisher) on the reply chain: the same step on the
+    /// attribute path, whose definition arrives sealed by the expansion.
+    ///
+    /// The two paths meet here. A `#[subscriber(publish("..."))]` definition mounted bare takes
+    /// its reply policy from the include-site chain; one that names any setting is a settings
+    /// builder over the sealed definition, and this is where its policy attaches - before
+    /// `include`, exactly as the value chain attaches it before `.build()`.
+    // Every parameter is one axis or chain state the wire step carries through; the count is
+    // the typestate itself, not incidental nesting an alias could hide.
+    #[allow(clippy::type_complexity)]
+    #[must_use]
+    pub fn publisher<Wire>(
+        self,
+        wire: Wire,
+    ) -> WiredSealedReplyChain<A, R, O, C, H, Doc, Dest, Wire, A::Family, Src, State, DC>
+    where
+        A: Axis,
+        R: ReplyRoute<A::Family>,
+        Wire: ReplyAttach<R::Wire>,
+    {
+        self.map_def(|Sealed(def)| {
+            Sealed(ReplyValue {
+                value: def.value,
+                dest: def.dest,
+                attach: wire.into_attach(),
+            })
         })
     }
 }

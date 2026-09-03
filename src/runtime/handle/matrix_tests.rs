@@ -1,6 +1,7 @@
 //! What the mounted cells of the matrix actually do: the placeholder source every sealed
-//! definition reports, the chunk contract of a capped page, a payload the input type refuses to
-//! construct, and the arena entries the runtime pairs at startup.
+//! definition reports, the page a body is handed against the size its registration named, a
+//! payload the input type refuses to construct, and the arena entries the runtime pairs at
+//! startup.
 //!
 //! `parity_tests` proves every spelling mounts; this module drives the same definitions far
 //! enough to settle, so the dispatch adapters behind them are exercised rather than only typed.
@@ -25,7 +26,7 @@ use crate::runtime::failure::{ErrorShutdown, FailurePolicy};
 use crate::runtime::handler::{Handler, HandlerOutcome};
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef};
 use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{SubscriberBuilder, SubscriberSettings};
+use crate::runtime::settings::{PageSized, SubscriberBuilder, SubscriberSettings};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::{
     Deserialized, Handle, Input, Message, Outs, Router, Slot, SoloDeserialized, TypedPublisher,
@@ -243,20 +244,20 @@ impl Handle<[Order], Vec<Confirmation>, AnalyticsArena> for PinnedPageGateway {
     }
 }
 
-/// Records every chunk it is handed and settles a full chunk uniformly, a short one per
-/// element, so both fan-out shapes of a capped page are exercised in one delivery.
-struct ChunkLog {
+/// Records every page it is handed and settles a page of the expected length uniformly, any
+/// other per element, so a resizing dispatch would change both the log and the settlement.
+struct PageLog {
     seen: Arc<Mutex<Vec<usize>>>,
-    cap: usize,
+    expected: usize,
 }
 
-impl ChunkLog {
+impl PageLog {
     fn verdict(&self, len: usize) -> Result<(), Vec<HandlerOutcome>> {
         self.seen
             .lock()
             .expect("the test holds no poisoned lock")
             .push(len);
-        if len == self.cap {
+        if len == self.expected {
             Ok(())
         } else {
             Err((0..len).map(|_| HandlerOutcome::drop()).collect())
@@ -264,7 +265,7 @@ impl ChunkLog {
     }
 }
 
-impl Handle<[Order]> for ChunkLog {
+impl Handle<[Order]> for PageLog {
     fn handle(
         &self,
         page: &[Order],
@@ -275,11 +276,11 @@ impl Handle<[Order]> for ChunkLog {
     }
 }
 
-struct PairChunkLog {
-    inner: ChunkLog,
+struct PairPageLog {
+    inner: PageLog,
 }
 
-impl Handle<[Message<Meta, Order>]> for PairChunkLog {
+impl Handle<[Message<Meta, Order>]> for PairPageLog {
     fn handle(
         &self,
         page: &[Message<Meta, Order>],
@@ -290,11 +291,11 @@ impl Handle<[Message<Meta, Order>]> for PairChunkLog {
     }
 }
 
-struct SlotChunkLog {
-    inner: ChunkLog,
+struct SlotPageLog {
+    inner: PageLog,
 }
 
-impl Handle<[Order], (), AnalyticsArena> for SlotChunkLog {
+impl Handle<[Order], (), AnalyticsArena> for SlotPageLog {
     fn handle(
         &self,
         page: &[Order],
@@ -305,11 +306,11 @@ impl Handle<[Order], (), AnalyticsArena> for SlotChunkLog {
     }
 }
 
-struct FrameChunkLog {
-    inner: ChunkLog,
+struct FramePageLog {
+    inner: PageLog,
 }
 
-impl<'p> Handle<[Strict<'p>]> for FrameChunkLog {
+impl<'p> Handle<[Strict<'p>]> for FramePageLog {
     fn handle(
         &self,
         page: &[Strict<'p>],
@@ -500,16 +501,17 @@ fn a_page_reply_attaches_a_transactional_publisher() {
             .reply()
             .to("confirmations")
             .publisher(TypedPublisher::new(MemoryPublish).transactional())
+            .batch(nonzero!(8))
             .build(),
     );
 }
 
 // ------------------------------------------------------------------------- the page contract
 
-/// A page verdict of `Ok` acks the whole chunk; a per-element vector of the wrong length is a
+/// A page verdict of `Ok` acks the whole page; a per-element vector of the wrong length is a
 /// bug in the body, and the panic names the subscription so the culprit is findable.
 #[test]
-fn a_page_verdict_of_ok_acks_the_whole_chunk() {
+fn a_page_verdict_of_ok_acks_the_whole_page() {
     assert!(matches!(
         settle_page(Ok(()), 3, "orders"),
         BatchResult::Uniform(_)
@@ -551,14 +553,14 @@ fn a_short_page_reply_outcome_vector_names_the_subscription() {
     let _ = page_reply_verdict(verdict, 2, "orders");
 }
 
-/// A capped page reaches a decoded body in chunks, each settled on its own: the full chunk acks
-/// uniformly (fanned out per element) and the short tail settles per element.
+/// A decoded page reaches its body exactly as the broker built it: the size the registration
+/// named opened the subscription, and the dispatch adds no resizing of its own.
 #[tokio::test]
-async fn a_capped_page_reaches_a_decoded_body_in_chunks() {
+async fn a_page_reaches_a_decoded_body_whole() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = ChunkLog {
+    let body = PageLog {
         seen: Arc::clone(&seen),
-        cap: 2,
+        expected: 3,
     };
     let handler = BatchDef::into_handler(definition_of(
         subscriber("orders", body).batch(nonzero!(2)).build(),
@@ -571,28 +573,18 @@ async fn a_capped_page_reaches_a_decoded_body_in_chunks() {
     let mut ctx = context("orders", &headers, &state, &delivery);
     let settled = handler.handle_slice(&page, &mut ctx).await;
 
-    assert_eq!(
-        *seen.lock().expect("the test holds no poisoned lock"),
-        [2, 1]
-    );
-    match settled {
-        BatchResult::PerElement(outcomes) => {
-            assert_eq!(outcomes.len(), 3);
-            assert!(outcomes[0].is_ack() && outcomes[1].is_ack());
-            assert!(outcomes[2].is_drop());
-        }
-        BatchResult::Uniform(_) => panic!("a capped page settles per element"),
-    }
+    assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
+    assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
-/// The same chunking on the pair lane: the typed header contract rides every element.
+/// The same on the pair lane: the typed header contract rides every element of the one page.
 #[tokio::test]
-async fn a_capped_page_reaches_a_pair_body_in_chunks() {
+async fn a_page_reaches_a_pair_body_whole() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = PairChunkLog {
-        inner: ChunkLog {
+    let body = PairPageLog {
+        inner: PageLog {
             seen: Arc::clone(&seen),
-            cap: 2,
+            expected: 3,
         },
     };
     let handler = BatchDef::into_handler(definition_of(
@@ -616,22 +608,19 @@ async fn a_capped_page_reaches_a_pair_body_in_chunks() {
     let mut ctx = context("orders", &headers, &state, &delivery);
     let settled = handler.handle_slice(&page, &mut ctx).await;
 
-    assert_eq!(
-        *seen.lock().expect("the test holds no poisoned lock"),
-        [2, 1]
-    );
-    assert!(matches!(settled, BatchResult::PerElement(outcomes) if outcomes.len() == 3));
+    assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
+    assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
 /// And on the self-deserializing lane, whose elements the dispatch adapter constructed out of
-/// the deliveries' payloads before the chunking begins.
+/// the deliveries' payloads before the body sees the page.
 #[tokio::test]
-async fn a_capped_page_reaches_a_self_deserializing_body_in_chunks() {
+async fn a_page_reaches_a_self_deserializing_body_whole() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = FrameChunkLog {
-        inner: ChunkLog {
+    let body = FramePageLog {
+        inner: PageLog {
             seen: Arc::clone(&seen),
-            cap: 2,
+            expected: 3,
         },
     };
     let handler = BatchDef::into_handler(definition_of(
@@ -645,27 +634,24 @@ async fn a_capped_page_reaches_a_self_deserializing_body_in_chunks() {
     let mut ctx = context("frames", &headers, &state, &delivery);
     let settled = handler.handle_slice(&page, &mut ctx).await;
 
-    assert_eq!(
-        *seen.lock().expect("the test holds no poisoned lock"),
-        [2, 1]
-    );
-    assert!(matches!(settled, BatchResult::PerElement(outcomes) if outcomes.len() == 3));
+    assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
+    assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
-/// A slot-carrying page chunks the same way, with the arena riding every chunk: the injections
-/// are what the form adds, and they change nothing about how the page is fed.
+/// A slot-carrying page reaches the body whole, with the arena riding it: the injections are
+/// what the form adds, and they change nothing about how a page is handed over.
 #[tokio::test]
-async fn a_capped_slot_page_reaches_the_body_in_chunks() {
+async fn a_slot_page_reaches_the_body_whole() {
     let connected = MemoryBroker::new()
         .connect()
         .await
         .expect("the memory broker connects");
     let arena = analytics_arena(&connected).await;
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = SlotChunkLog {
-        inner: ChunkLog {
+    let body = SlotPageLog {
+        inner: PageLog {
             seen: Arc::clone(&seen),
-            cap: 2,
+            expected: 3,
         },
     };
     let def = definition_of(subscriber("orders", body).batch(nonzero!(2)).build());
@@ -677,43 +663,31 @@ async fn a_capped_slot_page_reaches_the_body_in_chunks() {
     let mut ctx = context("orders", &headers, &state, &delivery);
     let settled = BatchInjectCall::<()>::call(&def, &page, &arena, &mut ctx).await;
 
-    assert_eq!(
-        *seen.lock().expect("the test holds no poisoned lock"),
-        [2, 1]
-    );
-    assert!(matches!(settled, BatchResult::PerElement(outcomes) if outcomes.len() == 3));
+    // The page the broker built is what arrives, whatever size the registration asked for: the
+    // size travels to the subscription, not to the dispatch.
+    assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
+    assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
-/// A page reply chunks in the dispatcher instead, so that each chunk's replies are published on
-/// their own; what the definition owes is the cap itself, on the reply form and the
-/// reply-with-slots one alike.
+/// Every page form carries the size to the mount, whatever else its signature holds.
 #[test]
-fn a_page_reply_definition_carries_its_cap() {
-    let capped = definition_of(
-        subscriber("orders", ConfirmPages)
-            .reply()
-            .to("confirmations")
-            .batch(nonzero!(2))
-            .build(),
-    );
-    assert_eq!(BatchPublishingDef::page_cap(&capped), Some(nonzero!(2)));
+fn every_page_form_carries_its_size_to_the_mount() {
+    let plain = subscriber("orders", SettlePage).batch(nonzero!(2)).build();
+    assert_eq!(PageSized::page_size(&plain), nonzero!(2));
 
-    let uncapped = definition_of(
-        subscriber("orders", ConfirmPages)
-            .reply()
-            .to("confirmations")
-            .build(),
-    );
-    assert_eq!(BatchPublishingDef::page_cap(&uncapped), None);
+    let replying = subscriber("orders", ConfirmPages)
+        .reply()
+        .to("confirmations")
+        .batch(nonzero!(4))
+        .build();
+    assert_eq!(PageSized::page_size(&replying), nonzero!(4));
 
-    let with_slots = definition_of(
-        subscriber("orders", PinnedPageGateway)
-            .reply()
-            .to("confirmations")
-            .batch(nonzero!(4))
-            .build(),
-    );
-    assert_eq!(BatchPublishingDef::page_cap(&with_slots), Some(nonzero!(4)));
+    let with_slots = subscriber("orders", PinnedPageGateway)
+        .reply()
+        .to("confirmations")
+        .batch(nonzero!(8))
+        .build();
+    assert_eq!(PageSized::page_size(&with_slots), nonzero!(8));
 }
 
 // -------------------------------------------------------------- the refused payload construction

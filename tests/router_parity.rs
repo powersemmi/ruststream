@@ -16,10 +16,12 @@ mod common;
 use common::{Event, Wire, connected, expect_id, observed_memory};
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, SeekHandle};
-use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, Router, RustStream};
+use ruststream::runtime::{
+    AppInfo, Ctx, HandlerOutcome, Out, PublishExt, Router, RustStream, SubscriberSettings,
+};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, Deserialized, OutSlot, Outgoing, Publisher, Seeker, Serialized, subscriber,
+    Broker, Deserialized, OutSlot, Outgoing, Publisher, Seeker, Serialized, nonzero, subscriber,
 };
 
 /// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
@@ -201,7 +203,7 @@ async fn a_router_mounts_a_batch_out_slot() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
-        .include(forward_page)
+        .include(forward_page.batch(nonzero!(64)))
         .publisher(MemoryPublish);
     let app = RustStream::new(AppInfo::new("rp-page", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -446,7 +448,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
-        .include(settle_page)
+        .include(settle_page.batch(nonzero!(64)))
         .publisher(TypedPublisher::new(MemoryPublish))
         .out(ruststream::runtime::DefaultSlot, MemoryPublish)
         .build();
@@ -510,12 +512,13 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
         .collect()
 }
 
-/// `.build()` on the batch publishing form takes the broker's own default publish policy.
+/// A batch publishing form mounted with only its page size takes the broker's own default
+/// publish policy: naming the size seals the definition, so the reply wiring defaults.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new().include(bulk_relay).build();
+    let router = Router::<MemoryBroker>::new().include(bulk_relay.batch(nonzero!(64)));
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -541,8 +544,7 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
         .build()
         .include(relay)
         .build()
-        .include(bulk_relay)
-        .build();
+        .include(bulk_relay.batch(nonzero!(64)));
 
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
     assert_eq!(

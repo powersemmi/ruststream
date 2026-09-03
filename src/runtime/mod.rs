@@ -119,15 +119,13 @@ pub use router::{
     RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
 };
 pub use settings::{
-    AllOpen, BatchStep, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
+    AllOpen, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open, PageSized,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
 pub use settings::{CapsPages, DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
-pub use slot::{
-    BindSlot, CappedSlots, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource,
-};
+pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
     SlotPublisher, Unrestricted,

@@ -429,9 +429,11 @@ fn server_security_lands_in_components_and_refs() {
 #[cfg(all(feature = "macros", feature = "json"))]
 mod typed_headers_spec {
     use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
+    use ruststream::runtime::{
+        AppInfo, HandlerOutcome, Headers, Message, Out, RustStream, SubscriberSettings,
+    };
     use ruststream::schemars::JsonSchema;
-    use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, subscriber};
+    use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, nonzero, subscriber};
     use serde::{Deserialize, Serialize};
 
     use super::build_spec;
@@ -515,7 +517,7 @@ mod typed_headers_spec {
             |b| {
                 b.include(convert).out(Events, MemoryPublish).build();
                 b.include(respond);
-                b.include(bulk);
+                b.include(bulk.batch(nonzero!(8)));
             },
         );
         let spec = build_spec(&app);

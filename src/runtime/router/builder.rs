@@ -17,6 +17,7 @@ use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::PublishPipeline;
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
+use crate::runtime::settings::PageSized;
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
@@ -249,7 +250,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef,
+        Def: BatchDef + PageSized,
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Handler: 'static,
         DecodeCodec: Send + Sync + 'static,
@@ -257,6 +258,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         // The handler bound alone cannot pin the kind, so the adapter names the def's input
         // kind explicitly.
         let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
@@ -269,6 +271,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    page_size,
                     _context: PhantomData,
                 },
                 self.routes,
@@ -289,12 +292,13 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef<Input = Provided<F>>,
+        Def: BatchDef<Input = Provided<F>> + PageSized,
         Def::Handler: 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         let handler =
             DeserializedBatch::<_, F, _>::over(def.into_handler()).with_decode(policies.decode);
         Router {
@@ -305,6 +309,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    page_size,
                     _context: PhantomData,
                 },
                 self.routes,
@@ -366,13 +371,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchInjectDef + 'static,
+        Def: BatchInjectDef + PageSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = batch_inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         Router {
             routes: (
                 BatchInjectRoute {
@@ -383,6 +389,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    page_size,
                 },
                 self.routes,
             ),
@@ -416,7 +423,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchPublishingDef + 'static,
+        Def: BatchPublishingDef + PageSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
         DecodeCodec: Send + Sync + 'static,
         ReplySource: 'static,
@@ -424,6 +431,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         // Defer building the handler: the app's publish pipeline is only known at mount time and
         // the live reply publisher only exists once the broker connects, so mounting captures the
         // pieces in a starter that pairs and builds at startup (see `BatchPublishingRoute`),
@@ -440,6 +448,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    page_size,
                 },
                 self.routes,
             ),

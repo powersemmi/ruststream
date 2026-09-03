@@ -14,7 +14,9 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream, SubscriberSettings,
+};
 use ruststream::testing::TestApp;
 use ruststream::{
     Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher, Serialized,
@@ -439,10 +441,11 @@ type BatchShape = (Vec<u64>, Vec<(u64, u32)>);
 
 static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec::new());
 
-// A size-capped buffer, so a batch closes on the cap rather than on delivery timing and the
-// per-element alignment is actually exercised across more than one element. The wait bound stays
-// at its 10 ms default: a longer one would only make the suite wait for the tail batch.
-#[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2)))]
+// The client-side buffer, so a page closes on the mount's size rather than on delivery timing
+// and the per-element alignment is actually exercised across more than one element. The wait
+// bound stays at its 10 ms default: a longer one would only make the suite wait for the tail
+// page.
+#[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")))]
 async fn bulk(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
     let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
     seen.push((
@@ -461,7 +464,7 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
     let app = RustStream::new(AppInfo::new("typed-headers-batch", "1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(bulk);
+            b.include(bulk.batch(nonzero!(2)));
         },
     );
     let tb = TestApp::start(app).await.expect("start");
@@ -540,7 +543,7 @@ async fn the_router_path_carries_the_batch_header_contract() {
     // The chain codec form: `with_codec` and the default-codec entry point share one mount.
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include(routed);
+        .include(routed.batch(nonzero!(2)));
     let app = RustStream::new(AppInfo::new("typed-headers-router", "1.0")).with_broker(
         MemoryBroker::new(),
         |b| {

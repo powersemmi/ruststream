@@ -16,7 +16,7 @@ use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
 use crate::runtime::publish::{PublishPipeline, ReplyPublisher};
-use crate::runtime::settings::{DefMountCodec, MountsWith};
+use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
@@ -42,7 +42,7 @@ macro_rules! impl_batch_inject_out_commit {
             C: MountCodec,
             Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Def: MountsWith<<Bound as BatchInjectDef>::Input, C>,
-            Bound: BatchInjectCall<State> + 'static,
+            Bound: BatchInjectCall<State> + PageSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Sync + Send + 'static,
             SourceMessage<B, Bound::Source>: Send + 'static,
@@ -102,7 +102,10 @@ impl<B, Layers, C, State, Pipeline, Def>
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
-    Def: BatchPublishingCall<State> + MountsWith<<Def as BatchPublishingDef>::Input, C> + 'static,
+    Def: BatchPublishingCall<State>
+        + PageSized
+        + MountsWith<<Def as BatchPublishingDef>::Input, C>
+        + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
         BatchSubscriber + Sync + Send + 'static,
@@ -131,7 +134,10 @@ impl<B, Layers, C, State, Pipeline, Def, Source, BatchReply>
     CommitVia<BatchPublishMount, B, Layers, C, State, Pipeline, Def> for WithSource<Source>
 where
     B: Broker + 'static,
-    Def: BatchPublishingCall<State> + MountsWith<<Def as BatchPublishingDef>::Input, C> + 'static,
+    Def: BatchPublishingCall<State>
+        + PageSized
+        + MountsWith<<Def as BatchPublishingDef>::Input, C>
+        + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber:
         BatchSubscriber + Sync + Send + 'static,
@@ -214,7 +220,7 @@ macro_rules! impl_batch_publishing_out_commit {
             C: MountCodec,
             Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
             Def: MountsWith<<Bound as BatchPublishingDef>::Input, C>,
-            Bound: BatchPublishingCall<State> + 'static,
+            Bound: BatchPublishingCall<State> + PageSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Sync + Send + 'static,
             SourceMessage<B, Bound::Source>: Send + 'static,

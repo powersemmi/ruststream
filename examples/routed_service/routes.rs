@@ -10,7 +10,8 @@
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{Router, RouterDef, TypedPublisher};
+use ruststream::nonzero;
+use ruststream::runtime::{Router, RouterDef, SubscriberSettings, TypedPublisher};
 
 use crate::domain::Repository;
 use crate::observability::StampSource;
@@ -48,12 +49,12 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
 /// inside one broker transaction, visible atomically on commit. It type-checks because
 /// the `MemoryPublish` policy pairs into a `MemoryPublisher`, which implements
 /// `TransactionalPublisher`; a broker without transactions fails to compile at the registration.
+/// `.batch(n)` is the page size the subscription opens with, which every page mount owes.
 pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
     let settlements = TypedPublisher::new(MemoryPublish).transactional();
 
     Router::new()
         .layer(metrics.consume_layer())
         .include(payments::process_payment)
-        .include(payments::settle)
-        .publisher(settlements)
+        .include(payments::settle.batch(nonzero!(64)).publisher(settlements))
 }

@@ -7,8 +7,8 @@
 //! ```
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-use ruststream::subscriber;
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSettings};
+use ruststream::{nonzero, subscriber};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +54,6 @@ async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("post_settle", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(handle);
-        b.include(handle_page);
+        b.include(handle_page.batch(nonzero!(64)));
     })
 }

@@ -14,9 +14,11 @@ use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
     PublishExt, PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream,
-    TypedPublisher, for_batch,
+    SubscriberSettings, TypedPublisher, for_batch,
 };
-use ruststream::{Broker, BuildContext, Field, HeaderMap, IncomingMessage, Publisher, subscriber};
+use ruststream::{
+    Broker, BuildContext, Field, HeaderMap, IncomingMessage, Publisher, nonzero, subscriber,
+};
 use tokio::sync::Notify;
 
 /// A broker context built from the incoming message: it lifts the correlation id off the headers so
@@ -145,7 +147,7 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let reply_pub = TypedPublisher::new(MemoryPublish).batch_transform(for_batch(MarkBatched));
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(batch_echo).publisher(reply_pub);
+        b.include(batch_echo.batch(nonzero!(8)).publisher(reply_pub));
         b.include(batch_capture);
     });
 

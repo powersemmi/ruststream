@@ -23,7 +23,7 @@ use ruststream::runtime::{
     SubscriberSettings,
 };
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, Publisher, nonzero, subscriber};
+use ruststream::{Buffered, Deserialized, Name, Publisher, nonzero, subscriber};
 
 /// The payload view the raw batch body below takes, one element per delivery in the page.
 #[derive(Deserialized)]
@@ -207,53 +207,9 @@ async fn the_builder_supplies_the_start_position() {
     running.shutdown().await.expect("shutdown failed");
 }
 
-static BUFFERED: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
-
-/// A batch shape read off the signature; where the batches come from is settled at the mount.
-#[subscriber]
-async fn correlate(orders: &[Order]) -> HandlerOutcome {
-    BUFFERED
-        .lock()
-        .unwrap()
-        .push(orders.iter().map(|o| o.id).collect());
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_builder_supplies_the_buffer() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(
-            correlate
-                .name("correlate")
-                .buffered(nonzero!(8), Duration::from_millis(5)),
-        );
-    });
-    let running = app.start().await.expect("startup failed");
-
-    for id in 0..3u32 {
-        publisher
-            .message(&Order { id })
-            .to("correlate")
-            .publish()
-            .await
-            .expect("publish failed");
-    }
-    wait_for(
-        || BUFFERED.lock().unwrap().iter().map(Vec::len).sum::<usize>() >= 3,
-        Duration::from_secs(5),
-    )
-    .await;
-    let flattened: Vec<u32> = BUFFERED.lock().unwrap().iter().flatten().copied().collect();
-    assert_eq!(flattened, vec![0, 1, 2]);
-    running.shutdown().await.expect("shutdown failed");
-}
-
-/// The same page shape, taking the broker's own batches instead of the framework's buffer: the
-/// mount site caps how much of one page reaches the body at a time. The body records nothing;
-/// the harness reports both the page the broker delivered and the slices the body was handed.
+/// The page shape read off the signature; the mount site names how big a page is and the broker
+/// builds its pages to it. The body records nothing; the harness reports the pages it was
+/// handed.
 #[subscriber]
 async fn paginate(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();
@@ -261,12 +217,12 @@ async fn paginate(orders: &[Order]) -> HandlerOutcome {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_builder_supplies_the_page_cap() {
+async fn the_builder_supplies_the_page_size() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    // The whole run is in the log before the subscription opens, so the opening replay hands the
-    // subscription one native page of three: nothing but the cap can split it. The harness
-    // injects after startup and settles per message, so the entries are published here.
+    // The whole run is in the log before the subscription opens, so the opening replay has three
+    // entries to hand over and the size is what shapes them into pages. The harness injects
+    // after startup and settles per message, so the entries are published here.
     for id in 0..3u32 {
         publisher
             .message(&Order { id })
@@ -294,15 +250,13 @@ async fn the_builder_supplies_the_page_cap() {
         [Order { id: 0 }, Order { id: 1 }, Order { id: 2 }],
     );
     subscriber
-        // One page arrived, carrying every replayed entry in publish order...
-        .assert_called_once()
-        // ... and the cap is what the body saw it through.
+        // The broker built the pages to the size the mount named: two, then the remainder.
         .assert_page_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
     tb.shutdown().await.expect("shutdown failed");
 }
 
-/// A page that answers: each chunk is one call with its own reply vector, published on its own.
+/// A page that answers: one call per delivered page, with that page's own reply vector.
 #[subscriber(publish("page-cap-confirmed"))]
 async fn confirm_pages(orders: &[Order]) -> Vec<Event> {
     orders
@@ -314,7 +268,7 @@ async fn confirm_pages(orders: &[Order]) -> Vec<Event> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_page_cap_reaches_a_replying_page() {
+async fn the_page_size_reaches_a_replying_page() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     for id in 0..3u32 {
@@ -340,10 +294,9 @@ async fn the_page_cap_reaches_a_replying_page() {
     let handle = tb.broker::<MemoryBroker>();
     handle
         .subscriber("page-cap-reply")
-        .assert_called_once()
         .assert_page_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
-    // Each chunk answered for its own elements, and the replies leave in page order.
+    // Each page answered for its own elements, and the replies leave in page order.
     assert_eq!(
         handle.published::<Event>("page-cap-confirmed").decoded(),
         [Event { id: 0 }, Event { id: 1 }, Event { id: 2 }],
@@ -351,7 +304,7 @@ async fn the_page_cap_reaches_a_replying_page() {
     tb.shutdown().await.expect("shutdown failed");
 }
 
-/// A page that fans out through a slot: the arena rides every chunk the cap makes.
+/// A page that fans out through a slot: the arena rides every page the broker delivers.
 #[subscriber]
 async fn fan_out_pages(orders: &[Order], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for order in orders {
@@ -371,7 +324,7 @@ async fn fan_out_pages(orders: &[Order], Out(out): Out<impl Publisher>) -> Handl
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_page_cap_reaches_a_slot_carrying_page() {
+async fn the_page_size_reaches_a_slot_carrying_page() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     for id in 0..3u32 {
@@ -398,7 +351,6 @@ async fn the_page_cap_reaches_a_slot_carrying_page() {
     let handle = tb.broker::<MemoryBroker>();
     handle
         .subscriber("page-cap-slots")
-        .assert_called_once()
         .assert_page_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
     assert_eq!(
@@ -409,8 +361,9 @@ async fn the_page_cap_reaches_a_slot_carrying_page() {
 }
 
 /// The client-side buffer composes with a start position: a page subscription assembled out of
-/// single deliveries still opens where the mount site says.
-#[subscriber]
+/// single deliveries still opens where the mount site says. The adapter is what a broker crate
+/// gives a transport with no native pages, named here by hand to pin the composition.
+#[subscriber(Buffered::<Name>::new(Name::new("buffered-replay")).max_wait(Duration::from_millis(5)))]
 async fn replay_pages(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();
     HandlerOutcome::ack()
@@ -432,8 +385,7 @@ async fn the_buffer_composes_with_a_start_position() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         b.include(
             replay_pages
-                .name("buffered-replay")
-                .buffered(nonzero!(8), Duration::from_millis(5))
+                .batch(nonzero!(8))
                 .start_at(MemoryPosition::start()),
         );
     });
@@ -471,8 +423,8 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(ingest));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(broker, |b| b.include(ingest.batch(nonzero!(8))));
     let running = app.start().await.expect("startup failed");
 
     for frame in [b"one".as_slice(), b"two".as_slice()] {

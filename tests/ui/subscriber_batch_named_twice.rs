@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use ruststream::nonzero;
 use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
 use ruststream::subscriber;
@@ -10,7 +8,7 @@ struct Order {
     id: u32,
 }
 
-// A page body whose pages the framework's buffer already sizes.
+// A page body: the mount site owes it a page size, exactly once.
 #[subscriber("orders")]
 async fn handle(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();
@@ -18,9 +16,7 @@ async fn handle(orders: &[Order]) -> HandlerOutcome {
 }
 
 fn main() {
-    // The buffer already says how big a page is; a native page cap on top of it names the same
-    // setting twice.
-    let _twice = handle
-        .buffered(nonzero!(128), Duration::from_millis(20))
-        .batch(nonzero!(64));
+    // The size is the subscription's one page parameter, so a second one has nothing left to
+    // name.
+    let _twice = handle.batch(nonzero!(128)).batch(nonzero!(64));
 }

@@ -18,8 +18,8 @@ use std::{
 
 use common::Order;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
-use ruststream::subscriber;
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
+use ruststream::{nonzero, subscriber};
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
 
@@ -247,7 +247,7 @@ async fn batch_pool_overlaps_batches() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("overlap", "0.1.0"))
-        .with_broker(broker, |b| b.include(overlap));
+        .with_broker(broker, |b| b.include(overlap.batch(nonzero!(8))));
 
     let running = app.start().await.expect("startup failed");
 

@@ -17,7 +17,7 @@ use tracing::warn;
 
 use crate::IncomingMessage;
 
-use super::batch::{BatchHandler, BatchResult, decode_batch, extend_settles, settle_batch};
+use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
@@ -54,15 +54,6 @@ pub trait BatchPublishingDef: Send + Sync {
 
     /// The name (subject / channel) the replies are published to.
     fn reply_name(&self) -> &str;
-
-    /// The cap [`batch`](super::SubscriberSettings::batch) named on the pages handed to the
-    /// handler, if any. A capped page runs the handler once per chunk, each chunk's replies
-    /// published on their own (one transaction per chunk under a
-    /// [`Transactional`](super::Transactional) publisher) and settling only that chunk's
-    /// elements. The default is the whole page in one call.
-    fn page_cap(&self) -> Option<std::num::NonZeroUsize> {
-        None
-    }
 
     /// The concurrency policy for this subscriber's dispatch loop (how many batches are in
     /// flight at once). The macro fills this in from the `workers(..)` argument; the default is
@@ -199,71 +190,35 @@ where
         if accepted.is_empty() {
             return;
         }
-        // A capped page is a sequence of calls, each answering for its own chunk and publishing
-        // its own replies; without a cap the page is one such call. The chunks' settlements are
-        // collected and applied once, so the page the broker delivered stays one settle pass
-        // however it was fed to the handler.
-        let result = match self.def.page_cap() {
-            None => self.run_chunk(&values, &subscription, ctx).await,
-            Some(max) => {
-                let mut settles = Vec::with_capacity(values.len());
-                for chunk in values.chunks(max.get()) {
-                    let outcome = self.run_chunk(chunk, &subscription, ctx).await;
-                    extend_settles(&mut settles, outcome, chunk.len());
+        // The page the broker delivered is the page the handler answers for, whole: the size it
+        // was built at is the registration's own, so there is nothing left to split here.
+        let result = match self.def.call(&values, &self.injections, ctx).await {
+            Ok(replies) => {
+                let name = self.def.reply_name();
+                let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
+                match self
+                    .publisher
+                    .publish_batch(name, &replies, &self.pipeline, &pubcx)
+                    .await
+                {
+                    Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
+                    Err(err) => {
+                        warn!(
+                            target: "ruststream::dispatch",
+                            subscription = %subscription,
+                            reply = %name,
+                            reply_type = std::any::type_name::<D::Reply>(),
+                            error = %err,
+                            "batch reply publish failed",
+                        );
+                        BatchResult::Uniform(HandlerOutcome::retry())
+                    }
                 }
-                BatchResult::PerElement(settles)
             }
+            Err(result) => result,
         };
         let tasks = ctx.tasks().clone();
         settle_batch(accepted, result, &subscription, &tasks).await;
-    }
-}
-
-impl<D, C, R, PP> BatchPublishingHandler<D, C, R, PP>
-where
-    D: BatchPublishingDef,
-    D::Injections: Send + Sync,
-    D::Reply: Serialize + Send + Sync,
-    C: Send + Sync,
-    R: ReplyPublisher,
-    PP: PublishPipeline,
-{
-    /// Runs the handler over one chunk of the page and publishes what it answered with,
-    /// reporting how that chunk settles.
-    async fn run_chunk<S>(
-        &self,
-        chunk: &[<D::Input as InputKind>::Owned],
-        subscription: &str,
-        ctx: &mut Context<'_, (), S>,
-    ) -> BatchResult
-    where
-        D: BatchPublishingCall<S>,
-        S: Send + Sync,
-    {
-        let replies = match self.def.call(chunk, &self.injections, ctx).await {
-            Ok(replies) => replies,
-            Err(result) => return result,
-        };
-        let name = self.def.reply_name();
-        let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
-        match self
-            .publisher
-            .publish_batch(name, &replies, &self.pipeline, &pubcx)
-            .await
-        {
-            Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %subscription,
-                    reply = %name,
-                    reply_type = std::any::type_name::<D::Reply>(),
-                    error = %err,
-                    "batch reply publish failed",
-                );
-                BatchResult::Uniform(HandlerOutcome::retry())
-            }
-        }
     }
 }
 
