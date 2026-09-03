@@ -20,12 +20,12 @@ help: the trait `PublishedThrough<Events>` is implemented for `Progress`
    |
 22 | #[derive(OutSlot)]
    |          ^^^^^^^
-note: required by a bound in `Slot::<M, W, E, Body>::message`
+note: required by a bound in `Slot::<M, W, E, Pipe, Body>::message`
   --> src/runtime/handle/outs.rs
    |
    |     pub fn message<'a, T, Index>(
    |            ------- required by a bound in this associated function
 ...
    |         T: OutgoingDestination + PublishedThrough<M>,
-   |                                  ^^^^^^^^^^^^^^^^^^^ required by this bound in `Slot::<M, W, E, Body>::message`
+   |                                  ^^^^^^^^^^^^^^^^^^^ required by this bound in `Slot::<M, W, E, Pipe, Body>::message`
    = note: this error originates in the derive macro `OutSlot` (in Nightly builds, run with -Z macro-backtrace for more info)

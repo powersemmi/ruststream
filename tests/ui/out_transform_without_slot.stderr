@@ -1,0 +1,18 @@
+error[E0277]: this `.transform(..)` has no step to apply to
+  --> tests/ui/out_transform_without_slot.rs:31:24
+   |
+31 |             .transform(Envelope)
+   |              --------- ^^^^^^^^ no `.out(marker, policy)` or `.publisher(policy)` call precedes it in this chain
+   |              |
+   |              required by a bound introduced by this call
+   |
+   = help: the trait `ruststream::runtime::NamedStep` is not implemented for `ruststream::runtime::NoOutBound`
+   = note: a transform rides the step named right before it: `.out(Marker, Policy).transform(..)` for a slot, `.publisher(Policy).transform(..)` for a reply
+note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::transform`
+  --> src/runtime/app/include/slot_builder.rs
+   |
+   |     pub fn transform<N>(
+   |            --------- required by a bound in this associated function
+...
+   |         Slots: TransformAt<N, Last, Step: NamedStep>,
+   |                                           ^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::transform`

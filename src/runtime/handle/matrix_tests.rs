@@ -24,6 +24,7 @@ use crate::runtime::dispatch::Delivery;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicy};
 use crate::runtime::handler::{Handler, HandlerOutcome};
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef};
+use crate::runtime::publish::PublishIdentity;
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{SubscriberBuilder, SubscriberSettings};
 use crate::runtime::subscriber_def::SubscriberDef;
@@ -339,10 +340,15 @@ fn context<'a>(
     Context::new(name, headers, state, (), delivery)
 }
 
-/// Resolves a single-slot arena against a connected memory broker, exactly as startup does.
+/// Resolves a single-slot arena against a connected memory broker, exactly as startup does: the
+/// policy, the mount site's codec, and the publish pipeline a mount with no middleware composes.
 async fn analytics_arena(connected: &ConnectedMemoryBroker) -> AnalyticsArena {
-    <AnalyticsArena as FromStartup<MemoryBroker, (), ((MemoryPublish, JsonCodec),)>>::resolve(
-        ((MemoryPublish, JsonCodec),),
+    <AnalyticsArena as FromStartup<
+        MemoryBroker,
+        (),
+        ((MemoryPublish, JsonCodec, PublishIdentity),),
+    >>::resolve(
+        ((MemoryPublish, JsonCodec, PublishIdentity),),
         connected,
         &(),
     )
@@ -763,7 +769,7 @@ async fn a_slot_entry_is_a_publisher_in_its_own_right() {
         .connect()
         .await
         .expect("the memory broker connects");
-    let entry = AnalyticsEntry::test_entry(connected.publisher(), JsonCodec);
+    let entry = AnalyticsEntry::test_entry(connected.publisher(), JsonCodec, PublishIdentity);
 
     assert!(format!("{entry:?}").contains("Slot"));
     assert!(Publisher::base_headers(&entry).is_none());
@@ -783,14 +789,13 @@ async fn a_refused_pairing_names_the_slot_it_failed_for() {
         .connect()
         .await
         .expect("the memory broker connects");
-    let failure =
-        <AnalyticsEntry as FromStartup<MemoryBroker, (), (RefusePairing, JsonCodec)>>::resolve(
-            (RefusePairing, JsonCodec),
-            &connected,
-            &(),
-        )
-        .await
-        .expect_err("the policy refuses to pair");
+    let failure = <AnalyticsEntry as FromStartup<
+        MemoryBroker,
+        (),
+        (RefusePairing, JsonCodec, PublishIdentity),
+    >>::resolve((RefusePairing, JsonCodec, PublishIdentity), &connected, &())
+    .await
+    .expect_err("the policy refuses to pair");
     assert!(
         failure.to_string().contains("Analytics"),
         "the pairing failure must name the slot: {failure}",

@@ -13,9 +13,9 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: src/runtime/handle/outs.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Body> TransactionalPublisher
-   | |     for Slot<M, W, E, Body>
-   | |___________________________^ `Slot<M, W, E, Body>`
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline, Body>
+   | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
+   | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
   ::: src/runtime/slot.rs
    |

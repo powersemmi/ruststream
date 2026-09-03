@@ -4,23 +4,23 @@ error[E0277]: not every Out slot of this handler is bound
 28 |         b.include(transcode).out(Encoded, MemoryPublish).build();
    |                                                          ^^^^^ the attachment still contains a `MissingSlot<..>` naming the unbound slot
    |
-   = help: the trait `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<transcode, Name, (Open, Open, Open)>>` is not implemented for `(ruststream::runtime::WithSource<MemoryPublish>, ruststream::runtime::MissingSlot<Audit>)`
+   = help: the trait `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<transcode, Name, (Open, Open, Open)>>` is not implemented for `(ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>)`
    = note: bind each remaining slot with .out(marker, policy) before .build()
    = help: the following other types implement trait `ruststream::runtime::SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>`:
              `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
              `(ruststream::runtime::DefaultReply, Slots)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::RawReplyInjectMount, B, Layers, C, State, Pipeline, Def>`
-             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
-             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, B, Layers, C, State, Pipeline, Def>`
-             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>, ruststream::runtime::WithSource<A2>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
-             `(ruststream::runtime::WithSource<A0>, ruststream::runtime::WithSource<A1>, ruststream::runtime::WithSource<A2>)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, B, Layers, C, State, Pipeline, Def>`
-             `(ruststream::runtime::WithSource<A0>,)` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<Source>, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A0, L0>>, ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A1, L1>>))` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<Source>, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A0, L0>>, ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A1, L1>>))` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<Source>, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A0, L0>>, ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A1, L1>>, ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A2, L2>>))` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<Source>, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A0, L0>>, ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A1, L1>>, ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A2, L2>>))` implements `ruststream::runtime::SlotCommit<runtime::router::mount::PublishInjectMount, B, Layers, C, State, Pipeline, Def>`
+             `(ruststream::runtime::WithSource<Source>, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<A0, L0>>,))` implements `ruststream::runtime::SlotCommit<runtime::router::mount::BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>`
            and $N others
-note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
+note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::build`
   --> src/runtime/app/include/slot_builder.rs
    |
    |     pub fn build(self)
    |            ----- required by a bound in this associated function
    |     where
    |         Slots: SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::build`

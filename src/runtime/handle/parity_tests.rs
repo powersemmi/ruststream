@@ -11,9 +11,10 @@ use crate::memory::{
 };
 use crate::nonzero;
 use crate::runtime::{
-    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, Outgoing, Outs,
-    PublishContext, PublishTransform, ReplyShape, Router, RouterDef, Serialized, SerializedReply,
-    SerializedWire, Slot, SoloDeserialized, SubscriberSettings, Verdict, for_batch, subscriber,
+    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, OutPipeline,
+    OutTransform, Outgoing, Outs, PublishContext, PublishTransform, ReplyShape, Router, RouterDef,
+    Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings,
+    Verdict, for_batch, subscriber,
 };
 use crate::{Publisher, Seeker};
 
@@ -313,17 +314,21 @@ where
     }
 }
 
+/// The generic spelling of the entry's publish path: the body leaves the mount site's pipeline
+/// open too, so it mounts under a slot transform and an app-wide `publish_layer` alike. A body
+/// that never sees either (every other one here) leaves the parameter defaulted.
 struct Mirror;
 
-impl<W, E> Handle<Order, (), Outs<(Slot<Analytics, W, E>,)>> for Mirror
+impl<W, E, Pipe> Handle<Order, (), Outs<(Slot<Analytics, W, E, Pipe>,)>> for Mirror
 where
     W: Publisher,
     E: Codec + Send + Sync,
+    Pipe: OutPipeline,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(Slot<Analytics, W, E, Pipe>,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -337,6 +342,66 @@ where
             return Err(HandlerOutcome::retry());
         }
         Ok(())
+    }
+}
+
+/// The second slot of the two-slot spelling: what a chain names when only one of the pair takes
+/// a transform.
+struct Ledger;
+
+impl crate::runtime::OutSlot for Ledger {
+    const NAME: &'static str = "Ledger";
+}
+
+impl crate::runtime::PublishedThrough<Ledger> for Event {}
+
+/// Two slots, each with its own publish path.
+struct PairMirror;
+
+impl<WA, EA, PipeA, WB, EB, PipeB>
+    Handle<Order, (), Outs<(Slot<Analytics, WA, EA, PipeA>, Slot<Ledger, WB, EB, PipeB>)>>
+    for PairMirror
+where
+    WA: Publisher,
+    EA: Codec + Send + Sync,
+    PipeA: OutPipeline,
+    WB: Publisher,
+    EB: Codec + Send + Sync,
+    PipeB: OutPipeline,
+{
+    async fn handle(
+        &self,
+        order: &Order,
+        outs: &Outs<(Slot<Analytics, WA, EA, PipeA>, Slot<Ledger, WB, EB, PipeB>)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        if outs
+            .get(Analytics)
+            .message(&Event { id: order.id })
+            .to("order-events")
+            .publish()
+            .await
+            .is_err()
+            || outs
+                .get(Ledger)
+                .message(&Event { id: order.id })
+                .to("order-ledger")
+                .publish()
+                .await
+                .is_err()
+        {
+            return Err(HandlerOutcome::retry());
+        }
+        Ok(())
+    }
+}
+
+/// The slot transform the mounts below compose: it stamps what leaves the slot it rides.
+struct Trace;
+
+impl OutTransform for Trace {
+    fn apply(&self, out: &mut Outgoing<'_>) {
+        out.headers_mut().insert("x-trace", b"1".to_vec());
     }
 }
 
@@ -619,15 +684,16 @@ fn the_source_steps_reach_through_the_reply_wiring() {
 
 struct Gateway;
 
-impl<W, E> Handle<Order, Confirmation, Outs<(Slot<Analytics, W, E>,)>> for Gateway
+impl<W, E, Pipe> Handle<Order, Confirmation, Outs<(Slot<Analytics, W, E, Pipe>,)>> for Gateway
 where
     W: Publisher,
     E: Codec + Send + Sync,
+    Pipe: OutPipeline,
 {
     fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(Slot<Analytics, W, E, Pipe>,)>,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         let _ = outs;
@@ -678,6 +744,21 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", Mirror).build())
         .out(Analytics, MemoryPublish)
         .build()
+        .include(subscriber("orders", Mirror).build())
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
+        .build()
+        // Two slots, the transform on one of them: it rides the `.out(..)` before it.
+        .include(subscriber("orders", PairMirror).build())
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
+        .out(Ledger, MemoryPublish)
+        .build()
+        .include(subscriber("orders", PairMirror).build())
+        .out(Ledger, MemoryPublish)
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
+        .build()
         .include(subscriber("orders", RawMirror).build())
         .out(Analytics, MemoryPublish)
         .build()
@@ -704,6 +785,19 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
                 .build(),
         )
         .out(Analytics, MemoryPublish)
+        .build()
+        // A transform on each side of the same registration: the step applies to what the chain
+        // named before it, the reply after `.publisher(..)` and the slot after `.out(..)`.
+        .include(
+            subscriber("orders", Gateway)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .transform(StampReply)
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
         .build()
         .include(
             subscriber("orders", PageGateway)
@@ -809,6 +903,15 @@ async fn a_subscriber_dispatches_end_to_end() {
             );
             b.include(subscriber("orders", RawMirror).build())
                 .publisher(MemoryPublish);
+            b.include(subscriber("orders", Mirror).build())
+                .out(Analytics, MemoryPublish)
+                .transform(Trace)
+                .build();
+            b.include(subscriber("orders", PairMirror).build())
+                .out(Analytics, MemoryPublish)
+                .transform(Trace)
+                .out(Ledger, MemoryPublish)
+                .build();
             b.include(
                 subscriber("orders", RawGateway)
                     .reply()
@@ -817,6 +920,17 @@ async fn a_subscriber_dispatches_end_to_end() {
                     .build(),
             )
             .out(Analytics, MemoryPublish)
+            .build();
+            b.include(
+                subscriber("orders", Gateway)
+                    .reply()
+                    .to("confirmations")
+                    .publisher(MemoryPublish)
+                    .transform(StampReply)
+                    .build(),
+            )
+            .out(Analytics, MemoryPublish)
+            .transform(Trace)
             .build();
             b.after_startup(MemoryPublish, async move |publisher| {
                 publisher
