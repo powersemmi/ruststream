@@ -43,8 +43,8 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 在启动时调用一次），而已连接形态直接持有活的客户端，它自身的操作永远不必检查“也许已连接”的状态。
 Broker 还可以额外保留一个由 `connect` 填充的共享单元（或者像内存 Broker 那样，保留一份可共享的进程内
 状态），这样在应用还在组装、`connect` 尚未运行时就能先把发布者发出去；该单元服务的是那些提前拿到的
-句柄，而不是已连接形态。[NATS 示例](example-nats.md)展示的就是基于单元的变体。
-[conformance 校验套件](conformance.md)会端到端地证明这道阶梯。
+句柄，而不是已连接形态。[conformance 校验套件](conformance.md)会端到端地证明这道阶梯，而
+[NATS 示例](example-nats.md)在一个真实客户端上把整道阶梯走了一遍。
 
 在一个已经关闭的 Broker 上，根本没有发布或订阅方法可调用，所以持有者一侧的误用通不过编译。别名仍是
 一条运行时规则：与连接互为别名的句柄（从已连接形态发出去的发布者、可共享 Broker 的克隆）在关闭之后

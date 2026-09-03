@@ -47,8 +47,8 @@ the live client directly - its own operations never check a "maybe connected" st
 additionally keep a shared cell that `connect` fills (or a shareable in-process state, as the
 in-memory broker does) so publishers can be handed out while the app is still being assembled,
 before `connect` runs; the cell serves those early handles, not the connected form. The
-[NATS example](example-nats.md) shows the cell-backed variant. The
-[conformance harness](conformance.md) proves the ladder end to end.
+[conformance harness](conformance.md) proves the ladder end to end, and the
+[NATS example](example-nats.md) walks the whole ladder on a real client.
 
 There is no publish or subscribe to call on a broker you already shut down, so owner-side misuse
 does not compile. Aliasing stays a runtime rule: handles that alias the connection (publishers
