@@ -2,21 +2,20 @@
 //! subscription-scoped context (the in-memory broker's [`MemoryBatchContext`] carries the
 //! subscription's seeker), and where to seek rides the elements themselves - a
 //! `&[Message<H, T>]` page reads the target off each element's typed header contract.
-#![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-
-mod common;
-
-use std::sync::Mutex;
-use std::time::Duration;
+#![cfg(all(
+    feature = "memory",
+    feature = "macros",
+    feature = "json",
+    feature = "testing"
+))]
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use ruststream::memory::{MemoryBatchContext, MemoryBroker, MemoryPosition, SeekHandle};
 use ruststream::prelude::*;
+use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, Publisher, Seeker};
-
-use common::wait_for;
 
 /// The producer's cursor contract: an element carrying `resume_at` asks the consumer to
 /// reposition the subscription there once the page is settled.
@@ -30,8 +29,6 @@ struct Entry {
     id: u64,
 }
 
-static PAGES: Mutex<Vec<Vec<u64>>> = Mutex::new(Vec::new());
-
 /// Settles the page, then repositions: the target comes from the elements' header contract and
 /// the handle from the broker's subscription-scoped batch context.
 #[subscriber("replay.log")]
@@ -39,10 +36,6 @@ async fn replay(
     page: &[Message<Cursor, Entry>],
     ctx: &mut Context<'_, MemoryBatchContext>,
 ) -> HandlerOutcome {
-    PAGES
-        .lock()
-        .unwrap()
-        .push(page.iter().map(|element| element.body.id).collect());
     let target = page
         .iter()
         .find_map(|element| element.headers.resume_at)
@@ -60,6 +53,9 @@ async fn replay(
 }
 
 /// Publishes `entry` with the cursor contract riding its headers.
+///
+/// This seeds the log BEFORE the subscription exists, which is the point of the test, so it goes
+/// through the broker's own publisher rather than the harness's injection.
 async fn publish_entry(broker: &MemoryBroker, id: u64, resume_at: Option<u64>) {
     let payload = serde_json::to_vec(&Entry { id }).expect("serializable");
     let msg = OutgoingMessage::new("replay.log", payload.as_slice())
@@ -82,18 +78,21 @@ async fn a_page_reads_its_seek_target_from_element_headers() {
     let app = RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(broker, |b| {
         b.include(replay.start_at(MemoryPosition::start()));
     });
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
+    // Nothing is injected here: the reaction was started by the opening replay, so the harness
+    // only has to drive it to a standstill.
+    tb.settle().await.expect("the replay settles");
 
-    wait_for(
-        || PAGES.lock().unwrap().iter().map(Vec::len).sum::<usize>() >= 4,
-        Duration::from_secs(5),
-    )
-    .await;
-    let pages = PAGES.lock().unwrap().clone();
+    let pages: Vec<Vec<u64>> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("replay.log")
+        .pages::<Entry>()
+        .iter()
+        .map(|page| page.iter().map(|entry| entry.id).collect())
+        .collect();
     assert_eq!(
         pages,
         [vec![0, 1, 2], vec![2]],
         "the page after the seek must open at the header-named position",
     );
-    running.shutdown().await.expect("shutdown failed");
 }

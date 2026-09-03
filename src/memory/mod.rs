@@ -255,8 +255,6 @@ impl MemoryBroker {
             batch_limit: DEFAULT_BATCH_LIMIT,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
-            #[cfg(feature = "testing")]
-            coordinator: self.state.coordinator(),
         }
     }
 
@@ -519,8 +517,6 @@ impl Subscribe for ConnectedMemoryBroker {
             batch_limit: DEFAULT_BATCH_LIMIT,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
-            #[cfg(feature = "testing")]
-            coordinator: self.state.coordinator(),
         }))
     }
 }
@@ -588,13 +584,20 @@ pub struct MemorySubscriber {
     /// Shared with every [`MemorySeeker`] minted off this subscriber: the pending reposition,
     /// the stale-delivery watermark, and the waker that rouses a parked stream.
     seek: Arc<SeekControl>,
-    /// A clone of the broker's harness coordinator, threaded into each yielded message so a requeue
-    /// re-counts and a consumed delivery decrements. `None` outside a harness run.
-    #[cfg(feature = "testing")]
-    coordinator: Option<Coordinator>,
 }
 
 impl MemorySubscriber {
+    /// A clone of the broker's harness coordinator, threaded into each yielded message so a
+    /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
+    ///
+    /// Read off the bus at stream time rather than captured at subscribe time: a subscriber built
+    /// before the app was handed to the harness would otherwise carry `None` forever and never
+    /// decrement what the bus counted in, hanging the quiescence wait.
+    #[cfg(feature = "testing")]
+    pub(crate) fn coordinator(&self) -> Option<Coordinator> {
+        self.state.coordinator()
+    }
+
     /// Caps how many buffered deliveries one batch yielded by
     /// [`BatchSubscriber::batches`](crate::BatchSubscriber::batches) may carry (default 64).
     ///
@@ -618,9 +621,9 @@ impl Subscriber for MemorySubscriber {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         let requeue = self.requeue.clone();
-        let seeker = Arc::new(crate::Seekable::seeker(self));
         #[cfg(feature = "testing")]
-        let coordinator = self.coordinator.clone();
+        let coordinator = self.coordinator();
+        let seeker = Arc::new(crate::Seekable::seeker(self));
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| {

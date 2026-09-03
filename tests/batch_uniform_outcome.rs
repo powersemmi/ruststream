@@ -3,28 +3,28 @@
 //! An acking page with nothing attached is the fast path: the page settles as a unit. Every other
 //! uniform answer - a refusal, or an ack carrying post-settle work - fans out to a per-element
 //! settlement, and the attached work rides the last element so a page runs it at most once.
-#![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
-use std::sync::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
-use common::{Order, wait_for};
+use common::Order;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
-
-static REFUSED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+use ruststream::testing::{Outcome, TestApp};
 
 /// Refuses the whole page at once: one outcome answers for every element in it.
 #[subscriber("uniform-drop")]
 async fn refuse(orders: &[Order]) -> HandlerOutcome {
-    REFUSED
-        .lock()
-        .unwrap()
-        .extend(orders.iter().map(|order| order.id));
+    let _ = orders;
     HandlerOutcome::drop()
 }
 
@@ -32,48 +32,48 @@ async fn refuse(orders: &[Order]) -> HandlerOutcome {
 /// behind an answer that named no element in particular.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_uniform_refusal_settles_every_element_of_the_page() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("uniform", "0.1.0"))
-        .with_broker(broker, |b| b.include(refuse));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include(refuse));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     for id in 0..3u32 {
-        publisher
-            .message(&Order { id })
+        tb.message(&Order { id })
             .to("uniform-drop")
             .publish()
             .await
             .expect("publish failed");
     }
-    wait_for(
-        || REFUSED.lock().unwrap().len() >= 3,
-        Duration::from_secs(5),
-    )
-    .await;
 
     // Exactly the three published ids: a drop is a refusal, not a redelivery, so no element
     // comes back for a second run either.
-    let mut refused = REFUSED.lock().unwrap().clone();
-    refused.sort_unstable();
-    assert_eq!(refused, vec![0, 1, 2]);
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    let refused: Vec<Order> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("uniform-drop")
+        .received();
+    assert_eq!(refused.iter().map(|o| o.id).collect::<Vec<_>>(), [0, 1, 2]);
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("uniform-drop")
+            .outcomes(),
+        [Outcome::Drop, Outcome::Drop, Outcome::Drop],
+    );
+    tb.broker::<MemoryBroker>()
+        .subscriber("uniform-drop")
+        .assert_called(3)
+        .settled(HandlerOutcome::drop());
 }
 
-static ACCEPTED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-static CONTINUED: AtomicUsize = AtomicUsize::new(0);
+/// How many times the page's attached post-settle work ran. It lives in application state, which
+/// is what a continuation writing to a dependency looks like in a service.
+struct Continued(Arc<AtomicUsize>);
 
 /// Acks the whole page and attaches one piece of post-settle work to that single answer.
 #[subscriber("uniform-after")]
-async fn accept(orders: &[Order]) -> HandlerOutcome {
-    ACCEPTED
-        .lock()
-        .unwrap()
-        .extend(orders.iter().map(|order| order.id));
+async fn accept(orders: &[Order], ctx: &mut Context<'_, (), Continued>) -> HandlerOutcome {
+    let _ = orders;
+    let continued = Arc::clone(&ctx.state().0);
     HandlerOutcome::ack().and_after(async move {
-        CONTINUED.fetch_add(1, Ordering::SeqCst);
+        continued.fetch_add(1, Ordering::SeqCst);
     })
 }
 
@@ -81,27 +81,29 @@ async fn accept(orders: &[Order]) -> HandlerOutcome {
 /// "once per page" rather than "once per element".
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_uniform_ack_runs_its_attached_work_once_for_the_page() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
+    let continued = Arc::new(AtomicUsize::new(0));
+    let state_counter = Arc::clone(&continued);
     let app = RustStream::new(AppInfo::new("uniform-after", "0.1.0"))
-        .with_broker(broker, |b| b.include(accept));
-    let running = app.start().await.expect("startup failed");
+        .on_startup(move |()| {
+            let counter = state_counter;
+            async move { Ok::<_, std::convert::Infallible>(Continued(counter)) }
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(accept));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Order { id: 9 })
+    tb.message(&Order { id: 9 })
         .to("uniform-after")
         .publish()
         .await
         .expect("publish failed");
-    wait_for(
-        || CONTINUED.load(Ordering::SeqCst) >= 1,
-        Duration::from_secs(5),
-    )
-    .await;
 
-    assert_eq!(ACCEPTED.lock().unwrap().as_slice(), [9]);
-    assert_eq!(CONTINUED.load(Ordering::SeqCst), 1);
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("uniform-after")
+        .assert_called_once()
+        .with(&Order { id: 9 })
+        .settled(HandlerOutcome::ack());
+    // The continuation runs off the delivery path, so the harness drains it before the count is
+    // read.
+    tb.drain().await;
+    assert_eq!(continued.load(Ordering::SeqCst), 1);
 }

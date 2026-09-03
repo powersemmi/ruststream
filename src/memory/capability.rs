@@ -202,7 +202,7 @@ impl BatchSubscriber for MemorySubscriber {
         let limit = self.batch_limit.max(1);
         let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
-        let coordinator = self.coordinator.clone();
+        let coordinator = self.coordinator();
         let seeker = Arc::new(Seekable::seeker(self));
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
@@ -596,6 +596,14 @@ impl Seeker for MemorySeeker {
             .pending
             .lock()
             .expect("memory broker mutex poisoned") = Some(clamped);
+        // Under the harness, hold the reaction open from the moment the reposition is recorded
+        // until the stream applies it: the replay it will enqueue is not counted yet, and a
+        // quiescence wait landing in that window would return on an empty in-flight count.
+        // `apply_pending_seek` releases this token once the replay is counted.
+        #[cfg(feature = "testing")]
+        if let Some(coordinator) = self.state.coordinator() {
+            coordinator.enqueued();
+        }
         drop(bus);
         self.control.waker.wake();
         ready(Ok(()))
@@ -620,14 +628,21 @@ impl MemorySubscriber {
             .expect("memory broker mutex poisoned")
             .take();
         let Some(target) = pending else { return };
+        #[cfg(feature = "testing")]
+        let coordinator = self.coordinator();
 
         let bus = self
             .state
             .subscribers
             .lock()
             .expect("memory broker mutex poisoned");
-        // A seek that raced shutdown: the subscription is dead, replay nothing.
+        // A seek that raced shutdown: the subscription is dead, replay nothing - but the token
+        // `Seeker::seek` took still has to come back, or the in-flight count never drains.
         if !matches!(&*bus, Bus::Live(_)) {
+            #[cfg(feature = "testing")]
+            if let Some(coordinator) = &coordinator {
+                coordinator.consumed();
+            }
             return;
         }
         let log = self
@@ -646,16 +661,18 @@ impl MemorySubscriber {
         // concurrent quiescence wait (`TestApp::settle`) could observe that instant and return
         // before the replayed deliveries were processed.
         #[cfg(feature = "testing")]
-        if let Some(coordinator) = &self.coordinator {
+        if let Some(coordinator) = &coordinator {
             for _ in target..entries.len() {
                 coordinator.enqueued();
             }
+            // The replay is now counted, so the seek's own token can go back.
+            coordinator.consumed();
         }
 
         while self.rx.try_recv().is_ok() {
             // Every drained delivery was counted in flight when it was enqueued.
             #[cfg(feature = "testing")]
-            if let Some(coordinator) = &self.coordinator {
+            if let Some(coordinator) = &coordinator {
                 coordinator.consumed();
             }
         }

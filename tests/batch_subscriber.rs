@@ -2,187 +2,145 @@
 //! payload parameter, batch mounting through `include`, per-element decode failures, and the
 //! `Buffered` adapter.
 //!
-//! Apps come up through `start()`, which resolves only after subscriptions are open, so each
-//! message is published exactly once; the tests wait on the handlers' recorded state.
-#![cfg(feature = "macros")]
+//! The harness settles each injection before it returns, so every page below is exactly the page
+//! the handler was called with - no polling for "at least one".
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
-use std::{
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use common::{Order, Wire, connected, wait_for};
+use common::{Order, Wire};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{
-    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, TypedPublisher,
-};
-use ruststream::testing::expect_published;
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, TypedPublisher};
+use ruststream::testing::{Outcome, TestApp};
 use ruststream::{Buffered, Name, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
-
-static BATCHES: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
 
 /// Settles a whole page of orders at once.
 #[subscriber("orders")]
 async fn bill(orders: &[Order]) -> HandlerOutcome {
-    BATCHES
-        .lock()
-        .unwrap()
-        .push(orders.iter().map(|o| o.id).collect());
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_macro_def_receives_batches() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(bill));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(bill));
-
-    let running = app.start().await.expect("startup failed");
-
-    // The three publishes may buffer into one batch or arrive split across several.
     for id in 0..3u32 {
-        publisher
-            .message(&Order { id })
+        tb.message(&Order { id })
             .to("orders")
             .publish()
             .await
             .expect("publish failed");
     }
-    wait_for(
-        || BATCHES.lock().unwrap().iter().map(Vec::len).sum::<usize>() >= 3,
-        Duration::from_secs(5),
-    )
-    .await;
 
-    // Nothing is dropped (the subscription was open before the first publish), so the flattened
-    // stream is exactly the publish order.
-    let flattened: Vec<u32> = BATCHES.lock().unwrap().iter().flatten().copied().collect();
+    // Nothing is dropped, so the flattened stream is exactly the publish order, and every page
+    // the handler was called with carried something.
+    let pages: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("orders").pages();
+    let flattened: Vec<u32> = pages.iter().flatten().map(|o| o.id).collect();
     assert_eq!(flattened, vec![0, 1, 2], "deliveries out of publish order");
     assert!(
-        BATCHES
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|batch| !batch.is_empty()),
+        pages.iter().all(|page| !page.is_empty()),
         "batches must not be empty",
     );
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
-
-static GOOD_IDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// Records the ids that survived decoding.
 #[subscriber("mixed")]
 async fn sift(orders: &[Order]) -> HandlerOutcome {
-    GOOD_IDS.lock().unwrap().extend(orders.iter().map(|o| o.id));
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undecodable_elements_never_reach_the_handler() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(sift));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| b.include(sift));
-
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 1 })
+    tb.message(&Order { id: 1 })
         .to("mixed")
         .publish()
         .await
         .expect("publish failed");
-    publisher
-        .message(&Wire::of(b"not json"))
+    tb.message(&Wire::of(b"not json"))
         .to("mixed")
         .publish()
         .await
         .expect("publish failed");
-    publisher
-        .message(&Order { id: 2 })
+    tb.message(&Order { id: 2 })
         .to("mixed")
         .publish()
         .await
         .expect("publish failed");
-    wait_for(
-        || {
-            let seen = GOOD_IDS.lock().unwrap();
-            seen.contains(&1) && seen.contains(&2)
-        },
-        Duration::from_secs(5),
-    )
-    .await;
 
     // The undecodable element is dropped individually, never failing the batch around it: exactly
     // the two decodable ids reach the handler, in publish order.
-    let ids = GOOD_IDS.lock().unwrap().clone();
+    let received: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("mixed").received();
+    let ids: Vec<u32> = received.iter().map(|o| o.id).collect();
     assert_eq!(ids, vec![1, 2], "unexpected ids reached the handler");
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("mixed")
+        .assert_called(2)
+        .settled(HandlerOutcome::ack());
 }
-
-static BUFFERED_SEEN: AtomicUsize = AtomicUsize::new(0);
 
 /// A handler mounted on a `Buffered`-wrapped source directly in the macro. The macro recovers
 /// the source type from the constructor path, so a generic source spells its parameter
 /// (turbofish).
 #[subscriber(Buffered::<Name>::new(Name::new("events")).max_size(nonzero!(2)))]
 async fn drain(events: &[Order]) -> HandlerOutcome {
-    BUFFERED_SEEN.fetch_add(events.len(), Ordering::SeqCst);
+    let _ = events;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_adapter_batches_plain_subscribers_via_router() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     // Mounted through the Router path to cover the batch form there as well.
-    let router = Router::<MemoryBroker>::new().include(drain);
+    let router = ruststream::runtime::Router::<MemoryBroker>::new().include(drain);
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 7 })
+    tb.message(&Order { id: 7 })
         .to("events")
         .publish()
         .await
         .expect("publish failed");
-    wait_for(
-        || BUFFERED_SEEN.load(Ordering::SeqCst) >= 1,
-        Duration::from_secs(5),
-    )
-    .await;
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("events")
+        .assert_called_once()
+        .with(&Order { id: 7 })
+        .settled(HandlerOutcome::ack());
 }
 
-static SETTLED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-static RETRIED_ONCE: AtomicBool = AtomicBool::new(false);
+/// Whether order 11 has already been refused once. Held in application state, so the handler
+/// reads it the way a service reads any dependency.
+struct Attempts {
+    retried_once: Arc<AtomicBool>,
+}
 
 /// Retries order 11 on first sight; settles everything else, per element.
 #[subscriber("pages")]
-async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
+async fn reconcile(orders: &[Order], ctx: &mut Context<'_, (), Attempts>) -> Vec<HandlerOutcome> {
+    let retried_once = Arc::clone(&ctx.state().retried_once);
     orders
         .iter()
         .map(|o| {
-            if o.id == 11 && !RETRIED_ONCE.swap(true, Ordering::SeqCst) {
+            if o.id == 11 && !retried_once.swap(true, Ordering::SeqCst) {
                 HandlerOutcome::retry()
             } else {
-                SETTLED.lock().unwrap().push(o.id);
                 HandlerOutcome::ack()
             }
         })
@@ -191,47 +149,39 @@ async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn per_element_outcomes_retry_individually() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
+    let retried_once = Arc::new(AtomicBool::new(false));
+    let state_flag = Arc::clone(&retried_once);
     let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
-        .with_broker(broker, |b| b.include(reconcile));
+        .on_startup(move |()| {
+            let retried_once = state_flag;
+            async move { Ok::<_, std::convert::Infallible>(Attempts { retried_once }) }
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(reconcile));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    // The page is published exactly once, so the retry accounting below is deterministic.
     for id in [10u32, 11, 12] {
-        publisher
-            .message(&Order { id })
+        tb.message(&Order { id })
             .to("pages")
             .publish()
             .await
             .expect("publish failed");
     }
-    wait_for(
-        || {
-            let settled = SETTLED.lock().unwrap();
-            [10, 11, 12].iter().all(|id| settled.contains(id))
-        },
-        Duration::from_secs(5),
-    )
-    .await;
 
-    // 11 was retried exactly once and settled only on redelivery; 10 and 12 settled first try.
-    assert!(RETRIED_ONCE.load(Ordering::SeqCst));
-    let settled = SETTLED.lock().unwrap().clone();
-    for id in [10u32, 11, 12] {
-        assert_eq!(
-            settled.iter().filter(|s| **s == id).count(),
-            1,
-            "{id} must settle exactly once; settled: {settled:?}",
-        );
-    }
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // 11 was refused once and settled only on redelivery; 10 and 12 settled first try.
+    assert!(retried_once.load(Ordering::SeqCst));
+    let pages: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("pages").pages();
+    let seen: Vec<Vec<u32>> = pages
+        .iter()
+        .map(|page| page.iter().map(|o| o.id).collect())
+        .collect();
+    assert_eq!(seen, vec![vec![10], vec![11], vec![11], vec![12]]);
+    assert_eq!(
+        tb.broker::<MemoryBroker>().subscriber("pages").outcomes(),
+        [Outcome::Ack, Outcome::Nack, Outcome::Ack, Outcome::Ack],
+    );
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Confirmation {
     id: u32,
     accepted: bool,
@@ -264,33 +214,29 @@ async fn audit(orders: &[Order]) -> Vec<Confirmation> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_replies_publish_transactionally() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    let observer = connected(&broker).await;
-
     let replies = TypedPublisher::new(MemoryPublish).transactional();
-    let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(broker, |b| {
-        b.include(confirm).publisher(replies);
-    });
+    let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(confirm).publisher(replies);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 7 })
+    tb.message(&Order { id: 7 })
         .to("requests")
         .publish()
         .await
         .expect("publish failed");
-    // expect_published polls under its own deadline and returns whatever arrived by then.
-    let confirmed = expect_published(&observer, "confirmations", 1, Duration::from_secs(5)).await;
-    assert!(!confirmed.is_empty(), "no confirmation arrived");
-    for raw in &confirmed {
-        let confirmation: Confirmation = serde_json::from_slice(raw.payload()).unwrap();
-        assert_eq!(confirmation.id, 7);
-        assert!(confirmation.accepted);
-    }
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    // The transaction commits exactly one confirmation for the one order it carried.
+    tb.broker::<MemoryBroker>()
+        .published::<Confirmation>("confirmations")
+        .assert_called_once()
+        .with(&Confirmation {
+            id: 7,
+            accepted: true,
+        });
 }
 
 #[test]
@@ -331,46 +277,44 @@ struct Tally {
     multiplier: u32,
 }
 
-static SCALED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-
-#[subscriber("scale")]
-async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> HandlerOutcome {
+/// Scales each order by the multiplier it read off application state and republishes it, so what
+/// the state contributed is visible on the wire.
+#[subscriber("scale", publish("scaled"))]
+async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> Vec<Order> {
     let multiplier = ctx.state().multiplier;
-    SCALED
-        .lock()
-        .unwrap()
-        .extend(orders.iter().map(|o| o.id * multiplier));
-    HandlerOutcome::ack()
+    orders
+        .iter()
+        .map(|o| Order {
+            id: o.id * multiplier,
+        })
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_handler_reads_typed_state() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
         .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
-        .with_broker(broker, |b| b.include(scale));
-
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(scale)
+                .publisher(TypedPublisher::new(MemoryPublish));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     for id in 1..4u32 {
-        publisher
-            .message(&Order { id })
+        tb.message(&Order { id })
             .to("scale")
             .publish()
             .await
             .expect("publish failed");
     }
-    wait_for(|| SCALED.lock().unwrap().len() >= 3, Duration::from_secs(5)).await;
 
     // Each id was multiplied by the state's multiplier (10), proving the handler read typed state.
-    let scaled = SCALED.lock().unwrap().clone();
-    assert!(
-        scaled.iter().all(|n| n % 10 == 0),
-        "every value must be a multiple of the state multiplier; got {scaled:?}",
+    let scaled: Vec<Order> = tb
+        .broker::<MemoryBroker>()
+        .published::<Order>("scaled")
+        .decoded();
+    assert_eq!(
+        scaled.iter().map(|o| o.id).collect::<Vec<_>>(),
+        vec![10, 20, 30],
     );
-    assert!(scaled.contains(&10) && scaled.contains(&20) && scaled.contains(&30));
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
