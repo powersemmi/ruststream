@@ -278,6 +278,14 @@ position and the subscription's seeker as fields of your per-delivery context an
 `SeekHandle` keys is the model. The batch forms reach the seeker through the batch context
 below, which carries the handle without the position.
 
+A handler body never states one of these traits. It bounds the slot it holds with the typed twin
+the core derives from the capability: `Publish` for `Publisher`, `TransactionalPublish` for
+`TransactionalPublisher`, `OwnedTransactionalPublish` for `OwnedTransactions`,
+`RequestReplyPublish` for `RequestReply`. The include site's policy is checked against your
+broker trait once, where the slot is bound, and the twin gives the body that capability's typed
+operations over the entry's codec and dictionary. Implement the broker trait on your live
+publisher; the twin holds by itself, and it is the name a service writes in `Out<impl ..>`.
+
 ### Extending the `Out` slot vocabulary
 
 An `Out<impl X, Marker>` handler parameter accepts any `X` the runtime's `SlotPublisher`
