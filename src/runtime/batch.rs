@@ -53,6 +53,32 @@ pub enum BatchResult {
     PerElement(Vec<HandlerOutcome>),
 }
 
+/// Extends `settles` with one chunk's outcomes, one per element.
+///
+/// The seam a page cap settles through: a page fed to its body in chunks answers per chunk, and
+/// the page still owes one outcome per delivery. A uniform chunk outcome fans its status out
+/// per element; its one continuation rides the chunk's last element, so it still runs after the
+/// whole chunk is settled.
+pub(crate) fn extend_settles(
+    settles: &mut Vec<HandlerOutcome>,
+    outcome: BatchResult,
+    chunk_len: usize,
+) {
+    match outcome {
+        BatchResult::Uniform(uniform) => {
+            if chunk_len == 0 {
+                return;
+            }
+            let status = uniform.outcome();
+            settles.extend(
+                std::iter::repeat_with(|| HandlerOutcome::from(status)).take(chunk_len - 1),
+            );
+            settles.push(uniform);
+        }
+        BatchResult::PerElement(chunk) => settles.extend(chunk),
+    }
+}
+
 /// Conversion into a [`BatchResult`], so batch `#[subscriber]` handlers can return a plain
 /// value.
 ///

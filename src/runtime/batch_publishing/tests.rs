@@ -19,6 +19,7 @@ use crate::{HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, Subscriptio
 struct Confirm {
     reply_to: &'static str,
     fail_with: Option<HandlerResult>,
+    cap: Option<std::num::NonZeroUsize>,
     calls: Arc<AtomicUsize>,
 }
 
@@ -27,6 +28,7 @@ impl Confirm {
         Self {
             reply_to,
             fail_with: None,
+            cap: None,
             calls: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -34,6 +36,14 @@ impl Confirm {
     fn failing(reply_to: &'static str, result: HandlerResult) -> Self {
         Self {
             fail_with: Some(result),
+            ..Self::new(reply_to)
+        }
+    }
+
+    /// The definition a `batch(max)` chain produces: the same handler, capped.
+    fn capped(reply_to: &'static str, max: std::num::NonZeroUsize) -> Self {
+        Self {
+            cap: Some(max),
             ..Self::new(reply_to)
         }
     }
@@ -55,6 +65,10 @@ impl BatchPublishingDef for Confirm {
 
     fn reply_name(&self) -> &str {
         self.reply_to
+    }
+
+    fn page_cap(&self) -> Option<std::num::NonZeroUsize> {
+        self.cap
     }
 }
 
@@ -107,6 +121,53 @@ async fn transactional_replies_publish_atomically_then_ack() {
     }
 
     // The acked input batch is not redelivered.
+    let mut stream = std::pin::pin!(input.stream());
+    assert!(futures::poll!(stream.next()).is_pending());
+}
+
+/// A capped page reply is a sequence of calls: each chunk answers with its own reply vector,
+/// which is published (and, under a transactional publisher, committed) on its own before the
+/// next chunk runs. The page still settles once, element by element.
+#[tokio::test]
+async fn a_capped_page_reply_publishes_chunk_by_chunk() {
+    let broker = MemoryBroker::new();
+    let mut input = broker.subscribe("orders");
+    let mut replies = broker.subscribe("confirmations");
+
+    let def = Confirm::capped("confirmations", crate::nonzero!(2));
+    let calls = def.calls();
+    let handler = BatchPublishingHandler {
+        def,
+        codec: JsonCodec,
+        publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
+        pipeline: PublishIdentity,
+        injections: (),
+        decode: FailurePolicy::Drop,
+    };
+
+    publish_numbers(&broker, "orders", &[1, 2, 3]).await;
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+    let batch = pull_batch(&mut input).await;
+    assert_eq!(batch.len(), 3, "the whole page is delivered at once");
+    handler.handle_batch(batch, &mut ctx).await;
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "a page of three under a cap of two is two calls",
+    );
+    // Both commits are visible, and the replies keep the page's order across them.
+    let confirmed = pull_batch(&mut replies).await;
+    let payloads: Vec<&[u8]> = confirmed.iter().map(IncomingMessage::payload).collect();
+    assert_eq!(payloads, [b"10".as_slice(), b"20", b"30"]);
+    for msg in confirmed {
+        msg.ack().await.unwrap();
+    }
+
+    // Every element of the page was acked, so nothing comes back.
     let mut stream = std::pin::pin!(input.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 }

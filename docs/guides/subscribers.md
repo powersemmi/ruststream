@@ -361,9 +361,11 @@ Mount it with `include`, like any other form - the definition carries the batch 
 How big a delivered page is, is the broker's business: its subscription options size the batches
 it ships. `batch(n)` is the cap the framework applies on top, so a handler written for a bounded
 page keeps that bound whatever the broker hands over - a larger page reaches it in chunks of at
-most `n`, each settled on its own. The cap is offered where there is a page to chunk: a
-single-message handler has none, and a page that replies or publishes through an `Out` slot
-settles as a whole, so naming it there does not compile.
+most `n`, each settled on its own. It applies to every page shape: a page that replies runs once
+per chunk and answers with that chunk's replies, published on their own (one transaction per
+chunk under a transactional reply publisher), and a page that fans out through an `Out` slot
+takes the arena into every chunk. A single-message handler has no page, so naming the cap there
+does not compile.
 
 The signature says the handler wants several messages at once; whether they arrive that way is a
 property of the broker, so it is settled where the definition is mounted. The subscription's

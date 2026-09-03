@@ -3,10 +3,11 @@
 //! contracts here.
 
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 
 use tracing::warn;
 
-use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
+use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler, extend_settles};
 use crate::runtime::context::Context;
 use crate::runtime::failure::FailurePolicy;
 use crate::runtime::handler::{Handler, HandlerOutcome};
@@ -193,7 +194,7 @@ where
 /// the body in chunks.
 pub struct PageBody<A, H> {
     body: H,
-    cap: Option<std::num::NonZeroUsize>,
+    cap: Option<NonZeroUsize>,
     _axes: PhantomData<fn() -> A>,
 }
 
@@ -229,24 +230,38 @@ pub(super) fn settle_page(
     }
 }
 
-/// Extends `settles` with one chunk's outcomes, one per element.
+/// Runs a page body over one delivered page, honouring the cap the registration named.
 ///
-/// A uniform chunk outcome fans its status out per element; its one continuation rides the
-/// chunk's last element, so it still runs after the whole chunk is settled.
-fn extend_settles(settles: &mut Vec<HandlerOutcome>, outcome: BatchResult, chunk_len: usize) {
-    match outcome {
-        BatchResult::Uniform(uniform) => {
-            if chunk_len == 0 {
-                return;
-            }
-            let status = uniform.outcome();
-            settles.extend(
-                std::iter::repeat_with(|| HandlerOutcome::from(status)).take(chunk_len - 1),
-            );
-            settles.push(uniform);
-        }
-        BatchResult::PerElement(chunk) => settles.extend(chunk),
+/// Without a cap the page is one call. With one it is fed in chunks of at most `max`, each
+/// settled on its own and fanned out per element, so the page still carries exactly one outcome
+/// per delivery. The settling page forms all run through here - plain and slot-carrying alike -
+/// which is what keeps the cap's meaning one thing.
+pub(super) async fn run_page<T, O, C, S, H>(
+    body: &H,
+    outs: &O,
+    cap: Option<NonZeroUsize>,
+    batch: &[T],
+    ctx: &mut Context<'_, C, S>,
+) -> BatchResult
+where
+    [T]: Input<Axis: PagedAxis>,
+    H: Handle<[T], (), O, C, S>,
+    T: Send + Sync,
+    O: Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+{
+    let Some(max) = cap else {
+        let verdict = body.handle(batch, outs, ctx).await;
+        return settle_page(verdict, batch.len(), ctx.name());
+    };
+    let mut settles = Vec::with_capacity(batch.len());
+    for chunk in batch.chunks(max.get()) {
+        let verdict = body.handle(chunk, outs, ctx).await;
+        let outcome = settle_page(verdict, chunk.len(), ctx.name());
+        extend_settles(&mut settles, outcome, chunk.len());
     }
+    BatchResult::PerElement(settles)
 }
 
 impl<T, C, S, H> SliceHandler<T, C, S> for PageBody<Page<T>, H>
@@ -258,21 +273,7 @@ where
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_page(&self.body, &(), self.cap, batch, ctx).await
     }
 }
 
@@ -290,21 +291,7 @@ where
         batch: &[Message<Hd, P>],
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_page(&self.body, &(), self.cap, batch, ctx).await
     }
 }
 
@@ -323,21 +310,7 @@ where
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_page(&self.body, &(), self.cap, batch, ctx).await
     }
 }
 
@@ -393,6 +366,8 @@ where
     }
 }
 
+/// The page cap's settle seam lives next to [`BatchResult`], but this is where it is used, and
+/// the checks below need no broker feature to run - which the batch module's own test file does.
 #[cfg(test)]
 mod tests {
     use super::{BatchResult, HandlerOutcome, extend_settles};

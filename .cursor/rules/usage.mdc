@@ -169,8 +169,10 @@ b.include(
 // client-side batching for subscriptions without native batches
 b.include(drain.name("orders").buffered(nonzero!(128), Duration::from_millis(20)));
 
-// a page body on a broker that batches natively: cap how much of one page reaches the body at
-// a time (`buffered(..)` and `batch(n)` size the same thing, so a mount names one of them)
+// a page body on a broker that batches natively: cap how much of one page reaches the body at a
+// time (`buffered(..)` and `batch(n)` size the same thing, so a mount names one of them). It
+// applies to every page shape - a replying page answers per chunk, a page with `Out` slots
+// takes the arena into every chunk
 b.include(settle.name("orders").batch(nonzero!(64)));
 ```
 

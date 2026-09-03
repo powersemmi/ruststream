@@ -331,39 +331,59 @@ impl<V> fmt::Debug for Sealed<V> {
     }
 }
 
-// The cap rides the definition, and only a page body that settles its own page has anywhere to
-// spend it: the page reply publishes its whole page in one transaction and the slot-carrying
-// page dispatches through the injections machinery, so neither chunks. Leaving those forms
-// without the impl is what turns `.batch(..)` on them into a compile error instead of a setting
-// that quietly does nothing.
+// The cap rides the definition, on every page form: the reply axis and the injections arena are
+// free here, because each of them reads the cap back where its own pages are dispatched - the
+// settling forms chunk in the body adapter, the replying ones in the publishing dispatcher, so
+// that each chunk's replies leave on their own.
 //
 // The three page spellings are named one by one rather than through a `PagedAxis` bound on one
 // impl: a bound inside a matching impl is what the compiler reports back, and the axis marker's
 // name is machinery. With no impl matching a single-message definition, the missing `CapsPages`
 // carries the message instead.
-impl<T, C, H, Doc> CapsPages for HandleValue<Page<T>, (), (), C, H, Doc> {
+impl<T, R, O, C, H, Doc> CapsPages for HandleValue<Page<T>, R, O, C, H, Doc> {
+    type Capped = Self;
+
     fn cap_pages(self, max: NonZeroUsize) -> Self {
         self.with_page_cap(max)
     }
 }
 
-impl<F, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, (), (), C, H, Doc> {
+impl<F, R, O, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, R, O, C, H, Doc> {
+    type Capped = Self;
+
     fn cap_pages(self, max: NonZeroUsize) -> Self {
         self.with_page_cap(max)
     }
 }
 
-impl<Hd, P, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, (), (), C, H, Doc> {
+impl<Hd, P, R, O, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, R, O, C, H, Doc> {
+    type Capped = Self;
+
     fn cap_pages(self, max: NonZeroUsize) -> Self {
         self.with_page_cap(max)
+    }
+}
+
+// The reply wiring wraps the value it caps, so the step reaches through it.
+impl<V: CapsPages, Dest, Attach> CapsPages for ReplyValue<V, Dest, Attach> {
+    type Capped = ReplyValue<V::Capped, Dest, Attach>;
+
+    fn cap_pages(self, max: NonZeroUsize) -> Self::Capped {
+        ReplyValue {
+            value: self.value.cap_pages(max),
+            dest: self.dest,
+            attach: self.attach,
+        }
     }
 }
 
 // The seal is transparent to the step, so the attribute path caps the very definition the
 // `subscriber(..)` chain does.
 impl<V: CapsPages> CapsPages for Sealed<V> {
-    fn cap_pages(self, max: NonZeroUsize) -> Self {
-        Self(self.0.cap_pages(max))
+    type Capped = Sealed<V::Capped>;
+
+    fn cap_pages(self, max: NonZeroUsize) -> Self::Capped {
+        Sealed(self.0.cap_pages(max))
     }
 }
 

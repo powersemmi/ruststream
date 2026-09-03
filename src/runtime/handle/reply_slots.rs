@@ -3,6 +3,7 @@
 //! one `.out(marker, policy)` per slot.
 
 use std::any::type_name;
+use std::num::NonZeroUsize;
 
 use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
@@ -271,6 +272,10 @@ where
 
     fn reply_name(&self) -> &str {
         self.0.dest.name()
+    }
+
+    fn page_cap(&self) -> Option<NonZeroUsize> {
+        self.0.value.page_cap
     }
 
     fn description(&self) -> Option<&str> {

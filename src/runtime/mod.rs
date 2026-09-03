@@ -125,7 +125,9 @@ pub use settings::{
 #[doc(hidden)]
 pub use settings::{CapsPages, DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
-pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
+pub use slot::{
+    BindSlot, CappedSlots, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource,
+};
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
     SlotPublisher, Unrestricted,

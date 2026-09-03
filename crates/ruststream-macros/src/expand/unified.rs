@@ -336,7 +336,13 @@ fn definition_wiring(
     if outs.is_empty() {
         return declared;
     }
-    let binding_impls = slot_binding_impls(name, outs, &sealed_ty, &def_expr);
+    let binding_impls = slot_binding_impls(
+        name,
+        outs,
+        &sealed_ty,
+        &def_expr,
+        parts.shape == Shape::Batch,
+    );
     quote! {
         #declared
 
@@ -352,7 +358,22 @@ fn slot_binding_impls(
     outs: &[OutParam<'_>],
     sealed_ty: &dyn Fn(&TokenStream2) -> TokenStream2,
     def_expr: &TokenStream2,
+    paged: bool,
 ) -> TokenStream2 {
+    // The include-site value is the unit struct until the slots bind, so a page cap named there
+    // has nothing to sit on yet; the runtime's wrapper carries it to the sealed definition the
+    // binding builds. Only a page handler declares the step at all.
+    let caps_pages = paged.then(|| {
+        quote! {
+            impl ::ruststream::runtime::CapsPages for #name {
+                type Capped = ::ruststream::runtime::CappedSlots<Self>;
+
+                fn cap_pages(self, max: ::core::num::NonZeroUsize) -> Self::Capped {
+                    ::ruststream::runtime::CappedSlots::new(self, max)
+                }
+            }
+        }
+    });
     let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();
     let policies: Vec<Ident> = (0..outs.len())
         .map(|index| Ident::new(&format!("__RsPolicy{index}"), name.span()))
@@ -379,6 +400,8 @@ fn slot_binding_impls(
     let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#bound_entries,)*)>));
     let witness_tys: Vec<&syn::Type> = outs.iter().map(|out| out.ty).collect();
     quote! {
+        #caps_pages
+
         impl ::ruststream::runtime::HasSlots for #name {
             type Markers = (#(#markers,)*);
         }

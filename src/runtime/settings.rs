@@ -462,27 +462,28 @@ impl<Def, Src, W, F, P, DC> BufferedStep for SubscriberBuilder<Def, Src, (W, F, 
     }
 }
 
-/// A definition whose deliveries are pages the runtime hands to the body itself, so a cap on
-/// them has something to cap: the plain page forms of the value definition, and nothing else.
+/// A definition whose deliveries are pages, so a cap on them has something to cap: every page
+/// form of the value definition, and the attribute's own slot-carrying page definition.
 ///
-/// A page reply publishes its whole page in one transaction and a slot-carrying page dispatches
-/// through the injections machinery; neither chunks, so neither takes a cap at all rather than
-/// accepting one that would do nothing. Machinery behind
-/// [`batch`](SubscriberSettings::batch); never named in user code.
+/// Machinery behind [`batch`](SubscriberSettings::batch); never named in user code.
 #[diagnostic::on_unimplemented(
-    message = "this subscriber has no native pages to cap",
+    message = "this subscriber has no pages to cap",
     label = "`batch(..)` caps the pages a page body is handed",
-    note = "the cap applies to a page body that settles its own page (`&[T]`, `&[F<'_>]`, \
-            `&[Message<H, P>]`, returning outcomes); a single-message body has no page, and a \
-            page that replies or publishes through an `Out` slot settles as a whole. To batch \
-            single deliveries on the client instead, name the framework's buffer with \
+    note = "the cap applies to a page body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`), with or \
+            without a reply and `Out` slots; a single-message body has no page. To batch single \
+            deliveries on the client instead, name the framework's buffer with \
             `buffered(max, wait)`"
 )]
 #[doc(hidden)]
 pub trait CapsPages: Sized {
+    /// The definition wearing the cap. It is the definition itself wherever the cap has a
+    /// place to sit, and a wrapper where the value it caps is only built later (the attribute's
+    /// slot-carrying definition, whose sealed form the slot binding instantiates).
+    type Capped;
+
     /// Records the cap on the definition.
     #[must_use]
-    fn cap_pages(self, max: NonZeroUsize) -> Self;
+    fn cap_pages(self, max: NonZeroUsize) -> Self::Capped;
 }
 
 /// Capping the pages the body is handed. See [`SubscriberSettings::batch`].
@@ -505,11 +506,18 @@ impl<Def, Src, W, F, P, DC> BatchStep for SubscriberBuilder<Def, Src, (W, F, P, 
 where
     Def: CapsPages,
 {
-    type Out = SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC>;
+    type Out = SubscriberBuilder<Def::Capped, Src, (W, F, P, Fixed), DC>;
 
     fn apply_batch(self, max: NonZeroUsize) -> Self::Out {
         let (def, source, workers, failures, codec) = self.into_parts();
-        Self::from_parts(def.cap_pages(max), source, workers, failures, codec)
+        SubscriberBuilder {
+            def: def.cap_pages(max),
+            source,
+            workers,
+            failures,
+            codec,
+            _state: PhantomData,
+        }
     }
 }
 
@@ -647,10 +655,10 @@ pub trait SubscriberSettings: Declared {
     /// deliveries is [`buffered`](Self::buffered) instead, which is why the two exclude each
     /// other.
     ///
-    /// Available on a page body that settles its own page (`&[T]` and friends): a
-    /// single-message body has no page, and a page that replies or publishes through an `Out`
-    /// slot settles as a whole, so there the cap has nothing to chunk and the step is not
-    /// offered at all.
+    /// Available on every page body (`&[T]` and friends), whatever else its signature carries:
+    /// a page that replies runs once per chunk and answers with that chunk's replies, published
+    /// on their own, and a page with `Out` slots takes the arena into every chunk. A
+    /// single-message body has no page, so the step is not offered there at all.
     fn batch(self, max: NonZeroUsize) -> <Self::Settings as BatchStep>::Out
     where
         Self::Settings: BatchStep,

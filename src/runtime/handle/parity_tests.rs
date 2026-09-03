@@ -402,7 +402,15 @@ fn eager_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", Expedite).build())
         .include(subscriber("orders", SettlePage).batch(nonzero!(8)).build())
         .include(subscriber("frames", Frames).build())
+        // The cap is a page setting, so it applies on every page spelling: the decoded one
+        // above, the self-deserializing one and the paired one.
+        .include(subscriber("frames", Frames).batch(nonzero!(8)).build())
         .include(subscriber("orders", HeaderedPage).build())
+        .include(
+            subscriber("orders", HeaderedPage)
+                .batch(nonzero!(8))
+                .build(),
+        )
         .include(
             subscriber("orders", Audit)
                 .describe("Inbound orders")
@@ -446,12 +454,13 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .build(),
         )
         .include(subscriber("frames", RawEcho).reply().to("echoes").build())
-        // No page cap here: a page reply publishes its whole page in one transaction, so the
-        // cap has nothing to chunk and the step is not offered on this chain at all.
+        // The cap on a page reply: each chunk is one call answering with its own reply vector,
+        // published on its own.
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
                 .to("confirmations")
+                .batch(nonzero!(8))
                 .build(),
         )
         .include(
@@ -542,6 +551,10 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", PageMirror).build())
         .out(Analytics, MemoryPublish)
         .build()
+        // The cap on a slot-carrying page: the arena rides every chunk the body is handed.
+        .include(subscriber("orders", PageMirror).batch(nonzero!(8)).build())
+        .out(Analytics, MemoryPublish)
+        .build()
         .include(
             subscriber("orders", Gateway)
                 .reply()
@@ -563,6 +576,16 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", PageGateway)
                 .reply()
                 .to("confirmations")
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .build()
+        // A page that both replies and fans out through the arena, capped.
+        .include(
+            subscriber("orders", PageGateway)
+                .reply()
+                .to("confirmations")
+                .batch(nonzero!(8))
                 .build(),
         )
         .out(Analytics, MemoryPublish)

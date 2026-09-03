@@ -3,6 +3,7 @@
 //! default) committed right at `include`.
 
 use std::any::type_name;
+use std::num::NonZeroUsize;
 
 use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
@@ -439,6 +440,10 @@ where
         self.0.dest.name()
     }
 
+    fn page_cap(&self) -> Option<NonZeroUsize> {
+        self.0.value.page_cap
+    }
+
     fn description(&self) -> Option<&str> {
         self.0.value.docs.description()
     }
@@ -488,6 +493,10 @@ pub(super) fn page_reply_verdict<R>(
     page_len: usize,
     subscription: &str,
 ) -> Result<Vec<R>, BatchResult> {
+    // The reply page's counterpart of `settle_page`: one call of the body, so one slice for the
+    // harness to report (see `record_body_page`).
+    #[cfg(feature = "testing")]
+    crate::testing::coordinator::record_body_page(page_len);
     match verdict {
         Ok(replies) => {
             assert!(

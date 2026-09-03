@@ -233,6 +233,10 @@ where
     fn reply_name(&self) -> &str {
         self.def.reply_name()
     }
+
+    fn page_cap(&self) -> Option<std::num::NonZeroUsize> {
+        self.def.page_cap()
+    }
 }
 
 impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>

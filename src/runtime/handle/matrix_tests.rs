@@ -17,7 +17,7 @@ use crate::codec::JsonCodec;
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use crate::nonzero;
 use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
-use crate::runtime::batch_inject::BatchInjectDef;
+use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::context::Context;
 use crate::runtime::dispatch::Delivery;
@@ -284,6 +284,21 @@ impl Handle<[Message<Meta, Order>]> for PairChunkLog {
         &self,
         page: &[Message<Meta, Order>],
         _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+        ready(self.inner.verdict(page.len()))
+    }
+}
+
+struct SlotChunkLog {
+    inner: ChunkLog,
+}
+
+impl Handle<[Order], (), AnalyticsArena> for SlotChunkLog {
+    fn handle(
+        &self,
+        page: &[Order],
+        _outs: &AnalyticsArena,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         ready(self.inner.verdict(page.len()))
@@ -635,6 +650,70 @@ async fn a_capped_page_reaches_a_self_deserializing_body_in_chunks() {
         [2, 1]
     );
     assert!(matches!(settled, BatchResult::PerElement(outcomes) if outcomes.len() == 3));
+}
+
+/// A slot-carrying page chunks the same way, with the arena riding every chunk: the injections
+/// are what the form adds, and they change nothing about how the page is fed.
+#[tokio::test]
+async fn a_capped_slot_page_reaches_the_body_in_chunks() {
+    let connected = MemoryBroker::new()
+        .connect()
+        .await
+        .expect("the memory broker connects");
+    let arena = analytics_arena(&connected).await;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let body = SlotChunkLog {
+        inner: ChunkLog {
+            seen: Arc::clone(&seen),
+            cap: 2,
+        },
+    };
+    let def = definition_of(subscriber("orders", body).batch(nonzero!(2)).build());
+
+    let page = orders(3);
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = HeaderMap::new();
+    let mut ctx = context("orders", &headers, &state, &delivery);
+    let settled = BatchInjectCall::<()>::call(&def, &page, &arena, &mut ctx).await;
+
+    assert_eq!(
+        *seen.lock().expect("the test holds no poisoned lock"),
+        [2, 1]
+    );
+    assert!(matches!(settled, BatchResult::PerElement(outcomes) if outcomes.len() == 3));
+}
+
+/// A page reply chunks in the dispatcher instead, so that each chunk's replies are published on
+/// their own; what the definition owes is the cap itself, on the reply form and the
+/// reply-with-slots one alike.
+#[test]
+fn a_page_reply_definition_carries_its_cap() {
+    let capped = definition_of(
+        subscriber("orders", ConfirmPages)
+            .reply()
+            .to("confirmations")
+            .batch(nonzero!(2))
+            .build(),
+    );
+    assert_eq!(BatchPublishingDef::page_cap(&capped), Some(nonzero!(2)));
+
+    let uncapped = definition_of(
+        subscriber("orders", ConfirmPages)
+            .reply()
+            .to("confirmations")
+            .build(),
+    );
+    assert_eq!(BatchPublishingDef::page_cap(&uncapped), None);
+
+    let with_slots = definition_of(
+        subscriber("orders", PinnedPageGateway)
+            .reply()
+            .to("confirmations")
+            .batch(nonzero!(4))
+            .build(),
+    );
+    assert_eq!(BatchPublishingDef::page_cap(&with_slots), Some(nonzero!(4)));
 }
 
 // -------------------------------------------------------------- the refused payload construction

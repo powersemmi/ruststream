@@ -453,6 +453,58 @@ pub trait BindSlots<C: ConnectedBroker, Sources>: Sized {
     fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra);
 }
 
+/// A slot-carrying page definition wearing the cap
+/// [`batch`](crate::runtime::SubscriberSettings::batch) named.
+///
+/// The attribute's slot-carrying definition is a unit struct until the include site's
+/// `.out(marker, policy)` calls bind it, so there is nothing to record a cap on yet; this
+/// carries it across the binding and hands it to the sealed definition that comes out. The
+/// value path needs no such step, because there the definition exists before the chain does.
+/// Machinery behind the settings step; never named in user code.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct CappedSlots<D> {
+    def: D,
+    max: std::num::NonZeroUsize,
+}
+
+impl<D> CappedSlots<D> {
+    /// Wears `max` on `def` until its slots bind.
+    #[must_use]
+    pub fn new(def: D, max: std::num::NonZeroUsize) -> Self {
+        Self { def, max }
+    }
+}
+
+// The wrapper is transparent to the mount: the form and the markers are the wrapped
+// definition's own. It rides `IncludeDef` rather than `Declared` directly, which is what keeps
+// it out of the way of the blanket the attribute's own definitions use.
+impl<D: crate::runtime::settings::Declared> crate::runtime::router::IncludeDef for CappedSlots<D> {
+    type Form = D::Form;
+}
+
+impl<D: HasSlots> HasSlots for CappedSlots<D> {
+    type Markers = D::Markers;
+}
+
+impl<C, Sources, D> BindSlots<C, Sources> for CappedSlots<D>
+where
+    C: ConnectedBroker,
+    D: BindSlots<C, Sources>,
+    D::Bound: crate::runtime::settings::CapsPages<Capped = D::Bound>,
+{
+    type Bound = D::Bound;
+    type Extra = D::Extra;
+
+    fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra) {
+        let (bound, extra) = self.def.bind(sources);
+        (
+            crate::runtime::settings::CapsPages::cap_pages(bound, self.max),
+            extra,
+        )
+    }
+}
+
 /// Implements [`InitSlots`] for each marker-tuple arity: every position starts as its marker's
 /// [`MissingSlot`].
 macro_rules! impl_init_slots {

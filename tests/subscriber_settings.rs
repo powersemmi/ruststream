@@ -16,14 +16,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Order, Wire, wait_for};
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
+use common::{Event, Order, Wire, wait_for};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource};
 use ruststream::runtime::{
-    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, PublishExt, Router, RustStream,
+    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, Out, PublishExt, Router, RustStream,
     SubscriberSettings,
 };
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, nonzero, subscriber};
+use ruststream::{Deserialized, Publisher, nonzero, subscriber};
 
 /// The payload view the raw batch body below takes, one element per delivery in the page.
 #[derive(Deserialized)]
@@ -299,6 +299,112 @@ async fn the_builder_supplies_the_page_cap() {
         // ... and the cap is what the body saw it through.
         .assert_page_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
+    tb.shutdown().await.expect("shutdown failed");
+}
+
+/// A page that answers: each chunk is one call with its own reply vector, published on its own.
+#[subscriber(publish("page-cap-confirmed"))]
+async fn confirm_pages(orders: &[Order]) -> Vec<Event> {
+    orders
+        .iter()
+        .map(|order| Event {
+            id: u64::from(order.id),
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_page_cap_reaches_a_replying_page() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("page-cap-reply")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            confirm_pages
+                .name("page-cap-reply")
+                .start_at(MemoryPosition::start())
+                .batch(nonzero!(2)),
+        );
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed page settles");
+
+    let handle = tb.broker::<MemoryBroker>();
+    handle
+        .subscriber("page-cap-reply")
+        .assert_called_once()
+        .assert_page_sizes(&[2, 1])
+        .settled(HandlerOutcome::ack());
+    // Each chunk answered for its own elements, and the replies leave in page order.
+    assert_eq!(
+        handle.published::<Event>("page-cap-confirmed").decoded(),
+        [Event { id: 0 }, Event { id: 1 }, Event { id: 2 }],
+    );
+    tb.shutdown().await.expect("shutdown failed");
+}
+
+/// A page that fans out through a slot: the arena rides every chunk the cap makes.
+#[subscriber]
+async fn fan_out_pages(orders: &[Order], Out(out): Out<impl Publisher>) -> HandlerOutcome {
+    for order in orders {
+        if out
+            .message(&Event {
+                id: u64::from(order.id),
+            })
+            .to("page-cap-fanned")
+            .publish()
+            .await
+            .is_err()
+        {
+            return HandlerOutcome::retry();
+        }
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_page_cap_reaches_a_slot_carrying_page() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("page-cap-slots")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            fan_out_pages
+                .name("page-cap-slots")
+                .start_at(MemoryPosition::start())
+                .batch(nonzero!(2)),
+        )
+        .publisher(MemoryPublish);
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed page settles");
+
+    let handle = tb.broker::<MemoryBroker>();
+    handle
+        .subscriber("page-cap-slots")
+        .assert_called_once()
+        .assert_page_sizes(&[2, 1])
+        .settled(HandlerOutcome::ack());
+    assert_eq!(
+        handle.published::<Event>("page-cap-fanned").decoded(),
+        [Event { id: 0 }, Event { id: 1 }, Event { id: 2 }],
+    );
     tb.shutdown().await.expect("shutdown failed");
 }
 
