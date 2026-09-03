@@ -1,12 +1,13 @@
-//! The typed twins of the broker capabilities, pinned on the manual path: a body states the
-//! capability on the whole arena entry (`Slot<Marker, W, E>: TransactionalPublish` /
-//! `OwnedTransactionalPublish` / `RequestReplyPublish`) and drives it through the entry against
-//! the in-memory broker, which carries all three natively. No broker trait and no broker
-//! publisher type appear in any body.
+//! The broker capabilities driven through an arena entry, pinned on the manual path: a body
+//! bounds the entry's wired value with the capability it needs (`TransactionalPublisher`,
+//! `OwnedTransactions`, `RequestReply`) and drives that capability's typed form through the
+//! entry against the in-memory broker, which carries all three natively. No broker type appears
+//! in any body.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 use std::time::Duration;
 
+use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryRequest};
 use ruststream::prelude::*;
 use ruststream::runtime::PublishedThrough;
@@ -71,7 +72,8 @@ struct SettleAtomically;
 
 impl<W, E> Handle<Order, (), Outs<(Slot<Journal, W, E>,)>> for SettleAtomically
 where
-    Slot<Journal, W, E>: TransactionalPublish,
+    W: TransactionalPublisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -177,7 +179,8 @@ struct SettleOwned;
 
 impl<W, E> Handle<Order, (), Outs<(Slot<Ledger, W, E>,)>> for SettleOwned
 where
-    Slot<Ledger, W, E>: OwnedTransactionalPublish,
+    W: OwnedTransactions,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -265,7 +268,8 @@ struct Respond;
 
 impl<W, E> Handle<Ask, (), Outs<(Slot<Answers, W, E>,)>> for Respond
 where
-    Slot<Answers, W, E>: Publish,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -299,12 +303,13 @@ impl OutSlot for Quotes {
 impl PublishedThrough<Quotes> for Quoted {}
 
 /// The requester: asks for a quote through the entry and publishes the answered price through
-/// the same entry - the plain builder is the `Publish` supertrait's.
+/// the same entry - the plain builder comes with the `Publisher` supertrait of the bound.
 struct AskQuote;
 
 impl<W, E> Handle<Order, (), Outs<(Slot<Quotes, W, E>,)>> for AskQuote
 where
-    Slot<Quotes, W, E>: RequestReplyPublish,
+    W: RequestReply,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,

@@ -64,8 +64,9 @@ alwaysApply: false
   feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerOutcome`,
   `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (the `subscriber`
   constructor, the body trait `Handle` with its input spellings `Message` and `Deserialized`, the
-  reply traits `Serialized` / `ReplyShape`, the injections arena `Outs` / `Slot` / `Publish`, plus
-  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`,
+  reply traits `Serialized` / `ReplyShape`, the injections arena `Outs` / `Slot` and the publisher
+  capability traits a slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
+  `RequestReply`), plus `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`,
   `DefaultSlot`, `RouterDef` and `nonzero!`). The lane machinery the impls name -
   `Input`, `SoloDeserialized`, `SerializedReply` - stays an explicit
   `use ruststream::runtime::{..}`.
@@ -361,13 +362,14 @@ plain policy - `.publisher(MemoryPublish)`, or nothing for the broker's default.
 `.reply()` and one publisher step for both wires. A page reply always publishes through the
 reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
 `Outs<(Slot<Marker, W, Enc>,)>`, where `W` is the wired live value and `Enc` the include site's
-encode codec, with the capability the body needs stated as a mandatory bound on the whole entry,
-one entry per marker.
+encode codec, with the broker capability the body needs stated as a mandatory bound on that wired
+value, one entry per marker.
 
 ```rust
 impl<W, Enc> Handle<Order, (), Outs<(Slot<Primary, W, Enc>,)>> for Mirror
 where
-    Slot<Primary, W, Enc>: Publish,
+    W: Publisher,
+    Enc: Codec + Send + Sync,
 {
     async fn handle(
         &self,

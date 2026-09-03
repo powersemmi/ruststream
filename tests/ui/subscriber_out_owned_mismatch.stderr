@@ -6,7 +6,7 @@ error[E0277]: `MemoryRequester` does not open caller-owned transactions
    |                           |
    |                           required by a bound introduced by this call
    |
-   = note: for a slot bound by `OwnedTransactionalPublish` (`Out<impl OwnedTransactionalPublish, _>`), attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
+   = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
 help: the following other types implement trait `OwnedTransactions`
   --> src/runtime/slot.rs
    |
@@ -23,14 +23,13 @@ help: the following other types implement trait `OwnedTransactions`
    |
    |   impl OwnedTransactions for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
-   = note: required for `Slot<DefaultSlot, MemoryRequester, JsonCodec>` to implement `OwnedTransactionalPublish`
 note: required for `settle` to implement `Handle<Order, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>>`
   --> tests/ui/subscriber_out_owned_mismatch.rs:14:1
    |
 14 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
-15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactionalPublish>) -> HandlerOutcome {
-   |          ^^^^^^                                   ------------------------- unsatisfied trait bound introduced here
+15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
+   |          ^^^^^^                                   ----------------- unsatisfied trait bound introduced here
    = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
    = note: 1 redundant requirement hidden
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`

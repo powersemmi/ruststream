@@ -13,7 +13,7 @@ use std::error::Error;
 use std::fmt::Display;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
+use ruststream::codec::{Codec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
@@ -112,7 +112,8 @@ struct Forward;
 
 impl<P, Enc> Handle<Event, (), Outs<(Slot<DefaultSlot, P, Enc>,)>> for Forward
 where
-    Slot<DefaultSlot, P, Enc>: Publish,
+    P: Publisher,
+    Enc: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -168,8 +169,10 @@ struct Mirror;
 impl<PA, EncA, PB, EncB> Handle<Event, (), Outs<(Slot<Primary, PA, EncA>, Slot<Shadow, PB, EncB>)>>
     for Mirror
 where
-    Slot<Primary, PA, EncA>: Publish,
-    Slot<Shadow, PB, EncB>: Publish,
+    PA: Publisher,
+    EncA: Codec + Send + Sync,
+    PB: Publisher,
+    EncB: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -207,7 +210,8 @@ struct Gateway;
 
 impl<P, Enc> Handle<Request, Response, Outs<(Slot<DefaultSlot, P, Enc>,)>> for Gateway
 where
-    Slot<DefaultSlot, P, Enc>: Publish,
+    P: Publisher,
+    Enc: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -355,7 +359,8 @@ struct Route;
 
 impl<P, Enc> Handle<Event, (), Outs<(Slot<Orders, P, Enc>,)>> for Route
 where
-    Slot<Orders, P, Enc>: Publish,
+    P: Publisher,
+    Enc: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -451,7 +456,7 @@ async fn seed_events<P>(
     seeder: Transactional<P, JsonCodec>,
 ) -> Result<(), Box<dyn Error + Send + Sync>>
 where
-    Transactional<P, JsonCodec>: TransactionalPublish,
+    P: TransactionalPublisher,
 {
     let scope = seeder.begin().await?;
     scope

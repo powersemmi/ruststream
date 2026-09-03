@@ -10,7 +10,7 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{Expr, Ident, ItemFn, Pat, TypeParamBound};
+use syn::{Expr, Ident, ItemFn, Pat};
 
 use crate::parse::SubscriberArgs;
 
@@ -533,30 +533,6 @@ fn form_token(
     }
 }
 
-/// The runtime's typed publishing vocabulary, by name: the capabilities implemented on the whole
-/// arena entry (`Slot<..>`) rather than on the wired live value under it. The attribute is
-/// syntactic, so it tells the two apart the way it recognizes `Out` itself - by the last path
-/// segment; everything else written in the capability position (`Publisher`, a broker-defined
-/// trait) bounds the live value.
-const ENTRY_CAPABILITIES: [&str; 4] = [
-    "Publish",
-    "TransactionalPublish",
-    "OwnedTransactionalPublish",
-    "RequestReplyPublish",
-];
-
-/// Whether a capability bound names one of the runtime's typed twins, bound on the entry.
-fn is_entry_capability(bound: &TypeParamBound) -> bool {
-    let TypeParamBound::Trait(bound) = bound else {
-        return false;
-    };
-    bound
-        .path
-        .segments
-        .last()
-        .is_some_and(|segment| ENTRY_CAPABILITIES.contains(&segment.ident.to_string().as_str()))
-}
-
 /// The arena pieces of a handler's `Out` parameters: the `O` axis, the per-slot generics with
 /// their bounds, and the body bindings picking each entry by marker.
 struct ArenaPieces {
@@ -564,8 +540,7 @@ struct ArenaPieces {
     o_ty: TokenStream2,
     /// The per-slot `W` / `E` generic parameters, in declaration order.
     we_params: Vec<Ident>,
-    /// The bounds of those generics: the user's capability bounds on `W` (or on the whole entry,
-    /// for the runtime's typed twins), the codec's on `E`.
+    /// The bounds of those generics: the user's capability bounds on `W`, the codec's on `E`.
     bounds: Vec<TokenStream2>,
     /// The body bindings: `let out = __rs_outs.get(Marker);` per parameter.
     bindings: Vec<TokenStream2>,
@@ -589,21 +564,14 @@ impl ArenaPieces {
             let wired = Ident::new(&format!("__RsOutW{index}"), name.span());
             let codec = Ident::new(&format!("__RsOutE{index}"), name.span());
             let marker = &out.marker;
+            let capability = out.bounds;
             let body = body_ty(out.bodies.as_ref());
-            let entry = quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #body>);
-            let (on_entry, on_wired): (Vec<_>, Vec<_>) = out
-                .bounds
-                .iter()
-                .partition(|bound| is_entry_capability(bound));
-            entries.push(entry.clone());
+            entries.push(quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #body>));
             // The dispatch machinery shares the arena across worker tasks, so Send + Sync are
             // structural; the codec bound is what the entry's typed publishes encode with.
             bounds.push(quote! {
-                #wired: #(#on_wired +)* ::core::marker::Send + ::core::marker::Sync + 'static
+                #wired: #capability + ::core::marker::Send + ::core::marker::Sync + 'static
             });
-            if !on_entry.is_empty() {
-                bounds.push(quote!(#entry: #(#on_entry)+*));
-            }
             bounds.push(quote! {
                 #codec: ::ruststream::codec::Codec
                     + ::core::marker::Send

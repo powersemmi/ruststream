@@ -63,10 +63,9 @@ pub use handle::{
     ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
-    Deserialized, Documentable, Documented, EncodedReply, ErrorOf, Handle, Input, IntoSource,
-    Message, Outs, OwnedTransactionOf, OwnedTransactionalPublish, PageDeserialized, Publish,
-    ReplyOf, ReplyShape, RequestReplyPublish, ScopeOf, Serialized, SerializedReply, Slot,
-    SoloDeserialized, TransactionalPublish, Undocumented, ValueBuilder, Verdict, subscriber,
+    Deserialized, Documentable, Documented, EncodedReply, Handle, Input, IntoSource, Message, Outs,
+    PageDeserialized, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
+    Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{

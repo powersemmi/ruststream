@@ -13,13 +13,12 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
     App, AppInfo, DefaultSlot, HandlerOutcome, Out, Outgoing, PublishContext, PublishLayer,
-    PublishNext, PublishPipeline, PublishTransform, RustStream, Transactional,
-    TransactionalPublish, TypedPublisher,
+    PublishNext, PublishPipeline, PublishTransform, RustStream, Transactional, TypedPublisher,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
-use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{OutSlot, Outgoing, Publisher, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -231,7 +230,7 @@ async fn seed_events<P>(
     seeder: Transactional<P, JsonCodec>,
 ) -> Result<(), Box<dyn Error + Send + Sync>>
 where
-    Transactional<P, JsonCodec>: TransactionalPublish,
+    P: TransactionalPublisher,
 {
     let scope = seeder.begin().await?;
     scope

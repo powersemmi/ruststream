@@ -165,11 +165,13 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
     --8<-- "examples/manual/publishing.rs:slots_mount"
     ```
 
-trait 约束里的能力还可以收窄：`Out<impl OwnedTransactionalPublish, Ledger>` 只有在策略的活发布者支持
-owned 事务时才能编译，这一点在挂载点检查，并给出点名缺失能力的诊断信息。约束里写的是 Broker 能力的
-类型化孪生 trait（`TransactionalPublish`、`OwnedTransactionalPublish`、`RequestReplyPublish`），而不是
-Broker 自己的 trait；在手动路径上，同一个约束写在整个条目上：`Slot<Ledger, W, E>:
-OwnedTransactionalPublish`。槽位标记同时也是[测试套件](testing.md#asserting-on-out-slots)
+trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 只有在策略的活发布者支持
+owned 事务时才能编译，这一点在挂载点检查，并给出点名缺失能力的诊断信息。约束里写的是 Broker 的能力
+trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`，或者你的 Broker
+crate 自己定义的那一个），而不是任何 Broker 类型，所以主体与 Broker 无关；在手动路径上，同一个约束
+写在条目的活值上：`where W: OwnedTransactions, E: Codec + Send + Sync`。在每一个这样的约束之下，条目
+还会在挂载点的编解码器和标记的列表之上给出该能力的类型化形态（发布构建器、事务作用域、拥有式事务）。
+槽位标记同时也是[测试套件](testing.md#asserting-on-out-slots)
 记录发布时所用的身份标识。
 
 `Out` 参数可选的第三个位置声明该处理器会发送什么（`Out<impl Publisher, Marker, (A, B)>`，可以是单个
@@ -424,22 +426,22 @@ commit、第二次 commit、结算之后再发布，都是编译错误，而不�
 （它们要读取产生回复的那次投递），在这里不会运行。丢弃一个尚未结算的作用域会记录一条警告，并让该句柄
 上的 Broker 事务保持打开状态，所以务必显式结算。
 
-解锁 `begin()` 的约束是 `TransactionalPublish`，它在每一种表面上的写法都一样：上面的事务性接线满足
-它，策略配对出事务性发布者的 `Out` 槽位也满足它（`Out<impl TransactionalPublish, Journal>`，手动路径
-上则是 `Slot<Journal, W, E>: TransactionalPublish`）。处理器随后在条目上调用 `begin()`，像上面那样
-驱动作用域；在槽位上打开的作用域只接纳该槽位自己的 `message` 所接纳的东西，也就是标记的列表再按
-参数声明的集合收窄，因此事务不可能发布生成文档从未声明过的消息。
+`Out` 槽位打开的是同一种作用域：用 `Out<impl TransactionalPublisher, Journal>` 约束该槽位（手动路径
+上则是 `where W: TransactionalPublisher`），在条目上调用 `begin()` 就得到这个作用域，驱动方式与上面
+完全一样。在槽位上打开的作用域只接纳该槽位自己的 `message` 所接纳的东西，也就是标记的列表再按
+参数声明的集合收窄，因此事务不可能发布生成文档从未声明过的消息，而它的发布在测试套件里仍记在该
+槽位名下。
 
 该作用域属于借用式的事务：它借用句柄上唯一的 Broker 侧事务，因此每个句柄同一时刻只有一个作用域
-处于打开状态。如果某个 Broker 的事务是客户端缓冲区而不是 producer 状态，它还提供拥有式的那种，即
-`OwnedTransactionalPublish`：每次调用 `transaction()` 都会开启一个独立的事务，其缓冲区就存放在返回的
+处于打开状态。如果某个 Broker 的事务是客户端缓冲区而不是 producer 状态，它还会实现拥有式的那种，即
+`OwnedTransactions`：每次调用 `transaction()` 都会开启一个独立的事务，其缓冲区就存放在返回的
 `TypedTransaction` 里，因此同一个句柄上可以并发打开任意多个，结算其中一个也绝不会碰到另一个。
 `message(..).publish()` 把内容缓冲进该值，`commit()` / `abort()` 消费它，这与作用域一样是“结算即消费”
 的纪律；而丢弃一个这样的事务只是丢掉它的缓冲区（并记录一条警告），不会留下一个打开着的 Broker 事务。
-像 Kafka 那样客户端每个 producer 恰好持有一个事务的 Broker，只提供借用式的那种。
+像 Kafka 那样客户端每个 producer 恰好持有一个事务的 Broker，只实现借用式的那种。
 
-拥有式的那种在各处的写法也一样：发布者在客户端缓冲事务的 `TypedPublisher` 就是
-`OwnedTransactionalPublish`，带这个约束的槽位也是（`Out<impl OwnedTransactionalPublish, Ledger>`）。
+拥有式的那种在两种表面上的写法也一样：发布者在客户端缓冲事务的 `TypedPublisher` 提供
+`transaction()`，带 `Out<impl OwnedTransactions, Ledger>` 约束的槽位同样提供。
 `transaction()` 会开启一个 `TypedTransaction`，它拥有该 Broker 事务，并用该表面的编解码器编码，写作
 `let mut txn = typed.transaction().await?;`，然后是 `txn.message(&value).publish().await?;` 和
 `txn.commit().await?;`。`.transactional()` 加 `begin()` 给出的是借用式作用域（每个句柄一个），而在同

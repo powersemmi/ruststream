@@ -23,17 +23,21 @@
 
 pub use crate::runtime::{
     App, AppInfo, Context, Ctx, DefaultSlot, Deserialized, FailurePolicies, FailurePolicy, FromRef,
-    Handle, HandlerOutcome, Headers, Message, Out, Outs, OwnedTransactionalPublish, Publish,
-    PublishExt, ReplyShape, RequestReplyPublish, Router, RouterDef, RunningApp, RustStream,
-    Serialized, Slot, State, SubscriberSettings, TransactionalPublish, TypedPublisher, Workers,
+    Handle, HandlerOutcome, Headers, Message, Out, Outs, PublishExt, ReplyShape, Router, RouterDef,
+    RunningApp, RustStream, Serialized, Slot, State, SubscriberSettings, TypedPublisher, Workers,
     subscriber,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
 // broker crate used on its own without this one - names it explicitly.
+//
+// The publisher capability traits are here because a handler body states one of them on its
+// injected slot (`Out<impl TransactionalPublisher>`) without knowing which broker runs it; the
+// consumer-side capabilities (`Partitioned`, `Seekable`, `Positioned`, `Seeker`) are not, since
+// a service reaches those through a broker whose prelude names the ones it implements.
 pub use crate::{
-    Broker, HeaderMap, IncomingMessage, MessageInfo, Name, OutSlot, PublishPolicy, Publisher,
-    Unnamed,
+    Broker, HeaderMap, IncomingMessage, MessageInfo, Name, OutSlot, OwnedTransactions,
+    PublishPolicy, Publisher, RequestReply, TransactionalPublisher, Unnamed,
 };
 // The counting macro every `workers(..)` chain writes.
 pub use crate::nonzero;

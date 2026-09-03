@@ -5,17 +5,17 @@ use std::future::{Future, ready};
 
 use serde::{Deserialize, Serialize};
 
-use crate::Seeker;
-use crate::codec::JsonCodec;
+use crate::codec::{Codec, JsonCodec};
 use crate::memory::{
     MemoryBroker, MemoryContext, MemoryPublish, MemoryPublisher, MemorySource, Position, SeekHandle,
 };
 use crate::nonzero;
 use crate::runtime::{
-    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, Outs, Publish,
-    ReplyShape, Router, RouterDef, Serialized, SerializedReply, SerializedWire, Slot,
-    SoloDeserialized, SubscriberSettings, Verdict, subscriber,
+    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, Outs, ReplyShape,
+    Router, RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
+    SubscriberSettings, Verdict, subscriber,
 };
+use crate::{Publisher, Seeker};
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -289,9 +289,8 @@ struct RawMirror;
 
 impl<W, E> Handle<Order, (), Outs<(Slot<Analytics, W, E>,)>> for RawMirror
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -318,9 +317,8 @@ struct Mirror;
 
 impl<W, E> Handle<Order, (), Outs<(Slot<Analytics, W, E>,)>> for Mirror
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -376,9 +374,8 @@ struct PageMirror;
 
 impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>> for PageMirror
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     fn handle(
         &self,
@@ -470,9 +467,8 @@ struct Gateway;
 
 impl<W, E> Handle<Order, Confirmation, Outs<(Slot<Analytics, W, E>,)>> for Gateway
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     fn handle(
         &self,
@@ -489,9 +485,8 @@ struct PageGateway;
 
 impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>> for PageGateway
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     fn handle(
         &self,
@@ -508,9 +503,8 @@ struct RawGateway;
 
 impl<W, E> Handle<Order, Export, Outs<(Slot<Analytics, W, E>,)>> for RawGateway
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     fn handle(
         &self,

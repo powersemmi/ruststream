@@ -80,11 +80,6 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
         &self.codec
     }
 
-    /// The leaf publisher, for the typed capability impls outside this module.
-    pub(crate) const fn publisher(&self) -> &P {
-        &self.publisher
-    }
-
     /// Adds a static [`PublishTransform`], applied to every single-message reply from this publisher
     /// (a `#[subscriber(.., publish(..))]` handler). It does not run on the batch path; use
     /// [`batch_transform`](Self::batch_transform) for that. The first one added runs first (closest
@@ -304,13 +299,6 @@ where
 /// transaction and the batch is retried, so replies are never half-visible.
 pub struct Transactional<P, C, PL = PublishTransformIdentity, BL = BatchTransformIdentity> {
     pub(super) inner: TypedPublisher<P, C, PL, BL>,
-}
-
-impl<P, C, PL, BL> Transactional<P, C, PL, BL> {
-    /// The wrapped typed publisher, for the typed capability impls outside this module.
-    pub(crate) const fn inner(&self) -> &TypedPublisher<P, C, PL, BL> {
-        &self.inner
-    }
 }
 
 impl<P, C, PL, BL> fmt::Debug for Transactional<P, C, PL, BL> {

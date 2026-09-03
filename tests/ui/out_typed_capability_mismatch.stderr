@@ -35,7 +35,7 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
 35 |         b.include(forward).out(Events, MemoryPublish).build();
    |                                                       ^^^^^ the trait `RequestReply` is not implemented for `MemoryPublisher`
    |
-   = note: for a slot bound by `RequestReplyPublish` (`Out<impl RequestReplyPublish, _>`), attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
+   = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
   --> src/runtime/slot.rs
    |
@@ -51,7 +51,6 @@ help: the following other types implement trait `RequestReply`
    |
    | impl RequestReply for MemoryRequester {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
-   = note: required for `Slot<Events, MemoryPublisher, JsonCodec, Progress>` to implement `RequestReplyPublish`
 note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>>`
   --> tests/ui/out_typed_capability_mismatch.rs:24:1
    |
@@ -60,8 +59,8 @@ note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<Events, 
 25 | async fn forward(
    |          ^^^^^^^
 26 |     _order: &Order,
-27 |     Out(out): Out<impl RequestReplyPublish, Events, Progress>,
-   |                        ------------------- unsatisfied trait bound introduced here
+27 |     Out(out): Out<impl RequestReply, Events, Progress>,
+   |                        ------------ unsatisfied trait bound introduced here
    = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>, (), forward, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
    = note: 1 redundant requirement hidden
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`

@@ -13,6 +13,7 @@ use std::any::type_name;
 use std::convert::Infallible;
 use std::future::{Future, ready};
 
+use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
@@ -197,7 +198,8 @@ struct Convert;
 
 impl<'p, P, Enc> Handle<Chunk<'p>, (), Outs<(Slot<Events, P, Enc>,)>> for Convert
 where
-    Slot<Events, P, Enc>: Publish,
+    P: Publisher,
+    Enc: Codec + Send + Sync,
 {
     async fn handle(
         &self,

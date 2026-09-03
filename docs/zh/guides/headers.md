@@ -119,7 +119,7 @@
 - 目的地来自类型自身的声明，因此固定名字在调用点上什么都不必写，模板化的名字则会要求补齐它的
   占位符；
 - 能力位置一如既往地会与挂载点的策略做静态检查：
-  `Out<impl TransactionalPublish, Events, (ChunkDone, Progress)>` 要求所用策略的活发布者是
+  `Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>` 要求所用策略的活发布者是
   事务性的，而声明过的那些发布会在条目打开的作用域内部完成，遵循同一份声明。
 
 服务手上已经是编码后形态的载荷，或者无法承载声明的外部类型（比如裸的 `Vec<Frame>`），包在一个既

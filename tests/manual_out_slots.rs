@@ -10,6 +10,7 @@
 
 use std::convert::Infallible;
 
+use ruststream::codec::Codec;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::prelude::*;
 use ruststream::runtime::{Input, MessageWire, PublishedThrough, SerializedWire, SoloDeserialized};
@@ -108,8 +109,10 @@ type TranscodeSlots<EncodedPub, AuditPub, EncA, EncB> =
 impl<'p, EncodedPub, AuditPub, EncA, EncB>
     Handle<Frame<'p>, (), TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>> for Transcode
 where
-    Slot<Encoded, EncodedPub, EncA>: Publish,
-    Slot<Audit, AuditPub, EncB>: Publish,
+    EncodedPub: Publisher,
+    EncA: Codec + Send + Sync,
+    AuditPub: Publisher,
+    EncB: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -224,7 +227,8 @@ struct ExportChunks;
 
 impl<'p, Wired, Enc> Handle<Frame<'p>, (), Outs<(Slot<Exports, Wired, Enc>,)>> for ExportChunks
 where
-    Slot<Exports, Wired, Enc>: Publish,
+    Wired: Publisher,
+    Enc: Codec + Send + Sync,
 {
     async fn handle(
         &self,

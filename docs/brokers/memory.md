@@ -42,15 +42,15 @@ a simulation of another broker's:
 - **Request / reply.** `broker.requester()` returns a `MemoryRequester` whose `request` publishes
   with a unique in-process inbox in the `reply-to` header and resolves on the first message
   delivered there; the `MemoryRequest` policy pairs into it, so a slot bound with
-  `RequestReplyPublish` binds to `MemoryRequest`. A responder reads `reply-to` from the request
-  and publishes its reply to that name. Requests nobody answers fail with
+  `Out<impl RequestReply, ..>` binds to `MemoryRequest`. A responder reads `reply-to` from the
+  request and publishes its reply to that name. Requests nobody answers fail with
   `RequestError::Timeout`.
 - **Batches.** `MemorySubscriber` implements `BatchSubscriber`: a batch is the first awaited
   delivery plus everything already buffered, capped by `set_batch_limit` (default 64). Partial
   batches ship immediately, so no deadline timer is involved.
 - **Transactions.** `MemoryPublisher`, what the `MemoryPublish` policy pairs into, carries both
-  transaction kinds, so a slot or wiring bound with `TransactionalPublish` or
-  `OwnedTransactionalPublish` binds to `MemoryPublish`. Publishes inside a scope are buffered and
+  transaction kinds, so a slot or wiring bound with `TransactionalPublisher` or
+  `OwnedTransactions` binds to `MemoryPublish`. Publishes inside a scope are buffered and
   fan out together in publish order on commit; an abort discards them; every owned transaction
   buffers on its own. Misuse on the raw handle errors with `MemoryError` per the broker contract:
   a second begin while one is open returns `TransactionBusy` (the open transaction is untouched),

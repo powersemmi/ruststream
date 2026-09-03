@@ -130,7 +130,7 @@ whole declaration:
 - the destination comes from the type's own declaration, so a fixed name needs nothing at the
   call site and a templated one demands its placeholders;
 - the capability position is checked against the include-site policy statically, as always:
-  `Out<impl TransactionalPublish, Events, (ChunkDone, Progress)>` demands a policy whose
+  `Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>` demands a policy whose
   live publisher is transactional, and the declared publishes ride inside the scope the entry
   opens, under the same declaration.
 

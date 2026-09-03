@@ -1,6 +1,6 @@
 use ruststream::memory::{MemoryBroker, MemoryRequest};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, OwnedTransactionalPublish, RustStream};
-use ruststream::subscriber;
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
+use ruststream::{OwnedTransactions, subscriber};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -12,7 +12,7 @@ struct Order {
 // requester) has no transactions at all: the include site fails to compile with the capability
 // diagnostic.
 #[subscriber("orders")]
-async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactionalPublish>) -> HandlerOutcome {
+async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
     let _ = order.id;
     HandlerOutcome::ack()
 }

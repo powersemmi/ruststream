@@ -181,12 +181,15 @@ in one step.
     --8<-- "examples/manual/publishing.rs:slots_mount"
     ```
 
-The capability in the bound can be refined: `Out<impl OwnedTransactionalPublish, Ledger>` compiles
-only against a policy whose live publisher supports owned transactions, checked at the include
-site with a diagnostic naming the missing capability. The bound names the typed twin of a broker
-capability - `TransactionalPublish`, `OwnedTransactionalPublish`, `RequestReplyPublish` - never
-the broker's own trait; on the manual path the same bound is stated on the whole entry,
-`Slot<Ledger, W, E>: OwnedTransactionalPublish`. The slot marker is also the identity the
+The capability in the bound can be refined: `Out<impl OwnedTransactions, Ledger>` compiles only
+against a policy whose live publisher supports owned transactions, checked at the include site
+with a diagnostic naming the missing capability. The bound names a broker capability trait -
+`Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`, or one your broker
+crate defines - and never a broker type, so the body stays broker-agnostic; on the manual path
+the same bound sits on the entry's wired value, `where W: OwnedTransactions, E: Codec + Send +
+Sync`. Under each bound the entry offers that capability's typed form (the publish builder, a
+transaction scope, an owned transaction) over the include site's codec and the marker's list.
+The slot marker is also the identity the
 [test harness](testing.md#asserting-on-out-slots) records publishes against.
 
 The `Out` parameter's optional third position declares what this handler sends
@@ -472,28 +475,28 @@ publisher's codec and sends them directly: per-publisher transforms and the app-
 originating delivery) and do not run here. Dropping an unsettled scope logs a warning and leaves
 the broker transaction open on that handle - always settle explicitly.
 
-The bound that unlocks `begin()` is `TransactionalPublish`, and it reads the same on every
-surface: the transactional wiring above satisfies it, and so does an `Out` slot whose policy
-pairs a transactional publisher (`Out<impl TransactionalPublish, Journal>`, or
-`Slot<Journal, W, E>: TransactionalPublish` on the manual path). A handler then calls `begin()`
-on the entry and drives the scope exactly as above; a scope opened on a slot admits what the
-slot's own `message` admits - the marker's list, narrowed by the parameter's declared set - so a
-transaction cannot publish what the generated document never declared.
+An `Out` slot opens the same scope: bind the slot with `Out<impl TransactionalPublisher, Journal>`
+(`where W: TransactionalPublisher` on the manual path), and `begin()` on the entry returns the
+scope, driven exactly as above. A scope opened on a slot admits what the slot's own `message`
+admits - the marker's list, narrowed by the parameter's declared set - so a transaction cannot
+publish what the generated document never declared, and its publishes keep the slot's capture in
+the test harness.
 
 The scope is the borrowed transaction kind: it borrows the handle's single broker-side
 transaction, so one scope per handle is open at a time. Brokers whose transactions are client
-buffers rather than producer state also offer the owned kind, `OwnedTransactionalPublish`:
-every `transaction()` call opens an independent transaction whose buffer lives in the returned
+buffers rather than producer state also implement the owned kind, `OwnedTransactions`: every
+`transaction()` call opens an independent transaction whose buffer lives in the returned
 `TypedTransaction`, so any number can be open concurrently on one handle and settling one never
 touches another. `message(..).publish()` buffers into the value and `commit()` / `abort()`
 consume it - the same settle-by-consuming discipline as the scope - while dropping one merely
 discards its buffer (with a warning) instead of leaving a broker transaction open. Kafka-like
-brokers, whose client holds exactly one transaction per producer, offer only the borrowed kind.
+brokers, whose client holds exactly one transaction per producer, implement only the borrowed
+kind.
 
-The owned kind is stated the same way everywhere too: a `TypedPublisher` whose publisher
-buffers client-side transactions is `OwnedTransactionalPublish`, and so is a slot bound with it
-(`Out<impl OwnedTransactionalPublish, Ledger>`). `transaction()` opens a `TypedTransaction` that
-owns the broker transaction and encodes with the surface's codec -
+The owned kind reads the same on both surfaces: a `TypedPublisher` whose publisher buffers
+client-side transactions offers `transaction()`, and so does a slot bound with
+`Out<impl OwnedTransactions, Ledger>`. It opens a `TypedTransaction` that owns the broker
+transaction and encodes with the surface's codec -
 `let mut txn = typed.transaction().await?;`, then `txn.message(&value).publish().await?;` and
 `txn.commit().await?;`. Where `.transactional()` + `begin()` gives the borrowed scope (one per
 handle), any number of `TypedTransaction`s can be open on one `TypedPublisher` at a time. An

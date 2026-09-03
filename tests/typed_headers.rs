@@ -14,13 +14,11 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{
-    AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream, TransactionalPublish,
-};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher, Serialized, nonzero,
-    subscriber,
+    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher, Serialized,
+    TransactionalPublisher, nonzero, subscriber,
 };
 use serde::{Deserialize, Serialize};
 
@@ -195,7 +193,7 @@ async fn from_headers_extracts_and_declared_messages_publish() {
 #[subscriber("txn.raw")]
 async fn transactional_convert(
     chunk: &Chunk,
-    Out(events): Out<impl TransactionalPublish, Events, (ChunkDone, Progress, Wire)>,
+    Out(events): Out<impl TransactionalPublisher, Events, (ChunkDone, Progress, Wire)>,
 ) -> HandlerOutcome {
     let Ok(scope) = events.begin().await else {
         return HandlerOutcome::retry();
@@ -219,7 +217,8 @@ async fn transactional_convert(
     {
         return HandlerOutcome::retry();
     }
-    // The Publish supertrait: a per-message computed destination stays available.
+    // The Publisher capability the bound implies: a per-message computed destination stays
+    // available on the entry itself.
     let audit = format!("audit.{}", chunk.seq);
     if events
         .message(&Wire(b"seen".to_vec()))

@@ -256,11 +256,11 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 `MemoryContext` 及其 `Position` / `SeekHandle` 键就是范本。批量的那些写法通过下面的批量上下文拿到
 seeker，它只带句柄、不带位置。
 
-处理器主体从不写这些 trait 中的任何一个。主体用核心从能力推导出的类型化孪生来约束它所持有的槽位：
-`Publisher` 对应 `Publish`，`TransactionalPublisher` 对应 `TransactionalPublish`，`OwnedTransactions`
-对应 `OwnedTransactionalPublish`，`RequestReply` 对应 `RequestReplyPublish`。包含点的策略只在槽位绑定的
-地方按你的 Broker trait 检查一次，而孪生让主体在条目的编解码器和字典之上获得该能力的类型化操作。在你的
-实时发布者上实现 Broker trait；孪生自动成立，服务在 `Out<impl ..>` 里写的正是孪生的名字。
+这些 trait 就是处理器主体所写的词汇。主体用它需要的那个能力来约束自己的槽位
+（`Out<impl TransactionalPublisher, Journal>`，手动路径上则是 `where W: TransactionalPublisher`），
+从不写你的任何类型；包含点会按这个约束把所绑定策略的活形态检查一次，在编译期完成。在四种发布者能力
+各自的约束之下，竞技场条目还会在包含点的编解码器和标记的字典之上给出该能力的类型化形态 - 发布构建
+器、事务作用域、拥有式事务、带关联的请求 - 所以服务要用到它们，只需你在实时发布者上实现该 trait。
 
 ### 扩展 `Out` 槽位的词汇
 

@@ -1,6 +1,6 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RequestReplyPublish, RustStream};
-use ruststream::{OutSlot, Outgoing, subscriber};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
+use ruststream::{OutSlot, Outgoing, RequestReply, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -24,7 +24,7 @@ struct Events;
 #[subscriber("orders")]
 async fn forward(
     _order: &Order,
-    Out(out): Out<impl RequestReplyPublish, Events, Progress>,
+    Out(out): Out<impl RequestReply, Events, Progress>,
 ) -> HandlerOutcome {
     let _ = out;
     HandlerOutcome::ack()

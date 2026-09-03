@@ -2,14 +2,15 @@
 //! `.out(marker, policy)` chain.
 //!
 //! A body that publishes declares the arena in its `O` position - one [`Slot`] entry per
-//! marker, generic over the wired live value and the include site's codec, with the capability
-//! it needs as a mandatory bound:
+//! marker, generic over the wired live value and the include site's codec, with the broker
+//! capability it needs as a mandatory bound on that value:
 //!
 //! ```
 //! # #[cfg(all(feature = "memory", feature = "json"))]
 //! # mod demo {
+//! use ruststream::codec::Codec;
 //! use ruststream::prelude::*;
-//! use ruststream::runtime::{Outs, Publish, PublishedThrough, Slot};
+//! use ruststream::runtime::{Outs, PublishedThrough, Slot};
 //! # #[derive(serde::Deserialize, schemars::JsonSchema)]
 //! # struct Order { id: u64 }
 //! # #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -24,7 +25,8 @@
 //!
 //! impl<W, E> Handle<Order, (), Outs<(Slot<Primary, W, E>,)>> for Mirror
 //! where
-//!     Slot<Primary, W, E>: Publish,
+//!     W: Publisher,
+//!     E: Codec + Send + Sync,
 //! {
 //!     async fn handle(
 //!         &self,
@@ -50,22 +52,37 @@
 //!
 //! The include site binds each marker with `.out(marker, policy)` in any order and seals with
 //! `.build()`; a missing, duplicate or extra binding, or a policy whose live form lacks the
-//! body's declared capability, fails to compile naming the marker. The capability a body
-//! states is the typed vocabulary of [`capabilities`](super::capabilities): [`Publish`] for the
-//! builder, and its refinements ([`TransactionalPublish`](super::TransactionalPublish),
-//! [`OwnedTransactionalPublish`](super::OwnedTransactionalPublish),
-//! [`RequestReplyPublish`](super::RequestReplyPublish)) for the broker capabilities the body
-//! drives through the entry. The slot's wired value is the policy's live form itself: a body
-//! needing a broker-defined capability pins the entry to the concrete live type
-//! (`Slot<Lanes, LaneRouter, E>`) - or bounds `W` with the broker's own capability trait - and
-//! calls it directly through the entry's transparent `Deref`. Everything is monomorphized: the
-//! arena is built once at startup, and a delivery only ever passes a reference to it.
+//! body's declared capability, fails to compile naming the marker. The capability a body states
+//! is the broker vocabulary and never a broker type, so the same body mounts on a production
+//! broker and on its in-process test transport unchanged. Under each of the publisher
+//! capabilities the entry offers that capability's typed form, over the include site's codec and
+//! the marker's `#[publishes(..)]` dictionary:
+//!
+//! | broker capability | typed operation on the entry | what it gives |
+//! |---|---|---|
+//! | [`Publisher`] | [`message`](Slot::message) | the publish builder |
+//! | [`TransactionalPublisher`] | [`begin`](Slot::begin) | a [`TransactionScope`] |
+//! | [`OwnedTransactions`] | [`transaction`](Slot::transaction) | a [`TypedTransaction`] |
+//! | [`RequestReply`] | [`request`](RequestReply::request) | the correlated reply |
+//!
+//! Each capability is also delegated raw on the entry, through the attributed leaf, so a body
+//! driving `begin_transaction` / `commit` / `abort` by hand keeps the slot's test-capture
+//! attribution. Where a typed operation and a raw one share a name
+//! ([`transaction`](Slot::transaction)), the inherent typed one wins, and the raw form stays
+//! reachable as `OwnedTransactions::transaction(entry)`.
+//!
+//! The slot's wired value is the policy's live form itself, so a body needing a broker-defined
+//! capability bounds `W` with the broker's own trait (or pins the entry to the concrete live
+//! type, `Slot<Lanes, LaneRouter, E>`) and calls it directly through the entry's transparent
+//! `Deref`. Everything is monomorphized: the arena is built once at startup, and a delivery only
+//! ever passes a reference to it.
 
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::time::Duration;
 
+use crate::codec::Codec;
 use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::context::Context;
@@ -73,7 +90,10 @@ use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::inject::FromStartup;
 use crate::runtime::inject::{InjectCall, InjectDef};
 use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publish::{HeadersUnset, MessageBody, PublishBuilder, message_of};
+use crate::runtime::publish::{
+    Admits, HeadersUnset, MessageBody, PublishBuilder, TransactionScope, TypedTransaction,
+    message_of,
+};
 use crate::runtime::router::IncludeDef;
 use crate::runtime::slot::{
     BindSlots, ContainsMessage, HasSlots, OutSlot, PublishedThrough, SlotPublisher,
@@ -89,7 +109,6 @@ use super::axis::{
     Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
     SoloDeserialized, SoloPair,
 };
-use super::capabilities::Publish;
 use super::eager::{construct, settle_page, settle_solo};
 use super::value::{HandleValue, Sealed};
 
@@ -103,20 +122,18 @@ use super::value::{HandleValue, Sealed};
 /// the broker capability vocabulary ([`TransactionalPublisher`](crate::TransactionalPublisher),
 /// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply)) and
 /// any broker-defined capability trait alike, so a body pins the entry to the broker's concrete
-/// live type (or bounds `W` with the broker's trait) and calls it directly. A publisher-shaped
-/// entry additionally offers the typed publish builder through [`Publish`], and the typed form
-/// of each broker capability through that trait's refinement
-/// ([`TransactionalPublish`](super::TransactionalPublish),
-/// [`OwnedTransactionalPublish`](super::OwnedTransactionalPublish),
-/// [`RequestReplyPublish`](super::RequestReplyPublish)).
+/// live type (or bounds `W` with the broker's trait) and calls it directly. Under each of the
+/// core capability bounds the entry also offers that capability's typed form -
+/// [`message`](Self::message), [`begin`](Self::begin), [`transaction`](Self::transaction) - over
+/// the include site's codec and the marker's dictionary.
 ///
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
-/// `#[subscriber]` parameter's third `Out` position narrows it; [`message`](Self::message)
-/// checks it at compile time (see [`ContainsMessage`]).
+/// `#[subscriber]` parameter's third `Out` position narrows it;
+/// [`message`](Slot::message) checks it at compile time (see
+/// [`ContainsMessage`](crate::runtime::ContainsMessage)).
 pub struct Slot<M, W, E, Body = ()> {
-    // The capability impls next door read both straight off the entry.
-    pub(super) wired: SlotPublisher<W, M>,
-    pub(super) codec: E,
+    wired: SlotPublisher<W, M>,
+    codec: E,
     _declared: PhantomData<fn() -> Body>,
 }
 
@@ -128,7 +145,7 @@ impl<M, W, E, Body> fmt::Debug for Slot<M, W, E, Body> {
 
 // The transparent window: the wired live value's whole surface (broker-defined capability
 // traits included) is reachable without any grafting machinery. Calls that resolve on the
-// entry itself (`Publish::message`, the delegated core capabilities) keep the slot's
+// entry itself (its typed operations, the delegated core capabilities) keep the slot's
 // test-capture attribution; calls reaching the live value through this `Deref` leave through
 // the unwrapped value and bypass it, like a settled owned transaction's buffer.
 impl<M, W, E, Body> Deref for Slot<M, W, E, Body> {
@@ -139,7 +156,17 @@ impl<M, W, E, Body> Deref for Slot<M, W, E, Body> {
     }
 }
 
-impl<M: OutSlot, W, E, Body> Slot<M, W, E, Body> {
+// A transaction opened on an entry admits exactly what the entry's own typed publish admits:
+// the marker's dictionary, narrowed by the parameter's declared set. No bound on `W` or `E`:
+// a body generic over the entry knows neither, and the gate must resolve for it.
+impl<M, W, E, Body, T, Index> Admits<T, Index> for Slot<M, W, E, Body>
+where
+    T: PublishedThrough<M>,
+    Body: ContainsMessage<T, Index>,
+{
+}
+
+impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Body> Slot<M, W, E, Body> {
     /// Starts a typed publish through the slot, on the message type's own wire
     /// ([`MessageWire`](crate::runtime::MessageWire)): a `serde::Serialize` value encodes with
     /// the include site's codec, a [`Serialized`](crate::runtime::Serialized) one carries its
@@ -202,31 +229,148 @@ impl<M: OutSlot, W, E, Body> Slot<M, W, E, Body> {
     /// }
     /// # }
     /// ```
-    // The builder is spelled through the `Publish` projections (not `W` and `E` directly) so a
-    // body generic over the entry needs only its declared `Slot<..>: Publish` bound to publish.
+    // The builder rides the attributed leaf, so a publish issued here is recorded against the
+    // slot by the test harness.
     pub fn message<'a, T, Index>(
         &'a self,
         value: &'a T,
-    ) -> PublishBuilder<
-        &'a <Self as Publish>::Leaf,
-        MessageBody<'a, T>,
-        &'a <Self as Publish>::EncodeCodec,
-        HeadersUnset,
-        T::Form,
-    >
+    ) -> PublishBuilder<&'a SlotPublisher<W, M>, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
     where
-        Self: Publish,
         Body: ContainsMessage<T, Index>,
         T: OutgoingDestination + PublishedThrough<M>,
     {
-        message_of(self.leaf(), value, self.encode_codec())
+        message_of(&self.wired, value, &self.codec)
+    }
+}
+
+impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Body> Slot<M, W, E, Body> {
+    /// Opens the entry's broker transaction and returns the [`TransactionScope`] that owns it:
+    /// publishes go through the scope, and [`commit`](TransactionScope::commit) or
+    /// [`abort`](TransactionScope::abort) consume it, so a commit without a begin, a second
+    /// commit, or a publish after settling do not compile.
+    ///
+    /// This is the borrowed kind: the wired publisher carries at most one broker-side
+    /// transaction, so one scope per entry is open at a time. The scope's typed entry admits
+    /// what the slot's own does (the marker's dictionary, narrowed by the parameter's declared
+    /// set), and publishes issued through it keep the slot's test-capture attribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to start a transaction, or when
+    /// one is already open on this handle.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::runtime::{HandlerOutcome, Out};
+    /// use ruststream::{Outgoing, OutSlot, TransactionalPublisher, subscriber};
+    /// use serde::Serialize;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Order { id: u64 }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "ledger.settled")]
+    /// struct Settled {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// #[publishes(Settled)]
+    /// struct Journal;
+    ///
+    /// #[subscriber("ledger.orders")]
+    /// async fn settle(
+    ///     order: &Order,
+    ///     Out(journal): Out<impl TransactionalPublisher, Journal, Settled>,
+    /// ) -> HandlerOutcome {
+    ///     let Ok(scope) = journal.begin().await else {
+    ///         return HandlerOutcome::retry();
+    ///     };
+    ///     if scope.message(&Settled { id: order.id }).publish().await.is_err()
+    ///         || scope.commit().await.is_err()
+    ///     {
+    ///         return HandlerOutcome::retry();
+    ///     }
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// ```
+    pub async fn begin(
+        &self,
+    ) -> Result<TransactionScope<'_, SlotPublisher<W, M>, E, Self>, W::Error> {
+        TransactionScope::open(&self.wired, &self.codec).await
+    }
+}
+
+impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Body> Slot<M, W, E, Body> {
+    /// Opens an independent, caller-owned broker transaction and returns the
+    /// [`TypedTransaction`] that owns it: publishes buffer into the value, and
+    /// [`commit`](TypedTransaction::commit) or [`abort`](TypedTransaction::abort) consume it.
+    ///
+    /// Every call opens its own transaction, so any number can be open on one entry at a time;
+    /// the transaction's typed entry admits what the slot's own does. The buffer settles outside
+    /// the slot, so its publishes land in the broker's publish log and are not attributed to the
+    /// slot (the documented capture boundary).
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to open a transaction; pure
+    /// client-buffer implementations are infallible in practice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::runtime::{HandlerOutcome, Out};
+    /// use ruststream::{Outgoing, OutSlot, OwnedTransactions, subscriber};
+    /// use serde::Serialize;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Order { id: u64 }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "ledger.settled")]
+    /// struct Settled {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// #[publishes(Settled)]
+    /// struct Ledger;
+    ///
+    /// #[subscriber("ledger.orders")]
+    /// async fn settle(
+    ///     order: &Order,
+    ///     Out(ledger): Out<impl OwnedTransactions, Ledger, Settled>,
+    /// ) -> HandlerOutcome {
+    ///     let Ok(mut txn) = ledger.transaction().await else {
+    ///         return HandlerOutcome::retry();
+    ///     };
+    ///     if txn.message(&Settled { id: order.id }).publish().await.is_err()
+    ///         || txn.commit().await.is_err()
+    ///     {
+    ///         return HandlerOutcome::retry();
+    ///     }
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// ```
+    // Shares its name with `OwnedTransactions::transaction`, which the entry also implements:
+    // the inherent typed form is what a body wants, and the raw one stays reachable through the
+    // trait path.
+    pub async fn transaction(
+        &self,
+    ) -> Result<TypedTransaction<'_, W::Transaction, E, Self>, W::Error> {
+        TypedTransaction::open(&self.wired, &self.codec).await
     }
 }
 
 // The broker capability vocabulary is also delegated on the entry itself (not only through
 // Deref), so an entry passes into generic positions demanding the capability and a direct
-// `publish` / `request` keeps the slot's test-capture attribution. The typed twins a body
-// states as its bounds live in the `capabilities` module.
+// `publish` / `request` keeps the slot's test-capture attribution. The typed form each of these
+// bounds unlocks on the entry lives in the `capabilities` module.
 impl<M: OutSlot, W: Publisher, E: Send + Sync, Body> Publisher for Slot<M, W, E, Body> {
     type Error = W::Error;
 

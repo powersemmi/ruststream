@@ -1,3 +1,4 @@
+use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryRequest};
 use ruststream::prelude::*;
 use serde::Deserialize;
@@ -13,14 +14,15 @@ impl OutSlot for Journal {
     const NAME: &'static str = "Journal";
 }
 
-// The body states the transactional capability on the whole entry, but the include site binds
-// the marker to a policy whose live publisher (the memory requester) has no transactions: the
-// mount fails to compile with the capability diagnostic, naming the entry.
+// The body bounds the entry's wired value with the transactional capability, but the include
+// site binds the marker to a policy whose live publisher (the memory requester) has no
+// transactions: the mount fails to compile with the capability diagnostic, naming the marker.
 struct Record;
 
 impl<W, E> Handle<Order, (), Outs<(Slot<Journal, W, E>,)>> for Record
 where
-    Slot<Journal, W, E>: TransactionalPublish,
+    W: TransactionalPublisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,

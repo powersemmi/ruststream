@@ -156,9 +156,8 @@ pub trait Positioned: IncomingMessage {
 /// [`abort`]: Self::abort
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not support broker-side transactions",
-    note = "for a slot bound by `TransactionalPublish` (`Out<impl TransactionalPublish, _>`), \
-            attach a policy whose live publisher is transactional (a transactional producer \
-            configuration)"
+    note = "for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live \
+            publisher is transactional (a transactional producer configuration)"
 )]
 pub trait TransactionalPublisher: Publisher {
     /// Begins a new transaction on this publisher.
@@ -344,9 +343,9 @@ pub trait Transaction: Send {
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not open caller-owned transactions",
-    note = "for a slot bound by `OwnedTransactionalPublish` (`Out<impl OwnedTransactionalPublish, \
-            _>`), attach a policy whose live publisher buffers client-side transactions; \
-            Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind"
+    note = "for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher \
+            buffers client-side transactions; Kafka-like brokers offer only the borrowed \
+            `TransactionalPublisher` kind"
 )]
 pub trait OwnedTransactions: Publisher {
     /// The buffer-owning transaction opened by [`transaction`](Self::transaction).
@@ -372,9 +371,8 @@ pub trait OwnedTransactions: Publisher {
 /// need request / reply on those transports must emulate it themselves.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not support request / reply messaging",
-    note = "for a slot bound by `RequestReplyPublish` (`Out<impl RequestReplyPublish, _>`), \
-            attach a policy whose live publisher correlates replies natively (NATS-style); Kafka \
-            and classic queues do not"
+    note = "for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher \
+            correlates replies natively (NATS-style); Kafka and classic queues do not"
 )]
 pub trait RequestReply: Publisher {
     /// The reply message type.

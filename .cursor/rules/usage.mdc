@@ -327,11 +327,13 @@ b.include(route)
     .build();
 ```
 
-The capability in the bound can be refined - `Out<impl OwnedTransactionalPublish, Ledger>` compiles
-only against a policy whose live publisher supports owned transactions, checked at the include
-site. The bound names the typed twin of a broker capability (`TransactionalPublish`,
-`OwnedTransactionalPublish`, `RequestReplyPublish`), never the broker's own trait; on the manual
-path the same bound is stated on the whole entry, `Slot<Ledger, W, E>: OwnedTransactionalPublish`.
+The capability in the bound can be refined - `Out<impl OwnedTransactions, Ledger>` compiles only
+against a policy whose live publisher supports owned transactions, checked at the include site.
+The bound names a broker capability trait (`Publisher`, `TransactionalPublisher`,
+`OwnedTransactions`, `RequestReply`, or one a broker crate defines), never a broker type; on the
+manual path the same bound sits on the entry's wired value, `where W: OwnedTransactions, E: Codec
++ Send + Sync`. Under it the entry offers that capability's typed form - `message(..)`, `begin()`,
+`transaction()` - over the include site's codec and the marker's list.
 
 ### Narrowing one path to a set of types
 
@@ -495,16 +497,17 @@ commit, or a publish after settling do not compile:
 ```rust
 use std::error::Error;
 
+use ruststream::TransactionalPublisher;
 use ruststream::codec::JsonCodec;
-use ruststream::runtime::{Transactional, TransactionalPublish};
+use ruststream::runtime::Transactional;
 
-// The bound names the capability the seeding needs, not the broker's publisher; the same bound
-// unlocks `begin()` on an `Out` slot (`Out<impl TransactionalPublish, Journal>`).
+// The bound names the capability the seeding needs, not the broker's publisher; the same
+// capability unlocks `begin()` on an `Out` slot (`Out<impl TransactionalPublisher, Journal>`).
 async fn seed_events<P>(
     seeder: Transactional<P, JsonCodec>,
 ) -> Result<(), Box<dyn Error + Send + Sync>>
 where
-    Transactional<P, JsonCodec>: TransactionalPublish,
+    P: TransactionalPublisher,
 {
     let scope = seeder.begin().await?;
     scope.message(&Event { id: 1 }).to("events").publish().await?;

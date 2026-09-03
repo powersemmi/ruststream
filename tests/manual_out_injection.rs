@@ -10,6 +10,7 @@ mod common;
 
 use common::{connected, expect_id};
 
+use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
@@ -38,7 +39,8 @@ struct Crossing;
 
 impl<Egress, Enc> Handle<Event, (), Outs<(Slot<DefaultSlot, Egress, Enc>,)>> for Crossing
 where
-    Slot<DefaultSlot, Egress, Enc>: Publish,
+    Egress: Publisher,
+    Enc: Codec + Send + Sync,
 {
     async fn handle(
         &self,

@@ -9,6 +9,7 @@
 
 use std::future::{Future, ready};
 
+use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::PublishedThrough;
@@ -82,9 +83,8 @@ struct MirrorPair;
 
 impl<W, E> Handle<Message<Meta, Order>, (), AnalyticsArena<W, E>> for MirrorPair
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -125,9 +125,8 @@ struct GatewayPair;
 
 impl<W, E> Handle<Message<Meta, Order>, Confirmation, AnalyticsArena<W, E>> for GatewayPair
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -156,9 +155,8 @@ struct MirrorPairPage;
 
 impl<W, E> Handle<[Message<Meta, Order>], (), AnalyticsArena<W, E>> for MirrorPairPage
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,
@@ -202,9 +200,8 @@ struct GatewayPairPage;
 impl<W, E> Handle<[Message<Meta, Order>], Vec<Confirmation>, AnalyticsArena<W, E>>
     for GatewayPairPage
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    W: Publisher,
+    E: Codec + Send + Sync,
 {
     async fn handle(
         &self,

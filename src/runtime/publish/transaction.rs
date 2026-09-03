@@ -29,8 +29,8 @@ pub trait Admits<T, Index> {}
 /// A live broker transaction, opened by `begin()` on a transactional surface.
 ///
 /// The surfaces are the typed wiring
-/// ([`Transactional::begin`](crate::runtime::Transactional::begin)) and an `Out` slot bound by
-/// [`TransactionalPublish`](crate::runtime::TransactionalPublish).
+/// ([`Transactional::begin`](crate::runtime::Transactional::begin)) and an `Out` slot whose wired
+/// value is a [`TransactionalPublisher`] ([`Slot::begin`](crate::runtime::Slot::begin)).
 /// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
 /// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
 /// publish after settling is a compile error. This is the manual counterpart of the per-batch
@@ -245,8 +245,9 @@ impl<T, P, C, PL, BL> Admits<T, ()> for TypedPublisher<P, C, PL, BL> {}
 /// An owned broker transaction carrying the publisher's codec, opened by `transaction()` on a
 /// surface with owned transactions.
 ///
-/// The surfaces are the typed wiring ([`TypedPublisher::transaction`]) and an `Out` slot bound
-/// by [`OwnedTransactionalPublish`](crate::runtime::OwnedTransactionalPublish).
+/// The surfaces are the typed wiring ([`TypedPublisher::transaction`]) and an `Out` slot whose
+/// wired value is an [`OwnedTransactions`] publisher
+/// ([`Slot::transaction`](crate::runtime::Slot::transaction)).
 /// The owned counterpart of [`TransactionScope`]: the scope borrows the handle's single
 /// broker-side transaction, while this value owns an independent one
 /// ([`OwnedTransactions::Transaction`]), so any number can be open on one publisher and driven
