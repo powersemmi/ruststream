@@ -7,6 +7,17 @@
 //! context, the extractor parameters, the subscriber settings a mount site fills in, and the
 //! publishing types a handler reaches for. What a handler publishes it publishes through the
 //! builder, so the outgoing message type is not here; see the note on the re-export below.
+//!
+//! The manual path is a first-class citizen of the glob: every impl a derive would have written
+//! is spelled with names from here, so a service without the `macros` feature imports nothing
+//! else. That covers the two lanes (`Deserialized` with its [`Input`] spelling over
+//! [`SoloDeserialized`]; `Serialized` with [`MessageWire`] over [`SerializedWire`] for a typed
+//! publish and [`ReplyShape`] over [`SerializedReply`] for the reply position), the outgoing
+//! declaration ([`OutgoingDestination`] with its three forms, [`MessageHeaders`] with its two
+//! contracts), the slot vocabulary ([`OutSlot`], [`PublishedThrough`], [`OutMessages`] with the
+//! [`OutgoingMessageMetadata`] a dictionary reports), the state projection ([`FromRef`]) and
+//! the extractor binding ([`FromContext`]).
+//!
 //! Brokers, codecs and the optional feature modules (`asyncapi`, `metrics`, `logging`, `otel`,
 //! `testing`) stay explicit imports.
 //!
@@ -22,24 +33,29 @@
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, Context, Ctx, DefaultSlot, Deserialized, FailurePolicies, FailurePolicy, FromRef,
-    Handle, HandlerOutcome, Headers, Message, Out, Outs, Publish, PublishExt, ReplyShape, Router,
-    RouterDef, RunningApp, RustStream, Serialized, Slot, State, SubscriberSettings, TypedPublisher,
-    Workers, subscriber,
+    App, AppInfo, Context, Ctx, DefaultSlot, Deserialized, FailurePolicies, FailurePolicy,
+    FromContext, FromRef, Handle, HandlerOutcome, Headers, Input, Message, MessageWire, Out,
+    OutMessages, OutgoingMessageMetadata, Outs, Publish, PublishExt, PublishedThrough, ReplyShape,
+    Router, RouterDef, RunningApp, RustStream, Serialized, SerializedReply, SerializedWire, Slot,
+    SoloDeserialized, State, SubscriberSettings, TypedPublisher, Workers, subscriber,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
 // broker crate used on its own without this one - names it explicitly.
 pub use crate::{
-    Broker, HeaderMap, IncomingMessage, MessageInfo, Name, OutSlot, PublishPolicy, Publisher,
-    Unnamed,
+    Broker, CallerName, FixedName, HeaderMap, IncomingMessage, MessageHeaders, MessageInfo, Name,
+    NameTemplate, NoHeaders, OutSlot, OutgoingDestination, PublishPolicy, Publisher, Unnamed,
+    WithHeaders,
 };
 // The counting macro every `workers(..)` chain writes.
 pub use crate::nonzero;
 
-// The derives sharing a name with their trait (`MessageInfo`, `OutSlot`, `FromRef`,
-// `Deserialized`, `Serialized`) come in with the re-exports above. `Outgoing` is the exception:
-// the derive lives at the crate root while the publish pipeline's message type of the same name
-// lives in `runtime`, so a service that writes a publish transform imports that one explicitly.
+// The derives sharing a name with their trait come in two ways. `MessageInfo` and `OutSlot`
+// carry both halves at the crate root, so the re-exports above bring the derive along. The
+// others keep the trait in `runtime` and only the derive at the root, so the derive is imported
+// here on its own - never the trait, which would collide with the `runtime` import above.
+// `Outgoing` is the exception: the derive lives at the crate root while the publish pipeline's
+// message type of the same name lives in `runtime`, so a service that writes a publish
+// transform imports that one explicitly.
 #[cfg(feature = "macros")]
-pub use crate::{Deserialized, FromRef, Outgoing, Serialized, app, subscriber};
+pub use crate::{Deserialized, FromRef, OutMessages, Outgoing, Serialized, app, subscriber};

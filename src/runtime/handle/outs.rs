@@ -9,13 +9,12 @@
 //! # #[cfg(all(feature = "memory", feature = "json"))]
 //! # mod demo {
 //! use ruststream::prelude::*;
-//! use ruststream::runtime::{Outs, Publish, PublishedThrough, Slot};
 //! # #[derive(serde::Deserialize, schemars::JsonSchema)]
 //! # struct Order { id: u64 }
 //! # #[derive(serde::Serialize, schemars::JsonSchema)]
 //! # struct Event { id: u64 }
-//! # impl ruststream::OutgoingDestination for Event { type Form = ruststream::CallerName; }
-//! # impl ruststream::MessageHeaders for Event { type Contract = ruststream::NoHeaders; }
+//! # impl OutgoingDestination for Event { type Form = CallerName; }
+//! # impl MessageHeaders for Event { type Contract = NoHeaders; }
 //! # struct Primary;
 //! # impl OutSlot for Primary { const NAME: &'static str = "Primary"; }
 //! # impl PublishedThrough<Primary> for Event {}

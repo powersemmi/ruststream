@@ -89,7 +89,7 @@ impl<H, P> Message<H, P> {
 /// comes for free - `&[Frame<'_>]` bodies mount off the same two impls:
 ///
 /// ```
-/// use ruststream::runtime::{Deserialized, Input, SoloDeserialized};
+/// use ruststream::prelude::*;
 ///
 /// struct Frame<'a>(&'a [u8]);
 ///

@@ -8,7 +8,7 @@
 /// # Examples
 ///
 /// ```
-/// use ruststream::MessageInfo;
+/// use ruststream::prelude::*;
 ///
 /// struct Order;
 /// impl MessageInfo for Order {
@@ -39,7 +39,7 @@ pub trait MessageInfo {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{MessageHeaders, WithHeaders};
+/// use ruststream::prelude::*;
 ///
 /// struct ChunkMeta {
 ///     task_id: u64,
@@ -119,7 +119,7 @@ impl<H> HeadersContract for WithHeaders<H> {}
 /// # Examples
 ///
 /// ```
-/// use ruststream::{FixedName, OutgoingDestination};
+/// use ruststream::prelude::*;
 ///
 /// struct OrderDone;
 ///
