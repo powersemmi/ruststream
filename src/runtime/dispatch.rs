@@ -579,6 +579,15 @@ async fn dispatch<H, M, C, St>(
     // borrows `&St` across the handler await, which requires `St: Sync`.
     St: Send + Sync,
 {
+    // Settling the message is what releases the harness's quiescence wait, and the post-settle
+    // continuations are spawned after it; one in-flight token spanning the whole dispatch keeps a
+    // `drain` from running before they exist.
+    #[cfg(feature = "testing")]
+    let watcher = delivery.hooks.coordinator().cloned();
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.enqueued();
+    }
     // Build the broker's typed per-delivery context from the message, then attach the fail-fast
     // handle.
     let cx = C::build(&msg);
@@ -667,6 +676,10 @@ async fn dispatch<H, M, C, St>(
     // path. Tracked so a graceful shutdown drains them.
     for fut in continuations {
         hooks.spawn(fut);
+    }
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.consumed();
     }
 }
 
