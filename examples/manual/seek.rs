@@ -101,11 +101,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // delivery, and the chained start position seeks the audit one before its first delivery.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
         b.include(subscriber(MemorySource::new("jobs"), Work).build());
+        // --8<-- [start:start_at_mount]
         b.include(
             subscriber(MemorySource::new("audit"), Record)
                 .start_at(MemoryPosition::start())
                 .build(),
         );
+        // --8<-- [end:start_at_mount]
     });
     // --8<-- [end:mount]
     let running = app.start().await?;

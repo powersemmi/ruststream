@@ -394,10 +394,44 @@ Broker 侧的语义和逐条消息的 `nack(requeue = true)` 完全一致：支�
 
 ## 定位（seek） { #seeking }
 
-传输层是可重放日志的 Broker（Kafka、Redis stream、内存 Broker 的发布日志）实现了 `Seekable`
-能力：一条活着的订阅可以移到另一个位置，比如修好处理器的 bug 之后重放一段流、从某个已知的点重新
-处理，或者向前跳过一段毒消息，而不必丢弃这条订阅。这样的 Broker 会在自己的投递上下文里发布定位
-键；没有可重放日志的 Broker 不发布这些键，下面这种挂载对它们来说编译不过，而不是到运行时才失败。
+修好处理器的 bug 之后重放一段流、从某个已知的点重新处理、向前跳过一段毒消息：这些情形都要在流里
+指定一个位置，或者是订阅打开的位置，或者是一条活着的订阅在不被丢弃的前提下移到的位置。传输层是
+可重放日志的 Broker（Kafka、Redis stream、内存 Broker 的发布日志）实现了 `Seekable` 能力，拥有
+自己的位置类型，并在自己的投递上下文里发布定位键；没有可重放日志的 Broker 两者都不提供，下面两
+种挂载对它们来说编译不过，而不是到运行时才失败。
+
+### 在选定的位置打开订阅
+
+一条新订阅在哪里打开由 Broker 决定：普通消费者从末尾开始，持久消费者从存下的游标开始。在那之前
+发布的一切对服务都不可见，而对必须看到完整历史的审计流来说，这是错的答案；对绝不该去趟积压的监
+控来说同样是错的答案。订阅在哪里打开是挂载点的属性，不是处理器的属性，所以它写在挂载点上：属性
+里写 `start_at(<position>)` 子句，设置链上写 `.start_at(..)`：
+
+=== "宏"
+
+    ```rust
+    --8<-- "examples/seek.rs:start_at"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/seek.rs:start_at"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/seek.rs:start_at_mount"
+    ```
+
+位置是 Broker 自己的位置类型的值，因此能写出来的正是这个 Broker 能表达的东西：内存日志提供
+`MemoryPosition::start()` 表示全部历史，`MemoryPosition::end()` 表示从下一次发布开始，
+`MemoryPosition::sequence(n)` 表示某一条日志记录。
+
+该子句在每次启动时都强制使用给定位置；没有它时，订阅就在 Broker 的默认位置打开。有条件的默认值
+（只在 Broker 没有为该组存下游标时才生效，比如 Kafka 的 offset reset、JetStream 的 deliver
+policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
+
+### 在处理器里重新定位
 
 处理器通过 Broker 的上下文键给自己的订阅重新定位：投递上下文携带位置和一个活的定位句柄（订阅
 打开时 Broker 解析一次），处理器按键读取它们：宏路径用 `Ctx` 提取器，手动路径对着 Broker 的
@@ -422,10 +456,6 @@ Broker 侧的语义和逐条消息的 `nack(requeue = true)` 完全一致：支�
     ```rust
     --8<-- "examples/manual/seek.rs:mount"
     ```
-
-该子句在每次启动时都强制使用给定位置；没有它时，订阅就在 Broker 的默认位置打开。有条件的默认值
-（只在 Broker 没有为该组存下游标时才生效，比如 Kafka 的 offset reset、JetStream 的 deliver
-policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 
 批量函数体重新定位自己的订阅是同样的做法，只是高了一层：seek 句柄属于整条订阅，因此随 Broker 的
 批量上下文走，而目标（生产者请求消费者从哪里继续的那个位置）随这一批自己的元素走。
