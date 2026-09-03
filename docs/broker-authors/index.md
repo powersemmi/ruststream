@@ -323,22 +323,46 @@ writes it with `.with_headers(..)`, and your `publish` reads it off the outgoing
 before the wire. A value your publisher cannot read is a publish error, never a silent fallback to
 the default - the caller asked for an ordering it would not get.
 
-Whatever you name in your own prelude, keep it clear of the names `ruststream::prelude` exports.
-`Publish`, the slot trait a handler's bound names, is one of them, and a service writes both globs
-side by side. An explicit re-export beats a glob, so `pub use crate::MyPublish as Publish;` in your
-prelude silently replaces the trait with your policy struct, and the service's own
-`fn f<T: Publish>()` fails with `E0404: expected trait, found struct` pointing at code that did
-nothing wrong. Policies keep their prefixed names (`MemoryPublish`, not `Publish`). Pin it with a
-probe that stops compiling the moment a name is shadowed:
+### Your crate's prelude
+
+Two files import different things, and the split is what keeps a service portable. A handler body
+imports `ruststream::prelude::*` and nothing of yours: it bounds an injected slot with the broker
+capability trait - `Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
+`Out<impl OwnedTransactions>`, `Out<impl RequestReply>` - so the body says what it needs of a
+publisher and never which broker provides it. A routes file imports your prelude, because mounting
+is where a broker is named.
+
+That makes your prelude the one import a service on your broker writes, so its shape is part of the
+contract. Four layers, in this order:
+
+- `pub use ruststream::prelude::*;` first, so everything a body already knows arrives unchanged;
+- the crate surface your own examples name: the broker, its subscription descriptor, its config;
+- your publish policies, aliased to the uniform mount-site names - `NatsPublish as Publish`,
+  `KafkaTransactionalPublish as TransactionalPublish`, `LapinRequest as Request` - so a routes file
+  reads the same whichever broker it mounts, and switching brokers is a change of import;
+- the capability manifest: the core capability traits your broker actually implements, so what a
+  service may bound a slot with is legible from that one import.
+
+The core exports no trait under the policy names, so those aliases collide with nothing. The rule
+that keeps it that way runs in both directions, and your half is that your prelude must not shadow
+a core name with anything of yours. An explicit re-export beats a glob without a word, so a name
+you spell like a core trait takes that trait away from every service writing the glob, and the
+error surfaces in the service's file rather than in yours.
+
+Pin both halves with a probe behind your own glob: the bound a body writes still has to arrive as
+the core trait, and the mount-site name still has to be your policy.
 
 <!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
 ```rust
-// in your crate, next to your prelude: the glob a service writes, and one bound over it
-mod prelude_probe {
-    use crate::prelude::*;
+// in your crate, behind your own prelude glob
+use crate::prelude::*;
 
-    #[allow(dead_code)]
-    fn probe<T: Publish>() {}
+// A capability bound a body states: the core trait, not something of yours.
+fn _p<T: Publisher>() {}
+
+// A mount-site name: your policy, constructible with no connection in sight.
+fn _q() {
+    let _: Publish = Publish::default();
 }
 ```
 

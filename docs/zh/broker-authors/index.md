@@ -295,21 +295,44 @@ seeker，它只带句柄、不带位置。
 点用 `.with_headers(..)` 写下它，而你的 `publish` 从出站的头部表里读走它，并在上线之前把它剥掉。
 你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它并不会得到。
 
-你在自己的 prelude 里取的名字，都要避开 `ruststream::prelude` 导出的名字。`Publish` 就是其中之一，
-它是处理器约束所写出的槽位 trait，而服务会把两个 glob 导入并排写在一起。显式 re-export 会盖过 glob，
-所以你的 prelude 里一句 `pub use crate::MyPublish as Publish;` 会悄悄把这个 trait 换成你的策略结构体，
-服务自己的 `fn f<T: Publish>()` 于是以 `E0404: expected trait, found struct` 失败，指向的却是一段
-毫无过错的代码。策略保留带前缀的名字（`MemoryPublish`，而不是 `Publish`）。用一个探针把这条规则钉死，
-名字一旦被遮蔽它就编译不过：
+### 你这个 crate 的 prelude
+
+两种文件导入的东西不一样，正是这种分工让服务保持可移植。处理器主体导入 `ruststream::prelude::*`，
+不导入你的任何东西：它用 Broker 的能力 trait 去约束注入进来的槽位，也就是 `Out<impl Publisher>`、
+`Out<impl TransactionalPublisher>`、`Out<impl OwnedTransactions>`、`Out<impl RequestReply>`，
+于是主体说清楚它对发布者有什么要求，却从不说这是哪个 Broker 提供的。挂载文件导入你的 prelude，因为
+指名 Broker 的地方就在那里。
+
+这样一来，你的 prelude 就是使用你这个 Broker 的服务所写的那一个导入，它的形状因此属于契约的一部分。
+四层，按这个顺序：
+
+- 先是 `pub use ruststream::prelude::*;`，让主体本来就认识的一切原样到位；
+- 你自己的示例会写出来的那部分 crate 表面：Broker、它的订阅描述符、它的配置；
+- 你的发布策略，以统一的挂载点名字取别名：`NatsPublish as Publish`、
+  `KafkaTransactionalPublish as TransactionalPublish`、`LapinRequest as Request`，
+  这样无论挂的是哪个 Broker，挂载文件读起来都一样，换 Broker 就是换一行导入；
+- 能力清单：你的 Broker 真正实现了的那些核心能力 trait，好让服务能用什么去约束槽位，从这一个导入
+  就看得出来。
+
+在这些策略名字下，核心一个 trait 都不导出，所以这些别名不会跟任何东西相撞。维持这一点的规则是双向的，
+你这一半是：你的 prelude 不能用自己的任何东西去遮蔽核心的名字。显式 re-export 会一声不响地盖过 glob，
+所以一个跟核心 trait 同名的名字，会把那个 trait 从每个写了这行 glob 的服务手里拿走，而错误浮现在服务
+的文件里，不在你的文件里。
+
+用一个跟在自己 glob 后面的探针把两半都钉死：主体所写的那个约束仍然必须以核心 trait 的身份到达，
+挂载点的名字仍然必须是你的策略。
 
 <!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
 ```rust
-// in your crate, next to your prelude: the glob a service writes, and one bound over it
-mod prelude_probe {
-    use crate::prelude::*;
+// in your crate, behind your own prelude glob
+use crate::prelude::*;
 
-    #[allow(dead_code)]
-    fn probe<T: Publish>() {}
+// A capability bound a body states: the core trait, not something of yours.
+fn _p<T: Publisher>() {}
+
+// A mount-site name: your policy, constructible with no connection in sight.
+fn _q() {
+    let _: Publish = Publish::default();
 }
 ```
 
