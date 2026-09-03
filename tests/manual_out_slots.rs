@@ -10,13 +10,10 @@
 
 use std::convert::Infallible;
 
+use ruststream::PairError;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{Input, MessageWire, PublishedThrough, SerializedWire, SoloDeserialized};
 use ruststream::testing::TestApp;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, PairError,
-};
 use serde::{Deserialize, Serialize};
 
 // `#[derive(Deserialized)]` by hand: the payload view the slot-publishing body takes, and the

@@ -11,7 +11,6 @@
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::prelude::*;
-use ruststream::runtime::FromContext;
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, ContextField};
 use serde::{Deserialize, Serialize};

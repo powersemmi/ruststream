@@ -18,7 +18,6 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::prelude::*;
-use ruststream::runtime::{Input, SoloDeserialized};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

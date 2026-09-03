@@ -11,9 +11,9 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
+use ruststream::Seeker;
 use ruststream::memory::{MemoryBroker, MemoryContext, MemoryPosition, MemorySource, SeekHandle};
 use ruststream::prelude::*;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, Seeker};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 

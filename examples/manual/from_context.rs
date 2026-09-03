@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::FromContext;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 

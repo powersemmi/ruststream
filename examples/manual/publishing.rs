@@ -13,22 +13,18 @@ use std::error::Error;
 use std::fmt::Display;
 use std::future::{Future, ready};
 
+use ruststream::TransactionalPublisher;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    BoundSegment, MissingSegment, OutMessages, OutgoingMessageMetadata, PublishAt, PublishContext,
-    PublishError, PublishLayer, PublishNext, PublishPipeline, PublishTransform, PublishedThrough,
-    TemplateAddress, Transactional,
+    BoundSegment, MissingSegment, PublishAt, PublishContext, PublishError, PublishLayer,
+    PublishNext, PublishPipeline, PublishTransform, TemplateAddress, Transactional,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::Outgoing;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NameTemplate, NoHeaders, OutgoingDestination,
-    TransactionalPublisher,
-};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
