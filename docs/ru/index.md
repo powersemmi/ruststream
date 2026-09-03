@@ -50,17 +50,16 @@
 - :material-school: **[Учебник](getting-started/tutorial.md)** - собираем сервис шаг за шагом.
 - :material-test-tube: **[Тестирование](guides/testing.md)** - тесты обработчиков прямо в процессе, сервер не нужен.
 - :material-web: **[HTTP-фреймворки](guides/http.md)** - работа рядом с axum и транзакционный outbox.
-- :material-transit-connection-variant: **[Брокеры](brokers/index.md)** - in-memory брокер, NATS и Redis.
+- :material-transit-connection-variant: **[Брокеры](brokers/index.md)** - in-memory брокер и крейты брокеров.
 - :material-server-network: **[Авторам брокеров](broker-authors/index.md)** - реализовать контракт и пройти conformance.
 
 </div>
 
 ## Что входит в этот репозиторий
 
-Этот сайт документирует `ruststream` - чистое Rust-ядро (без PyO3, без конкретных брокеров).
-Конкретные брокеры (NATS, Kafka, RabbitMQ, Redis, MQTT) поставляются собственными крейтами и берут
-`ruststream` с crates.io. Python-биндинги лежат в репозитории
-[`ruststream-py`](https://github.com/powersemmi/ruststream-py).
+Этот сайт документирует `ruststream` - ядро, не зависящее от брокера. Конкретные брокеры (NATS,
+Kafka, RabbitMQ, Redis, MQTT и другие) поставляются собственными крейтами и берут `ruststream` с
+crates.io.
 
 Справочник по Rust API опубликован на [docs.rs](https://docs.rs/ruststream) - см.
 [Справочник API](reference.md).
