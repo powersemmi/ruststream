@@ -27,26 +27,57 @@ use crate::{OutgoingMessage, RawMessage};
 use super::TestError;
 
 tokio::task_local! {
-    /// The coordinator of the harness driving the current dispatch task, so a slot publisher
-    /// can attribute its publishes without threading a handle through the resolution path.
-    /// Installed by `dispatch` around each handler invocation when a harness is attached.
-    static SLOT_SINK: Coordinator;
+    /// The harness driving the current dispatch task, so a slot publisher and the batch settle
+    /// path can reach it without threading a handle through every signature they sit behind.
+    /// Installed by `dispatch` and `run_batch` around each handler invocation when a harness is
+    /// attached.
+    static HARNESS: HarnessScope;
+}
+
+/// The harness a dispatch task runs under: which coordinator records it, and which broker's
+/// registration the delivery belongs to.
+#[derive(Clone)]
+pub(crate) struct HarnessScope {
+    coordinator: Coordinator,
+    scope_id: usize,
+}
+
+impl HarnessScope {
+    pub(crate) fn new(coordinator: Coordinator, scope_id: usize) -> Self {
+        Self {
+            coordinator,
+            scope_id,
+        }
+    }
 }
 
 /// Records a publish made through an `Out` slot against the harness driving the current
 /// dispatch task, if any. Called by the slot publisher wrapper on every publish; outside a
 /// harness-driven handler (production, or a test without a `TestApp`) it is a no-op.
 pub(crate) fn record_slot_publish(slot: &'static str, msg: &OutgoingMessage<'_>) {
-    let _ = SLOT_SINK.try_with(|coordinator| coordinator.record_slot(slot, msg));
+    let _ = HARNESS.try_with(|scope| scope.coordinator.record_slot(slot, msg));
 }
 
-/// Runs `fut` with the harness coordinator (when one is attached) visible to slot publishers.
-pub(crate) async fn in_slot_scope<F: Future>(
-    coordinator: Option<Coordinator>,
-    fut: F,
-) -> F::Output {
-    match coordinator {
-        Some(coordinator) => SLOT_SINK.scope(coordinator, fut).await,
+/// Records one page against the harness driving the current dispatch task, if any: the batch
+/// settle path knows the deliveries and their settlements but not which harness (if any) is
+/// watching, and it sits behind four call sites whose signatures would otherwise all have to
+/// carry one.
+pub(crate) fn record_page(name: &str, deliveries: Vec<Delivered>) {
+    let _ = HARNESS.try_with(|scope| {
+        scope.coordinator.record(Record {
+            scope_id: scope.scope_id,
+            name: name.to_owned(),
+            deliveries,
+            panicked: false,
+            decode_failed: false,
+        });
+    });
+}
+
+/// Runs `fut` with the harness (when one is attached) visible to the recorders above.
+pub(crate) async fn in_harness_scope<F: Future>(scope: Option<HarnessScope>, fut: F) -> F::Output {
+    match scope {
+        Some(scope) => HARNESS.scope(scope, fut).await,
         None => fut.await,
     }
 }
@@ -74,17 +105,22 @@ pub enum Outcome {
     Panicked,
 }
 
-/// One recorded delivery to a handler.
+/// One delivery inside a recorded handler call: the payload the handler saw, and how the
+/// dispatcher settled it (`None` when a fail-fast panic left the message unsettled).
+pub(crate) struct Delivered {
+    pub(crate) raw: Bytes,
+    pub(crate) settle: Option<HandlerResult>,
+}
+
+/// One recorded call into a handler: a single delivery, or a whole page.
 pub(crate) struct Record {
     /// The broker's registration index in the app, used to scope assertions per broker.
     pub(crate) scope_id: usize,
     /// The subscription (channel) name the message arrived on.
     pub(crate) name: String,
-    /// The raw payload bytes the handler received.
-    pub(crate) raw: Bytes,
-    /// The settlement the dispatcher applied, or `None` when a fail-fast panic left the message
-    /// unsettled.
-    pub(crate) settle: Option<HandlerResult>,
+    /// What this call carried: exactly one delivery for a single-message handler, one per
+    /// element of the page for a batch handler.
+    pub(crate) deliveries: Vec<Delivered>,
     /// Whether the handler panicked.
     pub(crate) panicked: bool,
     /// Whether the payload failed to decode before the handler ran.
@@ -92,22 +128,32 @@ pub(crate) struct Record {
 }
 
 impl Record {
-    /// Classifies this delivery into a single [`Outcome`]. Panic and decode-failure dominate the
+    /// Classifies this call into a single [`Outcome`]. Panic and decode-failure dominate the
     /// settlement (a fail-fast panic acks nothing; a skip-policy panic still records `Panicked`).
+    ///
+    /// A page settling its elements differently has no one outcome; the first element's stands
+    /// for the call, which is why the per-element assertions
+    /// ([`settled`](super::SubscriberAssertions::settled)) are what a mixed page is read with.
     pub(crate) fn outcome(&self) -> Outcome {
         if self.panicked {
             Outcome::Panicked
         } else if self.decode_failed {
             Outcome::DecodeFailed
         } else {
-            match self.settle {
-                Some(HandlerResult::Ack) => Outcome::Ack,
-                Some(HandlerResult::Nack { requeue: true } | HandlerResult::NackAfter { .. }) => {
-                    Outcome::Nack
-                }
-                Some(HandlerResult::Nack { requeue: false }) | None => Outcome::Drop,
-            }
+            settled_as(self.deliveries.first().and_then(|one| one.settle))
         }
+    }
+}
+
+/// The outcome one settlement classifies as. An unsettled delivery (a fail-fast panic tore the
+/// service down before it settled) reads as dropped: nothing acknowledged it.
+fn settled_as(settle: Option<HandlerResult>) -> Outcome {
+    match settle {
+        Some(HandlerResult::Ack) => Outcome::Ack,
+        Some(HandlerResult::Nack { requeue: true } | HandlerResult::NackAfter { .. }) => {
+            Outcome::Nack
+        }
+        Some(HandlerResult::Nack { requeue: false }) | None => Outcome::Drop,
     }
 }
 

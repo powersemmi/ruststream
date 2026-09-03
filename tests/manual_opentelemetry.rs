@@ -108,13 +108,12 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
     let mut headers = HeaderMap::new();
     if let Some(tp) = incoming {
         headers.insert("traceparent", tp);
     }
     ingress
-        .raw(&payload)
+        .message(&Req { n: 1 })
         .with_headers(headers)
         .to("in")
         .publish()

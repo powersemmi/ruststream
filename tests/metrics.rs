@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::wait_for;
+use common::{Wire, wait_for};
 
 use std::convert::Infallible;
 use std::future::{Future, ready};
@@ -66,7 +66,7 @@ async fn consume_metrics_are_recorded() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(b"{}")
+        .message(&Wire::of(b"{}"))
         .to("pings")
         .publish()
         .await
@@ -108,7 +108,7 @@ async fn consume_metrics_are_recorded_through_a_router() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(b"{}")
+        .message(&Wire::of(b"{}"))
         .to("pings")
         .publish()
         .await
@@ -160,9 +160,8 @@ mod publish {
             });
 
         let running = app.start().await.expect("startup failed");
-        let payload = serde_json::to_vec(&Req { n: 7 }).unwrap();
         ingress_pub
-            .raw(&payload)
+            .message(&Req { n: 7 })
             .to("requests")
             .publish()
             .await

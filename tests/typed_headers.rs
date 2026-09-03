@@ -17,7 +17,7 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher,
+    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher, Serialized,
     TransactionalPublisher, nonzero, subscriber,
 };
 use serde::{Deserialize, Serialize};
@@ -56,8 +56,14 @@ struct Progress {
     percent: u8,
 }
 
+/// Bytes published as themselves: the payload of the cases whose subject is not a model - the
+/// computed-destination escape hatch, and the delivery a decode policy is meant to reject. It
+/// declares no name, so each call site keeps naming one.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
+
 #[derive(OutSlot)]
-#[publishes(ChunkDone, Progress, Frames)]
+#[publishes(ChunkDone, Progress, Frames, Wire)]
 struct Events;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -186,7 +192,7 @@ async fn from_headers_extracts_and_declared_messages_publish() {
 #[subscriber("txn.raw")]
 async fn transactional_convert(
     chunk: &Chunk,
-    Out(events): Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>,
+    Out(events): Out<impl TransactionalPublisher, Events, (ChunkDone, Progress, Wire)>,
 ) -> HandlerOutcome {
     if events.begin_transaction().await.is_err() {
         return HandlerOutcome::retry();
@@ -212,7 +218,13 @@ async fn transactional_convert(
     }
     // The Publisher supertrait: a per-message computed destination stays available.
     let audit = format!("audit.{}", chunk.seq);
-    if events.raw(b"seen").to(audit).publish().await.is_err() {
+    if events
+        .message(&Wire(b"seen".to_vec()))
+        .to(audit)
+        .publish()
+        .await
+        .is_err()
+    {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
@@ -335,7 +347,7 @@ async fn raw_input_composes_with_from_headers() {
 
     // And the raw handler still applies the decode policy to a broken contract.
     broker
-        .raw(b"\x00")
+        .message(&Wire(b"\x00".to_vec()))
         .to("frames")
         .publish()
         .await

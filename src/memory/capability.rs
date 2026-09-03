@@ -65,14 +65,22 @@ pub enum RequestError {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "macros")]
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// use std::time::Duration;
 ///
 /// use futures::StreamExt;
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::PublishExt;
-/// use ruststream::{IncomingMessage, OutgoingMessage, RequestReply, Subscriber};
+/// use ruststream::{
+///     IncomingMessage, Outgoing, OutgoingMessage, RequestReply, Serialized, Subscriber,
+/// };
 ///
-/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// // The reply echoes the request's bytes, so they are already the payload; the inbox to
+/// // send them to is only known per request, which is what `to(..)` names.
+/// #[derive(Outgoing, Serialized)]
+/// struct Pong(Vec<u8>);
+///
 /// let broker = MemoryBroker::new();
 /// let mut service = broker.subscribe("svc.echo");
 /// let publisher = broker.publisher();
@@ -82,7 +90,8 @@ pub enum RequestError {
 ///     let mut stream = std::pin::pin!(service.stream());
 ///     if let Some(Ok(msg)) = stream.next().await {
 ///         let reply_to = msg.headers().reply_to().ok_or("request must carry reply-to")?.to_owned();
-///         publisher.raw(msg.payload()).to(reply_to).publish().await?;
+///         let pong = Pong(msg.payload().to_vec());
+///         publisher.message(&pong).to(reply_to).publish().await?;
 ///         msg.ack().await?;
 ///     }
 ///     Ok::<_, Box<dyn std::error::Error>>(())
@@ -486,18 +495,24 @@ impl MemoryPosition {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "macros")]
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// use futures::StreamExt;
 /// use ruststream::memory::{MemoryBroker, MemoryPosition};
 /// use ruststream::runtime::PublishExt;
-/// use ruststream::{IncomingMessage, Seekable, Seeker, Subscriber};
+/// use ruststream::{IncomingMessage, Outgoing, Seekable, Seeker, Serialized, Subscriber};
 ///
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// // An audit entry is opaque bytes, so it declares itself a serialized type and no codec
+/// // runs on it.
+/// #[derive(Outgoing, Serialized)]
+/// struct Entry(Vec<u8>);
+///
 /// let broker = MemoryBroker::new();
 /// let mut subscriber = broker.subscribe("audit");
 /// let seeker = subscriber.seeker();
 /// let publisher = broker.publisher();
 ///
-/// publisher.raw(b"one").to("audit").publish().await?;
+/// publisher.message(&Entry(b"one".to_vec())).to("audit").publish().await?;
 /// {
 ///     let mut stream = std::pin::pin!(subscriber.stream());
 ///     stream.next().await.expect("delivered")?.ack().await?;

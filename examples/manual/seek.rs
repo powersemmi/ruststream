@@ -11,15 +11,25 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::Seeker;
 use ruststream::memory::{MemoryBroker, MemoryContext, MemoryPosition, MemorySource, SeekHandle};
 use ruststream::prelude::*;
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, Seeker};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 struct Job {
     id: u64,
+}
+
+// `#[derive(Outgoing)]` with no `name`, by hand: the destination form is the one that leaves the
+// name to the call, so the publish builder offers `to(..)`.
+impl OutgoingDestination for Job {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Job {
+    type Contract = NoHeaders;
 }
 
 // --8<-- [start:start_at]
@@ -83,8 +93,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Published before the app even exists; only the chosen start position below makes these
     // visible to the audit subscription.
     for id in 1..=2u64 {
-        let payload = serde_json::to_vec(&Job { id })?;
-        ingress.raw(&payload).to("audit").publish().await?;
+        ingress.message(&Job { id }).to("audit").publish().await?;
     }
 
     // --8<-- [start:mount]
@@ -104,8 +113,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The jobs stream hits a poison marker at the second position; the handler's own seek
     // jumps it to the fourth, so id 3 is never processed.
     for id in [1, 999, 3, 4] {
-        let payload = serde_json::to_vec(&Job { id })?;
-        ingress.raw(&payload).to("jobs").publish().await?;
+        ingress.message(&Job { id }).to("jobs").publish().await?;
     }
     // A demo-only pause so the dispatch loops drain; a real service reacts to its own signals.
     sleep(Duration::from_millis(100)).await;

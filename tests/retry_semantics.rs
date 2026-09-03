@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, order_bytes};
+use common::Order;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::subscriber;
@@ -61,7 +61,7 @@ async fn retry_after_delay_is_honored_by_the_dispatcher() {
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("delayed")
         .publish()
         .await
@@ -128,7 +128,7 @@ async fn retry_completes_inside_a_worker_pool() {
 
     for id in 1..=4u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("pool-retry")
             .publish()
             .await
@@ -195,7 +195,7 @@ async fn retry_completes_inside_keyed_lanes() {
             let mut headers = ruststream::HeaderMap::new();
             headers.insert("partition-key", key);
             publisher
-                .raw(&order_bytes(id))
+                .message(&Order { id })
                 .with_headers(headers)
                 .to("lane-retry")
                 .publish()
@@ -255,7 +255,7 @@ async fn batch_pool_overlaps_batches() {
     // messages arrive in distinct batches - which a sequential batch loop could never hold in
     // flight simultaneously.
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("overlap")
         .publish()
         .await
@@ -269,7 +269,7 @@ async fn batch_pool_overlaps_batches() {
     assert!(first_held.is_ok(), "the first batch never reached the pool");
 
     publisher
-        .raw(&order_bytes(2))
+        .message(&Order { id: 2 })
         .to("overlap")
         .publish()
         .await

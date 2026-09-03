@@ -22,7 +22,7 @@ use ruststream::testing::{TestApp, expect_published};
 use ruststream::{ConnectedBroker, subscriber};
 use tokio::sync::{Mutex, Notify};
 
-use common::{Order, connected};
+use common::{Order, Wire, connected};
 
 #[subscriber("otel.orders")]
 async fn consume(_order: &Order) -> HandlerOutcome {
@@ -227,7 +227,7 @@ async fn an_undecodable_payload_bumps_the_decode_failure_counter() {
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("otel.orders")
         .publish()
         .await

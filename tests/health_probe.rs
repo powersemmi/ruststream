@@ -9,7 +9,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Order, order_bytes};
+use common::Order;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
     AppInfo, HandlerOutcome, HealthState, PublishExt, RustStream, RustStreamError,
@@ -59,7 +59,7 @@ async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
     let mut health = running.health();
 
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("health.boom")
         .publish()
         .await
@@ -101,7 +101,7 @@ async fn probe_taken_after_the_fail_fast_still_sees_failed() {
     // Deliberately no probe yet: the transition must be stored even with zero subscribers,
     // because in the real deployment the healthz task may come up after the failure.
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("health.boom")
         .publish()
         .await

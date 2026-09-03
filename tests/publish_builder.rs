@@ -13,7 +13,7 @@ use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, RustStream, 
 use ruststream::testing::{TestApp, TestableBroker};
 use ruststream::{
     Broker, HeaderMap, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, Publisher,
-    Transaction, subscriber,
+    Serialized, Transaction, subscriber,
 };
 use serde::{Deserialize, Serialize};
 
@@ -55,15 +55,36 @@ struct OrderArchived {
     id: u64,
 }
 
+/// A message carrying its own bytes: the wire a call site reaches for when the payload is not a
+/// model. `Serialized` is what says the bytes already are the payload, so no codec runs on them
+/// and the builder offers no codec position for it.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
+
+impl Wire {
+    /// The wire form of `bytes`, for the call sites that hold a literal.
+    fn of(bytes: impl AsRef<[u8]>) -> Self {
+        Self(bytes.as_ref().to_vec())
+    }
+}
+
 #[derive(OutSlot)]
 #[publishes(ChunkDone, Progress, OrderPlaced, OrderArchived)]
 struct Events;
 
-/// Every destination form, through one slot.
+/// The self-carrying wire goes out through a slot of its own, so the models keep the inline
+/// declaration form at its widest.
+#[derive(OutSlot)]
+#[publishes(Wire)]
+struct Frames;
+
+/// Every destination form, through one slot - plus the serialized wire through a second, which
+/// is also what keeps the four-element inline declaration exercised.
 #[subscriber("jobs.in")]
 async fn convert(
     job: &Job,
     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress, OrderPlaced, OrderArchived)>,
+    Out(frames): Out<impl Publisher, Frames, Wire>,
 ) -> HandlerOutcome {
     // Fixed name: nothing to say about the destination.
     if out
@@ -109,11 +130,11 @@ async fn convert(
     {
         return HandlerOutcome::retry();
     }
-    // Bytes: the same shape without a codec position.
+    // A self-carrying model: the same shape without a codec position.
     let mut headers = HeaderMap::new();
     headers.insert("source", "jobs.in");
-    if out
-        .raw(b"frame")
+    if frames
+        .message(&Wire::of(b"frame"))
         .with_headers(headers)
         .to("chunks.raw")
         .publish()
@@ -129,7 +150,10 @@ async fn convert(
 async fn every_destination_form_resolves_through_one_builder() {
     let app =
         RustStream::new(AppInfo::new("builder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(convert).out(Events, MemoryPublish).build();
+            b.include(convert)
+                .out(Events, MemoryPublish)
+                .out(Frames, MemoryPublish)
+                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -160,8 +184,8 @@ async fn every_destination_form_resolves_through_one_builder() {
         .assert_called_once();
     assert_eq!(done.messages()[0].headers().get_str("task_id"), Some("3"));
 
-    // The byte path carries its map as it is.
-    let raw = tb.out::<Events>();
+    // The serialized wire carries its map as it is.
+    let raw = tb.out::<Frames>();
     let framed = raw
         .messages()
         .iter()
@@ -192,11 +216,11 @@ async fn a_bare_publisher_publishes_through_the_builder() {
         .await
         .expect("call-level codec and a computed name");
     publisher
-        .raw(b"bytes")
+        .message(&Wire::of(b"bytes"))
         .to("audit")
         .publish()
         .await
-        .expect("bytes");
+        .expect("carried bytes");
 
     assert_eq!(connected.published("chunks.progress").len(), 1);
     assert_eq!(connected.published("orders.archived").len(), 1);
@@ -228,19 +252,19 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
         .await
         .expect("in transaction");
     scope
-        .raw(b"trace")
+        .message(&Wire::of(b"trace"))
         .to("audit.trail")
         .publish()
         .await
-        .expect("bytes in transaction");
+        .expect("carried bytes in transaction");
     scope.commit().await.expect("commit");
 
     publisher
-        .raw(b"wire")
+        .message(&Wire::of(b"wire"))
         .to("audit.wire")
         .publish()
         .await
-        .expect("bytes through the typed publisher");
+        .expect("carried bytes through the typed publisher");
 
     // The owned transaction kind.
     let mut owned = publisher.transaction().await.expect("owned transaction");
@@ -251,11 +275,11 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
         .await
         .expect("in owned transaction");
     owned
-        .raw(b"ledger")
+        .message(&Wire::of(b"ledger"))
         .to("audit.ledger")
         .publish()
         .await
-        .expect("bytes in owned transaction");
+        .expect("carried bytes in owned transaction");
     owned.commit().await.expect("commit");
 
     assert_eq!(connected.published("chunks.progress").len(), 2);
@@ -406,7 +430,7 @@ async fn a_publisher_without_a_base_sends_only_the_call_sites_headers() {
     headers.insert("x-trace", "call");
     connected
         .publisher()
-        .raw(b"bytes")
+        .message(&Wire::of(b"bytes"))
         .to("audit")
         .with_headers(headers)
         .publish()
@@ -414,7 +438,7 @@ async fn a_publisher_without_a_base_sends_only_the_call_sites_headers() {
         .expect("map headers without a base");
     connected
         .publisher()
-        .raw(b"bytes")
+        .message(&Wire::of(b"bytes"))
         .to("audit.bare")
         .publish()
         .await
@@ -518,7 +542,7 @@ async fn a_transaction_carries_its_own_base_under_the_call_site() {
         .expect("the base alone, buffered");
     let mut headers = HeaderMap::new();
     headers.insert("x-trace", "call");
-    txn.raw(b"ledger")
+    txn.message(&Wire::of(b"ledger"))
         .to("audit.ledger")
         .with_headers(headers)
         .publish()

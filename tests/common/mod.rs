@@ -72,8 +72,37 @@ pub(crate) fn payload(id: u64) -> Vec<u8> {
     serde_json::to_vec(&Event { id }).expect("an event serializes")
 }
 
+/// Bytes published as themselves: the named wire a suite injects an arbitrary payload through.
+///
+/// Publishing is typed, so bytes that are not a model of their own still travel as a declared
+/// type; `#[derive(Serialized)]` is what says "these bytes are already the payload", and no
+/// codec runs on them. Suites use it for the two payloads that are deliberately not a model:
+/// what a raw (`&[u8]` or `Deserialized`) subscriber is meant to receive, and what a decode
+/// policy is meant to reject. It declares no name - the subject differs per suite, so the call
+/// site keeps naming it with `to(..)`.
+#[cfg_attr(
+    feature = "macros",
+    derive(ruststream::Outgoing, ruststream::Serialized)
+)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct Wire(pub(crate) Vec<u8>);
+
+#[allow(dead_code)]
+impl Wire {
+    /// The wire form of `bytes`, for the call sites that hold a slice or a literal.
+    pub(crate) fn of(bytes: impl AsRef<[u8]>) -> Self {
+        Self(bytes.as_ref().to_vec())
+    }
+}
+
 /// The request/response pair of the middleware suites, whose subject is what runs around a
 /// handler rather than what the handler carries.
+///
+/// The request half rides the `Outgoing` derive like [`Order`]: a suite drives these middleware
+/// through it, so the request is published, and it declares no name because the subject differs
+/// per suite.
+#[cfg_attr(feature = "macros", derive(ruststream::Outgoing))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Req {

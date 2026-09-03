@@ -12,7 +12,7 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, FailurePolicy, HandlerOutcome, Out, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
 
 static WORKERS: usize = 2;
@@ -38,6 +38,11 @@ struct Progress {
 #[derive(OutSlot)]
 #[publishes(Progress)]
 struct Events;
+
+/// Bytes injected as themselves: the undecodable payload the const decode policy is meant to
+/// skip. It declares no name, so the injection names its subject.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
 
 #[subscriber(
     "params.pings",
@@ -79,7 +84,7 @@ async fn clause_values_come_from_constants_and_statics() {
     // The const decode policy applies: an undecodable payload is acked past (Skip), body never
     // runs.
     broker
-        .raw(b"\x00")
+        .message(&Wire(b"\x00".to_vec()))
         .to("params.pings")
         .publish()
         .await

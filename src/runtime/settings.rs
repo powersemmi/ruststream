@@ -225,6 +225,14 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
 /// decoded input, a byte input asks for no codec at all, and `()` (nothing named) falls back to
 /// the surface's own resolution. Machinery behind `include`; the `()`-vs-named split mirrors
 /// the surface-codec fallback pattern of [`InputCodec`].
+#[diagnostic::on_unimplemented(
+    message = "no codec is available to decode this subscriber's input",
+    label = "nothing in this chain names a codec",
+    note = "enable a codec feature on `ruststream` (`json`, `cbor` or `msgpack`), name one for \
+            the scope (`with_broker_codec(broker, JsonCodec, |b| ..)`) or the registration \
+            (`.codec(JsonCodec)`), or give the input type its own decoding with \
+            `#[derive(Deserialized)]` so no codec is needed"
+)]
 #[doc(hidden)]
 pub trait DefinitionInputCodec<Input, Surface> {
     /// The resolved codec.

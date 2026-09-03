@@ -8,7 +8,7 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Order, order_bytes, wait_for};
+use common::{Order, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::runtime::{
@@ -16,17 +16,16 @@ use ruststream::runtime::{
 };
 use ruststream::{Publisher, subscriber};
 
-/// Publishes `payload` once to each topic (the app is already started, so the subscriptions are
+/// Publishes an order once to each topic (the app is already started, so the subscriptions are
 /// open and every publish lands), then waits until every counter is non-zero.
 async fn publish_and_await_all(
     publisher: &impl Publisher,
     topics: &[&str],
     counters: &[&AtomicUsize],
 ) {
-    let payload = order_bytes(1);
     for topic in topics {
         publisher
-            .raw(&payload)
+            .message(&Order { id: 1 })
             .to(*topic)
             .publish()
             .await

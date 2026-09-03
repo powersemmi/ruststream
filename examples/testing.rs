@@ -21,7 +21,7 @@ struct Order {
     id: u64,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
 struct Receipt {
     order_id: u64,
 }
@@ -38,11 +38,10 @@ async fn handle_order(
     ctx: &mut ruststream::runtime::Context<'_, (), AppState>,
 ) -> HandlerOutcome {
     let receipt = Receipt { order_id: order.id };
-    let payload = serde_json::to_vec(&receipt).expect("serialize");
     if ctx
         .state()
         .receipts
-        .raw(&payload)
+        .message(&receipt)
         .to("receipts")
         .publish()
         .await

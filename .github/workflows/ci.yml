@@ -124,14 +124,21 @@ jobs:
 
       # The tests themselves on a reduced feature set. Everything above either builds the tests
       # with every feature on, or builds the library alone without them - so a test that reached
-      # for a gated item, or a mount that demanded a codec the byte path never uses, compiled
-      # nowhere and rotted unnoticed. The byte path is the one that must hold with no codec at
-      # all: `raw` in, `publish_raw` out, on both the scope and the router.
+      # for a gated item, or a mount that demanded a codec the self-carrying lanes never use,
+      # compiled nowhere and rotted unnoticed. Those lanes are what must hold with no codec at
+      # all: a `Deserialized` input in, a `Serialized` value out, through the same typed publish
+      # entry a service always writes. `ui_codec_free` pins the errors the other side of that
+      # line produces, which exist only where no codec resolves.
       - name: cargo test (reduced features)
         if: matrix.toolchain == 'stable'
+        env:
+          RUN_UI_TESTS: '1'
         run: |
           cargo test --locked --no-default-features --lib
+          cargo check --locked --workspace --no-default-features --features testing,memory,macros
           cargo test --locked --no-default-features --features macros,memory,testing --test raw_subscriber
+          cargo test --locked --no-default-features --features macros,memory,testing --test codec_free_lanes
+          cargo test --locked --no-default-features --features macros,memory,testing --test ui_codec_free
 
       # All-features hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it.

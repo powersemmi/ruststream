@@ -91,11 +91,10 @@ async fn delivery_context_propagates_to_the_reply() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Req { n: 7 }).expect("encode");
     let mut headers = HeaderMap::new();
     headers.insert("correlation-id", "trace-abc");
     ingress_pub
-        .raw(&payload)
+        .message(&Req { n: 7 })
         .with_headers(headers)
         .to("in")
         .publish()
@@ -152,9 +151,8 @@ async fn batch_layer_runs_only_on_batched_replies() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
     ingress_pub
-        .raw(&payload)
+        .message(&Req { n: 1 })
         .to("batch-in")
         .publish()
         .await
@@ -220,9 +218,8 @@ async fn dyn_stack_runs_a_runtime_built_middleware() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Req { n: 3 }).expect("encode");
     ingress_pub
-        .raw(&payload)
+        .message(&Req { n: 3 })
         .to("dyn-in")
         .publish()
         .await
@@ -311,9 +308,8 @@ async fn publish_layer_last_added_runs_outermost() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Req { n: 1 }).expect("encode");
     ingress_pub
-        .raw(&payload)
+        .message(&Req { n: 1 })
         .to("ord-in")
         .publish()
         .await

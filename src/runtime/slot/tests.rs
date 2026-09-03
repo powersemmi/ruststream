@@ -7,8 +7,6 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use super::*;
-#[cfg(feature = "memory")]
-use crate::runtime::PublishExt;
 use crate::{FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeaders};
 
 #[derive(Debug)]
@@ -129,9 +127,7 @@ async fn a_slot_publisher_delegates_the_transaction_protocol() {
     let slot = SlotPublisher::<_, Events>::new(broker.publisher());
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.raw(b"staged")
-        .to("slots.ledger")
-        .publish()
+    slot.publish(OutgoingMessage::new("slots.ledger", b"staged"))
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");
@@ -173,9 +169,7 @@ async fn a_slot_entry_delegates_request_reply() {
             .expect("a request carries reply-to")
             .to_owned();
         responder
-            .raw(msg.payload())
-            .to(reply_to)
-            .publish()
+            .publish(OutgoingMessage::new(&reply_to, msg.payload()))
             .await
             .expect("reply publish failed");
         msg.ack().await.expect("ack failed");
@@ -210,9 +204,7 @@ async fn a_slot_entry_delegates_the_transaction_protocol() {
     let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec);
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.raw(b"staged")
-        .to("slots.ledger")
-        .publish()
+    slot.publish(OutgoingMessage::new("slots.ledger", b"staged"))
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");

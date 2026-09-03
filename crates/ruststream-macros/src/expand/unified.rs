@@ -420,6 +420,14 @@ struct VerdictPieces {
     glue: TokenStream2,
 }
 
+/// The return type the handler declared, with an omitted one spelled `()`.
+fn declared_output(func: &ItemFn) -> TokenStream2 {
+    match &func.sig.output {
+        syn::ReturnType::Type(_, ty) => quote!(#ty),
+        syn::ReturnType::Default => quote!(()),
+    }
+}
+
 /// Computes the verdict conversion of one handler: the fixed `Result` spelling per input family
 /// and reply, with the user's whole return vocabulary lowered through the `IntoOutcome` /
 /// page-verdict seams.
@@ -430,32 +438,28 @@ fn verdict_pieces(
     paged: bool,
 ) -> VerdictPieces {
     let outcome = quote!(::ruststream::runtime::HandlerOutcome);
+    // Pin the body's type to the declared return type before the `IntoOutcome` conversion: the
+    // seam has several impls, so neither an open-ended tail like `.collect()` nor a bare
+    // `Ok(())` (whose error type only the signature names) can infer through the conversion
+    // alone. Ascribing it makes the body infer exactly as it does in a plain function.
+    let outcome_ty = declared_output(func);
     if paged {
         let page_len = quote!(let __rs_page_len = __rs_input.len(););
         match reply {
-            ReplyPlan::None => {
-                // Pin the body's type to the declared return type before the conversion: the
-                // seam has several impls, so an open-ended tail like `.collect()` cannot infer
-                // through the conversion alone.
-                let outcome_ty = match &func.sig.output {
-                    syn::ReturnType::Type(_, ty) => quote!(#ty),
-                    syn::ReturnType::Default => quote!(()),
-                };
-                VerdictPieces {
-                    verdict_ty: quote!(::core::result::Result<(), ::std::vec::Vec<#outcome>>),
-                    page_len,
-                    reject: quote! {
-                        return ::ruststream::runtime::page_verdict(
-                            ::core::convert::Into::<#outcome>::into(__rs_err),
-                            __rs_page_len,
-                        )
-                    },
-                    glue: quote! {
-                        let __rs_outcome: #outcome_ty = (async move #block).await;
-                        ::ruststream::runtime::page_verdict(__rs_outcome, __rs_page_len)
-                    },
-                }
-            }
+            ReplyPlan::None => VerdictPieces {
+                verdict_ty: quote!(::core::result::Result<(), ::std::vec::Vec<#outcome>>),
+                page_len,
+                reject: quote! {
+                    return ::ruststream::runtime::page_verdict(
+                        ::core::convert::Into::<#outcome>::into(__rs_err),
+                        __rs_page_len,
+                    )
+                },
+                glue: quote! {
+                    let __rs_outcome: #outcome_ty = (async move #block).await;
+                    ::ruststream::runtime::page_verdict(__rs_outcome, __rs_page_len)
+                },
+            },
             ReplyPlan::Publish { ty, body, .. } => VerdictPieces {
                 verdict_ty: quote! {
                     ::core::result::Result<::std::vec::Vec<#ty>, ::std::vec::Vec<#outcome>>
@@ -490,9 +494,10 @@ fn verdict_pieces(
                 // `Err` carries the settlement whatever its status: an ack settles as an ack,
                 // and the `Ok` arm stays the manual path's spelling.
                 glue: quote! {
-                    ::core::result::Result::Err(::ruststream::runtime::IntoOutcome::into_outcome(
-                        (async move #block).await,
-                    ))
+                    let __rs_outcome: #outcome_ty = (async move #block).await;
+                    ::core::result::Result::Err(
+                        ::ruststream::runtime::IntoOutcome::into_outcome(__rs_outcome),
+                    )
                 },
             },
             ReplyPlan::Publish { ty, body, .. } => VerdictPieces {

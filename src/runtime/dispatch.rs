@@ -26,7 +26,7 @@ use super::handler::{Handler, HandlerResult};
 use super::publish::raw_of;
 use super::publisher_registry::{ErasedPublisher, ErasedSink};
 #[cfg(feature = "testing")]
-use crate::testing::coordinator::{Record, TestHooks, in_slot_scope};
+use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in_harness_scope};
 
 /// Header carrying the framework's deferred-republish retry count.
 ///
@@ -591,8 +591,8 @@ async fn dispatch<H, M, C, St>(
     // Under the harness, the invocation runs in a task-local slot scope so publishes made
     // through injected `Out` publishers are attributed to their slot.
     #[cfg(feature = "testing")]
-    let result = in_slot_scope(
-        delivery.hooks.coordinator().cloned(),
+    let result = in_harness_scope(
+        harness_scope(delivery),
         AssertUnwindSafe(handler.handle(&msg, &mut ctx)).catch_unwind(),
     )
     .await;
@@ -645,8 +645,10 @@ async fn dispatch<H, M, C, St>(
         coordinator.record(Record {
             scope_id: delivery.scope_id,
             name: name.to_owned(),
-            raw: Bytes::copy_from_slice(msg.payload()),
-            settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
+            deliveries: vec![Delivered {
+                raw: Bytes::copy_from_slice(msg.payload()),
+                settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
+            }],
             panicked,
             decode_failed: ctx.took_decode_failed(),
         });
@@ -699,10 +701,18 @@ async fn run_batch<H, M, C, St>(
     let mut ctx = Context::new(name, &empty, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_decode_policy(failure.policies.decode);
-    // See `dispatch`: the harness's slot scope attributes `Out` publishes to their slot.
+    // See `dispatch`: the harness scope attributes `Out` publishes to their slot, and lets the
+    // batch settle path record the page it applied.
+    // A panicking page settles nothing, so its payloads are captured here (the handler owns the
+    // deliveries and a panic consumes them) to record the call the settle path never reached.
     #[cfg(feature = "testing")]
-    let result = in_slot_scope(
-        delivery.hooks.coordinator().cloned(),
+    let page: Vec<Bytes> = batch
+        .iter()
+        .map(|msg| Bytes::copy_from_slice(msg.payload()))
+        .collect();
+    #[cfg(feature = "testing")]
+    let result = in_harness_scope(
+        harness_scope(delivery),
         AssertUnwindSafe(handler.handle_batch(batch, &mut ctx)).catch_unwind(),
     )
     .await;
@@ -724,6 +734,19 @@ async fn run_batch<H, M, C, St>(
                 panic = %reason,
                 "batch handler panicked",
             );
+            #[cfg(feature = "testing")]
+            if let Some(coordinator) = delivery.hooks.coordinator() {
+                coordinator.record(Record {
+                    scope_id: delivery.scope_id,
+                    name: name.to_owned(),
+                    deliveries: page
+                        .into_iter()
+                        .map(|raw| Delivered { raw, settle: None })
+                        .collect(),
+                    panicked: true,
+                    decode_failed: false,
+                });
+            }
             if failure.policies.panic == FailurePolicy::FailFast {
                 failure
                     .shutdown
@@ -731,6 +754,17 @@ async fn run_batch<H, M, C, St>(
             }
         }
     }
+}
+
+/// The harness scope a delivery runs under, or `None` when no [`TestApp`](crate::testing::TestApp)
+/// is driving this app.
+#[cfg(feature = "testing")]
+fn harness_scope(delivery: &Delivery) -> Option<HarnessScope> {
+    delivery
+        .hooks
+        .coordinator()
+        .cloned()
+        .map(|coordinator| HarnessScope::new(coordinator, delivery.scope_id))
 }
 
 /// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it.

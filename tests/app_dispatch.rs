@@ -15,7 +15,11 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{BlanketLayer, Handler, HandlerMetadata, Input, Layer, SoloDeserialized};
+use ruststream::runtime::{
+    BlanketLayer, Handler, HandlerMetadata, Input, Layer, MessageWire, SerializedWire,
+    SoloDeserialized,
+};
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -44,8 +48,37 @@ struct Order {
     total: f64,
 }
 
-fn order_bytes(id: u32, total: f64) -> Vec<u8> {
-    serde_json::to_vec(&Order { id, total }).unwrap()
+// `#[derive(Outgoing)]` by hand, so the suites can inject an order through the publish builder
+// with the attribute off: no declared name, no header contract.
+impl OutgoingDestination for Order {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Order {
+    type Contract = NoHeaders;
+}
+
+/// The wire the suites inject their unstructured payloads through, with the impls
+/// `#[derive(Serialized)]` and `#[derive(Outgoing)]` write: the byte-level bodies below never
+/// look at the bytes, and the serialized wire is what keeps a codec off them.
+struct Wire(&'static [u8]);
+
+impl Serialized for Wire {
+    fn bytes(&self) -> &[u8] {
+        self.0
+    }
+}
+
+impl MessageWire for Wire {
+    type Wire = SerializedWire;
+}
+
+impl OutgoingDestination for Wire {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Wire {
+    type Contract = NoHeaders;
 }
 
 /// Counts the raw deliveries that reach it; the subject of the suites below is the wiring that
@@ -146,13 +179,13 @@ async fn app_dispatches_typed_messages() {
     let run = BackgroundRun::spawn(app);
 
     publisher
-        .raw(&order_bytes(7, 9.99))
+        .message(&Order { id: 7, total: 9.99 })
         .to("orders")
         .publish()
         .await
         .unwrap();
     publisher
-        .raw(&order_bytes(3, 1.0))
+        .message(&Order { id: 3, total: 1.0 })
         .to("orders")
         .publish()
         .await
@@ -204,7 +237,12 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    publisher.raw(b"go").to("work").publish().await.unwrap();
+    publisher
+        .message(&Wire(b"go"))
+        .to("work")
+        .publish()
+        .await
+        .unwrap();
 
     // Wait until the continuation is spawned and blocked (the message is already acked).
     parked.notified().await;
@@ -254,7 +292,12 @@ async fn shutdown_timeout_abandons_stuck_continuations() {
     let shutdown_signal = Arc::clone(&shutdown);
     let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
 
-    publisher.raw(b"go").to("work").publish().await.unwrap();
+    publisher
+        .message(&Wire(b"go"))
+        .to("work")
+        .publish()
+        .await
+        .unwrap();
     parked.notified().await;
 
     shutdown.notify_one();
@@ -362,7 +405,12 @@ async fn global_layer_wraps_handlers() {
 
     let run = BackgroundRun::spawn(app);
 
-    publisher.raw(b"x").to("orders").publish().await.unwrap();
+    publisher
+        .message(&Wire(b"x"))
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
 
     wait_for(
         || handler_hits.load(Ordering::SeqCst) == 1 && layer_hits.load(Ordering::SeqCst) == 1,
@@ -384,7 +432,12 @@ impl<'p> Handle<Frame<'p>> for Bridge {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        let _ = self.0.raw(b"reply").to("responses").publish().await;
+        let _ = self
+            .0
+            .message(&Wire(b"reply"))
+            .to("responses")
+            .publish()
+            .await;
         Ok(())
     }
 }
@@ -425,7 +478,11 @@ async fn cross_broker_publish_via_captured_publisher() {
     // ingress "orders" subscribes inside run() (deferred); retry until the bridge fires.
     let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let _ = ingress_pub.raw(b"x").to("orders").publish().await;
+            let _ = ingress_pub
+                .message(&Wire(b"x"))
+                .to("orders")
+                .publish()
+                .await;
             tokio::task::yield_now().await;
             if received.load(Ordering::SeqCst) >= 1 {
                 break;
@@ -480,7 +537,12 @@ async fn handler_reads_context_topic_and_state() {
 
     let run = BackgroundRun::spawn(app);
 
-    publisher.raw(b"x").to("orders").publish().await.unwrap();
+    publisher
+        .message(&Wire(b"x"))
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").is_some(),
@@ -587,7 +649,11 @@ fn app_records_handler_metadata() {
 async fn wait_for_published(publisher: &impl Publisher, seen: &AtomicU32, timeout: Duration) {
     let result = tokio::time::timeout(timeout, async {
         loop {
-            let _ = publisher.raw(b"ping").to("events").publish().await;
+            let _ = publisher
+                .message(&Wire(b"ping"))
+                .to("events")
+                .publish()
+                .await;
             // Yield once so the handler task has a chance to run before checking.
             tokio::task::yield_now().await;
             if seen.load(Ordering::SeqCst) >= 1 {

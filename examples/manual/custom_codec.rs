@@ -13,6 +13,7 @@ use bytes::BytesMut;
 use ruststream::codec::{CborCodec, Codec, CodecError, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -89,6 +90,16 @@ struct Receipt {
     id: u64,
 }
 
+// `#[derive(Outgoing)]` with no `name`, by hand: the destination form is the one that leaves the
+// name to the call, so the publish builder offers `to(..)`.
+impl OutgoingDestination for Receipt {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Receipt {
+    type Contract = NoHeaders;
+}
+
 /// The definition value `#[subscriber("orders")]` would have minted.
 struct Receive;
 
@@ -121,9 +132,9 @@ impl Handle<Order> for Audit {
 
 /// The replying handler. `publish("receipts")` is a reply clause on the definition, so without it
 /// the handler owns both halves of the reply: the publisher it sends through and the codec that
-/// frames what it sends. Holding the codec rather than a `TypedPublisher` is what makes the
-/// framing reachable - the typed publish builder resolves its destination from an `Outgoing`
-/// declaration, which is a derive the macro-free path does not have.
+/// frames what it sends. Holding the codec rather than a `TypedPublisher` is what keeps the
+/// framing per handler - the publish names it at the call, the most specific rung of the codec
+/// ladder.
 struct Bill {
     receipts: MemoryPublisher,
     codec: Envelope<JsonCodec>,
@@ -136,12 +147,10 @@ impl Handle<Order> for Bill {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        let Ok(payload) = self.codec.encode(&Receipt { id: order.id }) else {
-            return Err(HandlerOutcome::drop());
-        };
         if self
             .receipts
-            .raw(&payload)
+            .message(&Receipt { id: order.id })
+            .with_codec(self.codec)
             .to("receipts")
             .publish()
             .await

@@ -214,17 +214,22 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
+/// # #[cfg(all(feature = "memory", feature = "macros"))]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// use futures::StreamExt;
 /// use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
 /// use ruststream::runtime::PublishExt;
-/// use ruststream::{Broker, IncomingMessage, StartAt};
+/// use ruststream::{Broker, IncomingMessage, Outgoing, Serialized, StartAt};
 /// use ruststream::{Subscriber, SubscriptionSource};
+///
+/// // An audit entry is opaque bytes, so it declares itself a serialized type and no codec
+/// // runs on it.
+/// #[derive(Outgoing, Serialized)]
+/// struct Entry(Vec<u8>);
 ///
 /// let connected = MemoryBroker::new().connect().await?;
 /// let publisher = connected.publisher();
-/// publisher.raw(b"one").to("audit").publish().await?;
+/// publisher.message(&Entry(b"one".to_vec())).to("audit").publish().await?;
 ///
 /// // A fresh subscription opened at the start of the log replays the earlier publish.
 /// let mut subscriber = StartAt::new(MemorySource::new("audit"), MemoryPosition::start())

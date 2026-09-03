@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{Order, order_bytes, wait_for};
+use common::{Order, Wire, order_bytes, wait_for};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -82,33 +82,36 @@ async fn bpd(orders: &[Order]) -> Vec<u32> {
     orders.iter().map(|o| o.id).collect()
 }
 
-/// Spawns `run_until(pending)` and republishes `payload` to `topic` (the macro subscription only
-/// opens after connect) until the service tears itself down, then returns the run result.
+/// Spawns `run_until(pending)` and publishes `poison` to `topic` until the service tears itself
+/// down, then returns the run result.
+///
+/// The poison travels as a wire: what tears the service down differs per caller - a payload the
+/// handler panics on, or one the decoder rejects - so the shape they share is the bytes.
 async fn run_until_torn_down(
     app: RustStream,
     publisher: impl Publisher,
     topic: &str,
-    payload: Vec<u8>,
+    poison: &Wire,
 ) -> Result<(), RustStreamError> {
     let running = app.start().await.expect("startup failed");
     // `start` resolves with the subscription open, so one poison message is enough.
-    let _ = publisher.raw(&payload).to(topic).publish().await;
+    let _ = publisher.message(poison).to(topic).publish().await;
     tokio::time::timeout(Duration::from_secs(5), running.stopping())
         .await
         .expect("service did not tear down within the deadline");
     running.shutdown().await
 }
 
-/// Publishes `payload` to `topic` once (`start` resolves with subscriptions open) and waits until
+/// Publishes `order` to `topic` once (`start` resolves with subscriptions open) and waits until
 /// `counter` advances, proving the handler ran.
 async fn drive_until_seen(
     publisher: &impl Publisher,
     topic: &str,
-    payload: &[u8],
+    order: &Order,
     counter: &AtomicUsize,
 ) {
     let start = counter.load(Ordering::SeqCst);
-    let _ = publisher.raw(payload).to(topic).publish().await;
+    let _ = publisher.message(order).to(topic).publish().await;
     wait_for(
         || counter.load(Ordering::SeqCst) > start,
         Duration::from_secs(5),
@@ -124,7 +127,7 @@ async fn handler_panic_fails_fast_and_run_returns_err() {
         b.include(boom);
     });
 
-    let result = run_until_torn_down(app, publisher, "boom", order_bytes(1)).await;
+    let result = run_until_torn_down(app, publisher, "boom", &Wire::of(order_bytes(1))).await;
     assert!(
         matches!(result, Err(RustStreamError::Dispatch(_))),
         "a fail-fast panic must make run() return a dispatch error, got {result:?}",
@@ -141,18 +144,18 @@ async fn panic_drop_keeps_the_subscriber_consuming() {
 
     let running = app.start().await.expect("startup failed");
 
-    drive_until_seen(&publisher, "dropping", &order_bytes(7), &DROP_DONE).await;
+    drive_until_seen(&publisher, "dropping", &Order { id: 7 }, &DROP_DONE).await;
     let before = DROP_DONE.load(Ordering::SeqCst);
 
     // A poison order panics (dropped), then a good order must still be processed.
     publisher
-        .raw(&order_bytes(0))
+        .message(&Order { id: 0 })
         .to("dropping")
         .publish()
         .await
         .unwrap();
     publisher
-        .raw(&order_bytes(9))
+        .message(&Order { id: 9 })
         .to("dropping")
         .publish()
         .await
@@ -181,7 +184,7 @@ async fn decode_fail_fast_returns_err() {
         b.include(decode_ff);
     });
 
-    let result = run_until_torn_down(app, publisher, "decodeff", b"not json".to_vec()).await;
+    let result = run_until_torn_down(app, publisher, "decodeff", &Wire::of(b"not json")).await;
     assert!(
         matches!(result, Err(RustStreamError::Dispatch(_))),
         "a fail-fast decode failure must make run() return a dispatch error, got {result:?}",
@@ -198,18 +201,18 @@ async fn decode_skip_acks_past_bad_input_and_continues() {
 
     let running = app.start().await.expect("startup failed");
 
-    drive_until_seen(&publisher, "skipping", &order_bytes(1), &SKIP_DONE).await;
+    drive_until_seen(&publisher, "skipping", &Order { id: 1 }, &SKIP_DONE).await;
     let before = SKIP_DONE.load(Ordering::SeqCst);
 
     // A malformed payload is skipped (acked past), then a good order is still processed.
     publisher
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("skipping")
         .publish()
         .await
         .unwrap();
     publisher
-        .raw(&order_bytes(2))
+        .message(&Order { id: 2 })
         .to("skipping")
         .publish()
         .await
@@ -242,16 +245,16 @@ async fn publishing_decode_failure_is_dropped_and_continues() {
 
     let running = app.start().await.expect("startup failed");
 
-    drive_until_seen(&publisher, "rpcd", &order_bytes(1), &RPC_DONE).await;
+    drive_until_seen(&publisher, "rpcd", &Order { id: 1 }, &RPC_DONE).await;
     let before = RPC_DONE.load(Ordering::SeqCst);
     publisher
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("rpcd")
         .publish()
         .await
         .unwrap();
     publisher
-        .raw(&order_bytes(2))
+        .message(&Order { id: 2 })
         .to("rpcd")
         .publish()
         .await
@@ -281,11 +284,16 @@ async fn batch_decode_failure_drops_the_bad_element() {
 
     let running = app.start().await.expect("startup failed");
 
-    drive_until_seen(&publisher, "bd", &order_bytes(1), &BATCH_DONE).await;
+    drive_until_seen(&publisher, "bd", &Order { id: 1 }, &BATCH_DONE).await;
     let before = BATCH_DONE.load(Ordering::SeqCst);
-    publisher.raw(b"not json").to("bd").publish().await.unwrap();
     publisher
-        .raw(&order_bytes(2))
+        .message(&Wire::of(b"not json"))
+        .to("bd")
+        .publish()
+        .await
+        .unwrap();
+    publisher
+        .message(&Order { id: 2 })
         .to("bd")
         .publish()
         .await
@@ -317,16 +325,16 @@ async fn batch_publishing_decode_failure_is_dropped() {
 
     let running = app.start().await.expect("startup failed");
 
-    drive_until_seen(&publisher, "bpd", &order_bytes(1), &BATCH_REPLY_DONE).await;
+    drive_until_seen(&publisher, "bpd", &Order { id: 1 }, &BATCH_REPLY_DONE).await;
     let before = BATCH_REPLY_DONE.load(Ordering::SeqCst);
     publisher
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("bpd")
         .publish()
         .await
         .unwrap();
     publisher
-        .raw(&order_bytes(2))
+        .message(&Order { id: 2 })
         .to("bpd")
         .publish()
         .await
@@ -354,7 +362,7 @@ async fn batch_handler_panic_fails_fast() {
         b.include(batch_boom);
     });
 
-    let result = run_until_torn_down(app, publisher, "batchboom", order_bytes(1)).await;
+    let result = run_until_torn_down(app, publisher, "batchboom", &Wire::of(order_bytes(1))).await;
     assert!(
         matches!(result, Err(RustStreamError::Dispatch(_))),
         "a fail-fast batch panic must make run() return a dispatch error, got {result:?}",

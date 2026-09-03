@@ -10,9 +10,16 @@ check:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
     cargo check --workspace --all-targets --all-features
     cargo check --workspace --no-default-features
+    # The codec-free build. A codec is optional, so the self-carrying lanes
+    # (`Serialized` / `Deserialized`) and the typed publish entry point over them must stand with
+    # no codec feature at all; only encoding and decoding may demand one.
+    cargo check --workspace --no-default-features --features testing,memory,macros
 
 test:
     cargo test --workspace --all-features
+    # Runs the lanes that must not need a codec. Only this target is codec-free: the rest of
+    # `tests/` decodes JSON models and is compiled by the all-features run above.
+    cargo test --no-default-features --features testing,memory,macros --test codec_free_lanes
 
 fmt:
     cargo fmt --all

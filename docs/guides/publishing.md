@@ -6,11 +6,14 @@ when it sends somewhere else, or to more than one place. Either way the handler 
 unconnected publisher: registrations carry publish *policies* (pure declarations), and the runtime
 pairs them with the connected broker at startup.
 
-An explicit publish is always the same builder, entered with `message(..)` for a value and
-`raw(..)` for bytes and finished with `publish()`. The wire follows the value's type: a
-`serde::Serialize` value encodes with the resolved codec, a `#[derive(Serialized)]` one leaves
-byte-for-byte with no codec on the path. Which positions the call site has to fill -
-the destination, the typed headers, the codec - is decided by what the message type declares, so
+An explicit publish is always the same builder, entered with `message(..)` and finished with
+`publish()`. There is one entry point because there is one kind of thing to publish: a value of a
+declared type. The wire follows that type: a `serde::Serialize` value encodes with the resolved
+codec, a `#[derive(Serialized)]` one leaves byte-for-byte with no codec on the path. Bytes a
+service already holds encoded are a `Serialized` type - naming them is what puts them in the
+generated document instead of leaving an anonymous payload on the channel. Which positions the
+call site has to fill - the destination, the typed headers, the codec - is decided by what the
+message type declares, so
 an under-specified publish is a compile error rather than a run-time surprise. `Publisher::publish`
 still exists underneath, but as the interface a broker crate implements (see
 [broker authors](../broker-authors/index.md)); a service writes the builder.
@@ -117,10 +120,9 @@ in-process test transport.
 
 `message(&value)` publishes on the value's own wire: a `Serialize` value encodes with the
 scope's codec (name another one for a single call with `.with_codec(..)`), a `Serialized` one
-leaves byte-for-byte. `raw(&bytes)` sends a payload the service already holds encoded and has no
-codec position at all. All of them fill the headers position with `.with_headers(..)` - the
-message's declared contract by reference (`&meta`), or an already-built `HeaderMap` by value -
-and all end in `publish()`.
+leaves byte-for-byte and has no codec position at all. Either fills the headers position with
+`.with_headers(..)` - the message's declared contract by reference (`&meta`), or an already-built
+`HeaderMap` by value - and either ends in `publish()`.
 
 The include site names the source; for the scope's own broker it is the publish policy:
 
@@ -185,8 +187,8 @@ The `Out` parameter's optional third position declares what this handler sends
 a marker's own `#[publishes(A, B)]` list says what the slot may publish, which is what the
 generated document reports for a handler that leaves the position unrestricted. A typed publish
 of a type the marker does not name is a compile error naming the missing membership. A marker
-listing nothing publishes nothing typed, and byte publishes through
-`raw(..)` are unaffected - bytes carry no message type to list. The implicit `DefaultSlot` of a
+listing nothing publishes nothing at all: every publish carries a message type, so every publish
+is subject to the list. The implicit `DefaultSlot` of a
 single unnamed `Out<impl Publisher>` has no declaration site to list types on, so it admits
 every declared message. See [typed headers](headers.md).
 
@@ -197,7 +199,6 @@ on the path. Everything else is the ordinary rules: give the type `#[derive(Outg
 it in `#[publishes(..)]` like any model, and it is documented under its own name (with no
 payload schema, by design), its declared destination resolves the publish, and the dictionary,
 a declared message set and the headers positions gate it exactly as they gate an encoded model.
-`raw(..)` remains for bytes that carry no message type at all.
 
 === "Macros"
 
@@ -457,10 +458,10 @@ after settling are compile errors, not runtime surprises:
 --8<-- "examples/publishing.rs:manual_transaction"
 ```
 
-The scope carries the same builder as every other surface (`scope.message(&value).publish()`,
-`scope.raw(&bytes).to("audit").publish()`), sending into the open transaction instead of straight
-to the broker. It encodes values with the publisher's codec and sends them directly: per-publisher
-transforms and the app-wide `publish_layer` middleware belong to the dispatch path (they read the
+The scope carries the same builder as every other surface (`scope.message(&value).publish()`),
+sending into the open transaction instead of straight to the broker. It encodes values with the
+publisher's codec and sends them directly: per-publisher transforms and the app-wide
+`publish_layer` middleware belong to the dispatch path (they read the
 originating delivery) and do not run here. Dropping an unsettled scope logs a warning and leaves
 the broker transaction open on that handle - always settle explicitly.
 

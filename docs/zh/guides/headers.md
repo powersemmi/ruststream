@@ -122,10 +122,9 @@
   `Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>` 要求所用策略的活发布者是
   事务性的，而声明过的那些发布会在它的事务内部完成。
 
-服务手上已经是编码后形态的载荷，或者无法承载声明的外部类型（比如裸的 `Vec<Frame>`），走的是字节
-入口：`out.raw(&bytes).to(dest).publish()`。它接受同样的消息头位置，且不需要编解码器；如果某个载荷
-值得拥有自己的声明，就用一个 `#[derive(Outgoing)]` 的 newtype 把它包起来。既 derive 了 `Outgoing`
-又 derive 了 [`Serialized`](subscribers.md#raw-subscribers) 的 newtype 是词典里的一等成员：它像任何
+服务手上已经是编码后形态的载荷，或者无法承载声明的外部类型（比如裸的 `Vec<Frame>`），包在一个既
+derive 了 `Outgoing` 又 derive 了 [`Serialized`](subscribers.md#raw-subscribers) 的 newtype 里发出。
+这样的 newtype 是词典里的一等成员：它像任何
 模型一样声明自己的目的地和消息头，并经由同一个类型化入口发布，写成 `out.message(&export)` -
 类型把这次发布引到序列化的那条线上，字节按原样发出，而每个消息头位置照常工作。
 

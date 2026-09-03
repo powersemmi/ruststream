@@ -40,8 +40,8 @@ pub trait Publisher: Send + Sync {
     /// This is the contract a broker implements, and the direct call a broker crate used on its
     /// own - without this one - is written against. Inside a service built on `ruststream` it is
     /// the layer underneath: what a handler sends goes through the publish builder
-    /// ([`message`](crate::runtime::PublishExt::message) / [`raw`](crate::runtime::PublishExt::raw)),
-    /// which resolves the destination, the codec and the headers and assembles the
+    /// ([`message`](crate::runtime::PublishExt::message)), which resolves the destination, the
+    /// codec and the headers and assembles the
     /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
     /// publish transform, a middleware, a post-settle hook.
     ///
@@ -76,11 +76,11 @@ pub trait Publisher: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "memory")]
+    /// # #[cfg(all(feature = "memory", feature = "macros"))]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::PublishExt;
-    /// use ruststream::{HeaderMap, OutgoingMessage, Publisher};
+    /// use ruststream::{HeaderMap, Outgoing, OutgoingMessage, Publisher, Serialized};
     ///
     /// // A handle that tags every message it sends, without touching the message itself.
     /// struct Tenanted<P>(P, HeaderMap);
@@ -97,10 +97,14 @@ pub trait Publisher: Send + Sync {
     ///     }
     /// }
     ///
+    /// // Bytes that are already the payload, so this example needs no codec feature.
+    /// #[derive(Outgoing, Serialized)]
+    /// struct Order(Vec<u8>);
+    ///
     /// let broker = MemoryBroker::new();
     /// let base = [("tenant", "acme")].into_iter().collect();
     /// let publisher = Tenanted(broker.publisher(), base);
-    /// publisher.raw(b"{}").to("orders").publish().await?;
+    /// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -130,16 +134,20 @@ pub trait Publisher: Send + Sync {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
+/// # #[cfg(all(feature = "memory", feature = "macros"))]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryPublish};
 /// use ruststream::runtime::PublishExt;
-/// use ruststream::{Broker, PublishPolicy};
+/// use ruststream::{Broker, Outgoing, PublishPolicy, Serialized};
+///
+/// // Bytes that are already the payload, so this example needs no codec feature.
+/// #[derive(Outgoing, Serialized)]
+/// struct Order(Vec<u8>);
 ///
 /// let policy = MemoryPublish; // no broker in sight
 /// let connected = MemoryBroker::new().connect().await?;
 /// let publisher = policy.pair(&connected).await?; // live only past this point
-/// publisher.raw(b"{}").to("orders").publish().await?;
+/// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
 /// # Ok(())
 /// # }
 /// ```

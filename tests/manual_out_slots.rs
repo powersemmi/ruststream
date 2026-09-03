@@ -50,6 +50,35 @@ impl MessageHeaders for Event {
     type Contract = NoHeaders;
 }
 
+/// Bytes published as themselves: what the transcoding body sends when the payload is a frame
+/// rather than a model. Written out the way `#[derive(Outgoing, Serialized)]` would write it,
+/// and declaring no name, so each call site keeps naming one.
+struct Wire(Vec<u8>);
+
+impl Wire {
+    fn of(bytes: impl AsRef<[u8]>) -> Self {
+        Self(bytes.as_ref().to_vec())
+    }
+}
+
+impl Serialized for Wire {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl MessageWire for Wire {
+    type Wire = SerializedWire;
+}
+
+impl OutgoingDestination for Wire {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Wire {
+    type Contract = NoHeaders;
+}
+
 // `#[derive(OutSlot)]` by hand: a unit struct plus the marker's name, which is what the startup
 // diagnostics and the harness's per-slot assertions address the slot by.
 struct Encoded;
@@ -63,6 +92,12 @@ struct Audit;
 impl OutSlot for Audit {
     const NAME: &'static str = "Audit";
 }
+
+// The `#[publishes(Wire)]` dictionary of both markers, by hand: the frame and its receipt are
+// all that leaves either slot.
+impl PublishedThrough<Encoded> for Wire {}
+
+impl PublishedThrough<Audit> for Wire {}
 
 /// Two slots in one handler; no broker publisher type appears anywhere in the body.
 struct Transcode;
@@ -86,7 +121,7 @@ where
         headers.insert("source", "slots.in");
         if outs
             .get(Encoded)
-            .raw(chunk.0)
+            .message(&Wire::of(chunk.0))
             .with_headers(headers)
             .to("slots.encoded")
             .publish()
@@ -98,7 +133,7 @@ where
         let receipt = chunk.0.len().to_be_bytes();
         if outs
             .get(Audit)
-            .raw(&receipt)
+            .message(&Wire::of(receipt))
             .to("slots.audit")
             .publish()
             .await
@@ -125,11 +160,11 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
 
     // --8<-- [start:slot_capture]
     tb.broker::<MemoryBroker>()
-        .raw(b"frame")
+        .message(&Wire::of(b"frame"))
         .to("slots.in")
         .publish()
         .await
-        .expect("raw publish");
+        .expect("publish");
 
     let encoded = tb.out::<Encoded>().assert_called_once().with_raw(b"frame");
     let recorded = &encoded.messages()[0];
@@ -221,11 +256,11 @@ async fn a_serialized_member_publishes_through_the_typed_entry() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .raw(b"chunk")
+        .message(&Wire::of(b"chunk"))
         .to("slots.chunks")
         .publish()
         .await
-        .expect("raw publish");
+        .expect("publish");
     tb.settle().await.expect("settle");
 
     tb.out::<Exports>().assert_called_once().with_raw(b"chunk");
@@ -295,8 +330,7 @@ where
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let (publisher, dest) = outs.get(Lanes).lane(event.id);
-        let payload = serde_json::to_vec(event).expect("serializable");
-        if publisher.raw(&payload).to(dest).publish().await.is_err() {
+        if publisher.message(event).to(dest).publish().await.is_err() {
             return Err(HandlerOutcome::retry());
         }
         Ok(())

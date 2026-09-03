@@ -116,7 +116,6 @@ async fn scope_codec_include_family_dispatches() {
     // `start` resolves only once subscriptions are open, so one publish per topic suffices.
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Order { id: 1 }).unwrap();
     let topics = [
         "sc-plain-on",
         "sc-batch",
@@ -132,7 +131,7 @@ async fn scope_codec_include_family_dispatches() {
 
     for topic in topics {
         driver
-            .raw(&payload)
+            .message(&Order { id: 1 })
             .to(topic)
             .publish()
             .await
@@ -207,13 +206,12 @@ async fn default_codec_include_family_dispatches() {
     // `start` resolves only once subscriptions are open, so one publish per topic suffices.
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Order { id: 1 }).unwrap();
     let topics = ["d-plain-on", "d-batch-on", "d-pin-on", "d-bpin-on"];
     let counters: [&AtomicUsize; 4] = [&D_PLAIN_ON, &D_BATCH_ON, &D_POUT_ON, &D_BPOUT_ON];
 
     for topic in topics {
         driver
-            .raw(&payload)
+            .message(&Order { id: 1 })
             .to(topic)
             .publish()
             .await

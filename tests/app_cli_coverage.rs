@@ -21,7 +21,7 @@ use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use ruststream::codec::{CborCodec, Codec};
+use ruststream::codec::CborCodec;
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
 };
@@ -40,7 +40,7 @@ use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
-use common::{Order, Receipt, order_bytes};
+use common::{Order, Receipt, Wire};
 
 /// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -199,7 +199,7 @@ async fn run_until_returns_when_the_service_tears_itself_down() {
     let run = tokio::spawn(app.run_until(pending()));
     FAIL_FAST_READY.notified().await;
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("cov.failfast")
         .publish()
         .await
@@ -337,7 +337,7 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
         .expect_err("the refused subscription must abort startup");
     assert!(matches!(err, RustStreamError::Subscribe(_)), "got: {err:?}");
     let refused = publisher
-        .raw(b"x")
+        .message(&Wire::of(b"x"))
         .to("cov.refused")
         .publish()
         .await
@@ -487,7 +487,7 @@ async fn the_shutdown_timeout_aborts_a_handler_that_never_returns() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("cov.hung")
         .publish()
         .await
@@ -522,7 +522,7 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("cov.continuation")
         .publish()
         .await
@@ -571,14 +571,14 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
     assert!(rendered.contains("handlers: 1"), "{rendered}");
 
     let tb = TestApp::start(app).await.expect("harness start");
-    // CBOR bytes: the scope codec decodes them, the default (JSON) codec could not.
-    let payload = CborCodec.encode(&Order { id: 11 }).expect("cbor encode");
+    // Encoded with CBOR: the scope codec decodes it, the default (JSON) codec could not.
     tb.broker::<MemoryBroker>()
-        .raw(&payload)
+        .message(&Order { id: 11 })
+        .with_codec(CborCodec)
         .to("cov.labeled")
         .publish()
         .await
-        .expect("raw publish");
+        .expect("publish");
 
     tb.broker::<MemoryBroker>()
         .subscriber("cov.labeled")
@@ -599,7 +599,7 @@ impl<C> PublishTransform<C> for Envelope {
 #[subscriber("cov.audit.in", publish("cov.audit.out"))]
 async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Export {
     audit
-        .raw(frame.0)
+        .message(&Wire::of(frame.0))
         .to("cov.audit.copy")
         .publish()
         .await
@@ -620,11 +620,11 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
-        .raw(b"frame")
+        .message(&Wire::of(b"frame"))
         .to("cov.audit.in")
         .publish()
         .await
-        .expect("raw publish");
+        .expect("publish");
 
     tb.out::<DefaultSlot>()
         .assert_called_once()
@@ -638,7 +638,7 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
 #[subscriber("cov.gate.in", publish("cov.gate.out"))]
 async fn gate(order: &Order, Out(audit): Out<impl Publisher>) -> Receipt {
     audit
-        .raw(&order_bytes(order.id))
+        .message(order)
         .to("cov.gate.copy")
         .publish()
         .await

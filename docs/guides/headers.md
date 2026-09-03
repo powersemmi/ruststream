@@ -134,14 +134,11 @@ whole declaration:
   live publisher is transactional, and the declared publishes ride inside its transactions.
 
 A payload the service already holds encoded, or a foreign type that cannot carry a declaration
-(a bare `Vec<Frame>`), goes out through the byte entry point:
-`out.raw(&bytes).to(dest).publish()`. It takes the same headers positions and no codec; wrap
-the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own. A
-newtype that derives both `Outgoing` and
-[`Serialized`](subscribers.md#raw-subscribers) is a first-class member of the dictionary - it
-declares its destination and headers like any model and publishes through the same typed entry,
-`out.message(&export)`: the type routes the publish onto the serialized wire, so its bytes
-leave as they are while every headers position works unchanged.
+(a bare `Vec<Frame>`), goes out in a newtype deriving both `Outgoing` and
+[`Serialized`](subscribers.md#raw-subscribers). Such a newtype is a first-class member of the
+dictionary - it declares its destination and headers like any model and publishes through the
+same typed entry, `out.message(&export)`: the type routes the publish onto the serialized wire,
+so its bytes leave as they are while every headers position works unchanged.
 
 The contract fills that position once. What the publisher itself contributes travels
 underneath: a handle carrying an argument for every message it sends exposes it as a base, and

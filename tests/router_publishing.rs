@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, Receipt, order_bytes, wait_for};
+use common::{Order, Receipt, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
@@ -31,10 +31,9 @@ async fn publish_and_await_replies(
     topics: &[&str],
     counters: &[&AtomicUsize],
 ) {
-    let payload = order_bytes(1);
     for topic in topics {
         publisher
-            .raw(&payload)
+            .message(&Order { id: 1 })
             .to(*topic)
             .publish()
             .await
@@ -313,9 +312,8 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = order_bytes(1);
     publisher
-        .raw(&payload)
+        .message(&Order { id: 1 })
         .to("rl-in")
         .publish()
         .await
@@ -369,9 +367,8 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = order_bytes(1);
     publisher
-        .raw(&payload)
+        .message(&Order { id: 1 })
         .to("bl-in")
         .publish()
         .await
@@ -457,11 +454,10 @@ async fn router_publishing_threads_typed_delivery_context() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = order_bytes(1);
     let mut headers = HeaderMap::new();
     headers.insert("correlation-id", "trace-xyz");
     publisher
-        .raw(&payload)
+        .message(&Order { id: 1 })
         .with_headers(headers)
         .to("tc-in")
         .publish()

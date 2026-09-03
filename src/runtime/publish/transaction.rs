@@ -6,13 +6,10 @@ use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
-use super::{
-    HeadersUnset, MessageBody, PublishBuilder, RawBody, TypedPublisher, message_of, raw_of,
-};
+use super::{HeadersUnset, MessageBody, PublishBuilder, TypedPublisher, message_of};
 use crate::codec::{Codec, CodecError};
 use crate::{
-    CallerName, OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction,
-    TransactionalPublisher,
+    OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction, TransactionalPublisher,
 };
 
 /// A live broker transaction, opened by [`Transactional::begin`](crate::runtime::Transactional::begin).
@@ -51,18 +48,6 @@ impl<'s, P, C> TransactionScope<'s, P, C> {
         T: OutgoingDestination,
     {
         message_of(self.publisher, value, self.codec)
-    }
-
-    /// Starts a byte publish inside the transaction: the payload travels as it is, to the
-    /// destination named with `to(..)`.
-    pub fn raw<'a, B>(
-        &'a self,
-        payload: &'a B,
-    ) -> PublishBuilder<&'s P, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(self.publisher, payload)
     }
 }
 
@@ -250,18 +235,6 @@ impl<'c, Txn, C> TypedTransaction<'c, Txn, C> {
         T: OutgoingDestination,
     {
         message_of(&mut self.txn, value, self.codec)
-    }
-
-    /// Starts a byte publish into the transaction's buffer: the payload travels as it is, to the
-    /// destination named with `to(..)`.
-    pub fn raw<'a, B>(
-        &'a mut self,
-        payload: &'a B,
-    ) -> PublishBuilder<&'a mut Txn, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(&mut self.txn, payload)
     }
 }
 

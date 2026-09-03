@@ -23,7 +23,7 @@ use axum::routing::{get, post};
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{AppInfo, PublishExt, RustStream};
-use ruststream::subscriber;
+use ruststream::{Outgoing, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +37,12 @@ struct Confirmation {
     id: u64,
     accepted: bool,
 }
+
+/// The HTTP request body on its way to the bus: bytes that arrived from outside, with no model of
+/// their own. `Serialized` says they are already the payload, so no codec runs on them, and the
+/// axum buffer moves in whole - nothing is copied on the way to the broker.
+#[derive(Outgoing, Serialized)]
+struct Ingest(Bytes);
 
 // --8<-- [start:handler]
 #[subscriber("orders", publish("confirmations"))]
@@ -54,7 +60,12 @@ struct AppState {
 }
 
 async fn publish_order(State(state): State<Arc<AppState>>, body: Bytes) -> &'static str {
-    let _ = state.ingest.raw(body.as_ref()).to("orders").publish().await;
+    let _ = state
+        .ingest
+        .message(&Ingest(body))
+        .to("orders")
+        .publish()
+        .await;
     "published\n"
 }
 

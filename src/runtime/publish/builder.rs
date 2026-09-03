@@ -26,15 +26,16 @@ use super::sink::{CallCodec, PublishCodec, PublishSink};
 
 /// A publish under construction: the entry point's payload plus the positions still open.
 ///
-/// Built by the `message(..)` and `raw(..)` entry points of every publish surface (an
+/// Built by the `message(..)` entry point of every publish surface (an
 /// [`Out`](crate::runtime::Out) slot, a [`TypedPublisher`](super::TypedPublisher), a transaction
 /// scope, any [`Publisher`](crate::Publisher) through [`PublishExt`](super::PublishExt)), and
 /// finished by
 /// [`publish`](Self::publish). The type parameters are the positions:
 ///
 /// * `Sink` - where the bytes go, a [`PublishSink`].
-/// * `Body` - [`MessageBody`] (a value to encode) or [`RawBody`] (bytes as they are).
-/// * `Enc` - the codec position ([`PublishCodec`]); `()` on the byte entry point, which has none.
+/// * `Body` - [`MessageBody`], the value to encode. The runtime also fills this position with a
+///   crate-internal byte body where it republishes a delivery it already holds as bytes.
+/// * `Enc` - the codec position ([`PublishCodec`]); `()` on the byte body, which has none.
 /// * `Hdrs` - [`HeadersUnset`], [`TypedHeaders`] or [`MapHeaders`].
 /// * `Dest` - the destination: [`FixedName`] and [`SuppliedName`] are resolved, [`CallerName`]
 ///   and [`NameTemplate`] are still waiting for the call site.
@@ -272,6 +273,16 @@ impl AsRef<[u8]> for WireBytes<'_> {
 
 /// How one wire produces the outgoing payload for a value. Machinery behind the publish
 /// terminals, keyed by the value's [`MessageWire`] projection; never named in user code.
+///
+/// This is the point at which an encoded publish demands a codec: the encoded wire's impl needs
+/// `Enc: PublishCodec`, the serialized wire's needs nothing of `Enc` at all.
+#[diagnostic::on_unimplemented(
+    message = "no codec is available to encode `{T}` for this publish",
+    label = "this publish has no codec to encode with",
+    note = "enable a codec feature on `ruststream` (`json`, `cbor` or `msgpack`), name one for \
+            this publish with `.with_codec(JsonCodec)`, or give `{T}` its own bytes with \
+            `#[derive(Serialized)]` so no codec is needed"
+)]
 #[doc(hidden)]
 pub trait WirePayload<T, Enc> {
     /// Produces the bytes that leave: the encoded wire runs the resolved codec, the serialized
@@ -591,11 +602,14 @@ where
     deliver(sink, name, payload.as_ref(), headers).await
 }
 
+// No `Enc: PublishCodec` here: what a publish needs of its codec position is the wire's business,
+// and the serialized wire needs nothing. The encoded wire carries the bound through
+// `WirePayload`, so a value that must be encoded still demands a resolved codec - and a value
+// carrying its own bytes publishes in a build with no codec at all.
 impl<Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
 where
     Sink: PublishSink,
     T: OutgoingDestination + MessageHeaders + Sync,
-    Enc: PublishCodec,
     Hdrs: PublishHeaders,
 {
     /// Publishes the value to the resolved destination, on the value's own wire
@@ -641,7 +655,7 @@ where
     Sink: PublishSink,
     T: OutgoingDestination + MessageHeaders + MessageWire + Sync,
     T::Wire: WirePayload<T, Enc>,
-    Enc: PublishCodec + Send,
+    Enc: Send,
     Hdrs: PublishHeaders + SatisfiesContract<T::Contract> + Send,
 {
     type Error = Sink::Error;

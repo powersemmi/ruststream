@@ -187,8 +187,7 @@ mod tests {
 
     use super::*;
     use crate::memory::{MemoryBroker, MemorySubscriber};
-    use crate::runtime::PublishExt;
-    use crate::{Broker, IncomingMessage, Name};
+    use crate::{Broker, IncomingMessage, Name, OutgoingMessage, Publisher};
 
     async fn buffered(
         broker: &MemoryBroker,
@@ -304,7 +303,10 @@ mod tests {
         let mut sub = buffered(&broker, 2, Duration::from_secs(60)).await;
         let publisher = broker.publisher();
         for i in 0..4u8 {
-            publisher.raw(&[i]).to("buffered").publish().await.unwrap();
+            publisher
+                .publish(OutgoingMessage::new("buffered", &[i]))
+                .await
+                .unwrap();
         }
 
         // The wait bound is far away; only the size cap can close these batches.
@@ -326,9 +328,7 @@ mod tests {
         let mut sub = buffered(&broker, 64, Duration::from_millis(10)).await;
         let publisher = broker.publisher();
         publisher
-            .raw(b"only")
-            .to("buffered")
-            .publish()
+            .publish(OutgoingMessage::new("buffered", b"only"))
             .await
             .unwrap();
 
@@ -347,9 +347,7 @@ mod tests {
         let mut sub = buffered(&broker, 8, Duration::from_millis(10)).await;
         let publisher = broker.publisher();
         publisher
-            .raw(b"single")
-            .to("buffered")
-            .publish()
+            .publish(OutgoingMessage::new("buffered", b"single"))
             .await
             .unwrap();
 

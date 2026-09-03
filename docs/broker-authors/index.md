@@ -128,8 +128,8 @@ pub trait Publisher: Send + Sync {
 `OutgoingMessage` borrows its name and payload, so publishing does not force an allocation.
 
 This is the publish interface, not the one a service writes: applications publish through the
-builder (`publisher.message(&value).publish()`, `publisher.raw(&bytes).to(dest).publish()`),
-which resolves the destination, the codec and the headers and then makes exactly one call to
+builder (`publisher.message(&value).publish()`), which resolves the destination, the codec
+(where the value's wire needs one) and the headers and then makes exactly one call to
 this method. Implement `publish` and the whole builder follows; there is nothing else to
 provide.
 

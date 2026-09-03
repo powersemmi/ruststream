@@ -18,8 +18,8 @@ use ruststream::memory::{
 use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Router, RustStream, State};
 use ruststream::testing::TestApp;
 use ruststream::{
-    BuildContext, ContextField, Deserialized, FromRef, IncomingMessage, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, Serialized, subscriber,
+    BuildContext, ContextField, Deserialized, FromRef, IncomingMessage, Outgoing, OutgoingMessage,
+    PairError, PublishPolicy, Publisher, Serialized, subscriber,
 };
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
@@ -34,6 +34,19 @@ struct Frame<'a>(&'a [u8]);
 /// no codec in between.
 #[derive(Serialized)]
 struct Export(Vec<u8>);
+
+/// The named wire this suite injects its deliberately unstructured payloads through. Publishing
+/// is typed, and `Serialized` is what keeps the injection on the codec-free lane the handlers
+/// under test read from.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
+
+impl Wire {
+    /// The wire form of `bytes`, for the call sites that hold a slice or a literal.
+    fn of(bytes: impl AsRef<[u8]>) -> Self {
+        Self(bytes.as_ref().to_vec())
+    }
+}
 
 // --- the plain form: the handler sees the exact published bytes ---
 
@@ -54,7 +67,7 @@ async fn raw_handler_receives_exact_bytes() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("frames")
         .publish()
         .await
@@ -97,7 +110,7 @@ async fn raw_reply_round_trips_exact_bytes() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("relay-in")
         .publish()
         .await
@@ -138,7 +151,7 @@ async fn raw_reply_defaults_to_the_brokers_publish_policy() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("relay-default-in")
         .publish()
         .await
@@ -177,7 +190,7 @@ async fn raw_reply_result_form_controls_the_publish() {
 
     // The Err arm: nothing is published and the delivery settles by the returned result.
     tb.broker::<MemoryBroker>()
-        .raw(b"")
+        .message(&Wire::of(b""))
         .to("relay-checked-in")
         .publish()
         .await
@@ -192,7 +205,7 @@ async fn raw_reply_result_form_controls_the_publish() {
 
     // The Ok arm publishes the bytes as-is.
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("relay-checked-in")
         .publish()
         .await
@@ -267,7 +280,7 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("relay-flaky-in")
         .publish()
         .await
@@ -298,7 +311,7 @@ mod typed_in {
 
     use super::{
         AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, MemoryPublish, RustStream,
-        TestApp, subscriber,
+        TestApp, Wire, subscriber,
     };
 
     #[derive(Debug, Deserialize)]
@@ -369,7 +382,7 @@ mod typed_in {
         let tb = TestApp::start(app).await.expect("start");
         // Not valid JSON: the typed input side keeps the decode failure policy, unlike raw.
         tb.broker::<MemoryBroker>()
-            .raw(FRAME)
+            .message(&Wire::of(FRAME))
             .to("gateway-checked-in")
             .publish()
             .await
@@ -425,7 +438,7 @@ async fn state_extractor_and_ctx_resolve_alongside_raw() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("frames-state")
         .publish()
         .await
@@ -484,7 +497,7 @@ async fn ctx_extractor_projects_the_context_under_raw() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("frames-meta")
         .publish()
         .await
@@ -512,7 +525,7 @@ async fn workers_and_panic_policy_apply_to_raw() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(b"boom")
+        .message(&Wire::of(b"boom"))
         .to("frames-workers")
         .publish()
         .await
@@ -524,7 +537,7 @@ async fn workers_and_panic_policy_apply_to_raw() {
 
     // The panic policy dropped the poison frame; the app keeps serving.
     tb.broker::<MemoryBroker>()
-        .raw(b"ok")
+        .message(&Wire::of(b"ok"))
         .to("frames-workers")
         .publish()
         .await
@@ -554,7 +567,7 @@ async fn router_mounts_raw_definitions() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("routed-raw")
         .publish()
         .await
@@ -586,7 +599,7 @@ async fn router_mounts_a_byte_reply_definition() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("routed-relay-in")
         .publish()
         .await
@@ -642,7 +655,7 @@ mod scope_codec {
         let tb = TestApp::start(app).await.expect("start");
         // Bytes no JSON decoder would accept reach the raw handler untouched...
         tb.broker::<MemoryBroker>()
-            .raw(FRAME)
+            .message(&Wire::of(FRAME))
             .to("mixed-raw")
             .publish()
             .await

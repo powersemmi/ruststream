@@ -27,7 +27,16 @@ pub trait IncludeDef {
 
 /// The codec a registration surface decodes with: its own codec when one was named, else the
 /// default. Machinery behind `include`; the `()` impl is the "nothing named" case, which every
-/// surface starts in.
+/// surface starts in - and which exists only when the build has a default codec to fall back to,
+/// so this is where a decoding mount with no codec anywhere in the chain is rejected.
+#[diagnostic::on_unimplemented(
+    message = "no codec is available to decode this subscriber's input",
+    label = "nothing in this chain names a codec",
+    note = "enable a codec feature on `ruststream` (`json`, `cbor` or `msgpack`), name one for \
+            the scope (`with_broker_codec(broker, JsonCodec, |b| ..)`) or the registration \
+            (`.codec(JsonCodec)`), or give the input type its own decoding with \
+            `#[derive(Deserialized)]` so no codec is needed"
+)]
 #[doc(hidden)]
 pub trait MountCodec {
     /// The resolved codec.
@@ -61,6 +70,14 @@ impl<C: Codec + Clone + Send + Sync + 'static> MountCodec for C {
 /// against the input kind keeps that demand where it is real.
 ///
 /// Machinery behind `include`; you never implement or name it.
+#[diagnostic::on_unimplemented(
+    message = "no codec is available to decode this subscriber's input",
+    label = "nothing in this chain names a codec",
+    note = "enable a codec feature on `ruststream` (`json`, `cbor` or `msgpack`), name one for \
+            the scope (`with_broker_codec(broker, JsonCodec, |b| ..)`) or the registration \
+            (`.codec(JsonCodec)`), or give the input type its own decoding with \
+            `#[derive(Deserialized)]` so no codec is needed"
+)]
 #[doc(hidden)]
 pub trait InputCodec<Input> {
     /// The resolved codec: the surface's own, or `()` where the input needs none.
