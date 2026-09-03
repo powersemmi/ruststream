@@ -16,9 +16,9 @@ use std::future::{Future, ready};
 use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    BoundSegment, MissingSegment, OutMessages, OutPipeline, OutgoingMessageMetadata, PublishAt,
-    PublishContext, PublishError, PublishLayer, PublishNext, PublishPipeline, PublishTransform,
-    PublishedThrough, TemplateAddress,
+    BoundSegment, MissingSegment, OutMessages, OutPipeline, OutTransform, OutgoingMessageMetadata,
+    PublishAt, PublishContext, PublishError, PublishLayer, PublishNext, PublishPipeline,
+    PublishTransform, PublishedThrough, TemplateAddress,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
@@ -421,6 +421,19 @@ impl<C> PublishTransform<C> for EnvelopeTransform {
 }
 // --8<-- [end:static_transform]
 
+// --8<-- [start:slot_transform]
+/// A static, per-slot transform: it stamps what leaves one `Out` slot. There is no
+/// `PublishContext` here - the body issues a slot publish itself, so the delivery is the body's
+/// own to read and put on the message.
+struct OutboxEnvelope;
+
+impl OutTransform for OutboxEnvelope {
+    fn apply(&self, out: &mut Outgoing<'_>) {
+        out.headers_mut().insert("x-outbox", b"1".to_vec());
+    }
+}
+// --8<-- [end:slot_transform]
+
 // --8<-- [start:app_layer]
 /// A static, app-wide publish layer: observes every publish, then passes it on.
 #[derive(Clone)]
@@ -493,7 +506,7 @@ fn app() -> impl App {
     let broker = MemoryBroker::new();
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
-        // app-wide layer: wraps every published reply
+        // app-wide layer: wraps every publish a handler makes, replies and Out slots alike
         .publish_layer(AuditPublish)
         .with_broker(broker, |b| {
             // the first publish: runs once connected and subscribed, with the transactional
@@ -525,9 +538,11 @@ fn app() -> impl App {
                 .publisher(Publish);
             // --8<-- [end:forward_mount]
             // --8<-- [start:slots_mount]
-            // each named slot binds by marker; the call order does not matter
+            // each named slot binds by marker; the call order does not matter, and a
+            // .transform(..) rides the slot the .out(..) before it bound
             b.include(subscriber("mirror", Mirror).build())
                 .out(Shadow, Publish)
+                .transform(OutboxEnvelope)
                 .out(Primary, Publish)
                 .build();
             // --8<-- [end:slots_mount]

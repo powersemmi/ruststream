@@ -360,20 +360,24 @@ an `R` implementing `Serialized` (the impls above; `ReplyShape` with `type Wire 
 covers the reply position) leaves byte-for-byte, so those steps do not compile on it. There is one
 `.reply()` and one publisher step for both wires. A page reply always publishes through the
 reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
-`Outs<(Slot<Marker, W, Enc>,)>`, where `W` is the wired live value and `Enc` the include site's
-encode codec, with the broker capability the body needs stated as a mandatory bound on that wired
-value, one entry per marker.
+`Outs<(Slot<Marker, W, Enc, Pipe>,)>`, where `W` is the wired live value, `Enc` the include site's
+encode codec and `Pipe` the publish path it gave the slot (its `.transform(..)` steps over the
+app's own middleware), with the broker capability the body needs stated as a mandatory bound on
+that wired value, one entry per marker. Leaving `Pipe` generic under `OutPipeline` is what lets
+one body mount under any of them; spelled without it the entry pins the plain path
+(`PublishIdentity`: no slot transform, no app-wide `publish_layer`).
 
 ```rust
-impl<W, Enc> Handle<Order, (), Outs<(Slot<Primary, W, Enc>,)>> for Mirror
+impl<W, Enc, Pipe> Handle<Order, (), Outs<(Slot<Primary, W, Enc, Pipe>,)>> for Mirror
 where
     W: Publisher,
     Enc: Codec + Send + Sync,
+    Pipe: OutPipeline,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Primary, W, Enc>,)>,
+        outs: &Outs<(Slot<Primary, W, Enc, Pipe>,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         outs.get(Primary)
@@ -398,7 +402,7 @@ naming the slot, and a single unnamed slot binds through `.publisher(policy)`, w
 commits in one call. `outs.get(Marker)` hands back the entry itself: it keeps the `.message(..)`
 builder and is a transparent `Deref` onto the wired live value, so a broker-defined
 capability is called straight on it - a body that needs one pins the concrete live type
-(`Slot<Lanes, LaneRouter, Enc>`) or bounds `W` with the broker's own trait.
+(`Slot<Lanes, LaneRouter, Enc, Pipe>`) or bounds `W` with the broker's own trait.
 
 ## Middleware
 

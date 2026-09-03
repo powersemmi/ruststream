@@ -208,7 +208,9 @@ seek 句柄、流的名字 - 批量函数体把这个类型写成自己的上下
 要在处理器内部发布消息（`publish(..)` 这种回复形式之外的场景），不要把发布者塞进状态里，而是用 `Out`
 把它作为处理器参数收下：`Out(out): Out<impl Publisher>` 这种写法会把 `out` 绑定成函数体内一个可用的
 发布者。发布策略在挂载处理器的地方附加，具体的发布者类型由它推断，运行时会在 Broker 连接之后再把
-两者配对。完整写法及其代码片段见
+两者配对。从这个槽位出去的消息走的是与回复相同的[发布管线](publishing.md#the-publish-pipeline)：
+应用级的 `publish_layer` 链，上面压着这个槽位自己的 `.out(marker, policy).transform(..)` 步骤。
+完整写法及其代码片段见
 [在处理器内部发布](publishing.md#publishing-from-inside-a-handler)。
 
 ## 结算后钩子 { #post-settle-hooks }

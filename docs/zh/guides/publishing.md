@@ -141,6 +141,10 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
 `Out<impl Publisher>` 参数，它绑定的是隐含的 `DefaultSlot`，用普通的 `.publisher(policy)` 调用即可，
 绑定和提交一步完成。
 
+`.out(..)` 之后的 `.transform(..)` 跟着那个槽位走（见[发布管线](#the-publish-pipeline)）；一步到位的
+`.publisher(policy)` 当场就提交，所以只有一个槽位、又要加变换时按标记绑定：
+`.out(DefaultSlot, Publish).transform(..).build()`。
+
 === "宏"
 
     ```rust
@@ -323,11 +327,15 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
 
 ## 发布管线 { #the-publish-pipeline }
 
-消息离开进程之前会跑过两类变换，而且它们可以组合：
+消息离开进程之前会跑过三类变换，而且它们可以组合：
 
 - **回复接线上的静态 `PublishTransform`**，在 `.publisher(..)` 之后用 `.transform(..)` 添加。这是
   零成本、按目的地生效的变换（一层信封、一个固定的 content type，或者把这次投递的链路追踪 /
   关联 id 盖到回复上）。它们最先运行，离值最近。
+- **某一个 `Out` 槽位上的静态 `OutTransform`**，在 `.out(marker, policy)` 之后用 `.transform(..)`
+  添加。它在顺序里的位置相同，管的是从这个槽位出去的消息：一层 outbox 信封、一个固定的 content
+  type、一个租户标记。它不接受 `PublishContext`：槽位上的发布是处理器体自己发出的，那次投递也就
+  由它自己读取、自己盖到消息上。
 - **应用上的静态 `PublishLayer`**，用 `.publish_layer(..)` 添加。这是横切关注点（发布指标、死信包装），
   作用于每一条发布出去的消息，包在发送外面，因此能观察到发送的结果。整条链会组合成一个具体类型，
   于是它成为应用类型的一部分。构建器通常返回 `impl App`，从不把它写出来；
@@ -346,6 +354,12 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
 
 批量处理器的回复会跳过按消息生效的 `.transform(..)` 栈；要在那里加变换，用 `.batch_transform(..)`，
 并可以通过 `for_batch(transform)` 复用一个按消息的 `PublishTransform`。
+
+`OutTransform` 实现的是 `apply(&mut Outgoing<'_>)`，只跟着一个槽位走：
+
+```rust
+--8<-- "examples/publishing.rs:slot_transform"
+```
 
 `PublishLayer` 实现的是 around/next 形式的签名，因此它可以短路、重试，或者只做观察：
 
@@ -367,9 +381,16 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
     --8<-- "examples/manual/publishing.rs:pipeline"
     ```
 
-这条管线跑在回复路径上（`publish(..)` 那种写法）。注入的 `Out` 发布者是所绑定策略的活形态，直接使用：
-`.out(marker, policy)` 自己没有变换栈，因此需要变换的消息要么走回复路径，要么交给应用级的
-`publish_layer` 去盖。完整的程序见
+应用级的这层包住处理器发出的每一次发布：既包括 `publish(..)` 那种写法的回复，也包括从注入的 `Out`
+槽位出去的每一条消息。挂载点上的变换只留在它被指名的那一侧：`.publisher(Publish).transform(StampSource)`
+长的是回复的栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 长的是这个槽位的栈，所以两侧都有的
+注册就把两个调用都写上，而 `.transform(..)` 读起来就是“作用在它前面那一步上”。两侧在线路上的顺序一样：
+先是挂载点的变换（离编码后的值最近），然后是应用级的中间件，最后才是发送。
+
+有两种发布不走这条管线，而且都是处理器体自己驱动的：在槽位上开启的事务（`begin()`、`transaction()`）
+发往 Broker 的事务里，而一次 request / reply 往返（`request(..)`）等的是答复，并不以一次发送收尾。
+路由器里的槽位只带自己的变换，不带应用级的那条链：`include_router` 挂载的路由，其类型在应用之前就已
+定型，因此槽位发布需要这条链的处理器要用 `b.include(..)` 挂在 Broker 作用域上。完整的程序见
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs)。
 
 ## 批量回复与事务

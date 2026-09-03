@@ -333,17 +333,28 @@ async fn route(
 
 b.include(route)
     .out(Audit, Publish)
+    .transform(OutboxEnvelope)  // an OutTransform on the slot the .out(..) before it bound
     .out(Orders, Publish)
     .build();
 ```
+
+`.transform(..)` composes an `OutTransform` (`apply(&mut Outgoing<'_>)`, no publish context: the
+body issues a slot publish itself) onto the slot named right before it, and onto that one only.
+Before any `.out(..)` the step does not exist, and the one-call `.publisher(policy)` shorthand
+commits on the spot, so a single slot that needs a transform binds by marker
+(`.out(DefaultSlot, Publish).transform(..).build()`). On a registration that also has a reply,
+`.transform(..)` after `.publisher(..)` grows the reply's `PublishTransform` stack and after
+`.out(..)` the slot's.
 
 The capability in the bound can be refined - `Out<impl OwnedTransactions, Ledger>` compiles only
 against a policy whose live publisher supports owned transactions, checked at the include site.
 The bound names a broker capability trait (`Publisher`, `TransactionalPublisher`,
 `OwnedTransactions`, `RequestReply`, or one a broker crate defines), never a broker type; on the
 manual path the same bound sits on the entry's wired value, `where W: OwnedTransactions, E: Codec
-+ Send + Sync`. Under it the entry offers that capability's typed form - `message(..)`, `begin()`,
-`transaction()` - over the include site's codec and the marker's list.
++ Send + Sync, Pipe: OutPipeline` (the third parameter is the slot's publish path, left generic so
+one body mounts under any transform or app-wide layer). Under it the entry offers that
+capability's typed form - `message(..)`, `begin()`, `transaction()` - over the include site's
+codec and the marker's list.
 
 ### Narrowing one path to a set of types
 
@@ -605,7 +616,9 @@ Collect handlers in their own module, then mount the group. A `Router` is a cons
 router handlers, so cross-cutting middleware (logging, metrics) goes on the app and applies
 everywhere; that global layer must be a `BlanketLayer` (every bundled layer is). Publish-side
 middleware (tracing propagation, broker envelopes such as Kafka's Schema Registry framing) is
-added app-wide with `.publish_layer(..)` before `with_broker`.
+added app-wide with `.publish_layer(..)` before `with_broker`; it wraps every publish a handler
+makes, replies and `Out` slots alike, except in a router (its routes are typed before the app
+that mounts them, so a router's slots carry their own `.transform(..)` steps only).
 
 ```rust
 use ruststream::memory::prelude::*;

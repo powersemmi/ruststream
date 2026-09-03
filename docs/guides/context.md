@@ -226,7 +226,10 @@ To publish from inside a handler (beyond the `publish(..)` reply form), do not p
 in the state: take it as a handler parameter with `Out` - the pattern
 `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body. The policy is
 attached where the handler is included, the concrete publisher type is inferred from it, and
-the runtime pairs it after the broker connects. The full pattern and its snippet live in
+the runtime pairs it after the broker connects. What leaves through the slot travels the same
+[publish pipeline](publishing.md#the-publish-pipeline) a reply does: the app-wide `publish_layer`
+chain, under the slot's own `.out(marker, policy).transform(..)` steps. The full pattern and its
+snippet live in
 [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ## Post-settle hooks

@@ -157,6 +157,11 @@ names the slot (`MissingSlot<Audit>`). A single unnamed `Out<impl Publisher>` pa
 the implicit `DefaultSlot` through the plain `.publisher(policy)` call, which binds and commits
 in one step.
 
+A `.transform(..)` after an `.out(..)` rides that slot (see
+[the publish pipeline](#the-publish-pipeline)); the one-call `.publisher(policy)` shorthand
+commits on the spot, so a single slot that also names a transform binds by marker
+(`.out(DefaultSlot, Publish).transform(..).build()`).
+
 === "Macros"
 
     ```rust
@@ -361,12 +366,17 @@ still carries the handle's argument.
 
 ## The publish pipeline
 
-Two kinds of transform run before a message leaves the process, and they compose:
+Three kinds of transform run before a message leaves the process, and they compose:
 
 - **Static `PublishTransform`** on the reply wiring, chained with `.transform(..)` after
   `.publisher(..)`. Zero-cost, per-destination transforms (an envelope, a fixed content type, or
   stamping the delivery's trace / correlation id onto the reply). They run first, closest to the
   value.
+- **Static `OutTransform`** on one `Out` slot, chained with `.transform(..)` after
+  `.out(marker, policy)`. The same place in the order, for what leaves through that slot: an
+  outbox envelope, a fixed content type, a tenant tag. It takes no `PublishContext` - a slot
+  publish is issued by the body itself, so the delivery is the body's own to read and put on the
+  message.
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can observe its result. The chain composes into a concrete type, so it becomes part
@@ -389,6 +399,12 @@ carry a value from the incoming message onto the reply:
 A batch handler's replies skip the per-message `.transform(..)` stack; add a transform there with
 `.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`.
 
+An `OutTransform` implements `apply(&mut Outgoing<'_>)` and rides one slot:
+
+```rust
+--8<-- "examples/publishing.rs:slot_transform"
+```
+
 A `PublishLayer` implements an around/next signature, so it can short-circuit, retry, or
 observe:
 
@@ -410,10 +426,20 @@ Both levels compose on the application:
     --8<-- "examples/manual/publishing.rs:pipeline"
     ```
 
-The pipeline runs on the reply path (the `publish(..)` form). An injected `Out` publisher is the
-bound policy's live form, used directly: `.out(marker, policy)` carries no transform stack of its
-own, so a message that needs one is either published through the reply path or stamped by the
-app-wide `publish_layer`. The full program is
+The app-wide layer wraps every publish a handler makes: the reply of a `publish(..)` form and
+every message that leaves through an injected `Out` slot. The per-mount transforms stay with what
+they were named on - `.publisher(Publish).transform(StampSource)` grows the reply's stack,
+`.out(Audit, Publish).transform(OutboxEnvelope)` that slot's - so a registration that carries both
+writes both, and `.transform(..)` reads as "on the step before it". The order on the wire is the
+same on either side: the mount site's transforms first (closest to the encoded value), then the
+app-wide middleware, then the send.
+
+Two publishes stay outside it, and both are the ones a body drives itself: a transaction opened on
+a slot (`begin()`, `transaction()`) sends into the broker's transaction, and a request / reply
+round trip (`request(..)`) waits for an answer instead of ending in a send. A router's slots take
+their own transforms and not the app-wide chain: `include_router` mounts routes that were typed
+before the app existed, so a handler whose slot publishes have to travel that chain mounts on the
+broker scope with `b.include(..)`. The full program is
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 
 ## Batch replies and transactions
