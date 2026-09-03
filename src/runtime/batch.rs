@@ -539,17 +539,9 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
         BatchResult::Uniform(mut outcome) => {
             let after = outcome.take_after();
             let status = outcome.outcome();
-            // The page is recorded BEFORE the first settle: settling the last delivery is what
-            // wakes the harness, so a record written after the loop can lose the race with the
-            // assertions that follow the publish.
-            #[cfg(feature = "testing")]
-            {
-                for _ in 0..accepted.len() {
-                    page.settled(status);
-                }
-                page.record(subscription);
-            }
             for msg in accepted {
+                #[cfg(feature = "testing")]
+                page.settled(status);
                 settle(msg, status, subscription).await;
             }
             // The one uniform continuation runs after the whole batch is settled, on the
@@ -570,19 +562,13 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
                      retrying the unmatched remainder",
                 );
             }
-            // An unmatched message gets retried: an extra redelivery beats losing it.
-            let mut results = results;
-            results.truncate(accepted.len());
-            results.resize_with(accepted.len(), HandlerOutcome::retry);
-            #[cfg(feature = "testing")]
-            {
-                for result in &results {
-                    page.settled(result.outcome());
-                }
-                page.record(subscription);
-            }
-            for (msg, mut result) in accepted.into_iter().zip(results) {
+            let mut results = results.into_iter();
+            for msg in accepted {
+                // An unmatched message gets retried: an extra redelivery beats losing it.
+                let mut result = results.next().unwrap_or_else(HandlerOutcome::retry);
                 let after = result.take_after();
+                #[cfg(feature = "testing")]
+                page.settled(result.outcome());
                 settle(msg, result.outcome(), subscription).await;
                 // The continuation runs after this element is settled, on the tracked set so a
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
@@ -593,6 +579,8 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
             }
         }
     }
+    #[cfg(feature = "testing")]
+    page.record(subscription);
 }
 
 /// The page a batch settle is applying, captured for the harness: the payloads before the
