@@ -47,10 +47,18 @@ block, so the guarantee cannot regress.
   broker, so a handler never sees a "not connected" publisher. The parameter states a
   capability (`Out<impl Publisher>`), never a broker type, so the same handler mounts on a
   production broker and its in-process test transport unchanged.
+- **One typed publish entry.** Every publish starts with `message(&value)` and ends in
+  `publish()`. The value's type declares where it goes and which typed header contract it
+  carries (`#[derive(Outgoing)]`), so an under-specified publish - a forgotten headers
+  contract, an unbound address segment - is a compile error, not a runtime surprise.
 - **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features - or none at all:
   a `#[derive(Deserialized)]` input and a `#[derive(Serialized)]` reply move payload bytes
   untouched (`Deserialize`/`Serialize` mean the framework's codec does it; `Deserialized`/
-  `Serialized` mean the user's own type already did).
+  `Serialized` mean the user's own type already did). The byte lanes never touch a codec,
+  and a publish that would need one with none in reach fails to compile, naming the fix.
+- **The macro is sugar, not a layer.** `#[subscriber]` expands onto the same public rails the
+  macro-free path uses: a handler is an `impl Handle` bound to its subscription with
+  `subscriber("orders", body)`, and both spellings mix freely in one application.
 - **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI
   scaffolds projects, runs them, and generates the AsyncAPI document. Console logging ships
   behind the `logging` feature, installed on `run` with verbosity driven by `RUST_LOG`.
@@ -68,7 +76,6 @@ block, so the guarantee cannot regress.
 [dependencies]
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
-schemars = "1"
 ```
 
 The CLI ships with the crate behind the `cli` feature:
@@ -82,18 +89,17 @@ cargo install ruststream --features cli
 ```rust
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use schemars::JsonSchema;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize)]
 struct Order {
     id: u64,
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[ruststream::app]
@@ -121,9 +127,9 @@ struct AppState {
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerResult {
+async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerOutcome {
     create_order.execute(order);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 ```
 
@@ -165,7 +171,7 @@ tb.broker::<MemoryBroker>()
     .subscriber("orders")
     .assert_called_once()
     .with(&Order { id: 42 })
-    .settled(HandlerResult::Ack);
+    .settled(HandlerOutcome::ack());
 
 // It published the matching receipt downstream.
 tb.broker::<MemoryBroker>()

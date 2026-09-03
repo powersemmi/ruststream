@@ -119,7 +119,7 @@ newtype с `#[derive(Outgoing, Serialized)]`, поэтому тест назыв
 другое по порядку.
 
 Декодирующие помощники (`with`, `received`, `decoded`) работают кодеком по умолчанию. Если обработчик
-или издатель смонтирован с другим кодеком (`include_with` / `with_broker_codec`), передайте его
+или издатель смонтирован с другим кодеком (`with_broker_codec`, `Router::with_codec`), передайте его
 явно через варианты `_with` / `with_codec` - `subscriber(name).with_codec(&CborCodec, &expected)`,
 `.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
 `.decoded_with(&CborCodec)`, - а `with_raw` / `received_raw` / `messages` кодека не касаются.

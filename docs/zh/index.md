@@ -46,16 +46,15 @@ gen` 即可打印它的 AsyncAPI 文档，不需要任何运行时样板代码�
 - :material-school: **[教程](getting-started/tutorial.md)** - 一步步构建一个服务。
 - :material-test-tube: **[测试](guides/testing.md)** - 在进程内测试处理器，无需启动服务器。
 - :material-web: **[HTTP 框架](guides/http.md)** - 与 axum 并行运行，配合事务性 outbox。
-- :material-transit-connection-variant: **[Broker](brokers/index.md)** - 内存 Broker、NATS 和 Redis。
+- :material-transit-connection-variant: **[Broker](brokers/index.md)** - 内存 Broker 与各个 Broker crate。
 - :material-server-network: **[Broker 作者](broker-authors/index.md)** - 实现契约并通过 conformance 校验。
 
 </div>
 
 ## 本仓库的范围
 
-本站点介绍的是 `ruststream`，即纯 Rust 的核心（不含 PyO3，也不含任何具体 Broker）。具体的 Broker
-（NATS、Kafka、RabbitMQ、Redis、MQTT）各自位于独立的 crate 中，并从 crates.io 引入 `ruststream`。
-Python 绑定位于 [`ruststream-py`](https://github.com/powersemmi/ruststream-py) 仓库。
+本站点介绍的是 `ruststream`，即与 Broker 无关的核心 crate。具体的 Broker（NATS、Kafka、RabbitMQ、
+Redis、MQTT 等）各自位于独立的 crate 中，并从 crates.io 引入 `ruststream`。
 
 Rust API 参考文档发布在 [docs.rs](https://docs.rs/ruststream)，另见
 [API 参考](reference.md)。

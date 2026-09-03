@@ -75,8 +75,9 @@ dictionary-driven typed publish path ([typed headers](headers.md)). See
 
 ### Acking
 
-The return type is anything that converts into a [`HandlerOutcome`] (the settlement unit: a broker
-status plus an optional post-settle continuation):
+The return type is anything that converts into a
+[`HandlerOutcome`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.HandlerOutcome.html)
+(the settlement unit: a broker status plus an optional post-settle continuation):
 
 | Return value | Result |
 |---|---|
@@ -282,8 +283,8 @@ you would write yourself:
     --8<-- "examples/manual/subscribers.rs:builder_settings"
     ```
 
-A setting the attribute named is fixed in the definition's type and its builder method no longer
-applies, so there is no precedence rule to remember:
+A setting the attribute named is fixed in the definition's type, so the mount site cannot name it
+again - there is no precedence rule to remember:
 
 <!-- inline-rust: two compile-fail one-liners; a compiling example cannot host code that must not compile (the pinned diagnostics live in tests/ui) -->
 ```rust
@@ -390,10 +391,8 @@ The semantics differ from single-message handlers in a few ways:
   headers.
 - The context is one per page, and the broker fields on it are the *subscription-scoped* ones: a
   page body names the broker's batch context type (`ctx: &mut Context<'_, MemoryBatchContext>`
-  for the in-memory broker) and reads its keys with `ctx.context(..)`. The runtime builds that
-  value once per page, off the page's first delivery, through the broker's `BuildBatchContext`
-  impl; a broker with nothing subscription-scoped to hand over implements nothing and the page
-  keeps the `()` default.
+  for the in-memory broker) and reads its keys with `ctx.context(..)`. A broker with nothing
+  subscription-scoped to offer leaves pages on the `()` default.
 - Per-delivery data has no place there, because a page spans many deliveries: a position or a
   header rides the elements instead, read off a `&[Message<H, T>]` page element by element. The
   two are separate types, so a page body asking for the broker's per-delivery context does not
@@ -476,13 +475,21 @@ crate documents both. Broker authors prove the contract with the
 
 ## Raw subscribers
 
-When the payload is not a serialized value at all (a binary frame, a foreign wire format you
-parse yourself), the payload type deserializes itself and the codec stays out of the path.
-Which lane a payload rides is the type's own business, and the trait names are the mnemonic:
-`Deserialize` means the framework's codec builds the value, `Deserialized` means the type builds
-itself. `#[derive(Deserialized)]` covers the usual newtype over `&'a [u8]`, and a `&Frame<'_>`
-parameter is what puts a handler on that lane - the bytes arrive exactly as the broker handed
-them over, borrowed from its buffer, with nothing copied and no codec anywhere on the path.
+Sometimes the payload is not a serialized value at all: a binary frame, a foreign wire format
+you parse yourself. A codec would only stand in the way, so the payload type takes that stage
+out of the path:
+
+```text
+decoded:  broker -> bytes -> codec -> &Order     -> handler
+raw:      broker -> bytes ->          &Frame<'_> -> handler
+```
+
+Which lane a payload rides is chosen by its type, and the trait names are the mnemonic:
+`Deserialize`/`Serialize` - the framework's codec does it; `Deserialized`/`Serialized` - the
+type already did. A `Deserialized` type is a named `&[u8]` - one field, nothing copied:
+`#[derive(Deserialized)]` on a newtype over `&'a [u8]` is the whole declaration, and a
+`&Frame<'_>` parameter is what puts a handler on the lane. The bytes arrive exactly as the
+broker handed them over, borrowed from its buffer.
 
 === "Macros"
 
@@ -496,10 +503,10 @@ them over, borrowed from its buffer, with nothing copied and no codec anywhere o
     --8<-- "tests/manual_raw_subscriber.rs:raw"
     ```
 
-The macro-free form is the pair of impls the derive writes: `Deserialized` for the construction,
-and the `Input` spelling that routes the type onto that lane. A bare `&[u8]` parameter is not a
-handler input at all, and the compile error names the derive as the fix: a slice of bytes is
-also a page of decoded `u8` elements, so only a named type keeps the two apart.
+A bare `&[u8]` parameter does not compile: a payload always arrives behind a named type of the
+service's own, and the compile error names the derive as the fix. The Manual tab shows the pair
+of impls the derive writes - the construction, and the spelling that routes the type onto the
+lane.
 
 The form rule does not change with the lane: `&T` is one message, `&[T]` a page. A page of
 frames is therefore `&[Frame<'_>]`, and the page spelling comes with the derive - a page body
@@ -518,29 +525,28 @@ call, so nothing is copied there either, and the settlement rules are the batch 
     --8<-- "examples/manual/subscribers.rs:raw_batch"
     ```
 
-A construction that validates - a flatbuffers root, a capnp reader, a length check - reports the
+A construction that validates - a flatbuffers root, a capnp reader, a length check - reports a
 bad payload by returning `Err` from `from_payload`, and `on_failure(decode = ..)` settles that
-delivery: the same rung a codec decode failure lands on, and the same rung a typed `Headers`
-contract lands on. Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
-the injected `Out` parameters work unchanged on the single-delivery shape (a page of frames
-does not take `Out` yet), and such a subscriber mounts with the
-same `include` as every other definition - a scope codec, when one is set, does not apply
-to it. It is also the one subscriber form available with no codec feature enabled
-at all. For a custom serialization format you want *typed*
-handlers for, implement [`Codec`](codecs.md) instead and keep the typed path.
+delivery: the same rung a codec decode failure and a typed `Headers` violation land on.
+Everything else composes as usual: extractors, `&mut Context`, `workers(..)`,
+`on_failure(panic = ..)` and the injected `Out` parameters work unchanged on the
+single-delivery shape (a page of frames takes no `Out` parameter), and the subscriber mounts
+with the same `include` as every other definition. A scope codec does not apply to it - the
+lane never calls one - which also makes this the subscriber form that works with no codec
+feature enabled at all. For a custom serialization format you want *typed* handlers for,
+implement [`Codec`](codecs.md) instead and keep the typed path.
 
-A handler on this lane replies through the same one `publish("dest")` clause every reply form
-uses; the reply *type* picks the wire, on the mirror-image mnemonic. A `serde::Serialize` reply
-encodes through the reply codec, while a `#[derive(Serialized)]` newtype carries its own bytes
-(`fn bytes(&self) -> &[u8]`) and leaves byte-for-byte, published exactly as the handler returned
-it. Return it directly, or as `Result<Export, HandlerOutcome>` for the same explicit ack control
-the encoded reply form has. The publisher comes from the include site, where a `Serialized`
-reply attaches a plain publish policy (`b.include(relay).publisher(MemoryPublish)`) and an
-encoded one wraps that policy in `TypedPublisher::new(..)`; without the call the broker's
-default publish policy commits the reply. On the macro-free path both wires ride the one
-`.reply().to(dest).publisher(..)` chain, for the same reason: the reply type has already said
-which wire it is. A failed reply publish nacks the delivery with requeue, exactly as on the
-encoded path:
+A handler on this lane replies through the same `publish("dest")` clause every reply form uses,
+and the reply *type* picks the wire by the same mnemonic: a `serde::Serialize` reply encodes
+through the reply codec, a `#[derive(Serialized)]` newtype carries its own bytes and leaves
+byte-for-byte, exactly as the handler returned it. Return the reply directly, or as
+`Result<Export, HandlerOutcome>` for the same explicit ack control the encoded form has.
+
+The publisher comes from the include site: a `Serialized` reply attaches a plain publish policy
+(`b.include(relay).publisher(MemoryPublish)`), an encoded one wraps the policy in
+`TypedPublisher::new(..)`, and with no call at all the broker's default publish policy carries
+the reply. A failed reply publish nacks the delivery with requeue, exactly as on the encoded
+path:
 
 === "Macros"
 
@@ -574,8 +580,8 @@ the input still decodes with the scope codec and keeps its decode failure policy
 The other diagonal reads the same way: a `Frame<'_>` input with a `Serialize` reply encodes the
 answer through the reply codec while the input never touches one. Two things do not follow the
 type, though. A `Vec<u8>` reply is not a byte reply - it is an ordinary `Serialize` value, so it
-goes out encoded, and a payload that must leave untouched needs the newtype. And a `Serialized`
-*page* reply does not exist: page replies publish through the reply codec.
+goes out encoded, and a payload that must leave untouched needs the newtype. And a page reply
+always publishes through the reply codec - the `Serialized` wire applies to single replies.
 
 ## Worker pools
 
@@ -664,9 +670,17 @@ register the same handler.
     --8<-- "examples/subscribers.rs:manual"
     ```
 
-Reach for the manual form when a handler needs state the macro cannot express (a struct handler with
-fields), or to set a non-default [decode-failure policy](codecs.md#decode-failures). Otherwise the
-macro is less to maintain.
+The manual body returns a `Result`: the `Ok` side carries what the handler produces (the reply, or
+nothing) and the `Err` side carries the settlement, so `Ok(())` acks and
+`Err(HandlerOutcome::retry())` requeues; a page body settles element-wise with
+`Err(Vec<HandlerOutcome>)`. Between `subscriber(..)` and `.build()`, the chain takes the same
+settings the attribute's clauses would (`.name`, `.workers`, `.on_failure`, `.buffered`) plus the
+documentation controls: a registration is documented by default under the `asyncapi` feature,
+`.describe(..)` sets its description, and `.undocumented()` opts it out (see
+[AsyncAPI](asyncapi.md#payload-schemas)).
+
+Reach for the manual form when a handler needs state the macro cannot express (a struct handler
+with fields), or when the `macros` feature is off. Otherwise the attribute is less to maintain.
 
 ## Publishers
 

@@ -48,17 +48,15 @@ Two architectural commitments shape the framework:
 - :material-school: **[Tutorial](getting-started/tutorial.md)** - build a service step by step.
 - :material-test-tube: **[Testing](guides/testing.md)** - test handlers in-process, no server needed.
 - :material-web: **[HTTP frameworks](guides/http.md)** - run beside axum with a transactional outbox.
-- :material-transit-connection-variant: **[Brokers](brokers/index.md)** - the in-memory broker, NATS, and Redis.
+- :material-transit-connection-variant: **[Brokers](brokers/index.md)** - the in-memory broker and the broker crates.
 - :material-server-network: **[Broker authors](broker-authors/index.md)** - implement the contract and pass conformance.
 
 </div>
 
 ## Scope of this repository
 
-This site documents `ruststream`, the pure-Rust core (no PyO3, no concrete brokers). Concrete
-brokers (NATS, Kafka, RabbitMQ, Redis, MQTT) live in their own crates and pull `ruststream` from
-crates.io. The Python bindings live in the
-[`ruststream-py`](https://github.com/powersemmi/ruststream-py) repository.
+This site documents `ruststream`, the broker-agnostic core crate. Concrete brokers (NATS, Kafka,
+RabbitMQ, Redis, MQTT, and more) live in their own crates and pull `ruststream` from crates.io.
 
 The Rust API reference is published on [docs.rs](https://docs.rs/ruststream) - see
 [API reference](reference.md).

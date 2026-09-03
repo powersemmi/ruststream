@@ -30,7 +30,7 @@ always compiled. Everything else is an additive, opt-in feature.
 | `msgpack` | rmp-serde | `MsgpackCodec` |
 | `cbor` | ciborium | `CborCodec` |
 | `memory` | - | `MemoryBroker`, the in-memory reference broker |
-| `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]`, `#[derive(MessageInfo)]` |
+| `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]`, and the derives (`Outgoing`, `OutSlot`, `OutMessages`, `Deserialized`, `Serialized`, `FromRef`, `MessageInfo`) |
 | `asyncapi` | schemars, serde_norway | AsyncAPI generation and the HTML viewer |
 | `metrics` | prometheus | Prometheus middleware and exporter |
 | `logging` | tracing-subscriber | `ruststream::logging`, a colored console logger ([Logging](../guides/logging.md)) |

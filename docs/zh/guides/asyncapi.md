@@ -28,7 +28,7 @@ ruststream asyncapi gen --yaml
 `#[ruststream::app]` 已经替你把 `asyncapi gen` 命令接到了 `build_spec` 上，因此 CLI 和手写调用产出的
 是同一份文档。
 
-## 载荷 schema
+## 载荷 schema { #payload-schemas }
 
 处理器的载荷类型只要 derive 了 `JsonSchema`，就会作为一个 schema 出现。RustStream 重导出了 `schemars`，
 所以你不需要直接依赖它：
@@ -45,12 +45,17 @@ ruststream asyncapi gen --yaml
     --8<-- "examples/manual/asyncapi_http.rs:payload"
     ```
 
-没有 `JsonSchema` 的类型照样可以作为处理器的载荷，只是它不会给文档贡献 schema。生成文档时，每出现
-一处这样的缺口就会打一条 `WARN` 日志（每个处理器或每条出站声明只报一次，并写明是哪个订阅或哪个通道、
-以及是什么类型）。`Spec::messages_without_schema()` 会列出
-受影响的消息组件；在测试里断言它为空，就能在 CI 里卡住 schema 覆盖率。
+在 `#[subscriber]` 这条路径上，没有 `JsonSchema` 的类型照样可以作为处理器的载荷，只是它不会给文档
+贡献 schema。生成文档时，每出现一处这样的缺口就会打一条 `WARN` 日志（每个处理器或每条出站声明只报
+一次，并写明是哪个订阅或哪个通道、以及是什么类型）。`Spec::messages_without_schema()` 会列出受影响
+的消息组件；在测试里断言它为空，就能在 CI 里卡住 schema 覆盖率。
 
-自带线上格式的消息是刻意留下的例外。[`Deserialized`](subscribers.md#raw-subscribers) 输入、
+手写的注册（`subscriber(..)` 这条链）要求更严：它默认就会进文档，因此在 `asyncapi` feature 下，挂载
+它就要求它的消息类型给出 schema，没有 `JsonSchema` 的类型是一个编译错误，错误会点明该用哪个 derive。
+链上的 `.describe(..)` 设置这次操作的描述，`.undocumented()` 把这一条注册排除在文档之外，同时也就
+免掉了给出 schema 的义务。
+
+自带传输格式的消息是刻意留下的例外。[`Deserialized`](subscribers.md#raw-subscribers) 输入、
 以已序列化形态发出的出站类型 - 带
 [`#[derive(Serialized)]`](subscribers.md#raw-subscribers) 的回复，或者某个槽位 `#[publishes(..)]`
 词典里的 `Serialized` 成员 - 会用它自己的名字收录进文档、不带载荷 schema；生成文档时不会为它

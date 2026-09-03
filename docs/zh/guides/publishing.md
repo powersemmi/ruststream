@@ -4,14 +4,17 @@
 处理器都不会见到一个尚未连接的发布者：注册携带的是发布*策略*（纯粹的声明），运行时会在启动时把它们与
 已连接的 Broker 配对。
 
-显式发布用的始终是同一个构建器：从 `message(..)` 进入，以 `publish()` 收尾。入口只有一个，因为要
-发布的东西只有一种，就是一个已声明类型的值。走哪条线由这个类型决定：实现了 `serde::Serialize` 的值
-由编解码器编码，带 `#[derive(Serialized)]` 的类型按字节原样发出，路径上没有编解码器。服务手上已经
-编码好的字节就是一个带 `Serialized` 的类型：给它一个名字，它就从信道上的匿名载荷变成生成文档里的
-一条记录。调用点必须填哪些位置
-（目的地、类型化的消息头、编解码器），由消息类型自己的声明
-决定，因此一次信息不全的发布是编译错误，而不是运行时的意外。`Publisher::publish` 仍然在底下，但它是
-Broker crate 要实现的接口（参见 [Broker 作者](../broker-authors/index.md)）；服务代码写的是构建器。
+显式发布用的始终是同一个构建器：从 `message(..)` 进入，以 `publish()` 收尾。发出去的是一个已声明
+类型的值，用哪种传输方式则跟着这个类型走：
+
+```text
+message(&order)   -> codec -> bytes -> broker    （Serialize 的值需要编码）
+message(&export)  ->          bytes -> broker    （Serialized 的值本身就是字节）
+```
+
+服务手上已经编码好的字节以 `Serialized` newtype 的形式发出：给它一个名字，它就从信道上的匿名载荷
+变成生成文档里的一条记录。调用点必须填哪些位置（目的地、类型化的消息头、编解码器），由消息类型
+自己的声明决定，因此一次信息不全的发布是编译错误，而不是运行时的意外。
 
 ## 从处理器回复
 
@@ -33,8 +36,9 @@ Broker crate 要实现的接口（参见 [Broker 作者](../broker-authors/index
 
 用普通的 `include` 挂载它。如果不再多说什么，回复就会以默认编解码器、经由 Broker 的默认发布策略发出；
 要指定回复的编解码器或者加上变换，就用 `.publisher(..)` 链上一个架在 Broker 发布策略之上的
-[`TypedPublisher`] 栈（`TypedPublisher::new` 用默认编解码器，`TypedPublisher::with_codec` 则可以指定
-一个）。该栈是一份声明：运行时会在启动时把它与已连接的 Broker 配对。
+[`TypedPublisher`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.TypedPublisher.html)
+栈（`TypedPublisher::new` 用默认编解码器，`TypedPublisher::with_codec` 则可以指定一个）。该栈是一份
+声明：运行时会在启动时把它与已连接的 Broker 配对。
 
 === "宏"
 
@@ -51,9 +55,9 @@ Broker crate 要实现的接口（参见 [Broker 作者](../broker-authors/index
 入站请求的解码遵循作用域（用 `with_broker_codec` 设定的作用域编解码器，没有设定则用默认编解码器）；
 回复的编解码器则随着附加上去的栈一起走。参见[编解码器](codecs.md#the-publish-side)。
 
-一个子句服务于两条线，因为这个选择属于回复的类型，而不属于子句。实现了 `serde::Serialize` 的回复
-按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此附加的是一个
-普通的发布策略：这条线上没有编解码器可命名，也就没有 `TypedPublisher` 要把它包进去。参见
+一个子句服务于两种传输方式，因为这个选择属于回复的类型，而不属于子句。实现了 `serde::Serialize`
+的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此附加的是一个
+普通的发布策略：这种传输方式没有编解码器可命名，也就没有 `TypedPublisher` 要把它包进去。参见
 [原始字节订阅者](subscribers.md#raw-subscribers)。
 
 ## 控制确认行为
@@ -105,7 +109,7 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
     --8<-- "examples/manual/publishing.rs:forward"
     ```
 
-`message(&value)` 走值自己的那条线：`Serialize` 的值用作用域的编解码器编码（想给单次调用换一个，
+`message(&value)` 用值自己的那种传输方式：`Serialize` 的值用作用域的编解码器编码（想给单次调用换一个，
 用 `.with_codec(..)`），`Serialized` 的值按字节原样发出，根本没有编解码器的位置。两者都用
 `.with_headers(..)` 填上消息头这一位置 - 按引用传消息自己声明的契约（`&meta`），或者按值传一张
 已经建好的 `HeaderMap` - 也都以 `publish()` 收尾。
@@ -172,11 +176,11 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 都带着一个消息类型，因此每次发布都受这份列表管辖。单个无名 `Out<impl Publisher>` 的隐含
 `DefaultSlot` 没有可以列类型的声明处，所以它接受每一种已声明的消息。参见[类型化的消息头](headers.md)。
 
-类型化发布走哪条线，由类型选定。实现 `serde::Serialize` 的值由 `message(&value)` 用编解码器编码，
-如上；带 `#[derive(Serialized)]` 的类型自带字节，同一个调用把它们按原样发出 - 路径上没有任何
-编解码器。其余一切都是平常的规则：给它 `#[derive(Outgoing)]`，再像任何模型一样列进
-`#[publishes(..)]`，文档就会用它自己的名字收录它（按设计不带载荷 schema），目的地取自类型的声明，
-而词典、声明的消息集合和消息头位置对它的把关与对编码模型完全一致。
+类型化发布用哪种传输方式，由类型选定。实现 `serde::Serialize` 的值由 `message(&value)` 用编解码器
+编码，如上；带 `#[derive(Serialized)]` 的类型自带字节，同一个调用把它们按原样发出 - 路径上没有任何
+编解码器。其余一切都遵循平常的规则：给它 `#[derive(Outgoing)]`，再像任何模型一样列进
+`#[publishes(..)]`。文档会用它自己的名字收录它（不带载荷 schema - 字节本身就是格式），目的地取自
+类型的声明，而词典、声明的消息集合和消息头位置对它的把关与对编码模型完全一致。
 
 === "宏"
 
@@ -338,8 +342,7 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 批量处理器的回复会跳过按消息生效的 `.transform(..)` 栈；要在那里加变换，用 `.batch_transform(..)`，
 并可以通过 `for_batch(transform)` 复用一个按消息的 `PublishTransform`。
 
-`PublishLayer` 实现的是 around/next 形式的签名，因此它可以短路、重试，或者只做观察（“动态”一词
-留给 `PublishDynStack` 里的 `PublishDynLayer`）：
+`PublishLayer` 实现的是 around/next 形式的签名，因此它可以短路、重试，或者只做观察：
 
 ```rust
 --8<-- "examples/publishing.rs:app_layer"
@@ -434,6 +437,6 @@ commit、第二次 commit、结算之后再发布，都是编译错误，而不�
 
 ## 批量发布
 
-`Publisher` 上没有直接的批量发布 API。对多数 Broker（NATS、Kafka）来说，客户端本来就会把写入合并起来，
-因此逐条消息调用 `publish` 的循环能达到同样的吞吐。如果某个 Broker 真的有管线原语（Redis），那就由该
-Broker crate 把它作为 Broker 专有的能力暴露出来。
+要发布很多条消息，就在循环里逐条发布：对多数 Broker（NATS、Kafka）来说，客户端本来就会把写入合并
+起来，因此这个循环能达到和专门的批量调用一样的吞吐。如果某个 Broker 真的有管线原语（Redis），那就由
+它的 crate 把它作为 Broker 专有的能力暴露出来。
