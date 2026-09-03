@@ -17,10 +17,12 @@ use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
+use super::builder::IncludeRawReply;
+use super::slot_reply_builder::IncludeRawReplyOut;
 use super::{
-    CommitVia, DefaultBareReply, DefaultReply, IncludeMount, IncludePublishing,
-    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, MountCodec, PublishInjectMount,
-    PublishMount, SlotCommit, forms,
+    CommitVia, DefaultReply, IncludeMount, IncludePublishing, IncludePublishingOut,
+    IncludeSlotsWithReply, IncludeWith, MountCodec, PublishInjectMount, PublishMount,
+    RawReplyInjectMount, RawReplyMount, SlotCommit, forms,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -49,12 +51,12 @@ where
     C: 's,
     State: 's,
     Pipeline: 's,
-    DefaultBareReply: CommitVia<PublishMount, B, Layers, C, State, Pipeline, Def>,
+    DefaultReply: CommitVia<RawReplyMount, B, Layers, C, State, Pipeline, Def>,
 {
-    type Out = IncludePublishing<'s, B, Layers, C, State, Pipeline, Def, DefaultBareReply>;
+    type Out = IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, DefaultReply>;
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
-        IncludeWith::new(def, DefaultBareReply, scope)
+        IncludeWith::new(def, DefaultReply, scope)
     }
 }
 
@@ -90,8 +92,10 @@ where
     }
 }
 
+// The serialized wire's default next to the slot tuple: the broker's plain policy taken bare,
+// keyed by the raw mount token so it exists with no codec feature at all.
 impl<B, Layers, C, State, Pipeline, Def, Slots>
-    SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def> for (DefaultBareReply, Slots)
+    SlotCommit<RawReplyInjectMount, B, Layers, C, State, Pipeline, Def> for (DefaultReply, Slots)
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
@@ -106,6 +110,22 @@ where
             ),
             def,
             scope,
+        );
+    }
+}
+
+// A user policy on the serialized wire commits through the same wire-agnostic machinery the
+// encoded attach does; see the scope's `RawReplyMount` commit.
+impl<B, Layers, C, State, Pipeline, Def, Source, Slots>
+    SlotCommit<RawReplyInjectMount, B, Layers, C, State, Pipeline, Def>
+    for (WithSource<Source>, Slots)
+where
+    B: Broker + 'static,
+    Self: SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def>,
+{
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        <Self as SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def>>::commit(
+            self, def, scope,
         );
     }
 }
@@ -227,7 +247,7 @@ where
     Def: HasSlots,
     Def::Markers: InitSlots,
 {
-    type Out = IncludePublishingOut<
+    type Out = IncludeRawReplyOut<
         's,
         B,
         Layers,
@@ -235,14 +255,14 @@ where
         State,
         Pipeline,
         Def,
-        DefaultBareReply,
+        DefaultReply,
         <Def::Markers as InitSlots>::Init,
     >;
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
         IncludeSlotsWithReply::new(
             def,
-            DefaultBareReply,
+            DefaultReply,
             <Def::Markers as InitSlots>::init(),
             scope,
         )

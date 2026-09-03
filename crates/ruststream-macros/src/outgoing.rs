@@ -152,6 +152,11 @@ fn declared_entries(
                 #[allow(unused_imports)]
                 use ::ruststream::__private::NoHeadersSchemaProbe as _;
                 ::ruststream::__private::Probe::<#name #ty_generics>::new().headers_schema_json()
+            })
+            .with_serialized({
+                #[allow(unused_imports)]
+                use ::ruststream::__private::NoSerializedProbe as _;
+                ::ruststream::__private::Probe::<#name #ty_generics>::new().serialized_wire()
             }),
         ]
     }

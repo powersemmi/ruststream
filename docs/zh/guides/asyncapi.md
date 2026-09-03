@@ -47,8 +47,14 @@ ruststream asyncapi gen --yaml
 
 没有 `JsonSchema` 的类型照样可以作为处理器的载荷，只是它不会给文档贡献 schema。生成文档时，每出现
 一处这样的缺口就会打一条 `WARN` 日志（每个处理器或每条出站声明只报一次，并写明是哪个订阅或哪个通道、
-以及是什么类型；刻意不带 schema 的原始字节消息不在此列）。`Spec::messages_without_schema()` 会列出
+以及是什么类型）。`Spec::messages_without_schema()` 会列出
 受影响的消息组件；在测试里断言它为空，就能在 CI 里卡住 schema 覆盖率。
+
+自带线上格式的消息是刻意留下的例外。[`Deserialized`](subscribers.md#raw-subscribers) 输入、
+以已序列化形态发出的出站类型 - 带
+[`#[derive(Serialized)]`](subscribers.md#raw-subscribers) 的回复，或者某个槽位 `#[publishes(..)]`
+词典里的 `Serialized` 成员 - 会用它自己的名字收录进文档、不带载荷 schema；生成文档时不会为它
+告警，`messages_without_schema()` 也不会把它列出来：格式就是那些字节本身，schema 无话可说。
 
 除了载荷之外，文档还会带上**消息头的 schema**（来自处理器的 `Headers<T>` 参数，或者某个类型
 声明的 `headers = ..` 契约），以及为每一条已声明的出站消息生成的 **`send` 操作**，包括 `publish(..)`

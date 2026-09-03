@@ -1,24 +1,24 @@
-error[E0277]: `InjectHandler<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)>, JsonCodec>` cannot handle `MemoryMessage`
+error[E0277]: `runtime::inject::InjectHandler<SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>, JsonCodec>` cannot handle `MemoryMessage`
   --> tests/ui/out_typed_capability_mismatch.rs:35:55
    |
 35 |         b.include(forward).out(Events, MemoryPublish).build();
    |                                                       ^^^^^ unsatisfied trait bound
    |
-   = help: the trait `Handler<MemoryMessage>` is not implemented for `InjectHandler<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)>, JsonCodec>`
+   = help: the trait `Handler<MemoryMessage>` is not implemented for `runtime::inject::InjectHandler<SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>, JsonCodec>`
    = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
-help: the trait `Handler<Msg, <Def as InjectDef>::Context, State>` is conditionally implemented for `InjectHandler<Def, DecodeCodec>`
+help: the trait `Handler<Msg, <Def as runtime::inject::InjectDef>::Context, State>` is conditionally implemented for `runtime::inject::InjectHandler<Def, DecodeCodec>`
   --> src/runtime/inject.rs
    |
    | / impl<Msg, Def, DecodeCodec, State> Handler<Msg, Def::Context, State>
    | |     for InjectHandler<Def, DecodeCodec>
    | | where
    | |     Msg: IncomingMessage,
+   | |     Def: InjectCall<State>,
+   | |          ----------------- unsatisfied requirement introduced here: `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>: runtime::inject::InjectCall<()>`
 ...  |
    | |     DecodeCodec: Send + Sync,
    | |     State: Send + Sync,
-   | |                       ^ unsatisfied requirement introduced here: `<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)> as InjectDef>::Context == ()`
-   | |_______________________|
-   |
+   | |_______________________^
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open)>>`
 note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
   --> src/runtime/app/include/slot_builder.rs
@@ -39,34 +39,31 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
 help: the following other types implement trait `RequestReply`
   --> src/runtime/slot.rs
    |
-   |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
-...
-   | / impl<P, Body, M, EncodeCodec> RequestReply for TypedSlot<P, Body, M, EncodeCodec>
-   | | where
-   | |     P: RequestReply,
-   | |     M: OutSlot,
-   | |     EncodeCodec: Send + Sync,
-   | |_____________________________^ `TypedSlot<P, Body, M, EncodeCodec>`
+   | impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
   ::: src/runtime/handle/outs.rs
    |
-   |   impl<M: OutSlot, W: RequestReply, E: Send + Sync> RequestReply for Slot<M, W, E> {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Slot<M, W, E>`
+   | impl<M: OutSlot, W: RequestReply, E: Send + Sync, Body> RequestReply for Slot<M, W, E, Body> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Slot<M, W, E, Body>`
    |
   ::: src/memory/capability.rs
    |
-   |   impl RequestReply for MemoryRequester {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
-   = note: required for `SlotPublisher<MemoryPublisher, Events>` to implement `RequestReply`
-note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>` to implement `InjectDef`
+   | impl RequestReply for MemoryRequester {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
+note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>>`
   --> tests/ui/out_typed_capability_mismatch.rs:24:1
    |
 24 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
-...
+25 | async fn forward(
+   |          ^^^^^^^
+26 |     _order: &Order,
 27 |     Out(out): Out<impl RequestReply, Events, Progress>,
    |                        ------------ unsatisfied trait bound introduced here
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>, (), forward, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
+   = note: 1 redundant requirement hidden
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open)>>`
 note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
   --> src/runtime/app/include/slot_builder.rs

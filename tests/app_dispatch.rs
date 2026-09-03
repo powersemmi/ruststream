@@ -15,9 +15,28 @@ use std::{
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{BlanketLayer, Handler, HandlerMetadata, Layer};
+use ruststream::runtime::{BlanketLayer, Handler, HandlerMetadata, Input, Layer, SoloDeserialized};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+
+/// The payload view the byte-level bodies below take. The bodies never look at the bytes - the
+/// subject here is the wiring - but the view is what puts them on the codec-free lane.
+// The field is what makes the type a payload view; no body in this file reads it.
+#[allow(dead_code)]
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = std::convert::Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Order {
@@ -33,10 +52,10 @@ fn order_bytes(id: u32, total: f64) -> Vec<u8> {
 /// gets a delivery here, not what the body does with it.
 struct CountFrames(Arc<AtomicU32>);
 
-impl<'p> Handle<Payload<'p>> for CountFrames {
+impl<'p> Handle<Frame<'p>> for CountFrames {
     fn handle(
         &self,
-        _frame: &Payload<'p>,
+        _frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
@@ -358,10 +377,10 @@ async fn global_layer_wraps_handlers() {
 /// another broker, which is what the suite below asserts on.
 struct Bridge(MemoryPublisher);
 
-impl<'p> Handle<Payload<'p>> for Bridge {
+impl<'p> Handle<Frame<'p>> for Bridge {
     async fn handle(
         &self,
-        _frame: &Payload<'p>,
+        _frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {

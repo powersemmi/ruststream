@@ -10,7 +10,7 @@ use super::super::publish::TypedPublisher;
 use super::*;
 use crate::codec::JsonCodec;
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
-use crate::runtime::Decoded;
+use crate::runtime::input::Decoded;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;

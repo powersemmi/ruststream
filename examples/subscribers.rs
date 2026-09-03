@@ -67,10 +67,16 @@ async fn settle(orders: &[Order]) -> HandlerOutcome {
 // --8<-- [end:batch]
 
 // --8<-- [start:raw_batch]
+/// The raw element type: the derive gives the newtype the delivery's bytes, and with them both
+/// input spellings, so a page of frames is `&[Frame<'_>]`.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
 /// A batch of payloads: the batch shape without the decode step.
 #[subscriber("frames")]
-async fn ingest(frames: &[&[u8]]) -> HandlerOutcome {
-    println!("ingesting {} frames", frames.len());
+async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
+    let bytes: usize = frames.iter().map(|frame| frame.0.len()).sum();
+    println!("ingesting {} frames ({bytes} bytes)", frames.len());
     HandlerOutcome::ack()
 }
 // --8<-- [end:raw_batch]

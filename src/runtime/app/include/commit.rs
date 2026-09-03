@@ -18,10 +18,7 @@ use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandle
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
 
-use super::{DefaultBareReply, PublishMount};
-// The typed default reply exists only with a default codec to encode it, like the impl below.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use super::DefaultReply;
+use super::{DefaultReply, PublishMount, RawReplyMount};
 use crate::runtime::app::scope::BrokerScope;
 
 // ---------------------------------------------------------------------------------------------
@@ -67,8 +64,10 @@ where
     }
 }
 
-impl<B, Layers, C, State, Pipeline, Def> CommitVia<PublishMount, B, Layers, C, State, Pipeline, Def>
-    for DefaultBareReply
+// The serialized wire's default: the broker's plain publish policy taken bare, keyed by the
+// raw mount token so it exists with no codec feature at all.
+impl<B, Layers, C, State, Pipeline, Def>
+    CommitVia<RawReplyMount, B, Layers, C, State, Pipeline, Def> for DefaultReply
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
@@ -80,6 +79,22 @@ where
             WithSource::new(<B::Connected as DefaultPublish>::Policy::default()),
             def,
             scope,
+        );
+    }
+}
+
+// A user policy on the serialized wire commits through the same wire-agnostic machinery the
+// encoded attach does: the scope's `ReplySink` bound is structural, so one generic commit
+// serves both mount tokens.
+impl<B, Layers, C, State, Pipeline, Def, Source>
+    CommitVia<RawReplyMount, B, Layers, C, State, Pipeline, Def> for WithSource<Source>
+where
+    B: Broker + 'static,
+    Self: CommitVia<PublishMount, B, Layers, C, State, Pipeline, Def>,
+{
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        <Self as CommitVia<PublishMount, B, Layers, C, State, Pipeline, Def>>::commit(
+            self, def, scope,
         );
     }
 }

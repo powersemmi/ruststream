@@ -27,12 +27,13 @@ use ruststream::memory::{
 };
 use ruststream::runtime::{
     AppInfo, Context, DefaultSlot, Handle, HandlerOutcome, HealthState, IntoSource, Out, Outgoing,
-    Payload, PublishContext, PublishError, PublishExt, PublishTransform, RustStream,
-    RustStreamError, TypedPublisher, subscriber as subscriber_def,
+    PublishContext, PublishError, PublishExt, PublishTransform, RustStream, RustStreamError,
+    TypedPublisher, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, ConnectedBroker, DescribeServer, Publisher, ServerSpec, SubscriptionSource, subscriber,
+    Broker, ConnectedBroker, DescribeServer, Deserialized, Publisher, Serialized, ServerSpec,
+    SubscriptionSource, subscriber,
 };
 use tokio::sync::Notify;
 use tokio::time::timeout;
@@ -40,6 +41,14 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
 use common::{Order, Receipt, order_bytes};
+
+/// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
+/// The reply the byte-level relay returns: its bytes leave on the wire as they are.
+#[derive(Serialized)]
+struct Export(Vec<u8>);
 
 // ---------------------------------------------------------------------------------------------
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is
@@ -296,10 +305,10 @@ impl IntoSource for RefusedSubscription {
 /// The body behind the refused subscription: it never runs, so it only has to exist.
 struct NeverDelivered;
 
-impl<'p> Handle<Payload<'p>> for NeverDelivered {
+impl<'p> Handle<Frame<'p>> for NeverDelivered {
     fn handle(
         &self,
-        _frame: &Payload<'p>,
+        _frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
@@ -587,15 +596,15 @@ impl<C> PublishTransform<C> for Envelope {
     }
 }
 
-#[subscriber("cov.audit.in", raw, publish_raw("cov.audit.out"))]
-async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
+#[subscriber("cov.audit.in", publish("cov.audit.out"))]
+async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Export {
     audit
-        .raw(frame)
+        .raw(frame.0)
         .to("cov.audit.copy")
         .publish()
         .await
         .expect("the slot publisher is live");
-    frame.to_vec()
+    Export(frame.0.to_vec())
 }
 
 /// A byte-reply handler with an `Out` slot: the slot is bound explicitly and the reply leaves
@@ -622,7 +631,7 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
         .with_raw(b"frame");
     let replies = tb
         .broker::<MemoryBroker>()
-        .published::<Vec<u8>>("cov.audit.out");
+        .published::<Export>("cov.audit.out");
     replies.assert_called_once().with_raw(b"frame");
 }
 

@@ -54,7 +54,7 @@ async fn skipping(_order: &Order) -> HandlerOutcome {
 }
 
 /// A batch handler under an explicit `panic = fail_fast`.
-#[subscriber(batch("batchboom"), on_failure(panic = fail_fast))]
+#[subscriber("batchboom", on_failure(panic = fail_fast))]
 async fn batch_boom(orders: &[Order]) -> HandlerOutcome {
     // The test always delivers a non-empty batch, so this assertion always fails (panics).
     assert!(orders.is_empty(), "batch handler exploded");
@@ -69,14 +69,14 @@ async fn rpcd(order: &Order) -> u32 {
 }
 
 /// A plain batch handler: exercises the per-element batch decode-failure path.
-#[subscriber(batch("bd"))]
+#[subscriber("bd")]
 async fn bd(orders: &[Order]) -> HandlerOutcome {
     BATCH_DONE.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 /// A batch publishing handler: exercises the batch-publishing decode-failure path.
-#[subscriber(batch("bpd"), publish("bpd.out"))]
+#[subscriber("bpd", publish("bpd.out"))]
 async fn bpd(orders: &[Order]) -> Vec<u32> {
     BATCH_REPLY_DONE.fetch_add(orders.len(), Ordering::SeqCst);
     orders.iter().map(|o| o.id).collect()

@@ -10,12 +10,14 @@
 //! ```
 
 use std::any::type_name;
+use std::convert::Infallible;
 use std::future::{Future, ready};
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    ContainsMessage, OutMessages, OutgoingMessageMetadata, PublishedThrough, SlotPos,
+    ContainsMessage, Input, OutMessages, OutgoingMessageMetadata, PublishedThrough, SlotPos,
+    SoloDeserialized,
 };
 use ruststream::schemars::{JsonSchema, schema_for};
 use ruststream::testing::TestApp;
@@ -148,16 +150,34 @@ impl PublishedThrough<Events> for Progress {}
 // message set - destinations come from each type's declaration, headers from its contract, so
 // `Progress` publishes bare and `ChunkDone` does not compile without `.with_headers(&meta)`.
 // --8<-- [start:handler]
+// The raw input type. What `#[derive(Deserialized)]` would write is these two impls: the
+// construction, which borrows the delivery's bytes, and the `Input` spelling that routes
+// `&Chunk<'_>` onto the self-deserializing lane.
+struct Chunk<'a>(&'a [u8]);
+
+impl Deserialized for Chunk<'_> {
+    type Output<'a> = Chunk<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Chunk<'_>, Self::Error> {
+        Ok(Chunk(payload))
+    }
+}
+
+impl Input for Chunk<'_> {
+    type Axis = SoloDeserialized<Chunk<'static>>;
+}
+
 #[derive(Clone, Copy)]
 struct Convert;
 
-impl<'p, P, Enc> Handle<Payload<'p>, (), Outs<(Slot<Events, P, Enc>,)>> for Convert
+impl<'p, P, Enc> Handle<Chunk<'p>, (), Outs<(Slot<Events, P, Enc>,)>> for Convert
 where
     Slot<Events, P, Enc>: Publish,
 {
     async fn handle(
         &self,
-        chunk: &Payload<'p>,
+        chunk: &Chunk<'p>,
         outs: &Outs<(Slot<Events, P, Enc>,)>,
         ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
@@ -181,7 +201,7 @@ where
         };
         let done_meta = DoneMeta {
             task_id: meta.task_id,
-            duration_ms: chunk.len() as u64,
+            duration_ms: chunk.0.len() as u64,
         };
         if events
             .message(&done)

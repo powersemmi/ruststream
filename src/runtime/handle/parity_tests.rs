@@ -5,17 +5,53 @@ use std::future::{Future, ready};
 
 use serde::{Deserialize, Serialize};
 
+use crate::Seeker;
 use crate::codec::JsonCodec;
-use crate::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemorySource};
+use crate::memory::{
+    MemoryBroker, MemoryContext, MemoryPublish, MemoryPublisher, MemorySource, Position, SeekHandle,
+};
 use crate::nonzero;
 use crate::runtime::{
-    Bare, Context, Handle, HandlerOutcome, Message, Outs, Payload, Publish, Router, RouterDef,
-    Slot, SubscriberSettings, Verdict, subscriber,
+    Context, Deserialized, Handle, HandlerOutcome, Input, Message, Outs, Publish, ReplyShape,
+    Router, RouterDef, Serialized, SerializedReply, Slot, SoloDeserialized, SubscriberSettings,
+    Verdict, subscriber,
 };
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
+}
+
+/// The self-deserializing input lane, spelled by hand (the derive is `macros`-crate sugar over
+/// exactly these impls).
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = core::convert::Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
+
+/// The self-serialized reply lane, spelled by hand for the same reason.
+struct Export(Vec<u8>);
+
+impl Serialized for Export {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl ReplyShape for Export {
+    type Body = Self;
+    type Headers = ();
+    type Wire = SerializedReply;
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -46,14 +82,14 @@ impl Handle<Order> for Audit {
 
 struct Inspect;
 
-impl<'p> Handle<Payload<'p>> for Inspect {
+impl<'p> Handle<Frame<'p>> for Inspect {
     fn handle(
         &self,
-        payload: &Payload<'p>,
+        frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        let _ = payload.len();
+        let _ = frame.0.len();
         ready(Ok(()))
     }
 }
@@ -88,10 +124,10 @@ impl Handle<[Order]> for SettlePage {
 
 struct Frames;
 
-impl<'p> Handle<[Payload<'p>]> for Frames {
+impl<'p> Handle<[Frame<'p>]> for Frames {
     fn handle(
         &self,
-        page: &[Payload<'p>],
+        page: &[Frame<'p>],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
@@ -153,27 +189,27 @@ impl Handle<Order, Receipt> for IssueReceipt {
 
 struct Echo;
 
-impl Handle<Order, Vec<u8>> for Echo {
+impl Handle<Order, Export> for Echo {
     fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
-        ready(Ok(order.id.to_be_bytes().to_vec()))
+    ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
+        ready(Ok(Export(order.id.to_be_bytes().to_vec())))
     }
 }
 
 struct RawEcho;
 
-impl<'p> Handle<Payload<'p>, Vec<u8>> for RawEcho {
+impl<'p> Handle<Frame<'p>, Export> for RawEcho {
     fn handle(
         &self,
-        payload: &Payload<'p>,
+        frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
-        ready(Ok(payload.to_vec()))
+    ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
+        ready(Ok(Export(frame.0.to_vec())))
     }
 }
 
@@ -231,6 +267,48 @@ impl crate::MessageHeaders for Event {
 }
 
 impl crate::runtime::PublishedThrough<Analytics> for Event {}
+
+// A serialized out type is a first-class dictionary member: it declares its destination and
+// membership like any model, and its bytes leave through the slot's raw builder.
+impl crate::OutgoingDestination for Export {
+    type Form = crate::CallerName;
+}
+
+impl crate::MessageHeaders for Export {
+    type Contract = crate::NoHeaders;
+}
+
+impl crate::runtime::PublishedThrough<Analytics> for Export {}
+
+/// Publishes a serialized dictionary member's own bytes through the slot.
+struct RawMirror;
+
+impl<W, E> Handle<Order, (), Outs<(Slot<Analytics, W, E>,)>> for RawMirror
+where
+    Slot<Analytics, W, E>: Publish,
+    W: Send + Sync,
+    E: Send + Sync,
+{
+    async fn handle(
+        &self,
+        order: &Order,
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        let export = Export(order.id.to_be_bytes().to_vec());
+        if outs
+            .get(Analytics)
+            .raw(export.bytes())
+            .to("order-exports")
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerOutcome::retry());
+        }
+        Ok(())
+    }
+}
 
 struct Mirror;
 
@@ -335,10 +413,11 @@ fn every_eager_spelling_mounts() {
 }
 
 /// Every reply shape mounts through the chain: named and declared destinations, an attached
-/// and a defaulted policy, the bare wire (from a decoded and a byte input, with an explicit
-/// and the default bare publisher), the page form, and typed reply headers.
+/// and a defaulted policy, the serialized wire (from a decoded and a self-deserializing input,
+/// with an explicit and the broker's default publisher - selected by the reply type alone),
+/// the page form, and typed reply headers.
 fn reply_axes() -> impl RouterDef<MemoryBroker> {
-    use crate::runtime::{DefaultBareReply, TypedPublisher};
+    use crate::runtime::TypedPublisher;
 
     Router::<MemoryBroker>::new()
         .include(
@@ -359,16 +438,10 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", Echo)
                 .reply()
                 .to("echoes")
-                .publisher(Bare(MemoryPublish))
+                .publisher(MemoryPublish)
                 .build(),
         )
-        .include(
-            subscriber("frames", RawEcho)
-                .reply()
-                .to("echoes")
-                .publisher(DefaultBareReply)
-                .build(),
-        )
+        .include(subscriber("frames", RawEcho).reply().to("echoes").build())
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
@@ -429,7 +502,7 @@ where
 
 struct RawGateway;
 
-impl<W, E> Handle<Order, Vec<u8>, Outs<(Slot<Analytics, W, E>,)>> for RawGateway
+impl<W, E> Handle<Order, Export, Outs<(Slot<Analytics, W, E>,)>> for RawGateway
 where
     Slot<Analytics, W, E>: Publish,
     W: Send + Sync,
@@ -440,9 +513,9 @@ where
         order: &Order,
         outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Vec<u8>, HandlerOutcome>> {
+    ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
         let _ = outs;
-        ready(Ok(order.id.to_be_bytes().to_vec()))
+        ready(Ok(Export(order.id.to_be_bytes().to_vec())))
     }
 }
 
@@ -453,6 +526,9 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
 
     Router::<MemoryBroker>::new()
         .include(subscriber("orders", Mirror).build())
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(subscriber("orders", RawMirror).build())
         .out(Analytics, MemoryPublish)
         .build()
         .include(subscriber("orders", PinnedMirror).build())
@@ -490,7 +566,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", RawGateway)
                 .reply()
                 .to("echoes")
-                .publisher(Bare(MemoryPublish))
+                .publisher(MemoryPublish)
                 .build(),
         )
         .out(Analytics, MemoryPublish)
@@ -504,23 +580,24 @@ fn every_slot_spelling_mounts() {
 
 struct Replayer;
 
-impl Handle<Order, (), (), crate::runtime::SeekContext<crate::memory::MemorySeeker>> for Replayer {
+impl Handle<Order, (), (), MemoryContext> for Replayer {
     async fn handle(
         &self,
         order: &Order,
         _outs: &(),
-        ctx: &mut Context<'_, crate::runtime::SeekContext<crate::memory::MemorySeeker>>,
+        ctx: &mut Context<'_, MemoryContext>,
     ) -> Result<(), HandlerOutcome> {
-        let here = *ctx.position();
-        if order.id == u64::MAX && ctx.seek(here).await.is_err() {
+        let here = ctx.context(Position);
+        if order.id == u64::MAX && ctx.context(SeekHandle).seek(here).await.is_err() {
             return Err(HandlerOutcome::drop());
         }
         Ok(())
     }
 }
 
-/// The seek axis rides the broker context: position and reposition reach the body through
-/// `Context`, and a seekable source is all the mount asks for.
+/// The seek axis rides the broker context: the position and the reposition handle are plain
+/// context fields read by key, and a source whose context carries them is all the mount asks
+/// for.
 #[tokio::test]
 async fn seek_reaches_the_body_through_the_context() {
     use crate::OutgoingMessage;
@@ -542,12 +619,15 @@ async fn seek_reaches_the_body_through_the_context() {
     running.shutdown().await.expect("the app stops cleanly");
 }
 
-/// The scope surface mounts the same definitions, and one subscriber dispatches end to end.
+/// The scope surface mounts the same definitions - the new lanes included: the
+/// self-deserializing solo and page inputs, the serialized replies (attached and defaulted,
+/// with and without slots) and the serialized dictionary out - and one subscriber dispatches
+/// end to end.
 #[tokio::test]
 async fn a_subscriber_dispatches_end_to_end() {
     use crate::OutgoingMessage;
     use crate::Publisher;
-    use crate::runtime::{AppInfo, RustStream};
+    use crate::runtime::{AppInfo, RustStream, TypedPublisher};
 
     let app = RustStream::new(AppInfo::new("handle-parity", "0.0.0")).with_broker(
         MemoryBroker::new(),
@@ -558,6 +638,34 @@ async fn a_subscriber_dispatches_end_to_end() {
                     .buffered(nonzero!(4), std::time::Duration::from_millis(5))
                     .build(),
             );
+            b.include(subscriber("frames", Inspect).build());
+            b.include(subscriber("frames", Frames).build());
+            b.include(
+                subscriber("orders", Echo)
+                    .reply()
+                    .to("echoes")
+                    .publisher(MemoryPublish)
+                    .build(),
+            );
+            b.include(subscriber("frames", RawEcho).reply().to("echoes").build());
+            b.include(
+                subscriber("orders", Confirm)
+                    .reply()
+                    .to("confirmations")
+                    .publisher(TypedPublisher::new(MemoryPublish))
+                    .build(),
+            );
+            b.include(subscriber("orders", RawMirror).build())
+                .publisher(MemoryPublish);
+            b.include(
+                subscriber("orders", RawGateway)
+                    .reply()
+                    .to("echoes")
+                    .publisher(MemoryPublish)
+                    .build(),
+            )
+            .out(Analytics, MemoryPublish)
+            .build();
             b.after_startup(MemoryPublish, async move |publisher| {
                 publisher
                     .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))

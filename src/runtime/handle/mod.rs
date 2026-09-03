@@ -3,10 +3,11 @@
 //! A handler is a type implementing [`Handle`]; every axis of the form matrix is a defaulted
 //! parameter the impl pins, so the signature decides everything and nothing else is named:
 //!
-//! - `In` - the input spelling (see [`Input`]): a decoded `T`, raw `[u8]`, a
+//! - `In` - the input spelling (see [`Input`]): a decoded `T`, a [`Deserialized`] type, a
 //!   [`Message<H, P>`] pair, or a page of any of them;
 //! - `R` - the verdict's `Ok` side (`()` declares no reply; a reply body names its reply type,
-//!   a page reply body `Vec<Reply>`; a [`Message<H, P>`] reply carries typed headers);
+//!   a page reply body `Vec<Reply>`; a [`Message<H, P>`] reply carries typed headers; a
+//!   [`Serialized`] reply's bytes leave as they are);
 //! - `O` - the injections arena (`()` declares none; see [`Outs`]);
 //! - `C` - the broker's typed per-delivery context;
 //! - `S` - the typed application state the body reads via
@@ -53,7 +54,6 @@ mod eager;
 mod outs;
 mod reply;
 mod reply_slots;
-mod seek;
 mod value;
 mod verdict;
 
@@ -61,34 +61,28 @@ mod verdict;
 mod parity_tests;
 
 #[doc(hidden)]
-pub use axis::{
-    Axis, AxisDocs, Page, PageBytes, PagePair, PagedAxis, Solo, SoloAxis, SoloBytes, SoloPair,
-};
-pub use axis::{Input, Message, Payload};
+pub use axis::{Axis, AxisDocs, Page, PagePair, PagedAxis, Solo, SoloAxis, SoloPair};
+pub use axis::{Deserialized, Input, Message, PageDeserialized, SoloDeserialized};
 #[doc(hidden)]
-pub use docs::{DocState, Docs};
+pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
-#[doc(hidden)]
-pub use eager::{PageBody, SoloBody};
 #[doc(hidden)]
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
 pub use outs::{Outs, Publish, Slot};
 #[doc(hidden)]
 pub use reply::{
-    ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape, SealedBatchPublishing,
-    SealedPublishing, SealedRawReply, SplitAttach,
+    ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, SealedBatchPublishing,
+    SealedPublishing, SealedRawReply, SplitAttach, WireDocs,
 };
+pub use reply::{ReplyShape, Serialized};
 #[doc(hidden)]
-pub use reply_slots::{
-    ReplySlotFormFor, SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut,
-};
-pub use seek::SeekContext;
-#[doc(hidden)]
-pub use value::UnbuiltDefinition;
+pub use reply_slots::{SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut};
 pub use value::{
-    Bare, BareReply, DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented,
-    NamedDest, ReplyPublisherForm, ReplyValue, Sealed, subscriber,
+    DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented, NamedDest,
+    ReplyAttach, ReplyValue, Sealed, SerializedReply, subscriber,
 };
+#[doc(hidden)]
+pub use value::{ProbedReplyDef, UnbuiltDefinition, probed_def, probed_reply_def};
 pub use verdict::Verdict;
 #[doc(hidden)]
 pub use verdict::{OneByOne, Paged, VerdictFamily};
@@ -110,6 +104,10 @@ use super::context::Context;
 
 /// The one body contract of the manual path: every axis of the form matrix is a defaulted
 /// parameter the impl pins.
+///
+/// The lane is the type's business on both ends: a `serde` input decodes through the codec
+/// while a [`Deserialized`] one constructs itself from the payload, and a `serde` reply encodes
+/// through the reply codec while a [`Serialized`] one leaves byte-for-byte.
 ///
 /// The `outs` parameter carries the injections arena for a body that declared one (`O` other
 /// than `()`); a body without injections takes `&()`. The returned future's output is the

@@ -8,10 +8,21 @@
 
 use std::borrow::Cow;
 
+use crate::runtime::metadata::OutgoingMessageMetadata;
+
 /// The documentation state a definition starts in: its message types' schemas are reported in
 /// the generated document, and mounting demands they are derivable.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Documented;
+
+/// The `#[subscriber]` attribute's documentation state: schemas and message metadata were
+/// captured at the expansion site by the autoref probes and ride the definition as data
+/// ([`Docs`]), so the state itself demands nothing of the message types - a type without
+/// `JsonSchema` simply contributes no schema, exactly as the attribute always behaved.
+/// Machinery behind the macro expansion; never named in user code.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Probed;
 
 /// The opted-out documentation state: the registration reports no schemas and demands nothing
 /// of its message types.
@@ -71,14 +82,66 @@ impl<T: ?Sized> DocState<T> for Undocumented {
     }
 }
 
-/// The chain-collected documentation values of one definition: what `describe` set.
+// The probed state computes nothing per type: everything it reports was captured into `Docs`
+// at the expansion site.
+impl<T: ?Sized> DocState<T> for Probed {
+    fn schema() -> Option<String> {
+        None
+    }
+}
+
+/// The chain-collected documentation values of one definition.
+///
+/// What `describe` set, plus the probe-captured metadata a `#[subscriber]` expansion carries
+/// (`None` fields defer to the axis-computed values, so the value path is unaffected).
 #[derive(Debug, Clone, Default)]
 pub struct Docs {
     pub(crate) description: Option<Cow<'static, str>>,
+    pub(crate) input_schema: Option<String>,
+    pub(crate) headers_schema: Option<String>,
+    pub(crate) message_name: Option<&'static str>,
+    pub(crate) message_description: Option<&'static str>,
+    pub(crate) outgoing: Option<Vec<OutgoingMessageMetadata>>,
 }
 
 impl Docs {
     pub(crate) fn description(&self) -> Option<&str> {
         self.description.as_deref()
+    }
+}
+
+/// The probe-captured metadata of one `#[subscriber]` expansion.
+///
+/// Evaluated at the concrete types of the handler's signature (the autoref probes only
+/// specialize there) and carried into the definition as data. Machinery behind the macro
+/// expansion; not part of the public API.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct ProbedDocs {
+    /// The handler's doc comment.
+    pub description: Option<&'static str>,
+    /// The input type's JSON Schema, when derivable.
+    pub input_schema: Option<String>,
+    /// The typed header contract's JSON Schema, when one applies.
+    pub headers_schema: Option<String>,
+    /// The input type's `MessageInfo` name.
+    pub message_name: Option<&'static str>,
+    /// The input type's `MessageInfo` description.
+    pub message_description: Option<&'static str>,
+    /// The declared outgoing messages (the reply entry, the slots' dictionaries).
+    pub outgoing: Option<Vec<OutgoingMessageMetadata>>,
+}
+
+impl ProbedDocs {
+    /// Lowers the capture into the definition's [`Docs`].
+    pub(super) fn into_docs(self) -> Docs {
+        Docs {
+            description: self.description.map(Cow::Borrowed),
+            input_schema: self.input_schema,
+            headers_schema: self.headers_schema,
+            message_name: self.message_name,
+            message_description: self.message_description,
+            outgoing: self.outgoing,
+        }
     }
 }

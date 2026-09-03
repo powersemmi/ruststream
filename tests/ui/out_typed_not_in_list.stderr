@@ -12,7 +12,7 @@ error[E0308]: mismatched types
    = note: expected reference `&Progress`
               found reference `&Done`
 note: method defined here
-  --> src/runtime/slot.rs
+  --> src/runtime/handle/outs.rs
    |
    |     pub fn message<'a, T, Index>(
    |            ^^^^^^^

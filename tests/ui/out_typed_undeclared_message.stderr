@@ -1,8 +1,8 @@
 error[E0277]: `Rogue` does not define a message set for the `Events` slot
-  --> tests/ui/out_typed_undeclared_message.rs:27:1
+  --> tests/ui/out_typed_undeclared_message.rs:30:54
    |
-27 | #[subscriber("orders")]
-   | ^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+30 |     Out(out): Out<impl Publisher, Events, (Progress, Rogue)>,
+   |                                                      ^^^^^ unsatisfied trait bound
    |
 help: the trait `OutMessages<Events>` is not implemented for `Rogue`
   --> tests/ui/out_typed_undeclared_message.rs:17:1
@@ -20,4 +20,4 @@ help: the following other types implement trait `OutMessages<M>`
    |
    | impl<M: OutSlot> OutMessages<M> for () {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `()` implements `OutMessages<M>`
-   = note: this error originates in the attribute macro `subscriber` which comes from the expansion of the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)

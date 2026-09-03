@@ -229,7 +229,7 @@ static OVERLAP_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static RELEASE: LazyLock<watch::Sender<bool>> = LazyLock::new(|| watch::Sender::new(false));
 
 /// Holds every batch until the test observes two of them in flight at once.
-#[subscriber(batch("overlap"), workers(2))]
+#[subscriber("overlap", workers(2))]
 async fn overlap(_orders: &[Order]) -> HandlerOutcome {
     BATCHES_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
     OVERLAP_NOTIFY.notify_one();

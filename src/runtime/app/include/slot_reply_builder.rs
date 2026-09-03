@@ -7,7 +7,7 @@ use crate::Broker;
 
 use crate::runtime::slot::{BindSlot, OutSlot, WithSource};
 
-use super::{BatchPublishInjectMount, PublishInjectMount, SlotCommit};
+use super::{BatchPublishInjectMount, PublishInjectMount, RawReplyInjectMount, SlotCommit};
 use crate::runtime::app::scope::BrokerScope;
 
 /// A registration builder for a publishing handler that also takes
@@ -28,14 +28,33 @@ where
     _mount: PhantomData<Mount>,
 }
 
-/// The builder [`BrokerScope::include`] returns for a `publish("dest")` /
-/// `publish_raw("dest")` definition whose handler also takes
-/// [`Out`](crate::runtime::Out) parameters.
+/// The builder [`BrokerScope::include`] returns for a `publish("dest")` definition whose
+/// handler also takes [`Out`](crate::runtime::Out) parameters.
 pub type IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
     IncludeSlotsWithReply<'s, PublishInjectMount, B, Layers, C, State, Pipeline, Def, Reply, Slots>;
 
-/// The builder [`BrokerScope::include`] returns for a `batch(.., publish("dest"))`
-/// definition whose handler also takes [`Out`](crate::runtime::Out) parameters.
+/// The builder [`BrokerScope::include`] returns for a `publish("dest")` definition whose reply
+/// type is [`Serialized`](crate::runtime::Serialized).
+///
+/// The handler also takes [`Out`](crate::runtime::Out) parameters, bound one by one at the
+/// include site.
+pub type IncludeRawReplyOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
+    IncludeSlotsWithReply<
+        's,
+        RawReplyInjectMount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        Reply,
+        Slots,
+    >;
+
+/// The builder [`BrokerScope::include`] returns for a batch publishing (`&[T]` +
+/// `publish("dest")`) definition whose handler also takes [`Out`](crate::runtime::Out)
+/// parameters.
 pub type IncludeBatchPublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
     IncludeSlotsWithReply<
         's,

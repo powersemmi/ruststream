@@ -124,7 +124,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
 
 /// The destination is computed per element, off the whole page: exactly what a reply form
 /// cannot express and the injected publisher can - batch and Out compose.
-#[subscriber(batch("out.page"))]
+#[subscriber("out.page")]
 async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for event in events {
         let payload = serde_json::to_vec(event).expect("serializable");
@@ -206,7 +206,7 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
 
 /// The batch replies leave through the fixed destination while a per-page audit copy leaves
 /// through the injected publisher: the batch publishing form composes with Out.
-#[subscriber(batch("out.ledger"), publish("out.ledger.receipts"))]
+#[subscriber("out.ledger", publish("out.ledger.receipts"))]
 async fn settle_page(
     events: &[Event],
     Out(out): Out<impl Publisher>,

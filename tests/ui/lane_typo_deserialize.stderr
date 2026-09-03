@@ -1,0 +1,37 @@
+error[E0477]: the type `Frame<'_>` does not fulfill the required lifetime
+  --> tests/ui/lane_typo_deserialize.rs:17:10
+   |
+17 |     ) -> Result<(), HandlerOutcome> {
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: type must satisfy the static lifetime
+
+error: implementation of `_serde::Deserialize` is not general enough
+  --> tests/ui/lane_typo_deserialize.rs:17:10
+   |
+17 |     ) -> Result<(), HandlerOutcome> {
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^ implementation of `_serde::Deserialize` is not general enough
+   |
+   = note: `Frame<'_>` must implement `_serde::Deserialize<'0>`, for any lifetime `'0`...
+   = note: ...but `Frame<'_>` actually implements `_serde::Deserialize<'1>`, for some specific lifetime `'1`
+
+error[E0477]: the type `Frame<'_>` does not fulfill the required lifetime
+  --> tests/ui/lane_typo_deserialize.rs:11:6
+   |
+11 | impl Handle<Frame<'_>> for Ingest {
+   |      ^^^^^^^^^^^^^^^^^
+   |
+note: type must satisfy the static lifetime as required by this binding
+  --> src/runtime/handle/mod.rs
+   |
+   | pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Sync {
+   |                               ^^^^^
+
+error: implementation of `_serde::Deserialize` is not general enough
+  --> tests/ui/lane_typo_deserialize.rs:11:6
+   |
+11 | impl Handle<Frame<'_>> for Ingest {
+   |      ^^^^^^^^^^^^^^^^^ implementation of `_serde::Deserialize` is not general enough
+   |
+   = note: `Frame<'_>` must implement `_serde::Deserialize<'0>`, for any lifetime `'0`...
+   = note: ...but `Frame<'_>` actually implements `_serde::Deserialize<'1>`, for some specific lifetime `'1`

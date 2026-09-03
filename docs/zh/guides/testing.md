@@ -72,7 +72,8 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 Broker，它就报告 `TestError::Ambiguous`。
 
 输入走的是服务自己发布时用的同一个发布构建器：`message(&value)` 编码带 `#[derive(Outgoing)]` 的值，
-`raw(bytes)` 原样发送字节（负载无法解码的场景，也是裸订阅者唯一可用的写法），`with_headers(&meta)`
+`raw(bytes)` 原样发送字节（负载无法解码的场景，也是把数据送给[自己反序列化字节](subscribers.md#raw-subscribers)
+的处理器的方式），`with_headers(&meta)`
 附上类型化的消息头契约，而当值的类型没有声明目的地时，由 `to(name)` 指定 subject。
 
 ### 对处理器做断言

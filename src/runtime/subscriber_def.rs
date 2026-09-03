@@ -100,6 +100,7 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.deserialized = <D::Input as InputKind>::DESERIALIZED;
     meta
 }
 
@@ -113,7 +114,7 @@ mod tests {
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
     use crate::runtime::handler::{Handler, HandlerOutcome};
-    use crate::runtime::input::{Decoded, RawBytes};
+    use crate::runtime::input::{Decoded, Provided};
 
     struct Noop;
 
@@ -146,11 +147,15 @@ mod tests {
         }
     }
 
-    /// A raw def: the same trait with the byte input kind; pins the "bytes" metadata label.
+    /// A frame family standing in for a `Deserialized` input on the low-level def.
+    struct Frame;
+
+    /// A raw def: the same trait with the self-deserializing input kind; pins that the metadata
+    /// label is the family type's own name.
     struct ManualRawDef;
 
     impl SubscriberDef for ManualRawDef {
-        type Input = RawBytes;
+        type Input = Provided<Frame>;
         type Context = ();
         type Handler = ();
         type Source = Name;
@@ -163,11 +168,11 @@ mod tests {
     }
 
     #[test]
-    fn a_raw_def_reports_the_bytes_label() {
+    fn a_raw_def_reports_the_family_label() {
         let def = ManualRawDef;
         let meta = subscriber_metadata("frames".to_owned(), &def);
         assert_eq!(meta.name, "frames");
-        assert_eq!(meta.input_type, "bytes");
+        assert!(meta.input_type.ends_with("Frame"), "{}", meta.input_type);
         assert!(meta.payload_schema.is_none());
         def.into_handler();
     }

@@ -9,21 +9,42 @@ mod common;
 
 use common::wait_for;
 
+use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
 use ruststream::prelude::*;
+use ruststream::runtime::{Input, SoloDeserialized};
+
+/// The payload view the body takes: whatever bytes arrive, undecoded, so the test's subject
+/// stays the metric rather than a message model.
+// The body needs the delivery, not its bytes; the field is what makes the type a payload view.
+#[allow(dead_code)]
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
 
 /// Acks whatever arrives: the subject is the metric the dispatch records around the body, not the
 /// body itself.
 struct Ping;
 
-impl<'p> Handle<Payload<'p>> for Ping {
+impl<'p> Handle<Frame<'p>> for Ping {
     fn handle(
         &self,
-        _ping: &Payload<'p>,
+        _ping: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {

@@ -1,7 +1,8 @@
 //! The handler forms from the Subscribers guide, written without the `macros` feature.
 //!
 //! A handler is a named type with an `impl Handle`, and the input spelling picks the form: `&T`
-//! for one decoded message, `&[T]` for a page, `&[Payload<'_>]` for a page of raw payloads. The
+//! for one decoded message, `&[T]` for a page, `&[F<'_>]` for a page of raw payloads, where `F`
+//! is a type of the service's own that constructs itself from the bytes (`Deserialized`). The
 //! one constructor - `subscriber` - binds the body to its subscription source, the declarative
 //! settings (`.name`, `.workers`, `.on_failure`, `.buffered`) chain on the result, `.build()`
 //! seals it, and `include` mounts it.
@@ -10,12 +11,14 @@
 //! cargo run --example manual_subscribers --no-default-features --features memory,json
 //! ```
 
+use std::convert::Infallible;
 use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::prelude::*;
+use ruststream::runtime::{Input, SoloDeserialized};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -107,8 +110,8 @@ impl Handle<[Order]> for Reconcile {
 
 // --8<-- [start:batch_mount]
 /// Batches dispatch per page rather than per delivery, and the page input is the whole
-/// declaration: the mount demands a batching subscriber of the source, exactly as a `batch(..)`
-/// attribute would.
+/// declaration: the mount demands a batching subscriber of the source, exactly as a `&[T]`
+/// handler under `#[subscriber]` would.
 fn batch_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
         .include(subscriber("orders", SettlePage).build())
@@ -117,18 +120,37 @@ fn batch_routes() -> impl RouterDef<MemoryBroker> {
 // --8<-- [end:batch_mount]
 
 // --8<-- [start:raw_batch]
-/// A batch of payloads: the batch shape without the decode step. `Payload` borrows the bytes
-/// straight out of the delivery, so no codec takes part anywhere on this path.
+/// The raw element type. What `#[derive(Deserialized)]` would write is these two impls: the
+/// construction, which borrows the bytes straight out of the delivery, and the `Input`
+/// spelling that routes the type onto the self-deserializing lane - the page spelling
+/// (`&[Frame<'_>]`) comes with it. No codec takes part anywhere on this path.
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
+
+/// A batch of payloads: the batch shape without the decode step.
 struct Ingest;
 
-impl<'p> Handle<[Payload<'p>]> for Ingest {
+impl<'p> Handle<[Frame<'p>]> for Ingest {
     fn handle(
         &self,
-        frames: &[Payload<'p>],
+        frames: &[Frame<'p>],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        println!("ingesting {} frames", frames.len());
+        let bytes: usize = frames.iter().map(|frame| frame.0.len()).sum();
+        println!("ingesting {} frames ({bytes} bytes)", frames.len());
         ready(Ok(()))
     }
 }

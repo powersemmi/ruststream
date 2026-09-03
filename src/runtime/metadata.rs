@@ -28,6 +28,10 @@ pub struct OutgoingMessageMetadata {
     /// turns them into the channel's parameters block, so the declaration and the call site
     /// cannot drift apart.
     pub parameters: &'static [&'static str],
+    /// True when the type rides the serialized wire
+    /// ([`Serialized`](crate::runtime::Serialized)): its bytes are its own wire format, so the
+    /// missing payload schema is by design rather than a documentation gap.
+    pub serialized: bool,
 }
 
 impl OutgoingMessageMetadata {
@@ -42,6 +46,7 @@ impl OutgoingMessageMetadata {
             payload_schema: None,
             headers_schema: None,
             parameters: &[],
+            serialized: false,
         }
     }
 
@@ -77,6 +82,13 @@ impl OutgoingMessageMetadata {
     #[must_use]
     pub fn with_headers_schema(mut self, schema: Option<String>) -> Self {
         self.headers_schema = schema;
+        self
+    }
+
+    /// Builder-style setter for the serialized-wire marker (see [`serialized`](Self::serialized)).
+    #[must_use]
+    pub fn with_serialized(mut self, serialized: bool) -> Self {
+        self.serialized = serialized;
         self
     }
 }
@@ -116,6 +128,10 @@ pub struct HandlerMetadata {
     /// `publish("dest")` form, and every entry of an `Out` slot's `#[publishes(..)]`
     /// dictionary. Feeds the `AsyncAPI` `send` operations.
     pub outgoing: Vec<OutgoingMessageMetadata>,
+    /// True when the input rides the self-deserializing lane
+    /// ([`Deserialized`](crate::runtime::Deserialized)): the payload has no serde model, so
+    /// the missing schema is by design rather than a documentation gap.
+    pub deserialized: bool,
 }
 
 impl HandlerMetadata {
@@ -133,6 +149,7 @@ impl HandlerMetadata {
             message_name: None,
             message_description: None,
             outgoing: Vec::new(),
+            deserialized: false,
         }
     }
 
@@ -152,6 +169,7 @@ impl HandlerMetadata {
             message_name: None,
             message_description: None,
             outgoing: Vec::new(),
+            deserialized: false,
         }
     }
 

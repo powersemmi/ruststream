@@ -5,16 +5,14 @@ use std::marker::PhantomData;
 
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::{
-    BatchDef, BatchWithHeadersDef, RawBatch, TypedBatch, TypedBatchWithHeaders, batch_metadata,
-};
+use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch, batch_metadata};
 use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
-use crate::runtime::input::{DecodeWith, RawBytes};
+use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::PublishPipeline;
@@ -29,9 +27,8 @@ use super::routes_inject::{BatchInjectRoute, InjectRoute};
 use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 use super::sink::RouterSink;
 use super::{
-    BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter,
-    IncludedBatchWithHeadersRouter, IncludedRawBatchRouter, IncludedRouter, InjectedRouter,
-    MergedRouter, PublishingRouter, RawReplyRouter,
+    BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter, IncludedRawBatchRouter,
+    IncludedRouter, InjectedRouter, MergedRouter, PublishingRouter, RawReplyRouter,
 };
 
 /// A statically-typed, lazily-bound group of handler registrations, not attached to any broker.
@@ -272,6 +269,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    _context: PhantomData,
                 },
                 self.routes,
             ),
@@ -281,23 +279,24 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Mounts a raw batch definition on `source`: the handler borrows the batch's payloads as
-    /// they arrived, so no codec takes part.
-    pub(super) fn mount_raw_batch<Source, Def>(
+    /// Mounts a self-deserializing batch definition on `source`: each element constructs itself
+    /// from its delivery's payload, so no codec takes part.
+    pub(super) fn mount_raw_batch<Source, Def, F>(
         self,
         source: Source,
         def: Def,
-    ) -> IncludedRawBatchRouter<B, Source, Def, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef<Input = RawBytes>,
+        Def: BatchDef<Input = Provided<F>>,
         Def::Handler: 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = RawBatch::over(def.into_handler());
+        let handler =
+            DeserializedBatch::<_, F, _>::over(def.into_handler()).with_decode(policies.decode);
         Router {
             routes: (
                 BatchRoute {
@@ -306,47 +305,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            _broker: PhantomData,
-        }
-    }
-
-    /// Mounts a batch definition whose handler also reads a typed header contract per element,
-    /// the [`mount_batch`](Self::mount_batch) counterpart for that form.
-    pub(super) fn mount_batch_with_headers<Source, Def, DecodeCodec>(
-        self,
-        source: Source,
-        def: Def,
-        codec: DecodeCodec,
-    ) -> IncludedBatchWithHeadersRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, Routes>
-    where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchWithHeadersDef,
-        Def::Input: DecodeWith<DecodeCodec>,
-        Def::Handler: 'static,
-        DecodeCodec: Send + Sync + 'static,
-    {
-        let meta = batch_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        let handler = TypedBatchWithHeaders::<_, Def::Input, _, Def::Headers, _>::over(
-            codec,
-            def.into_handler(),
-        )
-        .with_decode(policies.decode);
-        Router {
-            routes: (
-                BatchRoute {
-                    source,
-                    handler,
-                    meta,
-                    policies,
-                    workers,
+                    _context: PhantomData,
                 },
                 self.routes,
             ),
@@ -357,9 +316,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     }
 
     /// Mounts an injected definition on `source`: its startup injections (an attached publish
-    /// policy pairing into an `Out` parameter, the subscription's own seeker for a `Seek` one)
-    /// resolve right after the subscription opens, so the handler holds live handles by
-    /// construction. The shared tail of the `Seek` and `Out` forms.
+    /// policy pairing into an `Out` parameter) resolve right after the subscription opens, so
+    /// the handler holds live handles by construction. The tail of the `Out` form.
     pub(super) fn mount_inject<Source, Def, DecodeCodec, Extra>(
         self,
         source: Source,
@@ -396,8 +354,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// The batch counterpart of [`mount_inject`](Self::mount_inject): the shared tail of the
-    /// `BatchSeek` and `BatchOut` forms.
+    /// The batch counterpart of [`mount_inject`](Self::mount_inject): the tail of the
+    /// `BatchOut` form.
     pub(super) fn mount_batch_inject<Source, Def, DecodeCodec, Extra>(
         self,
         source: Source,

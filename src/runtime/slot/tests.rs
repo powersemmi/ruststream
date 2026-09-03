@@ -143,24 +143,22 @@ async fn a_slot_publisher_delegates_the_transaction_protocol() {
     );
 }
 
-/// Request / reply rides the slot wrapper unchanged, through the typed layer as well: the
+/// Request / reply rides the arena entry unchanged, through the typed layer as well: the
 /// correlated reply comes back to the caller.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[tokio::test]
-async fn a_typed_slot_delegates_request_reply() {
+async fn a_slot_entry_delegates_request_reply() {
     use futures::StreamExt;
 
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
+    use crate::runtime::Slot;
     use crate::{IncomingMessage, Subscriber};
 
     let broker = MemoryBroker::new();
     let mut service = broker.subscribe("slots.echo");
     let responder = broker.publisher();
-    let slot = TypedSlot::<_, (), Events, _>::new(
-        SlotPublisher::<_, Events>::new(broker.requester()),
-        JsonCodec,
-    );
+    let slot = Slot::<Events, _, _>::test_entry(broker.requester(), JsonCodec);
 
     let respond = async {
         let mut stream = std::pin::pin!(service.stream());
@@ -195,23 +193,21 @@ async fn a_typed_slot_delegates_request_reply() {
     );
 }
 
-/// The typed slot delegates the borrowed transaction protocol too, so a capability-refined
+/// The arena entry delegates the borrowed transaction protocol too, so a capability-refined
 /// `Out` slot settles through the wrapper.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[tokio::test]
-async fn a_typed_slot_delegates_the_transaction_protocol() {
+async fn a_slot_entry_delegates_the_transaction_protocol() {
     use futures::StreamExt;
 
     use crate::Subscriber;
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
+    use crate::runtime::Slot;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("slots.ledger");
-    let slot = TypedSlot::<_, (), Events, _>::new(
-        SlotPublisher::<_, Events>::new(broker.publisher()),
-        JsonCodec,
-    );
+    let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec);
 
     slot.begin_transaction().await.expect("begin failed");
     slot.raw(b"staged")
@@ -238,14 +234,11 @@ async fn the_builder_separates_the_encode_and_the_headers_failure() {
     use crate::Subscriber;
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
-    use crate::runtime::PublishError;
+    use crate::runtime::{PublishError, Slot};
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("events.done");
-    let slot = TypedSlot::<_, (), Events, _>::new(
-        SlotPublisher::<_, Events>::new(broker.publisher()),
-        JsonCodec,
-    );
+    let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec);
 
     let encode = slot
         .message(&Progress::new())

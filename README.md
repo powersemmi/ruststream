@@ -48,7 +48,9 @@ block, so the guarantee cannot regress.
   capability (`Out<impl Publisher>`), never a broker type, so the same handler mounts on a
   production broker and its in-process test transport unchanged.
 - **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features - or none at all:
-  `raw` subscribers and `publish_raw` replies move payload bytes untouched.
+  a `#[derive(Deserialized)]` input and a `#[derive(Serialized)]` reply move payload bytes
+  untouched (`Deserialize`/`Serialize` mean the framework's codec does it; `Deserialized`/
+  `Serialized` mean the user's own type already did).
 - **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI
   scaffolds projects, runs them, and generates the AsyncAPI document. Console logging ships
   behind the `logging` feature, installed on `run` with verbosity driven by `RUST_LOG`.

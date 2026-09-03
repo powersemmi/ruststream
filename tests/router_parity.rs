@@ -15,12 +15,20 @@ mod common;
 
 use common::{Event, connected, expect_id, observed_memory, payload};
 
-use tokio::sync::Notify;
-
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, Router, RustStream, Seek};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, SeekHandle};
+use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, Router, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{Broker, OutSlot, Publisher, Seeker, subscriber};
+use ruststream::{
+    Broker, Deserialized, OutSlot, Outgoing, Publisher, Seeker, Serialized, subscriber,
+};
+
+/// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
+/// The reply those bodies return: its bytes leave on the wire as they are.
+#[derive(Serialized)]
+struct Export(Vec<u8>);
 
 // ---------------------------------------------------------------------------------------------
 // Out slots: the single-slot shorthand, named slots, and the batch counterpart.
@@ -68,14 +76,14 @@ struct Encoded;
 #[derive(OutSlot)]
 struct Audit;
 
-#[subscriber("rp.slots.in", raw)]
+#[subscriber("rp.slots.in")]
 async fn transcode(
-    chunk: &[u8],
+    chunk: &Frame<'_>,
     Out(encoded): Out<impl Publisher, Encoded>,
     Out(audit): Out<impl Publisher, Audit>,
 ) -> HandlerOutcome {
     if encoded
-        .raw(chunk)
+        .raw(chunk.0)
         .to("rp.slots.encoded")
         .publish()
         .await
@@ -83,7 +91,7 @@ async fn transcode(
     {
         return HandlerOutcome::retry();
     }
-    let receipt = chunk.len().to_be_bytes();
+    let receipt = chunk.0.len().to_be_bytes();
     if audit
         .raw(&receipt)
         .to("rp.slots.audit")
@@ -120,7 +128,57 @@ async fn a_router_binds_named_out_slots_by_marker() {
     tb.out::<Audit>().assert_called_once();
 }
 
-#[subscriber(batch("rp.page.in"))]
+/// A serialized dictionary member the slot's typed entry publishes byte-for-byte, the scope
+/// counterpart being `tests/lanes.rs`.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "rp.wire.out")]
+struct WireCopy(Vec<u8>);
+
+#[derive(OutSlot)]
+#[publishes(WireCopy)]
+struct Wires;
+
+#[subscriber("rp.wire.in")]
+async fn copy_out(frame: &Frame<'_>, Out(out): Out<impl Publisher, Wires>) -> HandlerOutcome {
+    if out
+        .message(&WireCopy(frame.0.to_vec()))
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+/// The serialized wire of a slot's typed entry mounts from a router exactly as from the scope:
+/// the bytes leave as they are, at the destination the type declares.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_router_publishes_a_serialized_message_through_a_slot() {
+    let router = Router::<MemoryBroker>::new()
+        .include(copy_out)
+        .out(Wires, MemoryPublish)
+        .build();
+    let app = RustStream::new(AppInfo::new("rp-wire", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .raw(b"frame")
+        .to("rp.wire.in")
+        .publish()
+        .await
+        .expect("raw publish");
+    tb.settle().await.expect("settle");
+
+    tb.out::<Wires>().assert_called_once().with_raw(b"frame");
+    tb.broker::<MemoryBroker>()
+        .published::<WireCopy>("rp.wire.out")
+        .assert_called_once()
+        .with_raw(b"frame");
+}
+
+#[subscriber("rp.page.in")]
 async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for event in events {
         if out
@@ -159,10 +217,10 @@ async fn a_router_mounts_a_batch_out_slot() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Startup injections that need no attachment: a Seek parameter, single and batch.
+// A broker context key: the seek handle rides the delivery context, read by the Ctx extractor.
 
 #[subscriber(MemorySource::new("rp.seek.in"))]
-async fn rewind(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
+async fn rewind(event: &Event, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     if event.id == 0 && seeker.seek(MemoryPosition::start()).await.is_err() {
         return HandlerOutcome::retry();
     }
@@ -170,7 +228,7 @@ async fn rewind(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutco
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_mounts_a_seek_parameter() {
+async fn a_router_mounts_a_seek_key_reader() {
     let router = Router::<MemoryBroker>::new().include(rewind);
     let app = RustStream::new(AppInfo::new("rp-seek", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -186,40 +244,6 @@ async fn a_router_mounts_a_seek_parameter() {
     tb.broker::<MemoryBroker>()
         .subscriber("rp.seek.in")
         .assert_called_once();
-}
-
-// The harness's per-subscriber assertions ride the per-message path (the documented middleware
-// exception), so a batch handler signals through a notify permit instead.
-static PAGE_SEEN: Notify = Notify::const_new();
-
-#[subscriber(batch(MemorySource::new("rp.seek.page")))]
-async fn rewind_page(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
-    if events.is_empty() && seeker.seek(MemoryPosition::start()).await.is_err() {
-        return HandlerOutcome::retry();
-    }
-    PAGE_SEEN.notify_one();
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_mounts_a_batch_seek_parameter() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-
-    let router = Router::<MemoryBroker>::new().include(rewind_page);
-    let app = RustStream::new(AppInfo::new("rp-seek-page", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
-
-    ingress
-        .raw(&payload(1))
-        .to("rp.seek.page")
-        .publish()
-        .await
-        .expect("publish");
-    PAGE_SEEN.notified().await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -251,12 +275,12 @@ async fn a_router_defaults_the_reply_publisher_on_mount() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[subscriber("rp.raw.in", raw, publish_raw("rp.raw.out"))]
-async fn echo_frame(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[subscriber("rp.raw.in", publish("rp.raw.out"))]
+async fn echo_frame(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 
-/// The byte-reply form: its reply travels a bare publisher, so it is its own route on a router.
+/// The byte-reply form: its reply leaves unencoded, so it is its own route on a router.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_the_byte_reply_form() {
     let router = Router::<MemoryBroker>::new().include(echo_frame).build();
@@ -273,19 +297,19 @@ async fn a_router_mounts_the_byte_reply_form() {
     tb.settle().await.expect("settle");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.raw.out")
+        .published::<Export>("rp.raw.out")
         .assert_called_once()
         .with_raw(b"frame");
 }
 
-#[subscriber("rp.raw.on.in", raw, publish_raw("rp.raw.on.out"))]
-async fn echo_frame_on(frame: &[u8]) -> Vec<u8> {
-    frame.to_vec()
+#[subscriber("rp.raw.on.in", publish("rp.raw.on.out"))]
+async fn echo_frame_on(frame: &Frame<'_>) -> Export {
+    Export(frame.0.to_vec())
 }
 
-/// The same form with an explicit bare policy instead of the default.
+/// The same form with an explicit publish policy instead of the broker default.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_takes_an_explicit_bare_reply_policy() {
+async fn a_router_takes_an_explicit_serialized_reply_policy() {
     let router = Router::<MemoryBroker>::new()
         .include(echo_frame_on)
         .publisher(MemoryPublish);
@@ -302,7 +326,7 @@ async fn a_router_takes_an_explicit_bare_reply_policy() {
     tb.settle().await.expect("settle");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.raw.on.out")
+        .published::<Export>("rp.raw.on.out")
         .assert_called_once()
         .with_raw(b"frame");
 }
@@ -349,15 +373,15 @@ async fn a_router_composes_a_default_reply_with_out_slots() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[subscriber("rp.audit.in", raw, publish_raw("rp.audit.out"))]
-async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
+#[subscriber("rp.audit.in", publish("rp.audit.out"))]
+async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Export {
     audit
-        .raw(frame)
+        .raw(frame.0)
         .to("rp.audit.copy")
         .publish()
         .await
         .expect("the slot publisher is live");
-    frame.to_vec()
+    Export(frame.0.to_vec())
 }
 
 /// The byte-reply form with an `Out` slot, reply side defaulted.
@@ -380,16 +404,16 @@ async fn a_router_composes_a_byte_reply_with_out_slots() {
     tb.settle().await.expect("settle");
 
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.audit.out")
+        .published::<Export>("rp.audit.out")
         .assert_called_once()
         .with_raw(b"frame");
     tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("rp.audit.copy")
+        .published::<Export>("rp.audit.copy")
         .assert_called_once()
         .with_raw(b"frame");
 }
 
-#[subscriber(batch("rp.ledger.in"), publish("rp.ledger.receipts"))]
+#[subscriber("rp.ledger.in", publish("rp.ledger.receipts"))]
 async fn settle_page(
     events: &[Event],
     Out(out): Out<impl Publisher>,
@@ -476,7 +500,7 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
 // ---------------------------------------------------------------------------------------------
 // The batch reply terminal, and the metadata every new route kind contributes.
 
-#[subscriber(batch("rp.batch.in"), publish("rp.batch.out"))]
+#[subscriber("rp.batch.in", publish("rp.batch.out"))]
 async fn bulk_relay(events: &[Event]) -> Vec<Event> {
     events
         .iter()
@@ -511,7 +535,6 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
 fn every_new_route_kind_reports_its_metadata_in_registration_order() {
     let router = Router::<MemoryBroker>::new()
         .include(rewind)
-        .include(rewind_page)
         .include(echo_frame)
         .build()
         .include(relay)
@@ -522,13 +545,7 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
     assert_eq!(
         names,
-        [
-            "rp.seek.in",
-            "rp.seek.page",
-            "rp.raw.in",
-            "rp.reply.in",
-            "rp.batch.in"
-        ]
+        ["rp.seek.in", "rp.raw.in", "rp.reply.in", "rp.batch.in"]
     );
 }
 

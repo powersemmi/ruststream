@@ -44,8 +44,8 @@ pub struct Typed<M, Input, DecodeCodec, Inner> {
 }
 
 impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
-    /// Builds the adapter for any input kind: [`Decoded<T>`] decodes with `codec`,
-    /// [`RawBytes`](super::RawBytes) ignores it (pass `()`) and lends the payload itself.
+    /// Builds the adapter for any input kind: `Decoded<T>` decodes with `codec`, the
+    /// self-deserializing `Provided<F>` ignores it (pass `()`) and lends the payload itself.
     #[must_use]
     pub fn over(codec: DecodeCodec, inner: Inner) -> Self
     where
@@ -189,7 +189,10 @@ mod tests {
     #[tokio::test]
     async fn raw_bytes_lend_the_payload_itself() {
         use super::Typed;
-        use crate::runtime::input::RawBytes;
+        use crate::runtime::input::Provided;
+
+        /// A marker family: the kind only labels the input, the view stays `&[u8]`.
+        struct Frame;
 
         let seen = Arc::new(AtomicU32::new(0));
         let inner = {
@@ -203,8 +206,8 @@ mod tests {
                 }
             }
         };
-        // No codec anywhere: the raw kind decodes with `()`.
-        let handler = Typed::<StubMsg, RawBytes, (), _>::over((), inner);
+        // No codec anywhere: the self-deserializing kind decodes with `()`.
+        let handler = Typed::<StubMsg, Provided<Frame>, (), _>::over((), inner);
         let state = ();
         let delivery = Delivery::empty();
         let headers = HeaderMap::new();

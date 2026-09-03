@@ -22,9 +22,7 @@ use crate::runtime::slot::{IntoSlotSource, WithSource};
 
 use super::builder::Router;
 use super::builders::{RouterBatchPublishing, RouterCommit, RouterPublishing, RouterRawReply};
-use super::mount::{
-    BatchPublishMount, DefaultBareReply, DefaultReply, PublishMount, RawReplyMount, RouterMount,
-};
+use super::mount::{BatchPublishMount, DefaultReply, PublishMount, RawReplyMount, RouterMount};
 use super::{BatchPublishingRouter, PublishingRouter, RawReplyRouter, RouterWith, forms};
 
 // ---------------------------------------------------------------------------------------------
@@ -47,7 +45,7 @@ impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec,
 where
     B: Broker + 'static,
 {
-    type Out = RouterRawReply<B, Routes, RouteCodec, RouteLayers, Def, DefaultBareReply>;
+    type Out = RouterRawReply<B, Routes, RouteCodec, RouteLayers, Def, DefaultReply>;
 
     fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
         RouterWith::new(def, router)
@@ -161,8 +159,10 @@ where
     }
 }
 
+// The serialized wire's default: the broker's plain publish policy taken bare - no codec is
+// demanded, so this commit exists in a build with no codec feature at all.
 impl<B, Routes, RouteCodec, RouteLayers, Def>
-    RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def> for DefaultBareReply
+    RouterCommit<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def> for DefaultReply
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,

@@ -4,8 +4,11 @@
 
 use std::marker::PhantomData;
 
-use crate::runtime::batch::{BatchDef, BatchResult, RawSliceHandler, SliceHandler};
+use tracing::warn;
+
+use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
 use crate::runtime::context::Context;
+use crate::runtime::failure::FailurePolicy;
 use crate::runtime::handler::{Handler, HandlerOutcome};
 use crate::runtime::router::IncludeDef;
 use crate::runtime::subscriber_def::SubscriberDef;
@@ -13,21 +16,59 @@ use crate::{Name, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
-    SoloPair,
+    Axis, AxisDocs, Deserialized, Input, Message, Page, PageDeserialized, PagePair, PagedAxis,
+    Solo, SoloAxis, SoloDeserialized, SoloPair,
 };
 use super::value::{HandleValue, Sealed};
 
+/// Constructs one [`Deserialized`] input from a delivery's payload; a failed construction is
+/// settled by the subscriber's decode policy, exactly as a codec decode failure is.
+pub(crate) fn construct<'p, F, C, S>(
+    payload: &'p [u8],
+    ctx: &mut Context<'_, C, S>,
+) -> Result<F::Output<'p>, HandlerOutcome>
+where
+    F: Deserialized,
+{
+    match F::from_payload(payload) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %ctx.name(),
+                message_type = std::any::type_name::<F>(),
+                error = %err,
+                "payload construction failed",
+            );
+            #[cfg(any(feature = "testing", feature = "otel"))]
+            ctx.mark_decode_failed();
+            Err(match ctx.decode_policy() {
+                FailurePolicy::FailFast => {
+                    ctx.fail_fast(&format!("payload construction failed: {err}"));
+                    HandlerOutcome::drop()
+                }
+                other => other
+                    .settlement()
+                    .map_or_else(HandlerOutcome::drop, Into::into),
+            })
+        }
+    }
+}
+
 /// The dispatch adapter of a single-delivery body: awaits the verdict and settles by it.
-pub struct SoloBody<A, C, S, H> {
+///
+/// The state axis is not part of the type: the [`Handler`] impls quantify over it, so a body
+/// whose `Handle` impl is generic over the state mounts on an app with any state, and one
+/// naming a concrete state mounts only there.
+pub struct SoloBody<A, C, H> {
     body: H,
-    _axes: SoloAxes<A, C, S>,
+    _axes: SoloAxes<A, C>,
 }
 
 /// The phantom carrying a solo adapter's axes.
-type SoloAxes<A, C, S> = PhantomData<fn() -> (A, C, S)>;
+type SoloAxes<A, C> = PhantomData<fn() -> (A, C)>;
 
-impl<A, C, S, H> std::fmt::Debug for SoloBody<A, C, S, H> {
+impl<A, C, H> std::fmt::Debug for SoloBody<A, C, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SoloBody").finish_non_exhaustive()
     }
@@ -41,7 +82,7 @@ pub(super) fn settle_solo(verdict: Result<(), HandlerOutcome>) -> HandlerOutcome
     }
 }
 
-impl<T, C, S, H> Handler<T, C, S> for SoloBody<Solo<T>, C, S, H>
+impl<T, C, S, H> Handler<T, C, S> for SoloBody<Solo<T>, C, H>
 where
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
     C: Send + Sync,
@@ -53,19 +94,25 @@ where
     }
 }
 
-impl<C, S, H> Handler<[u8], C, S> for SoloBody<SoloBytes, C, S, H>
+impl<F, C, S, H> Handler<[u8], C, S> for SoloBody<SoloDeserialized<F>, C, H>
 where
+    F: Deserialized + Send + Sync + 'static,
+    // Pinning the axis is what normalizes the generic output's verdict family.
+    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     C: Send + Sync,
     S: Send + Sync,
-    H: for<'p> Handle<Payload<'p>, (), (), C, S>,
+    H: for<'p> Handle<F::Output<'p>, (), (), C, S>,
 {
     async fn handle(&self, msg: &[u8], ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
-        let payload = Payload::new(msg);
-        settle_solo(self.body.handle(&payload, &(), ctx).await)
+        let input = match construct::<F, C, S>(msg, ctx) {
+            Ok(input) => input,
+            Err(outcome) => return outcome,
+        };
+        settle_solo(self.body.handle(&input, &(), ctx).await)
     }
 }
 
-impl<Hd, P, C, S, H> Handler<Message<Hd, P>, C, S> for SoloBody<SoloPair<Hd, P>, C, S, H>
+impl<Hd, P, C, S, H> Handler<Message<Hd, P>, C, S> for SoloBody<SoloPair<Hd, P>, C, H>
 where
     Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
     Hd: Send + Sync + 'static,
@@ -79,21 +126,21 @@ where
     }
 }
 
-impl<A, R, C, S, H, Doc> IncludeDef for Sealed<HandleValue<A, R, (), C, S, H, Doc>>
+impl<A, R, C, H, Doc> IncludeDef for Sealed<HandleValue<A, R, (), C, H, Doc>>
 where
     A: Axis,
 {
     type Form = A::EagerForm;
 }
 
-impl<A, C, S, H, Doc> SubscriberDef for Sealed<HandleValue<A, (), (), C, S, H, Doc>>
+impl<A, C, H, Doc> SubscriberDef for Sealed<HandleValue<A, (), (), C, H, Doc>>
 where
     A: SoloAxis,
     Doc: AxisDocs<A>,
 {
     type Input = A::Kind;
     type Context = C;
-    type Handler = SoloBody<A, C, S, H>;
+    type Handler = SoloBody<A, C, H>;
     // The sealed value never builds a source: the settings builder wrapping it carries the real
     // one, and this placeholder is no `SubscriptionSource` at all, so a bare mount is a compile
     // error.
@@ -108,14 +155,30 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
     }
 
-    fn into_handler(self) -> SoloBody<A, C, S, H> {
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.docs.message_description
+    }
+
+    fn into_handler(self) -> SoloBody<A, C, H> {
         SoloBody {
             body: self.0.body,
             _axes: PhantomData,
@@ -128,13 +191,13 @@ where
 /// Awaits the verdict, checks the per-element contract, and settles the page by it. Carries
 /// the [`batch`](crate::runtime::SubscriberBuilder::batch) cap, feeding an oversized page to
 /// the body in chunks.
-pub struct PageBody<A, S, H> {
+pub struct PageBody<A, H> {
     body: H,
     cap: Option<std::num::NonZeroUsize>,
-    _axes: PhantomData<fn() -> (A, S)>,
+    _axes: PhantomData<fn() -> A>,
 }
 
-impl<A, S, H> std::fmt::Debug for PageBody<A, S, H> {
+impl<A, H> std::fmt::Debug for PageBody<A, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PageBody").finish_non_exhaustive()
     }
@@ -182,14 +245,15 @@ fn extend_settles(settles: &mut Vec<HandlerOutcome>, outcome: BatchResult, chunk
     }
 }
 
-impl<T, S, H> SliceHandler<T, S> for PageBody<Page<T>, S, H>
+impl<T, C, S, H> SliceHandler<T, C, S> for PageBody<Page<T>, H>
 where
     [T]: Input<Axis = Page<T>>,
     T: Send + Sync + 'static,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[T], (), (), (), S>,
+    H: Handle<[T], (), (), C, S>,
 {
-    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, (), S>) -> BatchResult {
+    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
         match self.cap {
             None => {
                 let verdict = self.body.handle(batch, &(), ctx).await;
@@ -208,18 +272,19 @@ where
     }
 }
 
-impl<Hd, P, S, H> SliceHandler<Message<Hd, P>, S> for PageBody<PagePair<Hd, P>, S, H>
+impl<Hd, P, C, S, H> SliceHandler<Message<Hd, P>, C, S> for PageBody<PagePair<Hd, P>, H>
 where
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[Message<Hd, P>], (), (), (), S>,
+    H: Handle<[Message<Hd, P>], (), (), C, S>,
 {
     async fn handle_slice(
         &self,
         batch: &[Message<Hd, P>],
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
         match self.cap {
             None => {
@@ -239,23 +304,29 @@ where
     }
 }
 
-impl<S, H> RawSliceHandler<S> for PageBody<super::axis::PageBytes, S, H>
+// The elements were already constructed by the dispatch adapter, borrowing the deliveries'
+// payloads, so this cell only chunks and settles like the decoded one. The element is a fresh
+// parameter (`T`, one lifetime instantiation of the family's output) because a projection with
+// a free lifetime cannot head an impl; the pinned-axis bound is what ties it back to `F` and
+// normalizes the verdict family.
+impl<T, F, C, S, H> SliceHandler<T, C, S> for PageBody<PageDeserialized<F>, H>
 where
+    T: Send + Sync,
+    F: Deserialized + Send + Sync + 'static,
+    [T]: Input<Axis = PageDeserialized<F>>,
+    C: Send + Sync,
     S: Send + Sync,
-    H: for<'p> Handle<[Payload<'p>], (), (), (), S>,
+    H: Handle<[T], (), (), C, S>,
 {
-    async fn handle_slice(&self, batch: &[&[u8]], ctx: &mut Context<'_, (), S>) -> BatchResult {
-        // One page-sized Vec of borrowing wrappers; the payload bytes themselves stay in the
-        // broker's buffers.
-        let payloads: Vec<Payload<'_>> = batch.iter().map(|bytes| Payload::new(bytes)).collect();
+    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
         match self.cap {
             None => {
-                let verdict = self.body.handle(&payloads, &(), ctx).await;
-                settle_page(verdict, payloads.len(), ctx.name())
+                let verdict = self.body.handle(batch, &(), ctx).await;
+                settle_page(verdict, batch.len(), ctx.name())
             }
             Some(max) => {
-                let mut settles = Vec::with_capacity(payloads.len());
-                for chunk in payloads.chunks(max.get()) {
+                let mut settles = Vec::with_capacity(batch.len());
+                for chunk in batch.chunks(max.get()) {
                     let verdict = self.body.handle(chunk, &(), ctx).await;
                     let outcome = settle_page(verdict, chunk.len(), ctx.name());
                     extend_settles(&mut settles, outcome, chunk.len());
@@ -266,13 +337,14 @@ where
     }
 }
 
-impl<A, S, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), (), S, H, Doc>>
+impl<A, C, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), C, H, Doc>>
 where
     A: PagedAxis,
     Doc: AxisDocs<A>,
 {
     type Input = A::Kind;
-    type Handler = PageBody<A, S, H>;
+    type Context = C;
+    type Handler = PageBody<A, H>;
     // See `SubscriberDef::Source` above: the builder carries the real source.
     type Source = Unnamed<Name>;
 
@@ -285,14 +357,30 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
     }
 
-    fn into_handler(self) -> PageBody<A, S, H> {
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.docs.message_description
+    }
+
+    fn into_handler(self) -> PageBody<A, H> {
         PageBody {
             body: self.0.body,
             cap: self.0.page_cap,

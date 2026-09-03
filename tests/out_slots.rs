@@ -18,9 +18,13 @@ use ruststream::runtime::{
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, HeaderMap, OutSlot, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
-    Publisher, Transaction, subscriber,
+    Broker, Deserialized, HeaderMap, OutSlot, OutgoingMessage, OwnedTransactions, PairError,
+    PublishPolicy, Publisher, Transaction, subscriber,
 };
+
+/// The payload view the slot-publishing body takes: the delivery's bytes, borrowed.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
 
 #[derive(OutSlot)]
 struct Encoded;
@@ -29,16 +33,16 @@ struct Encoded;
 struct Audit;
 
 /// Two slots in one handler; no broker publisher type appears anywhere in the signature.
-#[subscriber("slots.in", raw)]
+#[subscriber("slots.in")]
 async fn transcode(
-    chunk: &[u8],
+    chunk: &Frame<'_>,
     Out(encoded): Out<impl Publisher, Encoded>,
     Out(audit): Out<impl Publisher, Audit>,
 ) -> HandlerOutcome {
     let mut headers = HeaderMap::new();
     headers.insert("source", "slots.in");
     if encoded
-        .raw(chunk)
+        .raw(chunk.0)
         .with_headers(headers)
         .to("slots.encoded")
         .publish()
@@ -47,7 +51,7 @@ async fn transcode(
     {
         return HandlerOutcome::retry();
     }
-    let receipt = chunk.len().to_be_bytes();
+    let receipt = chunk.0.len().to_be_bytes();
     if audit
         .raw(&receipt)
         .to("slots.audit")

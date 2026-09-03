@@ -515,7 +515,9 @@ impl MemoryPosition {
 #[derive(Clone)]
 pub struct MemorySeeker {
     state: Arc<MemoryState>,
-    name: String,
+    // Arc rather than String: the per-delivery context clones the handle, and the clone must
+    // stay allocation-free on the dispatch path.
+    name: Arc<str>,
     control: Arc<SeekControl>,
 }
 
@@ -535,7 +537,7 @@ impl Seekable for MemorySubscriber {
     fn seeker(&self) -> MemorySeeker {
         MemorySeeker {
             state: Arc::clone(&self.state),
-            name: self.name.clone(),
+            name: Arc::from(self.name.as_str()),
             control: Arc::clone(&self.seek),
         }
     }
@@ -568,7 +570,7 @@ impl Seeker for MemorySeeker {
             .published
             .lock()
             .expect("memory broker mutex poisoned")
-            .get(self.name.as_str())
+            .get(&*self.name)
             .map_or(0, Vec::len);
         let clamped = to.0.min(end);
         // Watermark first (Release, paired with the Acquire load in the delivery filter), then
@@ -668,18 +670,229 @@ impl Positioned for MemoryMessage {
     }
 }
 
-impl crate::SeekableMessage for MemoryMessage {
-    type Seeker = MemorySeeker;
+/// The in-memory broker's per-delivery context: this delivery's position in its name's publish
+/// log, and the subscription's own seeker.
+///
+/// The runtime builds one per dispatched delivery (see [`BuildContext`](crate::BuildContext)),
+/// and handlers read its fields by key - [`Position`] and [`SeekHandle`] - through the
+/// [`Ctx`](crate::runtime::Ctx) extractor or `ctx.context(..)`. A body that manages a log
+/// cursor names this type as its `C` axis and needs nothing else.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::{MemoryContext, Position, SeekHandle};
+/// use ruststream::prelude::*;
+/// use ruststream::Seeker;
+/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// # struct Job { id: u64 }
+///
+/// struct Replayer;
+///
+/// impl Handle<Job, (), (), MemoryContext> for Replayer {
+///     async fn handle(
+///         &self,
+///         job: &Job,
+///         _outs: &(),
+///         ctx: &mut Context<'_, MemoryContext>,
+///     ) -> Result<(), HandlerOutcome> {
+///         let here = ctx.context(Position);
+///         if job.id == u64::MAX && ctx.context(SeekHandle).seek(here).await.is_err() {
+///             return Err(HandlerOutcome::retry());
+///         }
+///         Ok(())
+///     }
+/// }
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct MemoryContext {
+    position: MemoryPosition,
+    seeker: MemorySeeker,
+}
 
+impl crate::BuildContext<MemoryMessage> for MemoryContext {
     /// # Panics
     ///
     /// Panics on a request-reply inbox message, which is not a subscription delivery; no
-    /// dispatch loop (and therefore no seek context) ever builds off one.
-    fn seeker(&self) -> MemorySeeker {
-        self.seek
-            .as_deref()
-            .expect("a seek context builds only off subscription deliveries")
-            .clone()
+    /// dispatch loop (and therefore no per-delivery context) ever builds off one.
+    fn build(msg: &MemoryMessage) -> Self {
+        Self {
+            position: Positioned::position(msg),
+            // A clone of the subscription's pre-minted handle: three reference-count bumps,
+            // nothing allocated per delivery.
+            seeker: msg
+                .seek
+                .as_deref()
+                .expect("a delivery context builds only off subscription deliveries")
+                .clone(),
+        }
+    }
+}
+
+/// The in-memory broker's subscription-scoped page context: the subscription's own seeker,
+/// shared by every delivery of the page.
+///
+/// The runtime builds one per dispatched page from the page's first delivery (see
+/// [`BuildBatchContext`](crate::BuildBatchContext)), and a page body reads it by key -
+/// [`SeekHandle`] - through `ctx.context(..)`. Per-delivery data (a [`Position`]) has no place
+/// here: a page spans many deliveries, so the position a body reacts to rides the elements
+/// themselves (a `&[Message<H, T>]` page reads it off each element's header contract), and
+/// keeping this a separate type from [`MemoryContext`] is what rejects a page body asking for
+/// per-delivery fields at compile time.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::Seeker;
+/// use ruststream::memory::{MemoryBatchContext, MemoryPosition, SeekHandle};
+/// use ruststream::prelude::*;
+/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// # struct Job { id: u64 }
+///
+/// struct Replayer;
+///
+/// impl Handle<[Job], (), (), MemoryBatchContext> for Replayer {
+///     async fn handle(
+///         &self,
+///         page: &[Job],
+///         _outs: &(),
+///         ctx: &mut Context<'_, MemoryBatchContext>,
+///     ) -> Result<(), Vec<HandlerOutcome>> {
+///         // A page that saw the rewind marker repositions the whole subscription once it is
+///         // settled; the next page opens at the target.
+///         if page.iter().any(|job| job.id == u64::MAX)
+///             && ctx
+///                 .context(SeekHandle)
+///                 .seek(MemoryPosition::start())
+///                 .await
+///                 .is_err()
+///         {
+///             return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+///         }
+///         Ok(())
+///     }
+/// }
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct MemoryBatchContext {
+    seeker: MemorySeeker,
+}
+
+impl crate::BuildBatchContext<MemoryMessage> for MemoryBatchContext {
+    /// # Panics
+    ///
+    /// Panics on a request-reply inbox message, which is not a subscription delivery; no
+    /// dispatch loop (and therefore no page context) ever builds off one.
+    fn build(first: &MemoryMessage) -> Self {
+        Self {
+            // A clone of the subscription's pre-minted handle: reference-count bumps only,
+            // nothing allocated per page.
+            seeker: first
+                .seek
+                .as_deref()
+                .expect("a page context builds only off subscription deliveries")
+                .clone(),
+        }
+    }
+}
+
+impl crate::Field<MemoryBatchContext> for SeekHandle {
+    type Value<'a> = &'a MemorySeeker;
+
+    fn get(self, src: &MemoryBatchContext) -> &MemorySeeker {
+        &src.seeker
+    }
+}
+
+/// The key reading this delivery's [`MemoryPosition`] out of [`MemoryContext`].
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::Position;
+/// use ruststream::prelude::*;
+/// use ruststream::subscriber;
+/// # #[derive(serde::Deserialize)]
+/// # struct Job { id: u64 }
+///
+/// #[subscriber("jobs")]
+/// async fn audit(job: &Job, Ctx(at): Ctx<Position>) -> HandlerOutcome {
+///     println!("job {} sits at {at:?}", job.id);
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Position;
+
+impl crate::ContextField for Position {
+    type Context = MemoryContext;
+    type Value = MemoryPosition;
+
+    fn read(self, src: &MemoryContext) -> MemoryPosition {
+        src.position
+    }
+}
+
+impl crate::Field<MemoryContext> for Position {
+    type Value<'a> = MemoryPosition;
+
+    fn get(self, src: &MemoryContext) -> MemoryPosition {
+        src.position
+    }
+}
+
+/// The key reading the subscription's [`MemorySeeker`] out of [`MemoryContext`]: the reposition
+/// handle, resolved once when the subscription opens and carried by every delivery's context.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::{MemoryPosition, SeekHandle};
+/// use ruststream::prelude::*;
+/// use ruststream::{Seeker, subscriber};
+/// # #[derive(serde::Deserialize)]
+/// # struct Job { id: u64, poisoned_until: Option<usize> }
+///
+/// /// Skips forward past a region the producer marked poisoned.
+/// #[subscriber("jobs")]
+/// async fn work(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
+///     if let Some(resume_at) = job.poisoned_until {
+///         if seeker.seek(MemoryPosition::sequence(resume_at)).await.is_err() {
+///             return HandlerOutcome::retry();
+///         }
+///     }
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct SeekHandle;
+
+impl crate::ContextField for SeekHandle {
+    type Context = MemoryContext;
+    type Value = MemorySeeker;
+
+    fn read(self, src: &MemoryContext) -> MemorySeeker {
+        src.seeker.clone()
+    }
+}
+
+impl crate::Field<MemoryContext> for SeekHandle {
+    type Value<'a> = &'a MemorySeeker;
+
+    fn get(self, src: &MemoryContext) -> &MemorySeeker {
+        &src.seeker
     }
 }
 

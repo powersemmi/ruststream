@@ -1,0 +1,21 @@
+error[E0119]: conflicting implementations of trait `MessageWire` for type `Export`
+ --> tests/ui/lane_typo_both_wires.rs:7:21
+  |
+7 | #[derive(Serialize, Serialized)]
+  |                     ^^^^^^^^^^
+  |
+  = note: conflicting implementation in crate `ruststream`:
+          - impl<T> MessageWire for T
+            where T: _serde::Serialize;
+  = note: this error originates in the derive macro `Serialized` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0119]: conflicting implementations of trait `ReplyShape` for type `Export`
+ --> tests/ui/lane_typo_both_wires.rs:7:21
+  |
+7 | #[derive(Serialize, Serialized)]
+  |                     ^^^^^^^^^^
+  |
+  = note: conflicting implementation in crate `ruststream`:
+          - impl<R> ReplyShape for R
+            where R: _serde::Serialize, R: Send, R: Sync;
+  = note: this error originates in the derive macro `Serialized` (in Nightly builds, run with -Z macro-backtrace for more info)

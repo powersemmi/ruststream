@@ -25,12 +25,12 @@ use tokio::sync::Notify;
 /// definition is built.
 struct Echo;
 
-impl<State: Send + Sync> Handle<Req, Resp, (), (), State> for Echo {
+impl Handle<Req, Resp> for Echo {
     fn handle(
         &self,
         req: &Req,
         _outs: &(),
-        _ctx: &mut Context<'_, (), State>,
+        _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Resp, HandlerOutcome>> {
         ready(Ok(Resp { n: req.n }))
     }
@@ -42,12 +42,12 @@ static GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
 /// The far end: records the reply's `traceparent`, which is the whole subject of the file.
 struct Capture;
 
-impl<State: Send + Sync> Handle<Resp, (), (), (), State> for Capture {
+impl Handle<Resp> for Capture {
     fn handle(
         &self,
         _resp: &Resp,
         _outs: &(),
-        ctx: &mut Context<'_, (), State>,
+        ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         *CAPTURED.lock().expect("poisoned") =
             ctx.headers().get_str("traceparent").map(str::to_owned);

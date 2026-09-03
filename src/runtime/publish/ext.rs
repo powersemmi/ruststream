@@ -58,7 +58,9 @@ pub trait PublishExt: Publisher {
     }
 
     /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with the crate's
-    /// default codec (name another one with `with_codec(..)`).
+    /// default codec (name another one with `with_codec(..)`). A
+    /// [`Serialized`](super::Serialized) value's bytes leave as they are instead - the wire is
+    /// the type's own ([`MessageWire`](super::MessageWire)), and no codec runs on it.
     ///
     /// Available when a codec feature is enabled; with none, every publish names its codec.
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]

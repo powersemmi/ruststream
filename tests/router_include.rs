@@ -58,13 +58,13 @@ async fn ri_on(_o: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber(batch("ri-batch"))]
+#[subscriber("ri-batch")]
 async fn ri_batch(orders: &[Order]) -> HandlerOutcome {
     RI_BATCH.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
-#[subscriber(batch(MemorySource::new("ri-batch-on")))]
+#[subscriber(MemorySource::new("ri-batch-on"))]
 async fn ri_batch_on(orders: &[Order]) -> HandlerOutcome {
     RI_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
@@ -115,13 +115,13 @@ async fn rc_on(_o: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber(batch("rc-batch"))]
+#[subscriber("rc-batch")]
 async fn rc_batch(orders: &[Order]) -> HandlerOutcome {
     RC_BATCH.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
-#[subscriber(batch(MemorySource::new("rc-batch-on")))]
+#[subscriber(MemorySource::new("rc-batch-on"))]
 async fn rc_batch_on(orders: &[Order]) -> HandlerOutcome {
     RC_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
     HandlerOutcome::ack()

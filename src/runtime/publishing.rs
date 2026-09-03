@@ -57,7 +57,7 @@ pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     message = "`{Self}` cannot be encoded as a reply",
     note = "an encoded reply is a `serde::Serialize` value (derive it), or a \
             `Message<Headers, Payload>` pair whose halves are; reply bytes that must leave \
-            unencoded take the bare wire instead (`.publisher(Bare(policy))`)"
+            unencoded ride a `#[derive(Serialized)]` reply type instead"
 )]
 pub trait EncodeReply: Send + Sync {
     /// Delivers `self` through the typed reply stack.
@@ -147,10 +147,11 @@ where
     }
 }
 
-/// The byte wiring: a bare [`Publisher`] sends an `AsRef<[u8]>` reply unencoded.
+/// The byte wiring: a bare [`Publisher`] sends a [`Serialized`](super::Serialized) reply's own
+/// bytes, unencoded.
 impl<Reply, DeliveryCx, Pipeline, Bare> ReplySink<Reply, DeliveryCx, Pipeline> for Bare
 where
-    Reply: AsRef<[u8]> + Sync,
+    Reply: super::Serialized + Sync,
     DeliveryCx: Sync,
     Pipeline: Send + Sync,
     Bare: Publisher,
@@ -164,7 +165,7 @@ where
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
-        self.publish(OutgoingMessage::new(name, reply.as_ref()))
+        self.publish(OutgoingMessage::new(name, reply.bytes()))
             .await
     }
 }
@@ -185,8 +186,8 @@ pub trait PublishingDef: Send + Sync {
     /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
     type Input: InputKind;
 
-    /// The tuple of startup-injected parameters ([`Out`](super::Out), [`Seek`](super::Seek),
-    /// ...; `()` when the signature carries none), resolved like
+    /// The tuple of startup-injected parameters ([`Out`](super::Out), ...; `()` when the
+    /// signature carries none), resolved like
     /// [`InjectDef::Injections`](super::InjectDef::Injections).
     type Injections;
 
@@ -295,6 +296,7 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
             def.message_description(),
         );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.deserialized = <D::Input as InputKind>::DESERIALIZED;
     meta.outgoing = def.outgoing();
     meta
 }
@@ -415,7 +417,7 @@ mod tests {
     struct ManualPub;
 
     impl PublishingDef for ManualPub {
-        type Input = crate::runtime::Decoded<u32>;
+        type Input = crate::runtime::input::Decoded<u32>;
         type Injections = ();
         type Reply = u32;
         type Context = ();

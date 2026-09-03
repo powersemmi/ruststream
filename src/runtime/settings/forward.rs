@@ -17,7 +17,7 @@ use std::marker::PhantomData;
 use crate::ConnectedBroker;
 
 use super::SubscriberBuilder;
-use crate::runtime::batch::{BatchDef, BatchResult, BatchWithHeadersDef};
+use crate::runtime::batch::{BatchDef, BatchResult};
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
@@ -101,6 +101,7 @@ where
     Src: Clone,
 {
     type Input = <Def as BatchDef>::Input;
+    type Context = <Def as BatchDef>::Context;
     type Handler = <Def as BatchDef>::Handler;
     type Source = Src;
 
@@ -109,14 +110,6 @@ where
     fn into_handler(self) -> <Def as BatchDef>::Handler {
         self.def.into_handler()
     }
-}
-
-impl<Def, Src, State, DC> BatchWithHeadersDef for SubscriberBuilder<Def, Src, State, DC>
-where
-    Def: BatchWithHeadersDef,
-    Src: Clone,
-{
-    type Headers = <Def as BatchWithHeadersDef>::Headers;
 }
 
 impl<Def, Src, State, DC> InjectDef for SubscriberBuilder<Def, Src, State, DC>

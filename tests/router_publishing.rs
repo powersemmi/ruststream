@@ -157,12 +157,12 @@ async fn chain_codec_router_publishing_replies() {
 static BP_OUT: AtomicUsize = AtomicUsize::new(0);
 static BP_OUT_ON: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber(batch("bp-in"), publish("bp-out"))]
+#[subscriber("bp-in", publish("bp-out"))]
 async fn bp_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("bp-in-on"), publish("bp-out-on"))]
+#[subscriber("bp-in-on", publish("bp-out-on"))]
 async fn bp_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -208,12 +208,12 @@ async fn default_codec_router_batch_publishing_replies() {
 static BPC_OUT: AtomicUsize = AtomicUsize::new(0);
 static BPC_OUT_ON: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber(batch("bpc-in"), publish("bpc-out"))]
+#[subscriber("bpc-in", publish("bpc-out"))]
 async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("bpc-in-on"), publish("bpc-out-on"))]
+#[subscriber("bpc-in-on", publish("bpc-out-on"))]
 async fn bpc_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -335,7 +335,7 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
 
 // The same on the BATCH router-publishing path: the app's publish_layer must reach a
 // router-mounted batch publishing handler.
-#[subscriber(batch("bl-in"), publish("bl-out"))]
+#[subscriber("bl-in", publish("bl-out"))]
 async fn bl_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }

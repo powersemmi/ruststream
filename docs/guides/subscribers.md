@@ -388,6 +388,16 @@ The semantics differ from single-message handlers in a few ways:
   settles **every** message uniformly: `ack()` acks them all, `retry()` requeues them all.
 - Per-message headers are not accessible in the `&[T]` form, and the context starts with empty
   headers.
+- The context is one per page, and the broker fields on it are the *subscription-scoped* ones: a
+  page body names the broker's batch context type (`ctx: &mut Context<'_, MemoryBatchContext>`
+  for the in-memory broker) and reads its keys with `ctx.context(..)`. The runtime builds that
+  value once per page, off the page's first delivery, through the broker's `BuildBatchContext`
+  impl; a broker with nothing subscription-scoped to hand over implements nothing and the page
+  keeps the `()` default.
+- Per-delivery data has no place there, because a page spans many deliveries: a position or a
+  header rides the elements instead, read off a `&[Message<H, T>]` page element by element. The
+  two are separate types, so a page body asking for the broker's per-delivery context does not
+  compile.
 - App-global and router middleware wrap per-message handlers and do not apply to batch
   registrations.
 
@@ -420,12 +430,14 @@ retried and the mismatch is logged.
 Replaying a stream after fixing a handler bug, reprocessing from a known point, skipping forward
 past a poison region: each moves a live subscription to another position without dropping it.
 Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory broker's publish
-log) implement the `Seekable` capability. Brokers without a replayable log do not, and the mount
-below fails to compile against them instead of failing at runtime.
+log) implement the `Seekable` capability and publish seek keys over their per-delivery context.
+Brokers without a replayable log ship no such keys, and the mount below fails to compile against
+them instead of failing at runtime.
 
-A handler repositions its own subscription through a `Seek` parameter. The runtime mints the
-seeker off the subscription right after it opens, so the handler always holds a live handle;
-nothing is attached at the include site:
+A handler repositions its own subscription through the broker's context keys: the delivery's
+context carries the position and a live seek handle (resolved once, when the subscription opens),
+and the handler reads them by key - the `Ctx` extractor on the attribute path, `ctx.context(..)`
+against the broker's context type on the manual one. Nothing is attached at the include site:
 
 === "Macros"
 
@@ -452,6 +464,10 @@ broker's default. A conditional default - apply only when the broker holds no st
 cursor for the group (Kafka's offset reset, a JetStream deliver policy) - stays on the
 broker's own subscription descriptor, which expresses it natively.
 
+A page body repositions its subscription the same way, one level up: the seek handle is
+subscription-scoped, so it rides the broker's batch context, while the target - a position the
+producer asked the consumer to resume from - rides the page's own elements.
+
 What one seek covers differs per broker - repositioning a consumer instance (Kafka) moves that
 instance only, repositioning a shared group cursor (Redis streams) moves the whole group - and a
 reposition invalidates any ack bookkeeping the broker keeps for the subscription; the broker
@@ -461,8 +477,12 @@ crate documents both. Broker authors prove the contract with the
 ## Raw subscribers
 
 When the payload is not a serialized value at all (a binary frame, a foreign wire format you
-parse yourself), a `&[u8]` message parameter takes the codec out of the path entirely: the handler
-receives each delivery's bytes exactly as the broker handed them over.
+parse yourself), the payload type deserializes itself and the codec stays out of the path.
+Which lane a payload rides is the type's own business, and the trait names are the mnemonic:
+`Deserialize` means the framework's codec builds the value, `Deserialized` means the type builds
+itself. `#[derive(Deserialized)]` covers the usual newtype over `&'a [u8]`, and a `&Frame<'_>`
+parameter is what puts a handler on that lane - the bytes arrive exactly as the broker handed
+them over, borrowed from its buffer, with nothing copied and no codec anywhere on the path.
 
 === "Macros"
 
@@ -476,9 +496,15 @@ receives each delivery's bytes exactly as the broker handed them over.
     --8<-- "tests/manual_raw_subscriber.rs:raw"
     ```
 
-A batch of payloads is the same thing at the batch shape: `&[&[u8]]` is the typed batch without
-the decode step, with the payloads borrowed from the batch's own messages for the duration of the
-call. Nothing is copied, and the settlement rules are the batch path's.
+The macro-free form is the pair of impls the derive writes: `Deserialized` for the construction,
+and the `Input` spelling that routes the type onto that lane. A bare `&[u8]` parameter is not a
+handler input at all, and the compile error names the derive as the fix: a slice of bytes is
+also a page of decoded `u8` elements, so only a named type keeps the two apart.
+
+The form rule does not change with the lane: `&T` is one message, `&[T]` a page. A page of
+frames is therefore `&[Frame<'_>]`, and the page spelling comes with the derive - a page body
+asks for no second impl. Its elements borrow the batch's own messages for the duration of the
+call, so nothing is copied there either, and the settlement rules are the batch path's.
 
 === "Macros"
 
@@ -492,22 +518,29 @@ call. Nothing is copied, and the settlement rules are the batch path's.
     --8<-- "examples/manual/subscribers.rs:raw_batch"
     ```
 
-An `on_failure(decode = ..)` policy on either shape is a compile error - there is no decode step
-to fail, unless the handler declares a `Headers` contract, which that policy does cover.
-Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
-the injected `Out` / `Seek` parameters work unchanged on the single-delivery shape (the batch of
-payloads does not take `Out` / `Seek` yet), and a raw subscriber mounts with the
+A construction that validates - a flatbuffers root, a capnp reader, a length check - reports the
+bad payload by returning `Err` from `from_payload`, and `on_failure(decode = ..)` settles that
+delivery: the same rung a codec decode failure lands on, and the same rung a typed `Headers`
+contract lands on. Extractors, `&mut Context`, `workers(..)`, `on_failure(panic = ..)`, and
+the injected `Out` parameters work unchanged on the single-delivery shape (a page of frames
+does not take `Out` yet), and such a subscriber mounts with the
 same `include` as every other definition - a scope codec, when one is set, does not apply
-to it. Raw subscribers are also the one subscriber form available with no codec feature enabled
+to it. It is also the one subscriber form available with no codec feature enabled
 at all. For a custom serialization format you want *typed*
 handlers for, implement [`Codec`](codecs.md) instead and keep the typed path.
 
-A raw subscriber can also reply in kind: the `publish_raw("dest")` clause publishes the
-returned bytes (`-> Vec<u8>`, or `-> Result<Vec<u8>, HandlerOutcome>` for the same explicit ack
-control as the typed reply form) as-is to the reply name, through the bare publisher attached
-at the include site (`b.include(relay).publisher(policy)`, or the broker's default publish
-policy without the call) - no codec on either side, and a failed reply publish nacks the
-delivery with requeue:
+A handler on this lane replies through the same one `publish("dest")` clause every reply form
+uses; the reply *type* picks the wire, on the mirror-image mnemonic. A `serde::Serialize` reply
+encodes through the reply codec, while a `#[derive(Serialized)]` newtype carries its own bytes
+(`fn bytes(&self) -> &[u8]`) and leaves byte-for-byte, published exactly as the handler returned
+it. Return it directly, or as `Result<Export, HandlerOutcome>` for the same explicit ack control
+the encoded reply form has. The publisher comes from the include site, where a `Serialized`
+reply attaches a plain publish policy (`b.include(relay).publisher(MemoryPublish)`) and an
+encoded one wraps that policy in `TypedPublisher::new(..)`; without the call the broker's
+default publish policy commits the reply. On the macro-free path both wires ride the one
+`.reply().to(dest).publisher(..)` chain, for the same reason: the reply type has already said
+which wire it is. A failed reply publish nacks the delivery with requeue, exactly as on the
+encoded path:
 
 === "Macros"
 
@@ -521,10 +554,10 @@ delivery with requeue:
     --8<-- "tests/manual_raw_subscriber.rs:raw_reply"
     ```
 
-`publish_raw` is not tied to a raw input: on a typed handler it makes only the *reply* raw - the
-input still decodes with the scope codec (and keeps the decode failure policy), while the
-returned bytes go out unencoded. That is the gateway shape, consuming structured messages and
-emitting a wire format the handler produced itself:
+Neither side constrains the other: the input type picks the decode, the reply type picks the
+encode, and the two diagonals compose freely. A decoded input with a `Serialized` reply is the
+gateway shape - structured messages in, a wire format the handler produced itself out - where
+the input still decodes with the scope codec and keeps its decode failure policy:
 
 === "Macros"
 
@@ -538,8 +571,11 @@ emitting a wire format the handler produced itself:
     --8<-- "tests/manual_raw_subscriber.rs:raw_reply_typed"
     ```
 
-The encoded `publish(..)` clause under `raw` is rejected (a raw handler's reply is bytes -
-`publish_raw` is the fix the error names), as is combining both reply clauses on one handler.
+The other diagonal reads the same way: a `Frame<'_>` input with a `Serialize` reply encodes the
+answer through the reply codec while the input never touches one. Two things do not follow the
+type, though. A `Vec<u8>` reply is not a byte reply - it is an ordinary `Serialize` value, so it
+goes out encoded, and a payload that must leave untouched needs the newtype. And a `Serialized`
+*page* reply does not exist: page replies publish through the reply codec.
 
 ## Worker pools
 

@@ -100,8 +100,8 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
         }
     }
 
-    /// Adds a static [`BatchPublishTransform`], applied to every reply of a
-    /// `#[subscriber(batch(..), publish(..))]` handler only (after the per-message
+    /// Adds a static [`BatchPublishTransform`], applied to every reply of a batch publishing
+    /// (`&[T]` + `publish(..)`) handler only (after the per-message
     /// [`PublishTransform`] stack), never to a single-message reply. Wrap a per-message
     /// [`PublishTransform`] with [`for_batch`](crate::runtime::for_batch) to reuse it here. The single-message mounts reject a
     /// publisher carrying a non-trivial batch stack, so a batch-only transform cannot leak onto the
@@ -123,7 +123,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     }
 
     /// Switches batch reply publishing to one broker transaction per batch: the replies of a
-    /// `#[subscriber(batch(..), publish(..))]` handler all become visible atomically on commit,
+    /// batch publishing (`&[T]` + `publish(..)`) handler all become visible atomically on commit,
     /// or none of them do.
     ///
     /// The leaf may be a live publisher or a publish policy; either way the transactional
@@ -140,8 +140,10 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
 }
 
 impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
-    /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with this publisher's
-    /// codec: `publisher.message(&done).publish().await?`.
+    /// Starts a typed publish of a `#[derive(Outgoing)]` value:
+    /// `publisher.message(&done).publish().await?`. The value's type picks its wire
+    /// ([`MessageWire`](super::MessageWire)): a `serde::Serialize` value encodes with this
+    /// publisher's codec, a [`Serialized`](super::Serialized) one leaves byte-for-byte.
     ///
     /// Which positions the call site still has to fill comes from the message type's
     /// declaration; see [`PublishBuilder`]. The static [`PublishTransform`](super::PublishTransform)

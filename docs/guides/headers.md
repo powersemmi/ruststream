@@ -40,13 +40,14 @@ header, unparsable value) never reaches the body - the delivery settles by the s
     --8<-- "examples/manual/typed_headers.rs:handler"
     ```
 
-`Headers` composes with a byte body (`&[u8]`, typed headers) and with every other extractor.
+`Headers` composes with a self-deserializing body (`&Frame<'_>` next to its typed headers) and
+with every other extractor.
 
-On a batch handler the headers stay per-delivery, so the parameter takes one contract per
-element: `Headers<Vec<T>>`. `meta[i]` belongs to `chunks[i]`, and the two line up by
-construction - an element whose payload or headers fail to materialize is settled by the same
-`on_failure(decode = ..)` policy and never reaches the handler, exactly as on the single-message
-path. The bare `Headers<T>` is rejected there, naming the vector form.
+On a batch handler the headers stay per-delivery, so the page pairs each element with its own
+contract: the input is `&[Message<H, T>]`, and `element.headers` sits next to `element.body`.
+The pairing holds by construction - an element whose payload or headers fail to materialize is
+settled by the same `on_failure(decode = ..)` policy and never reaches the handler, exactly as
+on the single-message path. A `Headers<..>` parameter is rejected there, naming the pair input.
 
 === "Macros"
 
@@ -61,8 +62,8 @@ path. The bare `Headers<T>` is rejected there, naming the vector form.
     ```
 
 Mounting reads the same as every other form and on both surfaces: `b.include(bulk)` on a broker
-scope, `Router::include` on the router path. The contract type travels in the route, and the
-definition's own form token is what picks that route.
+scope, `Router::include` on the router path. The contract type travels in the input axis, so
+the ordinary batch route decodes it next to each payload.
 
 When one channel carries messages whose headers differ per event kind, keep the standard
 extractor out of it and write your own [`FromContext`] extractor: read the discriminator
@@ -135,7 +136,12 @@ whole declaration:
 A payload the service already holds encoded, or a foreign type that cannot carry a declaration
 (a bare `Vec<Frame>`), goes out through the byte entry point:
 `out.raw(&bytes).to(dest).publish()`. It takes the same headers positions and no codec; wrap
-the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own.
+the payload in a `#[derive(Outgoing)]` newtype when it deserves a declaration of its own. A
+newtype that derives both `Outgoing` and
+[`Serialized`](subscribers.md#raw-subscribers) is a first-class member of the dictionary - it
+declares its destination and headers like any model and publishes through the same typed entry,
+`out.message(&export)`: the type routes the publish onto the serialized wire, so its bytes
+leave as they are while every headers position works unchanged.
 
 The contract fills that position once. What the publisher itself contributes travels
 underneath: a handle carrying an argument for every message it sends exposes it as a base, and

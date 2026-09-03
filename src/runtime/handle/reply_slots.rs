@@ -16,40 +16,19 @@ use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Input, Message, Page, PagePair, PagedAxis, Payload, Solo, SoloAxis, SoloBytes,
-    SoloPair,
+    Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
+    SoloDeserialized, SoloPair,
 };
-use super::docs::DocState;
+use super::eager::construct;
 use super::outs::{EntryMarkers, Outs, Slot};
-use super::reply::{ReplyDest, ReplyHeadersSchema, ReplyShape, page_reply_verdict};
-use super::value::{BareReply, EncodedReply, HandleValue, ReplyValue, Sealed};
-use super::verdict::{OneByOne, Paged};
-
-/// The reply-and-slots form token of one route on one verdict family; the bare route has no
-/// page form, as on the slot-free reply.
-#[doc(hidden)]
-pub trait ReplySlotFormFor<Fam> {
-    /// The sealed mount token.
-    type Form;
-}
-
-impl ReplySlotFormFor<OneByOne> for EncodedReply {
-    type Form = SealedPublishingOut;
-}
-
-impl ReplySlotFormFor<Paged> for EncodedReply {
-    type Form = SealedBatchPublishingOut;
-}
-
-impl ReplySlotFormFor<OneByOne> for BareReply {
-    type Form = SealedRawReplyOut;
-}
+use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs, page_reply_verdict};
+use super::value::{HandleValue, ReplyValue, Sealed};
 
 /// The mount token of a sealed single-message reply definition carrying slots.
 #[derive(Debug, Clone, Copy)]
 pub struct SealedPublishingOut;
 
-/// The mount token of a sealed bare-byte reply definition carrying slots.
+/// The mount token of a sealed serialized-reply definition carrying slots.
 #[derive(Debug, Clone, Copy)]
 pub struct SealedRawReplyOut;
 
@@ -57,17 +36,17 @@ pub struct SealedRawReplyOut;
 #[derive(Debug, Clone, Copy)]
 pub struct SealedBatchPublishingOut;
 
-impl<A, R, E, C, S, H, Doc, Dest, Route, Attach> IncludeDef
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, E, C, H, Doc, Dest, Attach> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
 where
     A: Axis,
-    Route: ReplySlotFormFor<A::Family>,
+    R: ReplyRoute<A::Family>,
 {
-    type Form = Route::Form;
+    type Form = R::SlotForm;
 }
 
-impl<A, R, E, C, S, H, Doc, Dest, Route, Attach> HasSlots
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, E, C, H, Doc, Dest, Attach> HasSlots
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
 where
     E: EntryMarkers,
 {
@@ -78,7 +57,7 @@ where
 /// live values, so the definition is its own bound form.
 macro_rules! impl_reply_bind_slots {
     ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
-        impl<Conn, A, R, C, S, H, Doc, Dest, Route, Attach, $($m, $p, $e),+>
+        impl<Conn, A, R, C, H, Doc, Dest, Attach, $($m, $p, $e),+>
             BindSlots<Conn, ($(($p, $e),)+)>
             for Sealed<
                 ReplyValue<
@@ -87,12 +66,10 @@ macro_rules! impl_reply_bind_slots {
                         R,
                         Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e>,)+)>,
                         C,
-                        S,
                         H,
                         Doc,
                     >,
                     Dest,
-                    Route,
                     Attach,
                 >,
             >
@@ -121,18 +98,16 @@ impl_reply_bind_slots! {
 
 // ------------------------------------------------------------------------- the solo reply def
 
-impl<A, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, E, C, H, Doc, Dest, Attach> PublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
 where
     A: SoloAxis,
-    R: ReplyShape + ReplyHeadersSchema<Doc>,
+    R: ReplyShape<Wire: WireDocs<R, Doc>>,
     E: EntryMarkers + Send + Sync,
     C: Send + Sync,
-    S: Send + Sync,
     H: Send + Sync,
-    Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
+    Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Route: Send + Sync,
     Attach: Send + Sync,
 {
     type Input = A::Kind;
@@ -155,26 +130,48 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .value
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .value
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
+    }
+
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.value.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.value.docs.message_description
     }
 
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        if let Some(declared) = &self.0.value.docs.outgoing {
+            return declared.clone();
+        }
         let mut declared = vec![
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
-                .with_payload_schema(<Doc as DocState<R::Body>>::schema())
-                .with_headers_schema(<R as ReplyHeadersSchema<Doc>>::headers_schema()),
+                .with_payload_schema(<R::Wire as WireDocs<R, Doc>>::payload_schema())
+                .with_headers_schema(<R::Wire as WireDocs<R, Doc>>::headers_schema())
+                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED),
         ];
         declared.extend(E::outgoing());
         declared
     }
 }
 
-impl<T, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+impl<T, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = Outs<E>, Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -194,20 +191,22 @@ where
     }
 }
 
-impl<R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloBytes, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>>
+impl<F, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
 where
     Self: PublishingDef<
-            Input = crate::runtime::RawBytes,
+            Input = <SoloDeserialized<F> as Axis>::Kind,
             Injections = Outs<E>,
             Reply = R,
             Context = C,
         >,
+    F: Deserialized + Send + Sync + 'static,
+    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     R: ReplyShape,
     E: Send + Sync,
     C: Send + Sync,
     S: Send + Sync,
-    H: for<'p> Handle<Payload<'p>, R, Outs<E>, C, S>,
+    H: for<'p> Handle<F::Output<'p>, R, Outs<E>, C, S>,
 {
     async fn call(
         &self,
@@ -215,15 +214,13 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
     ) -> Result<R, HandlerOutcome> {
-        let payload = Payload::new(input);
-        self.0.value.body.handle(&payload, injections, ctx).await
+        let input = construct::<F, C, S>(input, ctx)?;
+        self.0.value.body.handle(&input, injections, ctx).await
     }
 }
 
-impl<Hd, P, R, E, C, S, H, Doc, Dest, Route, Attach> PublishingCall<S>
-    for Sealed<
-        ReplyValue<HandleValue<SoloPair<Hd, P>, R, Outs<E>, C, S, H, Doc>, Dest, Route, Attach>,
-    >
+impl<Hd, P, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
 where
     Self: PublishingDef<
             Input = <SoloPair<Hd, P> as Axis>::Kind,
@@ -252,17 +249,15 @@ where
 
 // ------------------------------------------------------------------------- the page reply def
 
-impl<A, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>>
+impl<A, R, E, H, Doc, Dest, Attach> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, (), H, Doc>, Dest, Attach>>
 where
     A: PagedAxis,
-    R: ReplyShape + ReplyHeadersSchema<Doc>,
+    R: ReplyShape<Wire: WireDocs<R, Doc>>,
     E: EntryMarkers + Send + Sync,
-    S: Send + Sync,
     H: Send + Sync,
-    Doc: AxisDocs<A> + DocState<R::Body> + Send + Sync,
+    Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Route: Send + Sync,
     Attach: Send + Sync,
 {
     type Input = A::Kind;
@@ -283,28 +278,48 @@ where
     }
 
     fn input_schema(&self) -> Option<String> {
-        Doc::payload_schema()
+        self.0
+            .value
+            .docs
+            .input_schema
+            .clone()
+            .or_else(Doc::payload_schema)
     }
 
     fn headers_schema(&self) -> Option<String> {
-        Doc::headers_schema()
+        self.0
+            .value
+            .docs
+            .headers_schema
+            .clone()
+            .or_else(Doc::headers_schema)
+    }
+
+    fn message_name(&self) -> Option<&'static str> {
+        self.0.value.docs.message_name
+    }
+
+    fn message_description(&self) -> Option<&'static str> {
+        self.0.value.docs.message_description
     }
 
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
+        if let Some(declared) = &self.0.value.docs.outgoing {
+            return declared.clone();
+        }
         let mut declared = vec![
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
-                .with_payload_schema(<Doc as DocState<R::Body>>::schema())
-                .with_headers_schema(<R as ReplyHeadersSchema<Doc>>::headers_schema()),
+                .with_payload_schema(<R::Wire as WireDocs<R, Doc>>::payload_schema())
+                .with_headers_schema(<R::Wire as WireDocs<R, Doc>>::headers_schema())
+                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED),
         ];
         declared.extend(E::outgoing());
         declared
     }
 }
 
-impl<T, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<
-        ReplyValue<HandleValue<Page<T>, Vec<R>, Outs<E>, (), S, H, Doc>, Dest, Route, Attach>,
-    >
+impl<T, R, E, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, Outs<E>, (), H, Doc>, Dest, Attach>>
 where
     Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
     [T]: Input<Axis = Page<T>>,
@@ -325,15 +340,8 @@ where
     }
 }
 
-impl<Hd, P, R, E, S, H, Doc, Dest, Route, Attach> BatchPublishingCall<S>
-    for Sealed<
-        ReplyValue<
-            HandleValue<PagePair<Hd, P>, Vec<R>, Outs<E>, (), S, H, Doc>,
-            Dest,
-            Route,
-            Attach,
-        >,
-    >
+impl<Hd, P, R, E, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, Outs<E>, (), H, Doc>, Dest, Attach>>
 where
     Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
     [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,

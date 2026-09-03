@@ -7,6 +7,7 @@
 
 mod expand;
 mod from_ref;
+mod lanes;
 mod outgoing;
 mod parse;
 
@@ -21,8 +22,11 @@ use parse::{SubscriberArgs, doc_description};
 /// Turns an `async fn` handler into a mountable subscriber definition.
 ///
 /// The attribute carries the declarative settings of the subscription; the *shape* of the
-/// handler - one message, one delivery's payload, a whole batch, a batch of payloads - is read
-/// off the signature, which is the only place it was ever really written.
+/// handler - one message (`&T`) or a whole page of them (`&[T]`) - is read off the signature,
+/// which is the only place it was ever really written. Which lane a type rides is the type's
+/// own business: a `serde` type decodes through the scope codec, a `#[derive(Deserialized)]`
+/// type constructs itself from the payload bytes, and a reply encodes through the reply codec
+/// unless its type is `#[derive(Serialized)]`, in which case its bytes leave as they are.
 ///
 /// ```ignore
 /// /// Processes incoming orders.
@@ -31,10 +35,9 @@ use parse::{SubscriberArgs, doc_description};
 /// // later: broker_scope.include(handle);
 ///
 /// // reply form: the return value is encoded and published to "responses" through the
-/// // TypedPublisher (broker + reply codec) passed at wiring time.
+/// // reply publisher attached at the include site (the broker's default without it).
 /// #[subscriber("requests", publish("responses"))]
 /// async fn reply(req: &Request) -> Response { /* ... */ }
-/// // later: broker_scope.include_publishing(reply, typed_publisher);
 ///
 /// // reply form with explicit ack control: `Ok` publishes the reply, `Err` skips it and the
 /// // dispatcher settles by the returned HandlerOutcome.
@@ -47,15 +50,19 @@ use parse::{SubscriberArgs, doc_description};
 /// #[subscriber("orders")]
 /// async fn bill(orders: &[Order]) -> HandlerOutcome { /* settles the whole batch */ }
 ///
-/// // raw form: no codec, no serde - the handler receives the payload bytes as-is, said by a
-/// // `&[u8]` message parameter.
-/// #[subscriber("frames")]
-/// async fn on_frame(frame: &[u8]) -> HandlerOutcome { /* parse it yourself */ }
+/// // raw form: no codec, no serde - the input type deserializes itself from the payload
+/// // bytes. `Deserialize` means the framework's codec does it; `Deserialized` means it is
+/// // already done by the user's own type.
+/// #[derive(Deserialized)]
+/// struct Frame<'a>(&'a [u8]);
 ///
-/// // raw batch: the batch shape without the decode step; the payloads are borrowed from the
-/// // batch's own messages for the duration of the call.
 /// #[subscriber("frames")]
-/// async fn ingest(frames: &[&[u8]]) -> HandlerOutcome { /* parse them yourself */ }
+/// async fn on_frame(frame: &Frame<'_>) -> HandlerOutcome { /* parse it yourself */ }
+///
+/// // raw batch: the page shape on the same lane; the views borrow the batch's own messages
+/// // for the duration of the call.
+/// #[subscriber("frames")]
+/// async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome { /* parse them yourself */ }
 ///
 /// // the settings the attribute leaves out are filled in at the mount site, through the same
 /// // builder the attribute expands into:
@@ -63,17 +70,21 @@ use parse::{SubscriberArgs, doc_description};
 /// async fn audit(order: &Order) -> HandlerOutcome { HandlerOutcome::ack() }
 /// // later: broker_scope.include(audit.name(subject).workers(nonzero!(4)));
 ///
-/// // raw reply form: the returned bytes are published as-is to "frames-out" through the bare
-/// // publisher attached at the include site (b.include(mirror).publisher(policy), or the
-/// // broker's default publish policy without the call) - no codec on either side. Returning
-/// // Result<Vec<u8>, HandlerOutcome> gives the same explicit ack control as the typed form.
-/// #[subscriber("frames", raw, publish_raw("frames-out"))]
-/// async fn mirror(frame: &[u8]) -> Vec<u8> { frame.to_vec() }
+/// // raw reply: the reply type carries its own bytes, so they are published as they are -
+/// // no codec on the way out. `Serialize` means the framework's codec does it; `Serialized`
+/// // means it is already done by the user's own type. The same publish("dest") clause serves
+/// // both wires, and Result<Export, HandlerOutcome> gives the usual explicit ack control.
+/// #[derive(Serialized)]
+/// struct Export(Vec<u8>);
 ///
-/// // publish_raw also composes with a typed input (the gateway shape): the input decodes with
-/// // the scope codec, the returned bytes still go out unencoded.
-/// #[subscriber("orders", publish_raw("orders-wire"))]
-/// async fn encode(order: &Order) -> Vec<u8> { /* your wire format */ }
+/// #[subscriber("frames", publish("frames-out"))]
+/// async fn mirror(frame: &Frame<'_>) -> Export { Export(frame.0.to_vec()) }
+///
+/// // the lanes mix freely (the gateway shape): the input decodes with the scope codec, the
+/// // returned bytes still go out unencoded - and the other diagonal (a Deserialized input
+/// // with an encoded serde reply) works the same way.
+/// #[subscriber("orders", publish("orders-wire"))]
+/// async fn encode(order: &Order) -> Export { /* your wire format */ }
 /// ```
 ///
 /// Without `publish(..)` the handler returns any accepted outcome shape (a `HandlerOutcome`,
@@ -83,22 +94,24 @@ use parse::{SubscriberArgs, doc_description};
 /// `Result<Reply, HandlerOutcome>` to control acknowledgement: `Err(outcome)` publishes nothing
 /// and settles by `outcome`. The `Result` form is
 /// detected syntactically, so spell it out in the signature (a type alias is treated as a plain
-/// reply type). `publish_raw(..)` is the byte reply clause: the handler returns `Vec<u8>` (any
-/// owned `AsRef<[u8]>` type) and the bytes are published unencoded through the bare publisher
-/// paired at the include site; a failed reply publish nacks the delivery with requeue, exactly
-/// like the typed reply form. It composes with both a byte and a typed input; a byte input with
-/// the encoded `publish(..)` is rejected (such a handler's reply is bytes).
+/// reply type). A failed reply publish nacks the delivery with requeue on both wires, so a
+/// reply is retried rather than silently lost.
 ///
-/// A `&[T]` message parameter makes the definition a `BatchDef`: the handler runs once per batch
+/// A `&[T]` message parameter makes the definition a batch one: the handler runs once per batch
 /// pulled from the subscription's `BatchSubscriber` (added by the mount site's buffer for
-/// subscriptions without native batching). It returns any `IntoBatchResult` - one outcome
+/// subscriptions without native batching). It returns one outcome
 /// for the whole batch (`HandlerOutcome`, `()`, `Result<_, E>`), or a per-element
 /// `Vec<HandlerOutcome>` to settle element `i` of the slice with outcome `i`, each element
-/// carrying its own optional `and_after` continuation. A `&[&[u8]]` parameter is the same shape
-/// without the decode step.
+/// carrying its own optional `and_after` continuation. A `&[Message<H, T>]` parameter pairs
+/// each element with its typed
+/// header contract: the core decodes both under the subscriber's decode policy, and the body
+/// reads `element.headers` next to `element.body` (the single-message counterpart stays the
+/// `Headers<T>` extractor parameter). A batch body may name the broker's subscription-scoped
+/// batch context (`ctx: &mut Context<'_, MemoryBatchContext>`-style) to reach handles every
+/// delivery of the subscription shares, like a seeker.
 ///
-/// Combining a batch handler with `publish(..)` produces a `BatchPublishingDef`: the handler returns
-/// `Vec<Reply>` (or
+/// Combining a batch handler with `publish(..)` produces a batch reply definition: the handler
+/// returns `Vec<Reply>` (or
 /// `Result<Vec<Reply>, HandlerOutcome>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
 /// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply
@@ -120,13 +133,15 @@ use parse::{SubscriberArgs, doc_description};
 /// source attached at the include site (`b.include(f).publisher(..)`); its optional third
 /// position declares the message set the handler publishes (`Out<impl Publisher, Marker,
 /// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), narrowing what
-/// the publish builder accepts on it; a `Seek(seeker): Seek<K>` parameter injects the
-/// subscription's own seeker, minted right after the subscription opens (the source's
-/// subscriber must implement the `Seekable` capability). They combine freely in one handler:
-/// with each other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
+/// the publish builder accepts on it, and the generated document reports that narrowed list as
+/// the handler's send operations. `Out` parameters combine freely in one handler: with each
+/// other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
 /// `publish_raw(..)`, and the batch publishing form). An `Out` parameter's attachment is
 /// required at the include site: `.publisher(..)` on the plain and batch forms, `.out(..)` on
-/// the reply forms (where `.publisher(..)` stays the reply's own attachment).
+/// the reply forms (where `.publisher(..)` stays the reply's own attachment). Repositioning a
+/// subscription from inside the body is not a parameter but a broker context field: the broker
+/// publishes its position and seek-handle keys, and the handler reads them with the `Ctx`
+/// extractor like any other broker field.
 ///
 /// A `start_at(<position>)` clause opens the subscription at that position instead of the
 /// broker's default, seeking before the first delivery ("start from the latest on deploy",
@@ -385,7 +400,7 @@ pub fn derive_from_ref(item: TokenStream) -> TokenStream {
 /// #[publishes(ChunkDone, Progress)]
 /// struct Events;
 ///
-/// #[subscriber("chunks", raw)]
+/// #[subscriber("chunks")]
 /// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerOutcome {
 ///     /* ... */
 /// }
@@ -552,6 +567,56 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+/// Derives a self-deserializing input type (`Deserialized` in the core crate): `Deserialize`
+/// means the framework's codec does it, `Deserialized` means it is already done by the user's
+/// own type.
+///
+/// Covers the obvious shape - a newtype or single-field struct over the payload view
+/// `&'a [u8]` - and emits the construction plus both `Input` spellings, so `&Frame<'_>` and
+/// `&[Frame<'_>]` bodies mount. A validating or converting construction (a flatbuffers root, a
+/// capnp reader) implements the traits by hand instead; the pair of impls is on the core
+/// trait's rustdoc.
+///
+/// ```ignore
+/// #[derive(Deserialized)]
+/// struct Frame<'a>(&'a [u8]);
+///
+/// #[subscriber("frames")]
+/// async fn inspect(frame: &Frame<'_>) -> HandlerOutcome { /* parse it yourself */ }
+/// ```
+#[proc_macro_derive(Deserialized)]
+pub fn derive_deserialized(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    lanes::derive_deserialized(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derives a self-serialized outgoing type (`Serialized` in the core crate): `Serialize` means
+/// the framework's codec does it, `Serialized` means it is already done by the user's own
+/// type.
+///
+/// Covers the obvious shape - a newtype or single-field struct over an owned byte buffer - and
+/// emits the bytes accessor plus the wire spellings that route the type onto the serialized
+/// wire (`MessageWire` for a typed publish, `ReplyShape` for the reply position), so a handler
+/// returning it - or passing it to `message(..)` - publishes those bytes as they are. Any other
+/// shape implements the traits by hand; the impls are on the core trait's rustdoc.
+///
+/// ```ignore
+/// #[derive(Serialized)]
+/// struct Export(Vec<u8>);
+///
+/// #[subscriber("orders", publish("orders-wire"))]
+/// async fn encode(order: &Order) -> Export { /* your wire format */ }
+/// ```
+#[proc_macro_derive(Serialized)]
+pub fn derive_serialized(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    lanes::derive_serialized(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// The set enum's models, one per variant: each variant wraps exactly one type, and a

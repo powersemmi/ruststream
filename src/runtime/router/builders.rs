@@ -69,8 +69,10 @@ where
 pub type RouterPublishing<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
     RouterWith<PublishMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
 
-/// The builder [`Router::include`](super::Router::include) returns for a `publish_raw("dest")`
-/// definition, whose reply bytes go out as-is through a bare publisher.
+/// The builder [`Router::include`](super::Router::include) returns for a `publish("dest")`
+/// definition whose reply type is [`Serialized`](crate::runtime::Serialized).
+///
+/// The reply bytes go out as-is through a bare publisher.
 pub type RouterRawReply<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
     RouterWith<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
 
@@ -98,8 +100,11 @@ pub type RouterBatchOut<B, Routes, RouteCodec, RouteLayers, Def, Slots> =
 pub type RouterPublishingOut<B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> =
     RouterSlotsWithReply<PublishInjectMount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>;
 
-/// The builder [`Router::include`](super::Router::include) returns for a `publish_raw("dest")`
-/// definition whose handler also takes [`Out`](crate::runtime::Out) parameters.
+/// The builder [`Router::include`](super::Router::include) returns for a `publish("dest")`
+/// definition whose reply type is [`Serialized`](crate::runtime::Serialized).
+///
+/// The handler also takes [`Out`](crate::runtime::Out) parameters, bound one by one at the
+/// include site.
 pub type RouterRawReplyOut<B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> =
     RouterSlotsWithReply<
         RawReplyInjectMount,

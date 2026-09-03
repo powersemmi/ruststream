@@ -48,8 +48,9 @@ impl Spec {
     }
 
     /// The message components carrying no payload schema, excluding the deliberately
-    /// schema-free raw-bytes messages: the models that would document better with a
-    /// [`schemars::JsonSchema`] derive.
+    /// schema-free ones (a [`Deserialized`](crate::runtime::Deserialized) input, a
+    /// [`Serialized`](crate::runtime::Serialized) reply - their bytes are their own wire
+    /// format): the models that would document better with a [`schemars::JsonSchema`] derive.
     ///
     /// [`build_spec`] logs a `WARN` per gap when the document is generated; this accessor makes
     /// the same list assertable, so a service can gate schema coverage in its test suite.
@@ -74,7 +75,11 @@ impl Spec {
         self.components
             .messages
             .values()
-            .filter(|message| message.payload.is_none() && message.name != "bytes")
+            // The "bytes" name stays excluded next to the flag: a hand-rolled metadata entry
+            // spells its schema-free intent through the label alone.
+            .filter(|message| {
+                message.payload.is_none() && !message.schemaless && message.name != "bytes"
+            })
             .map(|message| message.name.as_str())
             .collect()
     }
@@ -195,6 +200,13 @@ pub struct MessageObject {
     /// the wire, header values are string-encoded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<Value>,
+    /// True when the message rides a self-carrying lane
+    /// ([`Deserialized`](crate::runtime::Deserialized) input /
+    /// [`Serialized`](crate::runtime::Serialized) reply): the bytes are their own wire format,
+    /// so the missing payload schema is by design. Generation bookkeeping, not part of the
+    /// rendered document.
+    #[serde(skip)]
+    pub schemaless: bool,
 }
 
 /// A JSON `$ref` pointer.
@@ -453,9 +465,10 @@ fn add_receive(
         .payload_schema
         .as_deref()
         .and_then(|json| serde_json::from_str::<Value>(json).ok());
-    // A raw handler is deliberately schema-free; a typed model without a schema is a
-    // documentation gap worth flagging at generation time.
-    if payload.is_none() && handler.input_type != "bytes" {
+    // A self-deserializing input is deliberately schema-free (its bytes are its own wire
+    // format); a typed model without a schema is a documentation gap worth flagging at
+    // generation time.
+    if payload.is_none() && !handler.deserialized && handler.input_type != "bytes" {
         warn!(
             target: "ruststream::asyncapi",
             subscription = %name,
@@ -526,6 +539,7 @@ fn add_receive(
         message_description,
         payload,
         headers,
+        handler.deserialized,
         name,
     );
 }
@@ -542,6 +556,7 @@ fn merge_message(
     description: Option<String>,
     payload: Option<Value>,
     headers: Option<Value>,
+    schemaless: bool,
     context: &str,
 ) {
     let entry = messages
@@ -551,10 +566,14 @@ fn merge_message(
             description: None,
             payload: None,
             headers: None,
+            schemaless: false,
         });
     if entry.description.is_none() {
         entry.description = description;
     }
+    // One schema-free-by-design contributor is enough: the shared component's missing schema
+    // is then explained, whichever side contributed it.
+    entry.schemaless |= schemaless;
     if entry.payload.is_none() {
         entry.payload = payload;
     }
@@ -587,9 +606,10 @@ fn add_outgoing(
         .payload_schema
         .as_deref()
         .and_then(|json| serde_json::from_str::<Value>(json).ok());
-    // A publish_raw reply is deliberately schema-free; a typed model without a schema is a
-    // documentation gap worth flagging at generation time.
-    if payload.is_none() && outgoing.message_type != "bytes" {
+    // A serialized-wire message is deliberately schema-free (its bytes are its own wire
+    // format); a typed model without a schema is a documentation gap worth flagging at
+    // generation time.
+    if payload.is_none() && !outgoing.serialized && outgoing.message_type != "bytes" {
         warn!(
             target: "ruststream::asyncapi",
             channel = %outgoing.channel,
@@ -652,7 +672,15 @@ fn add_outgoing(
         },
     );
 
-    merge_message(messages, name, description, payload, headers, channel);
+    merge_message(
+        messages,
+        name,
+        description,
+        payload,
+        headers,
+        outgoing.serialized,
+        channel,
+    );
 }
 
 /// Derives a stable `receive` operation id from a subscription name.
