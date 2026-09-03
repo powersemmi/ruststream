@@ -1,24 +1,23 @@
-error[E0599]: the method `codec` exists for struct `IncludeWith<'_, runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>, ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, CallCodec<JsonCodec>>>>`, but its trait bounds were not satisfied
-  --> tests/ui/reply_codec_named_twice.rs:29:14
+error[E0277]: this reply's codec is already named
+  --> tests/ui/reply_codec_named_twice.rs:29:20
    |
-26 | /         b.include(confirm)
-27 | |             .publisher(MemoryPublish)
-28 | |             .codec(JsonCodec)
-29 | |             .codec(CborCodec);
-   | |             -^^^^^ method cannot be called due to unsatisfied trait bounds
-   | |_____________|
+29 |             .codec(CborCodec);
+   |              ----- ^^^^^^^^^ `.codec(..)` fills the reply's codec slot, and it is filled
+   |              |
+   |              required by a bound introduced by this call
    |
+   = help: the trait `ruststream::runtime::CodecSlotOpen` is not implemented for `CallCodec<JsonCodec>`
+   = note: a reply encodes with exactly one codec: drop one of the `.codec(..)` calls
+help: the trait `ruststream::runtime::CodecSlotOpen` is implemented for `UnnamedCodec`
+  --> src/runtime/publish/wiring.rs
    |
-  ::: src/runtime/publish/wiring.rs
+   | impl CodecSlotOpen for UnnamedCodec {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, ruststream::runtime::WithSource<W>>::codec`
+  --> src/runtime/app/include/builder.rs
    |
-   | / pub struct ReplyWiring<
-   | |     Policy,
-   | |     Enc = UnnamedCodec,
-   | |     PL = PublishTransformIdentity,
-   | |     BL = BatchTransformIdentity,
-   | |     Tx = Direct,
-   | | > {
-   | |_- doesn't satisfy `_: NameReplyCodec<_>`
-   |
-   = note: the following trait bounds were not satisfied:
-           `ReplyWiring<MemoryPublish, CallCodec<JsonCodec>>: ruststream::runtime::NameReplyCodec<_>`
+   |     pub fn codec<Cd>(
+   |            ----- required by a bound in this associated function
+...
+   |         W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
+   |                                     ^^^^^^^^^^^^^ required by this bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W>>::codec`

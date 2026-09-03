@@ -129,8 +129,8 @@ pub use transform::{
     PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack, for_batch,
 };
 pub use wiring::{
-    AddBatchReplyTransform, AddReplyTransform, Direct, InTransaction, NameReplyCodec, ReplyWiring,
-    TransactionalReply,
+    AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, Direct, InTransaction,
+    NameReplyCodec, PublishingDirectly, ReplyWiring, TransactionalReply,
 };
 
 #[cfg(test)]

@@ -1,0 +1,21 @@
+error[E0277]: this reply already publishes inside a transaction
+  --> tests/ui/reply_transactional_twice.rs:28:14
+   |
+28 |             .transactional();
+   |              ^^^^^^^^^^^^^ `.transactional()` marks the reply's publish state, and it is marked
+   |
+   = help: the trait `ruststream::runtime::PublishingDirectly` is not implemented for `InTransaction`
+   = note: a page's replies ride one transaction: drop one of the `.transactional()` calls
+help: the trait `ruststream::runtime::PublishingDirectly` is implemented for `Direct`
+  --> src/runtime/publish/wiring.rs
+   |
+   | impl PublishingDirectly for Direct {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, ruststream::runtime::WithSource<W>>::transactional`
+  --> src/runtime/app/include/builder.rs
+   |
+   |     pub fn transactional(
+   |            ------------- required by a bound in this associated function
+...
+   |         W: TransactionalReply<State: PublishingDirectly>,
+   |                                      ^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W>>::transactional`

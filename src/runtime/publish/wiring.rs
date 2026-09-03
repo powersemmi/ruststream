@@ -68,16 +68,21 @@ impl<Policy, Enc, PL, BL, Tx> fmt::Debug for ReplyWiring<Policy, Enc, PL, BL, Tx
 
 /// Naming the reply codec: the `.codec(..)` step of a mount site's chain.
 ///
-/// Implemented for a wiring whose codec slot is still open, so a second `.codec(..)` - and the
-/// call on a byte-for-byte reply, which has no codec slot at all - fails here.
+/// Implemented for every reply wiring and for nothing else, so the call on a byte-for-byte reply
+/// - which carries the publish policy alone and has no codec slot at all - fails here. Whether
+/// the slot is still open is the separate question [`CodecSlotOpen`] answers, so that a second
+/// `.codec(..)` reports the slot rather than the whole wiring.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not take a reply codec",
     label = "this reply's codec cannot be named here",
-    note = "`.codec(..)` names an encoded reply's codec once, right after `.publisher(..)`; a \
+    note = "`.codec(..)` names an encoded reply's codec, right after `.publisher(..)`; a \
             `Serialized` reply carries its own bytes and takes no codec at all"
 )]
 pub trait NameReplyCodec<C> {
+    /// The codec slot the wiring holds right now: [`UnnamedCodec`] until a `.codec(..)` fills it.
+    type Slot;
+
     /// The wiring with the codec named.
     type Out;
 
@@ -85,7 +90,8 @@ pub trait NameReplyCodec<C> {
     fn name_codec(self, codec: C) -> Self::Out;
 }
 
-impl<Policy, PL, BL, Tx, C> NameReplyCodec<C> for ReplyWiring<Policy, UnnamedCodec, PL, BL, Tx> {
+impl<Policy, Enc, PL, BL, Tx, C> NameReplyCodec<C> for ReplyWiring<Policy, Enc, PL, BL, Tx> {
+    type Slot = Enc;
     type Out = ReplyWiring<Policy, CallCodec<C>, PL, BL, Tx>;
 
     fn name_codec(self, codec: C) -> Self::Out {
@@ -98,6 +104,22 @@ impl<Policy, PL, BL, Tx, C> NameReplyCodec<C> for ReplyWiring<Policy, UnnamedCod
         }
     }
 }
+
+/// A reply codec slot still open: what a `.codec(..)` step fills.
+///
+/// The step states this about the slot it is about to fill
+/// ([`NameReplyCodec::Slot`]) rather than about the wiring, so a second `.codec(..)` fails on the
+/// slot the first one already took - and this message, not a bare "no method", is what the call
+/// site reads.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this reply's codec is already named",
+    label = "`.codec(..)` fills the reply's codec slot, and it is filled",
+    note = "a reply encodes with exactly one codec: drop one of the `.codec(..)` calls"
+)]
+pub trait CodecSlotOpen {}
+
+impl CodecSlotOpen for UnnamedCodec {}
 
 /// Composing a static [`PublishTransform`](super::PublishTransform) onto the reply: the
 /// `.transform(..)` step. The stack grows, so the step repeats; the first one added runs first
@@ -173,18 +195,22 @@ impl<Policy, Enc, PL, BL, Tx, N> AddBatchReplyTransform<N>
 
 /// Wrapping a page's replies in one broker transaction: the `.transactional()` step.
 ///
-/// Implemented for a wiring still publishing directly, so a second `.transactional()` fails here;
-/// that the policy's live publisher actually is a
+/// Implemented for every reply wiring and for nothing else, so the call on a byte-for-byte reply
+/// fails here. Whether the wiring still publishes directly is the separate question
+/// [`PublishingDirectly`] answers, and that the policy's live publisher actually is a
 /// [`TransactionalPublisher`](crate::TransactionalPublisher) is checked where the wiring pairs,
 /// against the broker the mount site names.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot publish its replies inside a transaction",
     label = "this reply has no transaction to open",
-    note = "`.transactional()` marks an encoded page reply's wiring once, right after \
+    note = "`.transactional()` marks an encoded page reply's wiring, right after \
             `.publisher(..)`; the policy it marks must pair into a `TransactionalPublisher`"
 )]
 pub trait TransactionalReply {
+    /// How the wiring publishes right now: [`Direct`] until a `.transactional()` marks it.
+    type State;
+
     /// The wiring publishing inside a transaction.
     type Out;
 
@@ -192,7 +218,8 @@ pub trait TransactionalReply {
     fn into_transactional(self) -> Self::Out;
 }
 
-impl<Policy, Enc, PL, BL> TransactionalReply for ReplyWiring<Policy, Enc, PL, BL, Direct> {
+impl<Policy, Enc, PL, BL, Tx> TransactionalReply for ReplyWiring<Policy, Enc, PL, BL, Tx> {
+    type State = Tx;
     type Out = ReplyWiring<Policy, Enc, PL, BL, InTransaction>;
 
     fn into_transactional(self) -> Self::Out {
@@ -205,6 +232,20 @@ impl<Policy, Enc, PL, BL> TransactionalReply for ReplyWiring<Policy, Enc, PL, BL
         }
     }
 }
+
+/// A wiring still publishing each reply on its own: what a `.transactional()` step marks.
+///
+/// Stated about the publish state ([`TransactionalReply::State`]) rather than about the wiring,
+/// so a second `.transactional()` reports the mark the first one already made.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this reply already publishes inside a transaction",
+    label = "`.transactional()` marks the reply's publish state, and it is marked",
+    note = "a page's replies ride one transaction: drop one of the `.transactional()` calls"
+)]
+pub trait PublishingDirectly {}
+
+impl PublishingDirectly for Direct {}
 
 // A wiring is a policy over a policy: pairing swaps the leaf for its live form and resolves the
 // codec position, while the transform stacks travel unchanged.

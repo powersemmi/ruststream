@@ -494,6 +494,129 @@ fn every_reply_spelling_mounts() {
     let _ = reply_axes();
 }
 
+/// The chain has no order to remember: opening the reply wiring closes no other step, so the
+/// value steps and the declarative settings mount the same registration whichever side of
+/// `.publisher(..)` names them. Both spellings of each pair are built here; a step reachable on
+/// one side only would fail this module's build.
+fn order_free_reply_axes() -> impl RouterDef<MemoryBroker> {
+    use crate::codec::JsonCodec;
+    use crate::runtime::{FailurePolicies, SubscriberSettings};
+
+    Router::<MemoryBroker>::new()
+        // a page setting, before and after the wiring
+        .include(
+            subscriber("orders", ConfirmPages)
+                .reply()
+                .to("confirmations")
+                .batch(nonzero!(8))
+                .publisher(MemoryPublish)
+                .codec(JsonCodec)
+                .build(),
+        )
+        .include(
+            subscriber("orders", ConfirmPages)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .codec(JsonCodec)
+                .batch(nonzero!(8))
+                .build(),
+        )
+        // the documentation steps, before and after the wiring
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .describe("confirms an order")
+                .publisher(MemoryPublish)
+                .transform(StampReply)
+                .build(),
+        )
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .transform(StampReply)
+                .describe("confirms an order")
+                .build(),
+        )
+        .include(
+            subscriber("orders", Echo)
+                .reply()
+                .to("echoes")
+                .undocumented()
+                .publisher(MemoryPublish)
+                .build(),
+        )
+        .include(
+            subscriber("orders", Echo)
+                .reply()
+                .to("echoes")
+                .publisher(MemoryPublish)
+                .undocumented()
+                .build(),
+        )
+        // the declarative settings, before the wiring, inside it, and after the seal
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .workers(nonzero!(2))
+                .publisher(MemoryPublish)
+                .build(),
+        )
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .workers(nonzero!(2))
+                .on_failure(FailurePolicies::default())
+                .build(),
+        )
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .build()
+                .workers(nonzero!(2)),
+        )
+}
+
+#[test]
+fn the_reply_chain_takes_its_steps_in_any_order() {
+    let _ = order_free_reply_axes();
+}
+
+/// The unnamed source is constructed by the same `name(..)` step whichever side of the wiring
+/// names it, and a source transform still applies through the wiring.
+#[test]
+fn the_source_steps_reach_through_the_reply_wiring() {
+    use crate::runtime::SubscriberSettings;
+    use crate::{Name, Unnamed};
+
+    let _ = Router::<MemoryBroker>::new()
+        .include(
+            subscriber(Unnamed::<Name>::new(), Confirm)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .name("orders")
+                .map_source(|source| source)
+                .build(),
+        )
+        .include(
+            subscriber(Unnamed::<Name>::new(), Confirm)
+                .reply()
+                .to("confirmations")
+                .name("orders")
+                .publisher(MemoryPublish)
+                .build(),
+        );
+}
+
 struct Gateway;
 
 impl<W, E> Handle<Order, Confirmation, Outs<(Slot<Analytics, W, E>,)>> for Gateway

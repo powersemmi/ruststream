@@ -5,12 +5,18 @@ use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::time::Duration;
 
+use crate::runtime::dispatch::Workers;
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::publish::{
-    AddBatchReplyTransform, AddReplyTransform, NameReplyCodec, ReplyWiring, TransactionalReply,
+    AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, NameReplyCodec, PublishingDirectly,
+    ReplyWiring, TransactionalReply,
 };
 use crate::runtime::router::DefaultReply;
-use crate::runtime::settings::SubscriberBuilder;
+use crate::runtime::settings::{
+    BufferedStep, FailureStep, MapSourceStep, NameStep, StartAtStep, SubscriberBuilder, WorkersStep,
+};
 use crate::runtime::slot::WithSource;
 
 use super::axis::{Axis, Input, PagedAxis};
@@ -457,9 +463,14 @@ pub type UnwiredReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> =
 /// [`batch_transform`](Self::batch_transform) and [`transactional`](Self::transactional) fill the
 /// wiring's slots - each once, so naming one twice does not compile - and [`build`](Self::build)
 /// folds it back into the definition and seals it for
-/// [`include`](crate::runtime::Router::include). The subscriber settings
-/// ([`workers`](crate::runtime::SubscriberSettings::workers), ...) chain on either side of the
-/// wiring; the value steps (`.describe(..)`, `.undocumented()`, `.batch(..)`) come before it.
+/// [`include`](crate::runtime::Router::include).
+///
+/// Every other step of the chain reaches through the wiring unchanged: the value steps
+/// ([`describe`](Self::describe), [`undocumented`](Self::undocumented), [`batch`](Self::batch))
+/// and the declarative settings ([`workers`](crate::runtime::SubscriberSettings::workers),
+/// [`on_failure`](crate::runtime::SubscriberSettings::on_failure), ...) apply on either side of
+/// `.publisher(..)` and produce the same definition, each still fixed once. Opening the wiring
+/// therefore closes nothing: the chain has no order to remember.
 #[must_use = "the reply wiring seals with .build()"]
 pub struct ReplyWiringChain<Chain, W> {
     chain: Chain,
@@ -473,11 +484,58 @@ impl<Chain, W> fmt::Debug for ReplyWiringChain<Chain, W> {
 }
 
 impl<Chain, W> ReplyWiringChain<Chain, W> {
+    /// Rebuilds the wrapper over a stepped chain, keeping the wiring: how every forwarded step
+    /// reaches the definition underneath.
+    fn map_chain<NewChain>(
+        self,
+        f: impl FnOnce(Chain) -> NewChain,
+    ) -> ReplyWiringChain<NewChain, W> {
+        ReplyWiringChain {
+            chain: f(self.chain),
+            wiring: self.wiring,
+        }
+    }
+}
+
+// A wiring chain is not mountable until `.build()` seals it, so it carries the same diagnostic
+// form token an unsealed definition does - and, through the `Declared` blanket over it, the whole
+// settings surface, forwarded step by step below.
+impl<Chain, W> crate::runtime::router::IncludeDef for ReplyWiringChain<Chain, W> {
+    type Form = UnbuiltDefinition;
+}
+
+/// Implements one settings step on the wiring chain by forwarding it to the chain underneath.
+/// The step's own typestate travels with it, so a setting is still fixed exactly once whichever
+/// side of `.publisher(..)` names it.
+macro_rules! forward_settings_step {
+    ($($trait:ident<$($param:ident),*>::$method:ident($($arg:ident: $ty:ty),*)),+ $(,)?) => {$(
+        impl<Chain: $trait<$($param),*>, W $(, $param)*> $trait<$($param),*>
+            for ReplyWiringChain<Chain, W>
+        {
+            type Out = ReplyWiringChain<<Chain as $trait<$($param),*>>::Out, W>;
+
+            fn $method(self $(, $arg: $ty)*) -> Self::Out {
+                self.map_chain(|chain| chain.$method($($arg),*))
+            }
+        }
+    )+};
+}
+
+forward_settings_step! {
+    NameStep<>::apply_name(name: Cow<'static, str>),
+    WorkersStep<>::apply_workers(workers: Workers),
+    FailureStep<>::apply_failures(policies: FailurePolicies),
+    StartAtStep<P>::apply_start_at(position: P),
+    BufferedStep<>::apply_buffered(max_size: NonZeroUsize, max_wait: Duration),
+    MapSourceStep<F>::apply_map_source(f: F),
+}
+
+impl<Chain, W> ReplyWiringChain<Chain, W> {
     /// Encodes the reply with `codec` instead of the
     /// [`DefaultCodec`](crate::codec::DefaultCodec). Named once per registration.
     pub fn codec<Cd>(self, codec: Cd) -> ReplyWiringChain<Chain, W::Out>
     where
-        W: NameReplyCodec<Cd>,
+        W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
     {
         ReplyWiringChain {
             chain: self.chain,
@@ -515,12 +573,45 @@ impl<Chain, W> ReplyWiringChain<Chain, W> {
     /// its own broker.
     pub fn transactional(self) -> ReplyWiringChain<Chain, W::Out>
     where
-        W: TransactionalReply,
+        W: TransactionalReply<State: PublishingDirectly>,
     {
         ReplyWiringChain {
             chain: self.chain,
             wiring: self.wiring.into_transactional(),
         }
+    }
+}
+
+// The value steps reach through the wiring the same way the settings do, so `.describe(..)`,
+// `.undocumented()` and `.batch(..)` read the same on either side of `.publisher(..)`.
+impl<A, R, O, C, H, Doc, Dest, Src, State, DC, W>
+    ReplyWiringChain<UnwiredReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC>, W>
+{
+    /// See [`describe`](SubscriberBuilder::describe) on the reply chain.
+    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
+        self.map_chain(|chain| chain.describe(text))
+    }
+
+    /// See [`undocumented`](SubscriberBuilder::undocumented) on the reply chain.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the axes
+    pub fn undocumented(
+        self,
+    ) -> ReplyWiringChain<UnwiredReplyChain<A, R, O, C, H, Undocumented, Dest, Src, State, DC>, W>
+    where
+        Doc: IsDocumented,
+    {
+        // The method path is ambiguous here (the plain and the reply chain both define
+        // `undocumented`), so the closure is what picks the reply chain's one.
+        #[allow(clippy::redundant_closure_for_method_calls)]
+        self.map_chain(|chain| chain.undocumented())
+    }
+
+    /// See [`batch`](SubscriberBuilder::batch) on the reply chain.
+    pub fn batch(self, max: NonZeroUsize) -> Self
+    where
+        A: PagedAxis,
+    {
+        self.map_chain(|chain| chain.batch(max))
     }
 }
 

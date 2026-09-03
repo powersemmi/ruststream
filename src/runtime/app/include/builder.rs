@@ -6,7 +6,8 @@ use std::marker::PhantomData;
 use crate::Broker;
 
 use crate::runtime::publish::{
-    AddBatchReplyTransform, AddReplyTransform, NameReplyCodec, TransactionalReply,
+    AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, NameReplyCodec, PublishingDirectly,
+    TransactionalReply,
 };
 use crate::runtime::slot::WithSource;
 
@@ -177,7 +178,7 @@ where
         codec: Cd,
     ) -> IncludeWith<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W::Out>>
     where
-        W: NameReplyCodec<Cd>,
+        W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
         WithSource<W::Out>: CommitVia<Mount, B, Layers, C, State, Pipeline, Def>,
     {
         self.map_wiring(|wiring| wiring.name_codec(codec))
@@ -224,7 +225,7 @@ where
         self,
     ) -> IncludeWith<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W::Out>>
     where
-        W: TransactionalReply,
+        W: TransactionalReply<State: PublishingDirectly>,
         WithSource<W::Out>: CommitVia<Mount, B, Layers, C, State, Pipeline, Def>,
     {
         self.map_wiring(TransactionalReply::into_transactional)

@@ -98,9 +98,9 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 // service code.
 #[doc(hidden)]
 pub use publish::{
-    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, Direct, InTransaction,
-    NameReplyCodec, ReplyPublisher, ReplyWiring, Transactional, TransactionalReply, TypedPublisher,
-    WireBytes, WirePayload,
+    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, Direct,
+    InTransaction, NameReplyCodec, PublishingDirectly, ReplyPublisher, ReplyWiring, Transactional,
+    TransactionalReply, TypedPublisher, WireBytes, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,

@@ -15,7 +15,8 @@ use std::marker::PhantomData;
 use crate::Broker;
 
 use crate::runtime::publish::{
-    AddBatchReplyTransform, AddReplyTransform, NameReplyCodec, TransactionalReply,
+    AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, NameReplyCodec, PublishingDirectly,
+    TransactionalReply,
 };
 use crate::runtime::slot::{BindSlot, MissingSlot, OutSlot, WithSource};
 
@@ -208,7 +209,7 @@ where
         codec: Cd,
     ) -> RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, WithSource<W::Out>>
     where
-        W: NameReplyCodec<Cd>,
+        W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
     {
         self.map_wiring(|wiring| wiring.name_codec(codec))
     }
@@ -240,7 +241,7 @@ where
         self,
     ) -> RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, WithSource<W::Out>>
     where
-        W: TransactionalReply,
+        W: TransactionalReply<State: PublishingDirectly>,
     {
         self.map_wiring(TransactionalReply::into_transactional)
     }
@@ -483,7 +484,7 @@ where
         Slots,
     >
     where
-        W: NameReplyCodec<Cd>,
+        W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
     {
         self.map_wiring(|wiring| wiring.name_codec(codec))
     }
@@ -545,7 +546,7 @@ where
         Slots,
     >
     where
-        W: TransactionalReply,
+        W: TransactionalReply<State: PublishingDirectly>,
     {
         self.map_wiring(TransactionalReply::into_transactional)
     }
