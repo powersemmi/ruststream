@@ -128,7 +128,9 @@ jobs:
       # compiled nowhere and rotted unnoticed. Those lanes are what must hold with no codec at
       # all: a `Deserialized` input in, a `Serialized` value out, through the same typed publish
       # entry a service always writes. `ui_codec_free` pins the errors the other side of that
-      # line produces, which exist only where no codec resolves.
+      # line produces, which exist only where no codec resolves. `lane_traits_without_macros`
+      # builds with `macros` off, where the derives are gone and the prelude alone has to carry
+      # every name the hand-written lane impls spell.
       - name: cargo test (reduced features)
         if: matrix.toolchain == 'stable'
         env:
@@ -139,6 +141,7 @@ jobs:
           cargo test --locked --no-default-features --features macros,memory,testing --test raw_subscriber
           cargo test --locked --no-default-features --features macros,memory,testing --test codec_free_lanes
           cargo test --locked --no-default-features --features macros,memory,testing --test ui_codec_free
+          cargo test --locked --no-default-features --features memory,testing --test lane_traits_without_macros
 
       # All-features hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it.
