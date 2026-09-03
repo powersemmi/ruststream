@@ -19,6 +19,12 @@ use serde::{Deserialize, Serialize};
 /// The yield loop is the sanctioned no-sleep wait: in multi-thread mode the handler runs on
 /// another worker and flips the observed state independently, so yielding is enough to let it
 /// progress.
+///
+/// A suite whose subject is the application surface does not need this: the
+/// [`TestApp`](ruststream::testing::TestApp) harness settles the whole reaction before its
+/// injection returns. What is left here serves the suites that must observe a RUNNING app
+/// mid-reaction - the subscriber-settings suite, and the otel suite that kills the bus under a
+/// handler that is still holding its delivery.
 #[allow(dead_code)]
 pub(crate) async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
     let result = tokio::time::timeout(timeout, async {
@@ -41,12 +47,6 @@ pub(crate) async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) 
 #[allow(dead_code)]
 pub(crate) struct Order {
     pub(crate) id: u32,
-}
-
-/// An [`Order`] encoded as the JSON-decoding subscribers expect to receive it.
-#[allow(dead_code)]
-pub(crate) fn order_bytes(id: u32) -> Vec<u8> {
-    serde_json::to_vec(&Order { id }).expect("an order serializes")
 }
 
 /// The reply half of a request/reply suite: what a handler answers with when the answer's shape
@@ -158,50 +158,4 @@ pub(crate) async fn expect_id(
     assert_eq!(seen.len(), 1, "expected one publish on {name}");
     let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
     assert_eq!(event.id, id);
-}
-
-/// A service running in the background, stopped by the handle rather than by a signal.
-///
-/// Starts the service on its own task and hands back a handle that pokes it through a publisher
-/// and ends the run. A suite whose subject IS the teardown (a drain that must time out, a signal
-/// arriving mid-handler) writes the spawn by hand instead.
-#[allow(dead_code)]
-pub(crate) struct BackgroundRun {
-    shutdown: std::sync::Arc<tokio::sync::Notify>,
-    join: tokio::task::JoinHandle<Result<(), ruststream::runtime::RustStreamError>>,
-}
-
-#[allow(dead_code)]
-impl BackgroundRun {
-    /// Spawns `app` on its own task, running until [`stop`](Self::stop) is called.
-    pub(crate) fn spawn<Layers, State, Pipeline, Phase>(
-        app: ruststream::runtime::RustStream<Layers, State, Pipeline, Phase>,
-    ) -> Self
-    where
-        Layers: Send + 'static,
-        State: Send + Sync + 'static,
-        Pipeline: Send + 'static,
-        Phase: Send + 'static,
-    {
-        let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-        let signal = std::sync::Arc::clone(&shutdown);
-        let join = tokio::spawn(app.run_until(async move { signal.notified().await }));
-        Self { shutdown, join }
-    }
-
-    /// Ends the run and asserts it shut down gracefully.
-    pub(crate) async fn stop(self) {
-        self.shutdown.notify_one();
-        self.join
-            .await
-            .expect("the run task must not panic")
-            .expect("graceful shutdown failed");
-    }
-
-    /// Ends the run and hands back what it returned, for the suites asserting on the reason a
-    /// service stopped.
-    pub(crate) async fn stop_for_result(self) -> Result<(), ruststream::runtime::RustStreamError> {
-        self.shutdown.notify_one();
-        self.join.await.expect("the run task must not panic")
-    }
 }

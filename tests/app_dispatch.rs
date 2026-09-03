@@ -1,8 +1,9 @@
 //! Integration tests for `RustStream` lifecycle and dispatch, using `MemoryBroker`.
+//!
+//! What a handler saw rides the harness; the three suites whose subject IS the running app - the
+//! shutdown drain, the drain timeout, and the lifespan hook order - keep `run_until` and say so.
+#![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
-mod common;
-
-use common::{BackgroundRun, wait_for};
 use std::{
     future::{Future, ready},
     sync::{
@@ -19,6 +20,7 @@ use ruststream::runtime::{
     BlanketLayer, Handler, HandlerMetadata, Input, Layer, MessageWire, SerializedWire,
     SoloDeserialized,
 };
+use ruststream::testing::TestApp;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -81,18 +83,17 @@ impl MessageHeaders for Wire {
     type Contract = NoHeaders;
 }
 
-/// Counts the raw deliveries that reach it; the subject of the suites below is the wiring that
+/// Acks whatever raw delivery reaches it; the subject of the suites below is the wiring that
 /// gets a delivery here, not what the body does with it.
-struct CountFrames(Arc<AtomicU32>);
+struct TakeFrames;
 
-impl<'p> Handle<Frame<'p>> for CountFrames {
+impl<'p> Handle<Frame<'p>> for TakeFrames {
     fn handle(
         &self,
         _frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        self.0.fetch_add(1, Ordering::SeqCst);
         ready(Ok(()))
     }
 }
@@ -148,58 +149,43 @@ impl BlanketLayer for CountLayer {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_dispatches_typed_messages() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let received = Arc::new(AtomicU32::new(0));
-    let received_clone = Arc::clone(&received);
-
     let handler =
         ruststream::runtime::typed(JsonCodec, move |order: &Order, _ctx: &mut Context| {
-            let received = Arc::clone(&received_clone);
             let total = order.total;
-            let id = order.id;
             async move {
                 assert!(total > 0.0);
-                received.fetch_add(id, Ordering::SeqCst);
                 HandlerOutcome::ack()
             }
         });
 
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-        // Subscribe up front so messages published after run() starts are buffered, not lost.
-        let subscriber = b.broker().subscribe("orders");
-        b.handle(
-            subscriber,
-            handler,
-            HandlerMetadata::typed::<Order>("orders"),
-        );
-    });
+    let app =
+        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            let subscriber = b.broker().subscribe("orders");
+            b.handle(
+                subscriber,
+                handler,
+                HandlerMetadata::typed::<Order>("orders"),
+            );
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
+    for order in [Order { id: 7, total: 9.99 }, Order { id: 3, total: 1.0 }] {
+        tb.message(&order)
+            .to("orders")
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    publisher
-        .message(&Order { id: 7, total: 9.99 })
-        .to("orders")
-        .publish()
-        .await
-        .unwrap();
-    publisher
-        .message(&Order { id: 3, total: 1.0 })
-        .to("orders")
-        .publish()
-        .await
-        .unwrap();
-
-    wait_for(
-        || received.load(Ordering::SeqCst) == 10,
-        Duration::from_secs(5),
-    )
-    .await;
-
-    run.stop().await;
+    let received: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("orders").received();
+    assert_eq!(
+        received,
+        vec![Order { id: 7, total: 9.99 }, Order { id: 3, total: 1.0 }],
+    );
 }
 
+// The subject IS the running app's teardown: the drain has to hold `run()` open, which only the
+// spawned form can show.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn graceful_shutdown_drains_post_settle_continuations() {
     let broker = MemoryBroker::new();
@@ -257,6 +243,8 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
     assert_eq!(drained.load(Ordering::SeqCst), 1);
 }
 
+// The subject IS the running app's teardown deadline: a continuation that never completes has to
+// be abandoned by `run()` itself.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_timeout_abandons_stuck_continuations() {
     let broker = MemoryBroker::new();
@@ -308,117 +296,77 @@ async fn shutdown_timeout_abandons_stuck_continuations() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_subscribes_via_descriptor_after_connect() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let app =
+        RustStream::new(AppInfo::new("events", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber("events", TakeFrames).build());
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let seen = Arc::new(AtomicU32::new(0));
-    let seen_clone = Arc::clone(&seen);
-
-    let app = RustStream::new(AppInfo::new("events", "0.1.0")).with_broker(broker, |b| {
-        b.include(subscriber("events", CountFrames(seen_clone)).build());
-    });
-
-    let run = BackgroundRun::spawn(app);
-
-    // The descriptor subscribes inside run(); retry publishing until the subscription is live.
-    wait_for_published(&publisher, &seen, Duration::from_secs(5)).await;
-
-    run.stop().await;
+    deliver_one(&tb).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn included_router_handlers_dispatch() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let seen = Arc::new(AtomicU32::new(0));
-    let seen_clone = Arc::clone(&seen);
-
     // Router defined independently of any live broker, then mounted. Consuming builder.
-    let router = Router::<MemoryBroker>::new()
-        .include(subscriber("events", CountFrames(seen_clone)).build());
+    let router = Router::<MemoryBroker>::new().include(subscriber("events", TakeFrames).build());
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
-
-    wait_for_published(&publisher, &seen, Duration::from_secs(5)).await;
-
-    run.stop().await;
+    deliver_one(&tb).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn global_layer_reaches_router_handlers() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let layer_hits = Arc::new(AtomicU32::new(0));
-    let handler_hits = Arc::new(AtomicU32::new(0));
-    let handler_hits_clone = Arc::clone(&handler_hits);
 
     // The app-global stack must reach handlers mounted through include_router.
-    let router = Router::<MemoryBroker>::new()
-        .include(subscriber("events", CountFrames(handler_hits_clone)).build());
+    let router = Router::<MemoryBroker>::new().include(subscriber("events", TakeFrames).build());
 
     let app = RustStream::new(AppInfo::new("events", "0.1.0"))
         .layer(CountLayer(Arc::clone(&layer_hits)))
-        .with_broker(broker, |b| b.include_router(router));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
+    deliver_one(&tb).await;
 
-    wait_for_published(&publisher, &handler_hits, Duration::from_secs(5)).await;
-
-    assert!(
-        layer_hits.load(Ordering::SeqCst) >= 1,
-        "global layer did not reach the router handler"
+    // A layer's own invocation count is not something the harness records, so the layer keeps
+    // its counter; what the handler saw is read off the harness above.
+    assert_eq!(
+        layer_hits.load(Ordering::SeqCst),
+        1,
+        "global layer did not reach the router handler exactly once"
     );
-
-    run.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn global_layer_wraps_handlers() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let layer_hits = Arc::new(AtomicU32::new(0));
-    let handler_hits = Arc::new(AtomicU32::new(0));
-    let handler_hits_clone = Arc::clone(&handler_hits);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(CountLayer(Arc::clone(&layer_hits)))
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &_, _ctx: &mut Context| {
-                    let handler_hits = Arc::clone(&handler_hits_clone);
-                    async move {
-                        handler_hits.fetch_add(1, Ordering::SeqCst);
-                        HandlerOutcome::ack()
-                    }
-                },
+                move |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
                 HandlerMetadata::raw("orders"),
             );
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
-
-    publisher
-        .message(&Wire(b"x"))
+    tb.message(&Wire(b"x"))
         .to("orders")
         .publish()
         .await
-        .unwrap();
+        .expect("publish");
 
-    wait_for(
-        || handler_hits.load(Ordering::SeqCst) == 1 && layer_hits.load(Ordering::SeqCst) == 1,
-        Duration::from_secs(5),
-    )
-    .await;
-
-    run.stop().await;
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .settled(HandlerOutcome::ack());
+    assert_eq!(layer_hits.load(Ordering::SeqCst), 1);
 }
 
 /// Forwards every delivery to the publisher it was built with: the captured publisher belongs to
@@ -444,58 +392,38 @@ impl<'p> Handle<Frame<'p>> for Bridge {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cross_broker_publish_via_captured_publisher() {
-    let ingress = MemoryBroker::new();
     let egress = MemoryBroker::new();
-    let ingress_pub = ingress.publisher();
     // Capture the egress broker's own publisher into a handler on the ingress broker - typed, no
     // registry.
     let egress_pub = egress.publisher();
 
-    let received = Arc::new(AtomicU32::new(0));
-    let received_clone = Arc::clone(&received);
-
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
-        .with_broker(ingress, |b| {
+        .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Bridge(egress_pub.clone())).build());
         })
-        .with_broker(egress, |b| {
+        .with_broker_labeled("egress", egress, |b| {
             let subscriber = b.broker().subscribe("responses");
             b.handle(
                 subscriber,
-                move |_msg: &_, _ctx: &mut Context| {
-                    let received = Arc::clone(&received_clone);
-                    async move {
-                        received.fetch_add(1, Ordering::SeqCst);
-                        HandlerOutcome::ack()
-                    }
-                },
+                move |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
                 HandlerMetadata::raw("responses"),
             );
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
+    tb.broker_named("ingress")
+        .message(&Wire(b"x"))
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
 
-    // ingress "orders" subscribes inside run() (deferred); retry until the bridge fires.
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = ingress_pub
-                .message(&Wire(b"x"))
-                .to("orders")
-                .publish()
-                .await;
-            tokio::task::yield_now().await;
-            if received.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "cross-broker publish did not arrive on egress"
-    );
-
-    run.stop().await;
+    // The whole cascade settles before the injection returns, egress included.
+    tb.broker_named("egress")
+        .subscriber("responses")
+        .assert_called_once()
+        .with_raw(b"reply")
+        .settled(HandlerOutcome::ack());
 }
 
 struct Config {
@@ -504,9 +432,6 @@ struct Config {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handler_reads_context_topic_and_state() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let seen = Arc::new(Mutex::new(None::<(String, String)>));
     let seen_clone = Arc::clone(&seen);
 
@@ -516,7 +441,7 @@ async fn handler_reads_context_topic_and_state() {
                 greeting: "hello".to_owned(),
             })
         })
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
@@ -535,28 +460,28 @@ async fn handler_reads_context_topic_and_state() {
             );
         });
 
-    let run = BackgroundRun::spawn(app);
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Wire(b"x"))
+    tb.message(&Wire(b"x"))
         .to("orders")
         .publish()
         .await
-        .unwrap();
+        .expect("publish");
 
-    wait_for(
-        || seen.lock().expect("poisoned").is_some(),
-        Duration::from_secs(5),
-    )
-    .await;
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .settled(HandlerOutcome::ack());
+    // The subscription name and the app state are context reads, which the harness does not
+    // record; the collector next to it is what reports them.
     assert_eq!(
         *seen.lock().expect("poisoned"),
         Some(("orders".to_owned(), "hello".to_owned())),
     );
-
-    run.stop().await;
 }
 
+// The subject IS the lifecycle ladder of a running app: the shutdown half only runs when the app
+// is torn down, which the harness's `shutdown` does not report on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lifespan_hooks_run_in_order() {
     let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
@@ -603,14 +528,11 @@ async fn lifespan_hooks_run_in_order() {
         })
         .with_broker(MemoryBroker::new(), |_b| {});
 
-    let run = BackgroundRun::spawn(app);
-
-    wait_for(
-        || order.lock().expect("poisoned").contains(&"after_startup"),
-        Duration::from_secs(5),
-    )
-    .await;
-    run.stop().await;
+    // `run_until` runs the startup half, then takes the already-resolved shutdown signal and runs
+    // the teardown half, so the whole ladder is walked with nothing to wait for.
+    app.run_until(ready(()))
+        .await
+        .expect("graceful shutdown failed");
 
     assert_eq!(
         *order.lock().expect("poisoned"),
@@ -646,21 +568,16 @@ fn app_records_handler_metadata() {
     assert_eq!(app.info().title, "svc");
 }
 
-async fn wait_for_published(publisher: &impl Publisher, seen: &AtomicU32, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        loop {
-            let _ = publisher
-                .message(&Wire(b"ping"))
-                .to("events")
-                .publish()
-                .await;
-            // Yield once so the handler task has a chance to run before checking.
-            tokio::task::yield_now().await;
-            if seen.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "no delivery within {timeout:?}");
+/// Injects one frame on the `events` channel and asserts the mount under test received it.
+async fn deliver_one<S: Send + Sync + 'static>(tb: &TestApp<S>) {
+    tb.message(&Wire(b"ping"))
+        .to("events")
+        .publish()
+        .await
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .subscriber("events")
+        .assert_called_once()
+        .with_raw(b"ping")
+        .settled(HandlerOutcome::ack());
 }
