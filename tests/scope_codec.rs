@@ -4,42 +4,36 @@
 //! `BrokerScope<B, L, C: Codec>` impl block; the bare `with_broker` path uses the default-codec
 //! block (`C = ()`). This drives every explicit-source `_on` form (plus batch and
 //! batch-publishing) through one codec scope and one default-codec scope, end to end.
-#![cfg(feature = "macros")]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
-
-use common::{Order, Receipt, wait_for};
+use common::{Order, Receipt};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, TypedPublisher};
 use ruststream::subscriber;
-
-static PLAIN_ON: AtomicUsize = AtomicUsize::new(0);
-static BATCH: AtomicUsize = AtomicUsize::new(0);
-static BATCH_ON: AtomicUsize = AtomicUsize::new(0);
-static POUT: AtomicUsize = AtomicUsize::new(0);
-static POUT_ON: AtomicUsize = AtomicUsize::new(0);
-static BPOUT: AtomicUsize = AtomicUsize::new(0);
-static BPOUT_ON: AtomicUsize = AtomicUsize::new(0);
+use ruststream::testing::TestApp;
 
 #[subscriber("sc-plain-on")]
 async fn plain_on(_o: &Order) -> HandlerOutcome {
-    PLAIN_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("sc-batch")]
 async fn batch(orders: &[Order]) -> HandlerOutcome {
-    BATCH.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
 #[subscriber("sc-batch-on")]
 async fn batch_on(orders: &[Order]) -> HandlerOutcome {
-    BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
@@ -65,37 +59,50 @@ async fn batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
 
 #[subscriber("sc-pout")]
 async fn pout_check(_r: &Receipt) -> HandlerOutcome {
-    POUT.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("sc-pout-on")]
 async fn pout_on_check(_r: &Receipt) -> HandlerOutcome {
-    POUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("sc-bpout")]
 async fn bpout_check(_r: &Receipt) -> HandlerOutcome {
-    BPOUT.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("sc-bpout-on")]
 async fn bpout_on_check(_r: &Receipt) -> HandlerOutcome {
-    BPOUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
+}
+
+/// Publishes one order to each ingress topic and asserts every named subscription was called
+/// exactly once with it - the ingress ones directly, the reply ones through the relay.
+async fn drive<S: Send + Sync + 'static>(tb: &TestApp<S>, ingress: &[&str], settled: &[&str]) {
+    for topic in ingress {
+        tb.message(&Order { id: 1 })
+            .to(*topic)
+            .publish()
+            .await
+            .expect("publish");
+    }
+    for name in settled {
+        tb.broker::<MemoryBroker>()
+            .subscriber(name)
+            .assert_called_once()
+            .settled(HandlerOutcome::ack());
+    }
 }
 
 /// One codec scope, every scope-codec variant mounted: the plain and batch `include`s, and both
 /// reply-publishing shapes, each registered twice so the scope codec is proven on every path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scope_codec_include_family_dispatches() {
-    let broker = MemoryBroker::new();
-    let driver = broker.clone().publisher();
-
-    let app =
-        RustStream::new(AppInfo::new("sc", "0.1.0")).with_broker_codec(broker, JsonCodec, |b| {
+    let app = RustStream::new(AppInfo::new("sc", "0.1.0")).with_broker_codec(
+        MemoryBroker::new(),
+        JsonCodec,
+        |b| {
             b.include(plain_on);
             b.include(batch);
             b.include(batch_on);
@@ -111,55 +118,42 @@ async fn scope_codec_include_family_dispatches() {
             b.include(pout_on_check);
             b.include(bpout_check);
             b.include(bpout_on_check);
-        });
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    // `start` resolves only once subscriptions are open, so one publish per topic suffices.
-    let running = app.start().await.expect("startup failed");
-
-    let topics = [
-        "sc-plain-on",
-        "sc-batch",
-        "sc-batch-on",
-        "sc-pin",
-        "sc-pin-on",
-        "sc-bpin",
-        "sc-bpin-on",
-    ];
-    let counters: [&AtomicUsize; 7] = [
-        &PLAIN_ON, &BATCH, &BATCH_ON, &POUT, &POUT_ON, &BPOUT, &BPOUT_ON,
-    ];
-
-    for topic in topics {
-        driver
-            .message(&Order { id: 1 })
-            .to(topic)
-            .publish()
-            .await
-            .expect("publish");
-    }
-    wait_for(
-        || counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1),
-        Duration::from_secs(5),
+    drive(
+        &tb,
+        &[
+            "sc-plain-on",
+            "sc-batch",
+            "sc-batch-on",
+            "sc-pin",
+            "sc-pin-on",
+            "sc-bpin",
+            "sc-bpin-on",
+        ],
+        &[
+            "sc-plain-on",
+            "sc-batch",
+            "sc-batch-on",
+            "sc-pout",
+            "sc-pout-on",
+            "sc-bpout",
+            "sc-bpout-on",
+        ],
     )
     .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
-
-static D_PLAIN_ON: AtomicUsize = AtomicUsize::new(0);
-static D_BATCH_ON: AtomicUsize = AtomicUsize::new(0);
-static D_POUT_ON: AtomicUsize = AtomicUsize::new(0);
-static D_BPOUT_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("d-plain-on")]
 async fn d_plain_on(_o: &Order) -> HandlerOutcome {
-    D_PLAIN_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("d-batch-on")]
 async fn d_batch_on(orders: &[Order]) -> HandlerOutcome {
-    D_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
@@ -175,13 +169,11 @@ async fn d_batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
 
 #[subscriber("d-pout-on")]
 async fn d_pout_on_check(_r: &Receipt) -> HandlerOutcome {
-    D_POUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("d-bpout-on")]
 async fn d_bpout_on_check(_r: &Receipt) -> HandlerOutcome {
-    D_BPOUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
@@ -189,10 +181,7 @@ async fn d_bpout_on_check(_r: &Receipt) -> HandlerOutcome {
 /// reply-publishing shapes, decoding with the default codec rather than a named one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_include_family_dispatches() {
-    let broker = MemoryBroker::new();
-    let driver = broker.clone().publisher();
-
-    let app = RustStream::new(AppInfo::new("dsc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("dsc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(d_plain_on);
         b.include(d_batch_on);
         b.include(d_relay_on)
@@ -202,26 +191,12 @@ async fn default_codec_include_family_dispatches() {
         b.include(d_pout_on_check);
         b.include(d_bpout_on_check);
     });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    // `start` resolves only once subscriptions are open, so one publish per topic suffices.
-    let running = app.start().await.expect("startup failed");
-
-    let topics = ["d-plain-on", "d-batch-on", "d-pin-on", "d-bpin-on"];
-    let counters: [&AtomicUsize; 4] = [&D_PLAIN_ON, &D_BATCH_ON, &D_POUT_ON, &D_BPOUT_ON];
-
-    for topic in topics {
-        driver
-            .message(&Order { id: 1 })
-            .to(topic)
-            .publish()
-            .await
-            .expect("publish");
-    }
-    wait_for(
-        || counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1),
-        Duration::from_secs(5),
+    drive(
+        &tb,
+        &["d-plain-on", "d-batch-on", "d-pin-on", "d-bpin-on"],
+        &["d-plain-on", "d-batch-on", "d-pout-on", "d-bpout-on"],
     )
     .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
