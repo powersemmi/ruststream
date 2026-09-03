@@ -50,19 +50,22 @@
 //!
 //! The include site binds each marker with `.out(marker, policy)` in any order and seals with
 //! `.build()`; a missing, duplicate or extra binding, or a policy whose live form lacks the
-//! body's declared capability, fails to compile naming the marker. The slot's wired value is
-//! the policy's live form itself: a body needing a broker-defined capability pins the entry to
-//! the concrete live type (`Slot<Lanes, LaneRouter, E>`) - or bounds `W` with the broker's own
-//! capability trait - and calls it directly through the entry's transparent `Deref`. Everything
-//! is monomorphized: the arena is built once at startup, and a delivery only ever passes a
-//! reference to it.
+//! body's declared capability, fails to compile naming the marker. The capability a body
+//! states is the typed vocabulary of [`capabilities`](super::capabilities): [`Publish`] for the
+//! builder, and its refinements ([`TransactionalPublish`](super::TransactionalPublish),
+//! [`OwnedTransactionalPublish`](super::OwnedTransactionalPublish),
+//! [`RequestReplyPublish`](super::RequestReplyPublish)) for the broker capabilities the body
+//! drives through the entry. The slot's wired value is the policy's live form itself: a body
+//! needing a broker-defined capability pins the entry to the concrete live type
+//! (`Slot<Lanes, LaneRouter, E>`) - or bounds `W` with the broker's own capability trait - and
+//! calls it directly through the entry's transparent `Deref`. Everything is monomorphized: the
+//! arena is built once at startup, and a delivery only ever passes a reference to it.
 
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::time::Duration;
 
-use crate::codec::Codec;
 use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::context::Context;
@@ -86,6 +89,7 @@ use super::axis::{
     Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
     SoloDeserialized, SoloPair,
 };
+use super::capabilities::Publish;
 use super::eager::{construct, settle_page, settle_solo};
 use super::value::{HandleValue, Sealed};
 
@@ -96,18 +100,23 @@ use super::value::{HandleValue, Sealed};
 ///
 /// The wired value is the bound policy's [`Live`](crate::PublishPolicy::Live) form, and the
 /// entry is a transparent window onto it: `Deref` reaches every method the live value offers -
-/// the core capability vocabulary ([`TransactionalPublisher`](crate::TransactionalPublisher),
+/// the broker capability vocabulary ([`TransactionalPublisher`](crate::TransactionalPublisher),
 /// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply)) and
 /// any broker-defined capability trait alike, so a body pins the entry to the broker's concrete
 /// live type (or bounds `W` with the broker's trait) and calls it directly. A publisher-shaped
-/// entry additionally offers the typed publish builder through [`Publish`].
+/// entry additionally offers the typed publish builder through [`Publish`], and the typed form
+/// of each broker capability through that trait's refinement
+/// ([`TransactionalPublish`](super::TransactionalPublish),
+/// [`OwnedTransactionalPublish`](super::OwnedTransactionalPublish),
+/// [`RequestReplyPublish`](super::RequestReplyPublish)).
 ///
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
 /// `#[subscriber]` parameter's third `Out` position narrows it; [`message`](Self::message)
 /// checks it at compile time (see [`ContainsMessage`]).
 pub struct Slot<M, W, E, Body = ()> {
-    wired: SlotPublisher<W, M>,
-    codec: E,
+    // The capability impls next door read both straight off the entry.
+    pub(super) wired: SlotPublisher<W, M>,
+    pub(super) codec: E,
     _declared: PhantomData<fn() -> Body>,
 }
 
@@ -127,51 +136,6 @@ impl<M, W, E, Body> Deref for Slot<M, W, E, Body> {
 
     fn deref(&self) -> &W {
         self.wired.inner()
-    }
-}
-
-/// The publish capability of a wired slot: what a body's mandatory bound names to start typed
-/// publishes through the slot.
-///
-/// The bound is stated on the whole entry (`Slot<Marker, W, E>: Publish`), and holds exactly
-/// when the bound policy's live form is a [`Publisher`] and the include site's codec encodes.
-/// The other capabilities keep their own vocabulary: a slot whose body begins transactions
-/// bounds its `W` parameter with [`TransactionalPublisher`](crate::TransactionalPublisher) (or
-/// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply), a
-/// broker-defined trait) next to - or instead of - this one, and the include site's policy must
-/// pair a live form carrying it.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a publish-capable slot entry",
-    note = "a slot body's publish bound is stated on the whole entry: `impl<W, E> Handle<T, (), \
-            Outs<(Slot<Marker, W, E>,)>> for Body where Slot<Marker, W, E>: Publish`"
-)]
-pub trait Publish: Send + Sync {
-    /// The attributed live publisher under the entry. The bound is stated here so a body
-    /// generic over the entry can drive the whole publish builder off the one `Publish` bound.
-    #[doc(hidden)]
-    type Leaf: Publisher;
-
-    /// The encode codec of the include site.
-    #[doc(hidden)]
-    type EncodeCodec: Codec + Send + Sync;
-
-    #[doc(hidden)]
-    fn leaf(&self) -> &Self::Leaf;
-
-    #[doc(hidden)]
-    fn encode_codec(&self) -> &Self::EncodeCodec;
-}
-
-impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Body> Publish for Slot<M, W, E, Body> {
-    type Leaf = SlotPublisher<W, M>;
-    type EncodeCodec = E;
-
-    fn leaf(&self) -> &SlotPublisher<W, M> {
-        &self.wired
-    }
-
-    fn encode_codec(&self) -> &E {
-        &self.codec
     }
 }
 
@@ -259,9 +223,10 @@ impl<M: OutSlot, W, E, Body> Slot<M, W, E, Body> {
     }
 }
 
-// The core capability vocabulary is also delegated on the entry itself (not only through
+// The broker capability vocabulary is also delegated on the entry itself (not only through
 // Deref), so an entry passes into generic positions demanding the capability and a direct
-// `publish` / `request` keeps the slot's test-capture attribution.
+// `publish` / `request` keeps the slot's test-capture attribution. The typed twins a body
+// states as its bounds live in the `capabilities` module.
 impl<M: OutSlot, W: Publisher, E: Send + Sync, Body> Publisher for Slot<M, W, E, Body> {
     type Error = W::Error;
 

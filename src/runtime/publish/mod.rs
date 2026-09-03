@@ -120,7 +120,7 @@ pub use pipeline::{
 pub use publisher::{Transactional, TypedPublisher};
 pub use reply::{ReplyPublisher, ReplyWiring};
 pub use sink::{CallCodec, PublishCodec, PublishSink, UnnamedCodec};
-pub use transaction::{TransactionPublishError, TransactionScope, TypedTransaction};
+pub use transaction::{Admits, TransactionPublishError, TransactionScope, TypedTransaction};
 pub use transform::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch,
     PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack, for_batch,

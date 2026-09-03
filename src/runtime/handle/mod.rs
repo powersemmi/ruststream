@@ -49,6 +49,7 @@
 //! ```
 
 mod axis;
+mod capabilities;
 mod docs;
 mod eager;
 mod outs;
@@ -65,12 +66,16 @@ mod parity_tests;
 #[doc(hidden)]
 pub use axis::{Axis, AxisDocs, Page, PagePair, PagedAxis, Solo, SoloAxis, SoloPair};
 pub use axis::{Deserialized, Input, Message, PageDeserialized, SoloDeserialized};
+pub use capabilities::{
+    ErrorOf, OwnedTransactionOf, OwnedTransactionalPublish, Publish, ReplyOf, RequestReplyPublish,
+    ScopeOf, TransactionalPublish,
+};
 #[doc(hidden)]
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
-pub use outs::{Outs, Publish, Slot};
+pub use outs::{Outs, Slot};
 #[doc(hidden)]
 pub use reply::{
     ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, SealedBatchPublishing,

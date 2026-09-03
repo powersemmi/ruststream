@@ -545,7 +545,8 @@ fn workers_count(count: &Expr, handler: &Ident) -> syn::Result<TokenStream2> {
 ///
 /// Each must carry its capability as `impl Trait` (the concrete publisher type is inferred at
 /// the include site) and a distinct marker; a single parameter may omit the marker and binds
-/// the implicit `DefaultSlot`.
+/// the implicit `DefaultSlot`. Where the bound lands - on the wired live value, or on the whole
+/// arena entry for the runtime's typed twins - is the unified emission's call.
 fn split_outs<'a>(extractors: &mut Vec<(&'a Pat, &'a Type)>) -> syn::Result<Vec<OutParam<'a>>> {
     let mut outs = Vec::new();
     let mut kept = Vec::new();
@@ -558,7 +559,7 @@ fn split_outs<'a>(extractors: &mut Vec<(&'a Pat, &'a Type)>) -> syn::Result<Vec<
             return Err(Error::new_spanned(
                 args[0],
                 "an Out parameter names the capability it needs, not a publisher type: write \
-                 `Out<impl Publisher>` (or a capability like `impl OwnedTransactions`); the \
+                 `Out<impl Publisher>` (or a capability like `impl TransactionalPublish`); the \
                  concrete publisher is inferred from the policy attached at the include site",
             ));
         };

@@ -28,12 +28,13 @@ use super::slot::DefaultSlot;
 /// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
 ///
 /// The publisher type is not named in the signature: the handler states the capability it needs
-/// (`impl Publisher`, `impl OwnedTransactions`, ...) and the concrete type is inferred from the
-/// policy attached at the include site (`b.include(f).publisher(..)`), so the same handler
-/// mounts on a production broker and on its in-process test transport unchanged. A handler
-/// taking several publishers names a slot marker per parameter
-/// (`Out<impl Publisher, MySlot>`, see [`OutSlot`](super::OutSlot)) and the include site binds
-/// each with `.out(marker, policy)`, in any order.
+/// (`impl Publisher`, or a typed twin such as `impl TransactionalPublish` - see
+/// [`Publish`](super::Publish)) and the concrete type is inferred from the policy attached at
+/// the include site (`b.include(f).publisher(..)`), so the same handler mounts on a production
+/// broker and on its in-process test transport unchanged. A handler taking several publishers
+/// names a slot marker per parameter (`Out<impl Publisher, MySlot>`, see
+/// [`OutSlot`](super::OutSlot)) and the include site binds each with `.out(marker, policy)`,
+/// in any order.
 ///
 /// An optional third position declares the message set the handler publishes, which the publish
 /// builder ([`message`](super::Slot::message), destinations from each type's

@@ -130,8 +130,10 @@ impl<T> PublishedThrough<DefaultSlot> for T {}
 ///
 /// The wrapper is a zero-cost newtype (static dispatch, no boxing): every capability of the
 /// underlying publisher ([`Publisher`], [`TransactionalPublisher`], [`OwnedTransactions`],
-/// [`RequestReply`]) is delegated, so an `Out<impl OwnedTransactions, M>` bound holds exactly
-/// when the attached policy's live form supports it. Under the `testing` feature, publishes made
+/// [`RequestReply`]) is delegated, so a typed twin's bound on the entry
+/// (`Out<impl OwnedTransactionalPublish, M>`, see
+/// [`OwnedTransactionalPublish`](crate::runtime::OwnedTransactionalPublish)) holds exactly when
+/// the attached policy's live form supports it. Under the `testing` feature, publishes made
 /// through the wrapper inside a `TestApp`-driven handler are also recorded against the slot,
 /// which is what backs the harness's per-slot assertions.
 ///

@@ -6,8 +6,8 @@ use serde::Serialize;
 use tracing::warn;
 
 use super::{
-    BatchPublishTransform, PublishContext, PublishPipeline, TransactionScope, Transactional,
-    TypedPublisher,
+    Admits, BatchPublishTransform, PublishContext, PublishPipeline, TransactionScope,
+    Transactional, TypedPublisher,
 };
 use crate::codec::Codec;
 use crate::runtime::lifecycle::BoxError;
@@ -205,12 +205,10 @@ where
     /// # Errors
     ///
     /// Returns the publisher's error when the broker refuses to start a transaction.
-    pub async fn begin(&self) -> Result<TransactionScope<'_, P, C>, P::Error> {
-        self.inner.publisher.begin_transaction().await?;
-        Ok(TransactionScope {
-            publisher: &self.inner.publisher,
-            codec: &self.inner.codec,
-            open: true,
-        })
+    pub async fn begin(&self) -> Result<TransactionScope<'_, P, C, Self>, P::Error> {
+        TransactionScope::open(&self.inner.publisher, &self.inner.codec).await
     }
 }
+
+// A typed wiring has no dictionary: its scopes take any declared message type.
+impl<T, P, C, PL, BL> Admits<T, ()> for Transactional<P, C, PL, BL> {}

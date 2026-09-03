@@ -6,7 +6,7 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |                            |
    |                            required by a bound introduced by this call
    |
-   = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
+   = note: for a slot bound by `RequestReplyPublish` (`Out<impl RequestReplyPublish, _>`), attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
   --> src/runtime/slot.rs
    |
@@ -22,13 +22,14 @@ help: the following other types implement trait `RequestReply`
    |
    | impl RequestReply for MemoryRequester {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
+   = note: required for `Slot<DefaultSlot, MemoryPublisher, JsonCodec>` to implement `RequestReplyPublish`
 note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>>`
   --> tests/ui/subscriber_out_capability_mismatch.rs:14:1
    |
 14 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
-15 | async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerOutcome {
-   |          ^^^^^^^                                    ------------ unsatisfied trait bound introduced here
+15 | async fn forward(order: &Order, Out(_out): Out<impl RequestReplyPublish>) -> HandlerOutcome {
+   |          ^^^^^^^                                    ------------------- unsatisfied trait bound introduced here
    = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
    = note: 1 redundant requirement hidden
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`

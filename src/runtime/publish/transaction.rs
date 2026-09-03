@@ -1,6 +1,7 @@
 //! Transaction scopes over a publisher, borrowed and owned.
 
 use std::fmt;
+use std::marker::PhantomData;
 
 use serde::Serialize;
 use thiserror::Error;
@@ -12,8 +13,24 @@ use crate::{
     OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction, TransactionalPublisher,
 };
 
-/// A live broker transaction, opened by [`Transactional::begin`](crate::runtime::Transactional::begin).
+/// What a surface's transactions admit into their typed publish entry: implemented by the
+/// surface a scope or an owned transaction is opened on, which rides the transaction as its
+/// `Admit` parameter. Machinery; never named in user code.
 ///
+/// A transaction opened on a typed wiring ([`Transactional::begin`](crate::runtime::Transactional::begin),
+/// [`TypedPublisher::transaction`]) admits every declared message, like the wiring's own entry
+/// point; one opened on an `Out` slot admits exactly what the slot's `message` admits - the
+/// marker's `#[publishes(..)]` dictionary narrowed by the parameter's declared set - so a
+/// transaction cannot publish what the generated document never declared. `Index` is inferred
+/// per call, like the declared-set membership it forwards to.
+#[doc(hidden)]
+pub trait Admits<T, Index> {}
+
+/// A live broker transaction, opened by `begin()` on a transactional surface.
+///
+/// The surfaces are the typed wiring
+/// ([`Transactional::begin`](crate::runtime::Transactional::begin)) and an `Out` slot bound by
+/// [`TransactionalPublish`](crate::runtime::TransactionalPublish).
 /// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
 /// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
 /// publish after settling is a compile error. This is the manual counterpart of the per-batch
@@ -24,34 +41,60 @@ use crate::{
 /// middleware do not run here - both belong to the dispatch path, where a delivery context
 /// exists.
 ///
+/// `Admit` is the surface the scope was opened on, and gates what [`message`](Self::message)
+/// admits (see [`Admits`]): a scope opened on a slot admits what the slot's typed entry admits,
+/// one opened on a typed wiring admits every declared message.
+///
 /// Dropping an unsettled scope logs a warning and leaves the broker transaction open (destructors
 /// cannot run async work); always settle explicitly.
 #[must_use = "a transaction scope must be settled with commit() or abort()"]
-pub struct TransactionScope<'a, P, C> {
-    // The transactional reply wiring opens a scope over the publisher it wraps.
-    pub(super) publisher: &'a P,
-    pub(super) codec: &'a C,
-    pub(super) open: bool,
+pub struct TransactionScope<'a, P, C, Admit> {
+    publisher: &'a P,
+    codec: &'a C,
+    open: bool,
+    _admit: PhantomData<fn() -> Admit>,
 }
 
-impl<'s, P, C> TransactionScope<'s, P, C> {
+impl<'a, P, C, Admit> TransactionScope<'a, P, C, Admit>
+where
+    P: TransactionalPublisher,
+    C: Sync,
+{
+    /// Begins a broker transaction on `publisher` and returns the scope owning it. The one
+    /// constructor of every surface that opens scopes (the typed wiring, the slot entries), so
+    /// the begin-then-own step is written once.
+    pub(crate) async fn open(publisher: &'a P, codec: &'a C) -> Result<Self, P::Error> {
+        publisher.begin_transaction().await?;
+        Ok(Self {
+            publisher,
+            codec,
+            open: true,
+            _admit: PhantomData,
+        })
+    }
+}
+
+impl<'s, P, C, Admit> TransactionScope<'s, P, C, Admit> {
     /// Starts a typed publish inside the transaction, encoded with the wrapper's codec: the same
     /// builder as everywhere else, sending into the open transaction instead of straight to the
     /// broker.
     ///
-    /// Nothing published this way is visible before [`commit`](Self::commit).
-    pub fn message<'a, T>(
+    /// Nothing published this way is visible before [`commit`](Self::commit). A scope opened on
+    /// an `Out` slot admits what the slot's own entry admits: the message type has to be in the
+    /// marker's dictionary and the parameter's declared set (see [`Admits`]).
+    pub fn message<'a, T, Index>(
         &'a self,
         value: &'a T,
     ) -> PublishBuilder<&'s P, MessageBody<'a, T>, &'s C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
+        Admit: Admits<T, Index>,
     {
         message_of(self.publisher, value, self.codec)
     }
 }
 
-impl<P, C> TransactionScope<'_, P, C>
+impl<P, C, Admit> TransactionScope<'_, P, C, Admit>
 where
     P: TransactionalPublisher,
     C: Codec,
@@ -128,7 +171,7 @@ where
     }
 }
 
-impl<P, C> Drop for TransactionScope<'_, P, C> {
+impl<P, C, Admit> Drop for TransactionScope<'_, P, C, Admit> {
     fn drop(&mut self) {
         if self.open {
             warn!(
@@ -140,7 +183,7 @@ impl<P, C> Drop for TransactionScope<'_, P, C> {
     }
 }
 
-impl<P, C> fmt::Debug for TransactionScope<'_, P, C> {
+impl<P, C, Admit> fmt::Debug for TransactionScope<'_, P, C, Admit> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TransactionScope")
             .field("open", &self.open)
@@ -189,17 +232,21 @@ where
     ///
     /// Returns the publisher's error when the broker refuses to open a transaction; pure
     /// client-buffer implementations are infallible in practice.
-    pub async fn transaction(&self) -> Result<TypedTransaction<'_, P::Transaction, C>, P::Error> {
-        Ok(TypedTransaction {
-            txn: self.publisher.transaction().await?,
-            codec: &self.codec,
-        })
+    pub async fn transaction(
+        &self,
+    ) -> Result<TypedTransaction<'_, P::Transaction, C, Self>, P::Error> {
+        TypedTransaction::open(&self.publisher, &self.codec).await
     }
 }
 
-/// An owned broker transaction carrying the publisher's codec, opened by
-/// [`TypedPublisher::transaction`].
+// A typed wiring has no dictionary: its transactions take any declared message type.
+impl<T, P, C, PL, BL> Admits<T, ()> for TypedPublisher<P, C, PL, BL> {}
+
+/// An owned broker transaction carrying the publisher's codec, opened by `transaction()` on a
+/// surface with owned transactions.
 ///
+/// The surfaces are the typed wiring ([`TypedPublisher::transaction`]) and an `Out` slot bound
+/// by [`OwnedTransactionalPublish`](crate::runtime::OwnedTransactionalPublish).
 /// The owned counterpart of [`TransactionScope`]: the scope borrows the handle's single
 /// broker-side transaction, while this value owns an independent one
 /// ([`OwnedTransactions::Transaction`]), so any number can be open on one publisher and driven
@@ -210,35 +257,55 @@ where
 ///
 /// Like the scope, it encodes values and sends them directly: the reply [`PublishTransform`](crate::runtime::PublishTransform)
 /// stack and the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware belong
-/// to the dispatch path, where a delivery context exists, and do not run here.
+/// to the dispatch path, where a delivery context exists, and do not run here. `Admit` is the
+/// surface the transaction was opened on and gates what [`message`](Self::message) admits, as
+/// on the scope (see [`Admits`]).
 ///
 /// Dropping an unsettled value discards the client buffer like an abort - unlike the scope, no
 /// broker-side transaction is left open on the handle. The missed-settle warning comes from the
 /// underlying [`Transaction`] value's own drop (per its contract), so this wrapper does not add
 /// a second one.
 #[must_use = "a transaction does nothing until settled with commit() or abort()"]
-pub struct TypedTransaction<'a, Txn, C> {
+pub struct TypedTransaction<'a, Txn, C, Admit> {
     txn: Txn,
     codec: &'a C,
+    _admit: PhantomData<fn() -> Admit>,
 }
 
-impl<'c, Txn, C> TypedTransaction<'c, Txn, C> {
+impl<'a, Txn, C: Sync, Admit> TypedTransaction<'a, Txn, C, Admit> {
+    /// Opens an owned transaction on `publisher` and wraps it with `codec`. The one constructor
+    /// of every surface that opens owned transactions (the typed wiring, the slot entries).
+    pub(crate) async fn open<P>(publisher: &P, codec: &'a C) -> Result<Self, P::Error>
+    where
+        P: OwnedTransactions<Transaction = Txn>,
+    {
+        Ok(Self {
+            txn: publisher.transaction().await?,
+            codec,
+            _admit: PhantomData,
+        })
+    }
+}
+
+impl<'c, Txn, C, Admit> TypedTransaction<'c, Txn, C, Admit> {
     /// Starts a typed publish into the transaction's buffer, encoded with the publisher's codec.
     ///
     /// The unique borrow is what the buffer needs, so one publish is built and awaited at a
-    /// time; nothing is visible before [`commit`](Self::commit).
-    pub fn message<'a, T>(
+    /// time; nothing is visible before [`commit`](Self::commit). A transaction opened on an
+    /// `Out` slot admits what the slot's own entry admits (see [`Admits`]).
+    pub fn message<'a, T, Index>(
         &'a mut self,
         value: &'a T,
     ) -> PublishBuilder<&'a mut Txn, MessageBody<'a, T>, &'c C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
+        Admit: Admits<T, Index>,
     {
         message_of(&mut self.txn, value, self.codec)
     }
 }
 
-impl<Txn, C> TypedTransaction<'_, Txn, C>
+impl<Txn, C, Admit> TypedTransaction<'_, Txn, C, Admit>
 where
     Txn: Transaction,
     C: Codec,
@@ -316,7 +383,7 @@ where
     }
 }
 
-impl<Txn, C> fmt::Debug for TypedTransaction<'_, Txn, C> {
+impl<Txn, C, Admit> fmt::Debug for TypedTransaction<'_, Txn, C, Admit> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedTransaction").finish_non_exhaustive()
     }

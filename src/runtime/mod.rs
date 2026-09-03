@@ -63,9 +63,10 @@ pub use handle::{
     ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
-    Deserialized, Documentable, Documented, EncodedReply, Handle, Input, IntoSource, Message, Outs,
-    PageDeserialized, Publish, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
-    Undocumented, ValueBuilder, Verdict, subscriber,
+    Deserialized, Documentable, Documented, EncodedReply, ErrorOf, Handle, Input, IntoSource,
+    Message, Outs, OwnedTransactionOf, OwnedTransactionalPublish, PageDeserialized, Publish,
+    ReplyOf, ReplyShape, RequestReplyPublish, ScopeOf, Serialized, SerializedReply, Slot,
+    SoloDeserialized, TransactionalPublish, Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
@@ -92,6 +93,8 @@ pub(crate) use lifecycle::ConnectedLifecycle;
 pub use lifecycle::ConnectedSlot;
 pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+#[doc(hidden)]
+pub use publish::{Admits, WireBytes, WirePayload};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, EncodedWire, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
@@ -103,8 +106,6 @@ pub use publish::{
     TransactionPublishError, TransactionScope, Transactional, TypedHeaders, TypedPublisher,
     TypedTransaction, UnnamedCodec, for_batch,
 };
-#[doc(hidden)]
-pub use publish::{WireBytes, WirePayload};
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.
 #[cfg(feature = "testing")]
