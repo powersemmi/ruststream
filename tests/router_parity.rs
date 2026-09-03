@@ -50,7 +50,8 @@ async fn a_router_mounts_a_single_out_slot() {
 
     let router = Router::<MemoryBroker>::new()
         .include(forward)
-        .publisher(Publish);
+        .publisher(Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("rp-out", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -198,7 +199,8 @@ async fn a_router_mounts_a_batch_out_slot() {
 
     let router = Router::<MemoryBroker>::new()
         .include(forward_page)
-        .publisher(Publish);
+        .publisher(Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("rp-page", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -310,7 +312,8 @@ async fn echo_frame_on(frame: &Frame<'_>) -> Export {
 async fn a_router_takes_an_explicit_serialized_reply_policy() {
     let router = Router::<MemoryBroker>::new()
         .include(echo_frame_on)
-        .publisher(Publish);
+        .publisher(Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("rp-raw-on", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("harness start");
@@ -441,7 +444,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
 
     let router = Router::<MemoryBroker>::new()
         .include(settle_page)
-        .publisher(TypedPublisher::new(Publish))
+        .publisher(Publish)
         .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-ledger", "0.1.0"))
@@ -476,7 +479,8 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
     // the slot pairs against the egress broker while the subscription lives on the ingress one.
     let router = Router::<MemoryBroker>::new()
         .include(forward)
-        .publisher(egress);
+        .publisher(egress)
+        .build();
     let app = RustStream::new(AppInfo::new("rp-bridge", "0.1.0"))
         .with_broker(ingress_broker, |b| b.include_router(router))
         .with_broker(egress_broker, |_b| {});

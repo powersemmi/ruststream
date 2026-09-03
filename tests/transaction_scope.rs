@@ -1,6 +1,6 @@
 //! Integration tests for the manual transaction scope: publishes issued through a
 //! [`TransactionScope`] become visible together on commit, never after an abort, and the
-//! wrapper is reusable once a scope settles.
+//! publisher handle is reusable once a scope settles.
 //!
 //! [`TransactionScope`]: ruststream::runtime::TransactionScope
 #![cfg(all(feature = "memory", feature = "json"))]
@@ -9,7 +9,7 @@ use std::pin::pin;
 
 use futures::{FutureExt, StreamExt};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::TypedPublisher;
+use ruststream::runtime::PublishExt;
 use ruststream::{IncomingMessage, Outgoing, Subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +23,7 @@ struct Order {
 async fn commit_makes_scope_publishes_visible_atomically() {
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("orders.settled");
-    let publisher = TypedPublisher::new(broker.publisher()).transactional();
+    let publisher = broker.publisher();
 
     let scope = publisher.begin().await.expect("begin failed");
     scope
@@ -64,7 +64,7 @@ async fn commit_makes_scope_publishes_visible_atomically() {
 async fn abort_discards_scope_publishes_and_frees_the_wrapper() {
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("orders.settled");
-    let publisher = TypedPublisher::new(broker.publisher()).transactional();
+    let publisher = broker.publisher();
 
     let scope = publisher.begin().await.expect("begin failed");
     scope
@@ -80,7 +80,7 @@ async fn abort_discards_scope_publishes_and_frees_the_wrapper() {
         "aborted publish became visible"
     );
 
-    // The wrapper is free again: a fresh scope on the same handle commits normally.
+    // The handle is free again: a fresh scope on the same publisher commits normally.
     let scope = publisher.begin().await.expect("second begin failed");
     scope
         .message(&Order { id: 3 })

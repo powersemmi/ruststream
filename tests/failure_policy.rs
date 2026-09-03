@@ -236,7 +236,8 @@ async fn publishing_decode_failure_is_dropped_and_continues() {
     let publisher = broker.publisher();
     let router = Router::<MemoryBroker>::new()
         .include(rpcd)
-        .publisher(TypedPublisher::new(Publish));
+        .publisher(Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("rpcd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
@@ -316,7 +317,8 @@ async fn batch_publishing_decode_failure_is_dropped() {
     let publisher = broker.publisher();
     let router = Router::<MemoryBroker>::new()
         .include(bpd)
-        .publisher(TypedPublisher::new(Publish));
+        .publisher(Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("bpd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 

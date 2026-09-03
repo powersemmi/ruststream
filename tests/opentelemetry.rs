@@ -67,14 +67,14 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
     let otel = OpenTelemetry::new();
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
-    // The reply wiring propagates the delivery's trace context onto each reply.
-    let reply_pub = TypedPublisher::new(Publish).transform(otel.propagation());
-
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         // The consume layer opens a span per delivery and records the consumer's trace context.
         .layer(otel.consume_layer())
         .with_broker(broker, |b| {
-            b.include(echo).publisher(reply_pub);
+            // The reply wiring propagates the delivery's trace context onto each reply.
+            b.include(echo)
+                .publisher(Publish)
+                .transform(otel.propagation());
             b.include(capture);
         });
     // --8<-- [end:wiring]

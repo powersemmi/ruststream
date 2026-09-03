@@ -265,9 +265,10 @@ async fn batch_replies_publish_transactionally() {
     let publisher = broker.publisher();
     let observer = connected(&broker).await;
 
-    let replies = TypedPublisher::new(TransactionalPublish).transactional();
     let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(broker, |b| {
-        b.include(confirm).publisher(replies);
+        b.include(confirm)
+            .publisher(TransactionalPublish)
+            .transactional();
     });
 
     let running = app.start().await.expect("startup failed");
@@ -293,9 +294,8 @@ async fn batch_replies_publish_transactionally() {
 #[test]
 fn batch_publishing_def_records_metadata() {
     let broker = MemoryBroker::new();
-    let replies = TypedPublisher::new(Publish);
     let app = RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-        b.include(audit).publisher(replies);
+        b.include(audit).publisher(Publish);
     });
 
     assert_eq!(app.handlers().len(), 1);

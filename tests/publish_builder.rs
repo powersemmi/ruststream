@@ -225,23 +225,21 @@ async fn a_bare_publisher_publishes_through_the_builder() {
     assert_eq!(audit[0].payload(), b"bytes");
 }
 
-/// The typed publisher and both transaction surfaces carry the same builder.
+/// A bare publisher and both transaction surfaces carry the same builder.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_typed_publisher_and_transactions_carry_the_builder() {
+async fn a_publisher_and_its_transactions_carry_the_builder() {
     let broker = MemoryBroker::new();
     let connected = broker.clone().connect().await.expect("connect");
-    let publisher = TypedPublisher::with_codec(connected.publisher(), JsonCodec);
+    let publisher = connected.publisher();
 
     publisher
         .message(&Progress { percent: 10 })
         .publish()
         .await
-        .expect("typed publisher");
+        .expect("bare publisher");
 
     // The borrowed transaction kind.
-    let transactional =
-        TypedPublisher::with_codec(connected.publisher(), JsonCodec).transactional();
-    let scope = transactional.begin().await.expect("begin");
+    let scope = publisher.begin().await.expect("begin");
     scope
         .message(&Progress { percent: 20 })
         .publish()
@@ -260,10 +258,13 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
         .to("audit.wire")
         .publish()
         .await
-        .expect("carried bytes through the typed publisher");
+        .expect("carried bytes through the bare publisher");
 
     // The owned transaction kind.
-    let mut owned = publisher.transaction().await.expect("owned transaction");
+    let mut owned = publisher
+        .owned_transaction()
+        .await
+        .expect("owned transaction");
     owned
         .message(&OrderArchived { id: 1 })
         .to("orders.archived")
@@ -312,7 +313,7 @@ async fn a_batch_publishing_handler_carries_the_builder() {
     let app =
         RustStream::new(AppInfo::new("bulk", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(settle)
-                .publisher(TypedPublisher::new(Publish))
+                .publisher(Publish)
                 .out(Events, Publish)
                 .build();
         });
@@ -528,10 +529,12 @@ async fn a_header_contract_serializes_over_the_handles_base() {
 async fn a_transaction_carries_its_own_base_under_the_call_site() {
     let broker = MemoryBroker::new();
     let connected = broker.clone().connect().await.expect("connect");
-    let publisher =
-        TypedPublisher::with_codec(Tenanted(connected.publisher(), tenant_base()), JsonCodec);
+    let publisher = Tenanted(connected.publisher(), tenant_base());
 
-    let mut txn = publisher.transaction().await.expect("owned transaction");
+    let mut txn = publisher
+        .owned_transaction()
+        .await
+        .expect("owned transaction");
     txn.message(&Progress { percent: 3 })
         .publish()
         .await

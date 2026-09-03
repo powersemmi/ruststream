@@ -226,7 +226,7 @@ async fn scope_default_codec_drops_per_call_codec() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// A static (zero-cost) publish transform baked onto the `TypedPublisher`.
+/// A static (zero-cost) publish transform composed onto the reply wiring.
 struct StaticEnvelope;
 
 impl<C> PublishTransform<C> for StaticEnvelope {
@@ -265,13 +265,15 @@ async fn static_publish_layer_transforms_reply() {
 
     // The static layer is composed onto the policy stack at compile time - no dyn dispatch.
     let egress = egress.bindable();
-    let egress_pub = egress.bind(TypedPublisher::new(Publish).transform(StaticEnvelope));
+    let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(egress, |b| {
             b.include(check);
         })
         .with_broker(ingress, |b| {
-            b.include(relay).publisher(egress_pub);
+            b.include(relay)
+                .publisher(egress_pub)
+                .transform(StaticEnvelope);
         });
 
     let running = app.start().await.expect("startup failed");
@@ -346,7 +348,7 @@ async fn macro_publisher_replies_cross_broker() {
 
     // The reply is published cross-broker: a token bound to egress; name from the macro.
     let egress = egress.bindable();
-    let egress_pub = egress.bind(TypedPublisher::new(Publish));
+    let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
         .with_broker(egress, |b| {

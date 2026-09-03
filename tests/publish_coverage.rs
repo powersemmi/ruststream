@@ -183,8 +183,7 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
     let publisher = broker.publisher();
     let mut replies = broker.subscribe("flaky.out");
     let app = RustStream::new(AppInfo::new("flaky", "0.1.0")).with_broker(broker, |b| {
-        b.include(flaky)
-            .publisher(TypedPublisher::new(FailsOncePolicy));
+        b.include(flaky).publisher(FailsOncePolicy);
     });
 
     let running = app.start().await.expect("startup failed");

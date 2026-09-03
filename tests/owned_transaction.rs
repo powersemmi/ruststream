@@ -134,13 +134,13 @@ async fn commit_against_a_shut_down_bus_errors() {
     assert_eq!(txn.commit().await, Err(MemoryError::ShutDown));
 }
 
-/// The typed sugar (`TypedPublisher::transaction`) over the same owned kind; the default codec
+/// The typed sugar (`PublishExt::owned_transaction`) over the same owned kind; the default codec
 /// needs a codec feature, hence the gate.
 #[cfg(feature = "json")]
 mod typed {
     use ruststream::Outgoing;
     use ruststream::codec::{Codec, DefaultCodec};
-    use ruststream::runtime::TypedPublisher;
+    use ruststream::runtime::PublishExt;
     use serde::{Deserialize, Serialize};
 
     use super::*;
@@ -160,9 +160,12 @@ mod typed {
     async fn typed_publish_round_trips_through_the_default_codec() {
         let broker = MemoryBroker::new();
         let mut subscriber = broker.subscribe("orders");
-        let publisher = TypedPublisher::new(broker.publisher());
+        let publisher = broker.publisher();
 
-        let mut txn = publisher.transaction().await.expect("transaction failed");
+        let mut txn = publisher
+            .owned_transaction()
+            .await
+            .expect("transaction failed");
         txn.message(&Order { id: 7 })
             .to("orders")
             .publish()
@@ -188,10 +191,16 @@ mod typed {
     async fn concurrent_typed_scopes_commit_independently() {
         let broker = MemoryBroker::new();
         let mut subscriber = broker.subscribe("orders");
-        let publisher = TypedPublisher::new(broker.publisher());
+        let publisher = broker.publisher();
 
-        let mut first = publisher.transaction().await.expect("first transaction");
-        let mut second = publisher.transaction().await.expect("second transaction");
+        let mut first = publisher
+            .owned_transaction()
+            .await
+            .expect("first transaction");
+        let mut second = publisher
+            .owned_transaction()
+            .await
+            .expect("second transaction");
         first
             .message(&Order { id: 1 })
             .to("orders")
@@ -229,9 +238,12 @@ mod typed {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn typed_commit_against_a_shut_down_bus_errors() {
         let broker = MemoryBroker::new();
-        let publisher = TypedPublisher::new(broker.publisher());
+        let publisher = broker.publisher();
 
-        let mut txn = publisher.transaction().await.expect("transaction failed");
+        let mut txn = publisher
+            .owned_transaction()
+            .await
+            .expect("transaction failed");
         txn.message(&Order { id: 9 })
             .to("orders")
             .publish()

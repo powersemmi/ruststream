@@ -101,9 +101,11 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
         )
         .include(subscriber_def("brc-meta-batch", MetaBatch).build())
         .include(brc_relay)
-        .publisher(TypedPublisher::new(Publish))
+        .publisher(Publish)
+        .build()
         .include(brc_batch_relay)
-        .publisher(TypedPublisher::new(Publish));
+        .publisher(Publish)
+        .build();
 
     assert!(format!("{router:?}").contains("Router"));
 
@@ -185,7 +187,8 @@ fn assert_subscribe_error(result: Result<impl Sized, RustStreamError>, expected:
 async fn publishing_route_reports_a_refused_reply_publisher() {
     let router = Router::<MemoryBroker>::new()
         .include(brc_relay)
-        .publisher(TypedPublisher::new(RefusedPublish));
+        .publisher(RefusedPublish)
+        .build();
 
     let app =
         RustStream::new(AppInfo::new("brc-pair", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -201,7 +204,8 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
 async fn batch_publishing_route_reports_a_refused_reply_publisher() {
     let router = Router::<MemoryBroker>::new()
         .include(brc_batch_relay)
-        .publisher(TypedPublisher::new(RefusedPublish));
+        .publisher(RefusedPublish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(
         MemoryBroker::new(),
@@ -219,7 +223,8 @@ async fn batch_publishing_route_reports_a_refused_reply_publisher() {
 async fn publishing_route_reports_a_source_that_never_opens() {
     let router = Router::<MemoryBroker>::new()
         .include(brc_closed_relay)
-        .publisher(TypedPublisher::new(Publish));
+        .publisher(Publish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("brc-source", "0.1.0")).with_broker(
         MemoryBroker::new(),

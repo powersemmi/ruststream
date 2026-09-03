@@ -149,7 +149,7 @@ mod publish {
         let ingress_pub = ingress.publisher();
 
         let egress = egress.bindable();
-        let egress_pub = egress.bind(TypedPublisher::new(Publish));
+        let egress_pub = egress.bind(Publish);
         let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
             .publish_layer(metrics.publish_layer())
             .with_broker(egress, |_b| {})

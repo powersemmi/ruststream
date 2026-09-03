@@ -38,9 +38,10 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     // the shared in-process bus makes this clone observe the app's broker.
     let observer = connected(&broker).await;
 
-    let replies = TypedPublisher::new(TransactionalPublish).transactional();
     let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {
-        b.include(tx_confirm).publisher(replies);
+        b.include(tx_confirm)
+            .publisher(TransactionalPublish)
+            .transactional();
     });
 
     let running = app.start().await.expect("startup failed");

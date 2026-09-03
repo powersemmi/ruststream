@@ -64,12 +64,11 @@ async fn confirms_valid_orders() {
     let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            let replies = TypedPublisher::new(Publish);
             b.include(
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(replies)
+                    .publisher(Publish)
                     .build(),
             );
         },

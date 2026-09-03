@@ -588,7 +588,8 @@ async fn routed_relay(frame: &Frame<'_>) -> Export {
 async fn router_mounts_a_byte_reply_definition() {
     let router = Router::<MemoryBroker>::new()
         .include(routed_relay)
-        .publisher(Publish);
+        .publisher(Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
 

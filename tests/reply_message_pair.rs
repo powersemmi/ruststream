@@ -70,7 +70,7 @@ async fn a_pair_reply_carries_its_contract_into_the_outgoing_headers() {
     let app = RustStream::new(AppInfo::new("pair-reply", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(confirm).publisher(TypedPublisher::new(Publish));
+            b.include(confirm).publisher(Publish);
             b.include(audit);
         },
     );

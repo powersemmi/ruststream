@@ -646,7 +646,8 @@ async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
     let app =
         RustStream::new(AppInfo::new("cov-gate", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(gate)
-                .publisher(TypedPublisher::new(Publish).transform(Envelope))
+                .publisher(Publish)
+                .transform(Envelope)
                 .out(DefaultSlot, Publish)
                 .build();
         });
@@ -688,7 +689,7 @@ fn the_include_builders_render_a_debug_form() {
         RustStream::new(AppInfo::new("cov-debug", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             let reply = b.include(debug_reply);
             assert_debug_form(&reply, "IncludeWith");
-            reply.publisher(TypedPublisher::new(Publish));
+            reply.publisher(Publish);
 
             let slots = b.include(debug_slot);
             assert_debug_form(&slots, "IncludeSlots");

@@ -79,13 +79,15 @@ async fn delivery_context_propagates_to_the_reply() {
     let ingress_pub = ingress.publisher();
 
     let egress = egress.bindable();
-    let egress_pub = egress.bind(TypedPublisher::new(Publish).transform(PropagateCorrelation));
+    let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(egress, |b| {
             b.include(capture);
         })
         .with_broker(ingress, |b| {
-            b.include(echo).publisher(egress_pub);
+            b.include(echo)
+                .publisher(egress_pub)
+                .transform(PropagateCorrelation);
         });
 
     let running = app.start().await.expect("startup failed");
@@ -139,12 +141,12 @@ async fn batch_capture(_resp: &Resp, ctx: &mut Context<'_>) {
 async fn batch_layer_runs_only_on_batched_replies() {
     let broker = MemoryBroker::new();
     let ingress_pub = broker.publisher();
-    // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
-    // single-message mounts would reject a publisher carrying it.
-    let reply_pub = TypedPublisher::new(Publish).batch_transform(for_batch(MarkBatched));
-
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(batch_echo).publisher(reply_pub);
+        // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
+        // single-message mounts would reject a wiring carrying it.
+        b.include(batch_echo)
+            .publisher(Publish)
+            .batch_transform(for_batch(MarkBatched));
         b.include(batch_capture);
     });
 
