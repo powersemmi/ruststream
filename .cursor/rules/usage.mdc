@@ -41,7 +41,9 @@ alwaysApply: false
   `.publisher(..)` for the reply side, `.out(<marker>, ..)` for each injected publisher (finish
   those with `.build()`), or chain nothing and the broker's default publish policy is used.
 - The codec defaults to `codec::DefaultCodec` (`json` > `cbor` > `msgpack`), so `include` needs no
-  codec argument. Log with `tracing`, never `println!`. In tests use `MemoryBroker` driven by the
+  codec argument. With no codec feature at all, anything that would need to encode or decode is a
+  compile error naming the fix; the `Deserialized`/`Serialized` byte lanes never need a codec.
+  Log with `tracing`, never `println!`. In tests use `MemoryBroker` driven by the
   `TestApp` harness (`testing` feature).
 
 ## Subscriber and app
@@ -352,14 +354,13 @@ enum ConvertSends {
 }
 ```
 
-Publishing a type the set does not name is a compile error naming the missing membership. Byte
-publishes through `raw(..)` are unaffected - bytes carry no message type to list. A type that
-carries its own wire format still belongs in the dictionary, and the wire follows the type: derive
-`Serialized` next to `#[derive(Outgoing)]`, list it in `#[publishes(..)]` like any model - the
-document reports it under its own name with no payload schema, by design - and publish it through
-the same typed entry, `out.message(&export).publish()`: its bytes leave as they are, no codec runs,
-and the destination comes off the declaration. `raw(..)` remains for bytes with no message type at
-all.
+Publishing a type the set does not name is a compile error naming the missing membership. A type
+that carries its own wire format belongs in the dictionary too, and the wire follows the type:
+derive `Serialized` next to `#[derive(Outgoing)]`, list it in `#[publishes(..)]` like any model -
+the document reports it under its own name with no payload schema - and publish it through the
+same typed entry, `out.message(&export).publish()`: its bytes leave as they are, no codec runs,
+and the destination comes off the declaration. Bytes with no declared type have no publish entry;
+wrap them in a `Serialized` newtype.
 
 ### Where a message goes
 
@@ -376,6 +377,9 @@ struct OrderPlaced { id: u64 }
 
 #[derive(Debug, Serialize, Outgoing)]            // no name: the call site says
 struct Event { id: u64 }
+
+#[derive(Debug, Outgoing, Serialized)]           // bytes that already are the payload
+struct Export(Vec<u8>);
 ```
 
 ```rust
@@ -390,8 +394,8 @@ orders.message(&OrderPlaced { id }).to().tenant("acme").publish().await?;
 // no declared name: `to(..)` takes a &str or a computed String
 out.message(&Event { id }).to(format!("events.{shard}")).publish().await?;
 
-// bytes as delivered, no codec in the path; always names its own destination
-out.raw(&bytes).to("egress").publish().await?;
+// bytes as delivered: a Serialized newtype rides the same entry, and no codec runs
+out.message(&Export(bytes)).to("egress").publish().await?;
 ```
 
 A message declaring `headers = Meta` publishes only with `.with_headers(&meta)` - forgetting it,
@@ -458,9 +462,9 @@ b.after_startup(MemoryPublish, async move |publisher| {
 });
 ```
 
-Every `Publisher` gets `.message(&value)` (encoded with `DefaultCodec`; a `Serialized` value's
-bytes leave as they are) and `.raw(&bytes)` from
-`PublishExt`, which the prelude carries - so a bare policy is enough for an ordinary typed publish.
+Every `Publisher` gets `.message(&value)` from `PublishExt`, which the prelude carries - a
+`Serialize` value encodes with `DefaultCodec`, a `Serialized` value's bytes leave as they are -
+so a bare policy is enough for an ordinary typed publish.
 Reach for `TypedPublisher` only when you are changing something about how the value travels:
 
 ```rust

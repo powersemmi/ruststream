@@ -243,8 +243,6 @@ becomes a field, and everything the runtime owns per delivery comes off the cont
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ruststream::codec::Codec; // the trait, for `encode`
-
 /// Held: fixed at registration. Read off the context: owned by the runtime.
 struct Confirm {
     seen: Arc<AtomicU64>,
@@ -265,13 +263,12 @@ impl Handle<Order, (), (), (), AppState> for Confirm {
     ) -> Result<(), HandlerOutcome> {
         self.seen.fetch_add(order.id, Ordering::SeqCst);
 
-        let payload = JsonCodec
-            .encode(&Receipt { order_id: order.id })
-            .expect("encode");
+        // `Receipt` implements the outgoing traits by hand (see Publishing below), so the
+        // state-held publisher uses the same one `message(..)` entry as everything else.
         if ctx
             .state()
             .receipts
-            .raw(&payload)
+            .message(&Receipt { order_id: order.id })
             .to("receipts")
             .publish()
             .await
@@ -324,22 +321,34 @@ middleware enriches, and `HeaderMap::insert_typed(&value)` writes a contract bac
 
 ## Publishing
 
-`message(&value)` needs `T: OutgoingDestination`, which is what `#[derive(Outgoing)]` implements -
-so without the derive the typed publish builder has nothing to resolve a destination from. Two
-routes remain, and both are the ones the builder itself ends in:
+`message(&value)` needs `T: OutgoingDestination`, which is what `#[derive(Outgoing)]` implements.
+Without the `macros` feature the same impls are written by hand; the caller-named form is three
+short ones, and then the value publishes like any declared message:
 
 ```rust
-use ruststream::codec::Codec; // `encode` is a trait method
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutSlot, OutgoingDestination};
+use ruststream::runtime::{OutMessages, OutgoingMessageMetadata};
 
-// encode with the codec, then send the bytes to a destination you name
-let bytes = JsonCodec.encode(&receipt)?;
-publisher.raw(&bytes).to("receipts").publish().await?;
+impl OutgoingDestination for Receipt {
+    type Form = CallerName; // FixedName / NameTemplate for a declared destination
+}
 
-// or build the message and call the Publisher trait method directly
-publisher
-    .publish(OutgoingMessage::new("receipts", bytes.as_ref()).with_headers(headers))
-    .await?;
+impl MessageHeaders for Receipt {
+    type Contract = NoHeaders; // WithHeaders<Meta> for a typed header contract
+}
+
+impl<M: OutSlot> OutMessages<M> for Receipt {
+    fn outgoing() -> Vec<OutgoingMessageMetadata> {
+        Vec::new()
+    }
+}
+
+publisher.message(&Receipt { order_id: 7 }).to("receipts").publish().await?;
 ```
+
+A payload that already is bytes implements `Serialized` the same way - `fn bytes(&self) -> &[u8]`
+plus the wire spellings (`MessageWire`, `ReplyShape`), exactly what `#[derive(Serialized)]`
+writes - and rides the same `message(..)` entry with no codec on the path.
 
 `TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
 work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the chain -
@@ -386,8 +395,8 @@ b.include(subscriber("mirror", Mirror).build())
 
 The markers come from the impl, so a missing, duplicate or extra `.out(..)` is a compile error
 naming the slot, and a single unnamed slot binds through `.publisher(policy)`, which binds and
-commits in one call. `outs.get(Marker)` hands back the entry itself: it keeps the `.message(..)` /
-`.raw(..)` builders and is a transparent `Deref` onto the wired live value, so a broker-defined
+commits in one call. `outs.get(Marker)` hands back the entry itself: it keeps the `.message(..)`
+builder and is a transparent `Deref` onto the wired live value, so a broker-defined
 capability is called straight on it - a body that needs one pins the concrete live type
 (`Slot<Lanes, LaneRouter, Enc>`) or bounds `W` with the broker's own trait.
 
