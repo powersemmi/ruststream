@@ -343,8 +343,8 @@ attribute says it.
     --8<-- "examples/manual/subscribers.rs:batch"
     ```
 
-Mount it with `include`, like any other form - the definition carries the batch shape, and
-`batch(n)` caps how much of one page the handler is handed at a time:
+Mount it with `include`, like any other form. The definition carries the batch shape; the mount
+site owes it one number, the page size:
 
 === "Macros"
 
@@ -358,42 +358,33 @@ Mount it with `include`, like any other form - the definition carries the batch 
     --8<-- "examples/manual/subscribers.rs:batch_mount"
     ```
 
-How big a delivered page is, is the broker's business: its subscription options size the batches
-it ships. `batch(n)` is the cap the framework applies on top, so a handler written for a bounded
-page keeps that bound whatever the broker hands over - a larger page reaches it in chunks of at
-most `n`, each settled on its own. It applies to every page shape: a page that replies runs once
-per chunk and answers with that chunk's replies, published on their own (one transaction per
-chunk under a transactional reply publisher), and a page that fans out through an `Out` slot
-takes the arena into every chunk. A single-message handler has no page, so naming the cap there
-does not compile.
+`batch(n)` is the one page parameter the framework carries, and it is mandatory: a page handler
+mounted without it does not compile, because there is no size the framework could invent for
+you. The number goes straight to the broker, which builds its pages to it - `XREADGROUP COUNT`,
+a JetStream pull batch, a Kafka poll limit - and the page your body sees is exactly the page the
+broker delivered, never a slice of it. It may be shorter than `n` whenever that is all the
+broker had.
 
-The signature says the handler wants several messages at once; whether they arrive that way is a
-property of the broker, so it is settled where the definition is mounted. The subscription's
-subscriber must implement the `BatchSubscriber` capability: brokers whose clients batch natively
-(Kafka poll, JetStream pull consumers) expose it directly, and batch sizing lives in their
-subscription options; the in-memory broker batches natively too. Where the subscription does not
-batch, the compiler asks for the framework's buffer and the mount supplies it, closing a batch by
-size or by a deadline after its first delivery:
+Everything else about how a page forms - a block timeout, a consumer group, a prefetch window -
+is the broker's own vocabulary, chained after the size on its subscription source:
 
-=== "Macros"
+<!-- inline-rust: the extra step belongs to a broker crate, which this repository cannot depend on -->
+```rust
+// on a Redis broker: the size is the core's word, `.block(..)` is the broker's
+b.include(reconcile.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)));
+```
 
-    ```rust
-    --8<-- "examples/subscribers.rs:batch_buffered"
-    ```
+The size applies to every page shape, whatever else the signature carries: a page that replies,
+and a page that fans out through an `Out` slot, name it exactly as a plain one does. A
+single-message handler has no page, so naming it there does not compile either - how many
+deliveries such a handler takes at once is `workers(n)` instead.
 
-=== "Manual"
-
-    ```rust
-    --8<-- "examples/manual/subscribers.rs:batch_buffered"
-    ```
-
-Batches come either from the broker (configured by the broker's own settings) or from this wrap;
-the setting is named after the adapter to keep the two apart. The wrap changes the subscription
-type, so it goes last among the broker's own settings - theirs are bound to the unwrapped type
-and stop applying past it - while the core's own steps still compose on top: `start_at(..)` opens
-a buffered page subscription at a chosen position like any other, so a page assembled out of
-single deliveries can still replay. The wrap is also where the page size comes from once it is
-there, so a mount names `buffered(..)` or `batch(n)`, never both.
+Every broker offers pages. Those whose clients batch natively expose the `BatchSubscriber`
+capability directly (Kafka poll, JetStream pull consumers, Redis `XREADGROUP`; the in-memory
+broker too), and those whose transport delivers one message at a time assemble the pages on the
+client through the core's `Buffered` adapter, inside the broker crate. Nothing at the mount site
+says which of the two it was. See [Pages](../broker-authors/index.md#pages-batchsubscriber) in
+the broker-authors guide for how a broker does it.
 
 The semantics differ from single-message handlers in a few ways:
 
@@ -653,7 +644,7 @@ integration test.
 | `retry()` / `retry_after` × `workers(n)` | Retried deliveries re-enter the pool and complete like any other delivery. |
 | `retry()` / `retry_after` × `workers(n, by_key)` | Retries complete, but per-key ordering across a retry is **not** promised: a requeued message rejoins the stream from the back. If a key's messages must stay ordered even through failures, the handler has to absorb the failure instead of nacking. |
 | `.transactional()` × `workers(n)` | One transaction per batch, exactly as in the sequential loop. Concurrent batches run concurrent, independent transactions; each stays atomic (commit-then-ack per batch). |
-| `Buffered` × `workers(n)` | Batches still close by `max_size` / `max_wait` only; the pool bounds how many closed batches are processed at once and never affects batch boundaries. |
+| a page size × `workers(n)` | Pages still close at `batch(n)` or, where the broker pages on the client, at its deadline; the pool bounds how many closed pages are processed at once and never affects page boundaries. |
 | `publish(..)` × `workers(n)` | Replies are produced concurrently, so reply order across deliveries is not promised. A failed reply publish retries only its own delivery. |
 | middleware × a batch handler | App-global and router layers wrap per-message handlers and do not apply to batch registrations (a per-message layer cannot wrap a whole-batch handler). |
 
@@ -688,7 +679,7 @@ The manual body returns a `Result`: the `Ok` side carries what the handler produ
 nothing) and the `Err` side carries the settlement, so `Ok(())` acks and
 `Err(HandlerOutcome::retry())` requeues; a page body settles element-wise with
 `Err(Vec<HandlerOutcome>)`. Between `subscriber(..)` and `.build()`, the chain takes the same
-settings the attribute's clauses would (`.name`, `.workers`, `.on_failure`, `.buffered`) plus the
+settings the attribute's clauses would (`.name`, `.workers`, `.on_failure`, `.batch`) plus the
 documentation controls: a registration is documented by default under the `asyncapi` feature,
 `.describe(..)` sets its description, and `.undocumented()` opts it out (see
 [AsyncAPI](asyncapi.md#payload-schemas)).

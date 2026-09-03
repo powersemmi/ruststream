@@ -254,10 +254,12 @@ shape the `Out` slot vocabulary uses below.
 ## Capability traits
 
 Implement only the capabilities your broker supports; none are part of the mandatory interface.
+`BatchSubscriber` is the exception: [every broker offers it](#pages-batchsubscriber), because
+every page handler asks for one.
 
 | Trait | For brokers that support |
 |---|---|
-| `BatchSubscriber` | receiving messages in batches |
+| `BatchSubscriber` | receiving messages in pages (every broker; see below) |
 | `TransactionalPublisher` | begin / commit / abort around publishes on the handle |
 | `OwnedTransactions` / `Transaction` | transactions whose buffer lives in a value, any number open at once per handle |
 | `RequestReply` | native request-reply (NATS yes, Kafka no) |
@@ -277,6 +279,35 @@ position and the subscription's seeker as fields of your per-delivery context an
 `ContextField` keys for them - the in-memory broker's `MemoryContext` with its `Position` /
 `SeekHandle` keys is the model. The batch forms reach the seeker through the batch context
 below, which carries the handle without the position.
+
+### Pages: `BatchSubscriber`
+
+A handler taking `&[T]` consumes a page, and its mount site names one number - the page size -
+which the runtime passes straight to `BatchSubscriber::batches(size)`. The page your subscriber
+yields is the page the body sees: the runtime never splits or merges one, so a page must never
+carry more than `size` messages, and it may carry fewer whenever that is all the transport had.
+
+Translate `size` into whatever your client already speaks: `XREADGROUP COUNT`, a JetStream pull
+batch, a Kafka poll limit. Everything else about how a page forms - a block timeout, a consumer
+group, a prefetch window - stays your own vocabulary, configured on your subscription source
+through your settings extension trait, so a service writes `b.include(handler.batch(nonzero!(6))
+.block(Duration::from_secs(5)))` with the core's word first and yours after it.
+
+Where the transport delivers one message at a time, do not leave the capability out: assemble
+the pages on the client with the core's `BufferedSubscriber`, whose `batches` honours the size
+it is given. The deadline that closes a partial page is your choice, made once when you build
+the wrapper; the size is not yours to choose. Everything else about the subscriber reaches
+through the wrapper unchanged:
+
+```rust
+--8<-- "tests/batch_subscriber.rs:buffered_capability"
+```
+
+Nothing in the mount site says which of the two you did, which is the point: a service names the
+page size and gets pages.
+
+The `conformance` batch suite checks the contract - it opens a subscription at a size smaller
+than the run and fails a broker whose pages come back larger.
 
 ### Extending the `Out` slot vocabulary
 

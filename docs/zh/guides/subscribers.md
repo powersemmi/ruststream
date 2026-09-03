@@ -319,8 +319,8 @@ API 调用。该形态从签名里读出，属性宏里什么都不用写。
     --8<-- "examples/manual/subscribers.rs:batch"
     ```
 
-和其他写法一样，用 `include` 挂载即可，批量形态由定义自己携带，而 `batch(n)` 限定处理器一次拿到
-一批中的多少条：
+和其他写法一样，用 `include` 挂载即可。分页形态由定义自己携带，而挂载点要给出一个数字，也就是
+页大小：
 
 === "宏"
 
@@ -334,35 +334,29 @@ API 调用。该形态从签名里读出，属性宏里什么都不用写。
     --8<-- "examples/manual/subscribers.rs:batch_mount"
     ```
 
-投递过来的一批有多大，是 Broker 说了算：批量大小由它的订阅选项决定。`batch(n)` 是框架在这之上再加
-的上限，因此按固定大小写出来的处理器不管 Broker 递过来多少，都守得住这个上限：更大的一批会分成不
-超过 `n` 条的若干块送达，每块各自结算。任何形态的页都适用：会回复的页每块运行一次，用这一块的回复
-作答，并单独发布出去（在事务性回复 Publisher 之下就是每块一个事务），通过 `Out` 槽发布的页则把
-Arena 带进每一块。单条消息的处理器没有页，因此在它身上写出来无法通过编译。
+`batch(n)` 是框架唯一携带的分页参数，而且是必填的：分页处理器不写它就无法通过编译，因为框架没有
+任何依据替你编出一个大小来。这个数字直接传给 Broker，由它照着攒页 - `XREADGROUP COUNT`、
+JetStream 的 pull 批次、Kafka 的 poll 上限 - 处理器看到的正是 Broker 投递过来的那一页，绝不是它的
+一个切片。Broker 手上只有更少的消息时，这一页也可以短于 `n`。
 
-签名说的是处理器想一次拿到多条消息；它们是否真的成批到达，则是 Broker 的性质，因此这件事在挂载
-定义的地方才敲定。这条订阅的订阅者必须实现 `BatchSubscriber` 能力：客户端原生成批的 Broker
-（Kafka 的 poll、JetStream 的 pull consumer）直接提供它，批量大小则在它们的订阅选项里；内存
-Broker 同样原生成批。如果订阅本身不成批，编译器就会要求给出框架自带的缓冲，并由挂载点提供，它按
-大小、或者按首次投递之后的一个截止时间来封批：
+一页是怎么攒出来的，其余部分 - 阻塞超时、消费者组、预取窗口 - 都属于 Broker 自己的词汇，写在页
+大小之后，挂在它的订阅源上：
 
-=== "宏"
+<!-- inline-rust: 这一步属于 Broker crate，而本仓库不能依赖它 -->
+```rust
+// 在 Redis Broker 上：大小是核心的词，`.block(..)` 是 Broker 的词
+b.include(reconcile.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)));
+```
 
-    ```rust
-    --8<-- "examples/subscribers.rs:batch_buffered"
-    ```
+不管签名里还有什么，页大小对任何形态的页都适用：会回复的页、通过 `Out` 槽发布的页，写法和普通的
+页完全一样。单条消息的处理器没有页，因此在它身上写出来同样无法通过编译 - 这类处理器一次处理多少
+条投递，由 `workers(n)` 决定。
 
-=== "手写"
-
-    ```rust
-    --8<-- "examples/manual/subscribers.rs:batch_buffered"
-    ```
-
-批要么来自 Broker（由 Broker 自己的设置配置），要么来自这层包装；这项设置以适配器命名，正是为了把
-两者分开。这层包装改变了订阅的类型，所以在 Broker 自己的设置里它排在最后 - 那些设置绑定在未包装
-的类型上，过了这一步就不再适用；而核心自带的步骤仍然可以叠在它之上：`start_at(..)` 让缓冲出来的
-分页订阅和别的订阅一样，从选定的位置开始，因此由单条投递攒出来的页同样能回放。页既然由它来攒，
-页的大小也就由它来定，因此挂载点要么写 `buffered(..)`，要么写 `batch(n)`，不会两个都写。
+任何 Broker 都提供分页。客户端原生成批的 Broker 直接提供 `BatchSubscriber` 能力（Kafka 的 poll、
+JetStream 的 pull consumer、Redis 的 `XREADGROUP`，内存 Broker 也一样）；传输一次只投递一条消息
+的 Broker，则在自己的 crate 里用核心的 `Buffered` 适配器在客户端攒页。挂载点看不出走的是哪一条
+路。Broker 具体怎么做，见 Broker 作者指南的
+[分页](../broker-authors/index.md#pages-batchsubscriber)一节。
 
 它的语义和单条消息的处理器有几处不同：
 
@@ -595,7 +589,7 @@ Broker 消息的 `partition_key()`（消息实现了 `Partitioned` 能力的 Bro
 | `retry()` / `retry_after` × `workers(n)` | 重试的投递会重新进入该池，并像其他投递一样走完。 |
 | `retry()` / `retry_after` × `workers(n, by_key)` | 重试能走完，但跨越一次重试之后，同一个键内部的顺序**不**保证：重新入队的消息会从队尾重新进入流。如果某个键的消息即使遇到失败也必须保持顺序，处理器就必须自己消化这次失败，而不是 nack。 |
 | `.transactional()` × `workers(n)` | 每批一个事务，和顺序循环时完全一样。并发的批跑的是并发且互相独立的事务；每个事务各自保持原子性（每批先提交再 ack）。 |
-| `Buffered` × `workers(n)` | 批仍然只按 `max_size` / `max_wait` 封口；池只限制同时处理多少个已封好的批，永远不影响批的边界。 |
+| 页大小 × `workers(n)` | 页仍然按 `batch(n)` 封口，Broker 在客户端攒页时则按它的截止时间封口；池只限制同时处理多少个已封好的页，永远不影响页的边界。 |
 | `publish(..)` × `workers(n)` | 回复是并发产生的，因此跨投递的回复顺序没有保证。回复发布失败只会重试它自己那一次投递。 |
 | 中间件 × 批量处理器 | 应用全局的层和路由器上的层包裹的是按消息的处理器，对批量注册不生效（按消息的层没法包裹一个整批的处理器）。 |
 
@@ -628,7 +622,7 @@ Broker 消息的 `partition_key()`（消息实现了 `Partitioned` 能力的 Bro
 手写的函数体返回一个 `Result`：`Ok` 那一侧承载处理器产出的东西（回复，或者什么都没有），`Err` 那一侧
 承载结算，于是 `Ok(())` 就是 ack，`Err(HandlerOutcome::retry())` 就是重新入队；批量函数体用
 `Err(Vec<HandlerOutcome>)` 逐个元素结算。在 `subscriber(..)` 和 `.build()` 之间，这条链可以接受属性
-宏的子句能给的同一批设置（`.name`、`.workers`、`.on_failure`、`.buffered`），外加文档方面的开关：
+宏的子句能给的同一批设置（`.name`、`.workers`、`.on_failure`、`.batch`），外加文档方面的开关：
 在 `asyncapi` feature 下，一条注册默认就会进文档，`.describe(..)` 设置它的描述，`.undocumented()`
 把它排除在外（参见 [AsyncAPI](asyncapi.md#payload-schemas)）。
 

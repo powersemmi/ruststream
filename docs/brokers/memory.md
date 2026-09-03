@@ -43,9 +43,9 @@ a simulation of another broker's:
   with a unique in-process inbox in the `reply-to` header and resolves on the first message
   delivered there. A responder reads `reply-to` from the request and publishes its reply to that
   name. Requests nobody answers fail with `RequestError::Timeout`.
-- **Batches.** `MemorySubscriber` implements `BatchSubscriber`: a batch is the first awaited
-  delivery plus everything already buffered, capped by `set_batch_limit` (default 64). Partial
-  batches ship immediately, so no deadline timer is involved.
+- **Pages.** `MemorySubscriber` implements `BatchSubscriber` natively: a page is the first
+  awaited delivery plus everything already buffered, capped at the size the registration named
+  with `batch(n)`. Partial pages ship immediately, so no deadline timer is involved.
 - **Transactions.** `MemoryPublisher` implements `TransactionalPublisher`: publishes between
   `begin_transaction` and `commit` are buffered and fan out together in publish order; `abort`
   discards them. Misuse errors with `MemoryError` per the trait contract: a second
