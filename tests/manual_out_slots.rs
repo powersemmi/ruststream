@@ -11,8 +11,8 @@
 use std::convert::Infallible;
 
 use ruststream::codec::Codec;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{Input, MessageWire, PublishedThrough, SerializedWire, SoloDeserialized};
 use ruststream::testing::TestApp;
 use ruststream::{
@@ -155,8 +155,8 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
     let app =
         RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("slots.in", Transcode).build())
-                .out(Audit, MemoryPublish)
-                .out(Encoded, MemoryPublish)
+                .out(Audit, Publish)
+                .out(Encoded, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -253,7 +253,7 @@ async fn a_serialized_member_publishes_through_the_typed_entry() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("slots.chunks", ExportChunks).build())
-                .out(Exports, MemoryPublish)
+                .out(Exports, Publish)
                 .build();
         },
     );
@@ -308,7 +308,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(LaneRouter {
-            publisher: MemoryPublish.pair(connected).await?,
+            publisher: Publish.pair(connected).await?,
         })
     }
 }

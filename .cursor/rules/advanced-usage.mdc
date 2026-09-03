@@ -84,8 +84,7 @@ alwaysApply: false
 ```rust
 use std::error::Error;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -358,7 +357,7 @@ reply *type*, not the chain: a `serde::Serialize` `R` encodes through the codec,
 `.publisher(TypedPublisher::new(policy))` (or nothing, for the broker's default), while an `R`
 implementing `Serialized` (the impls above; `ReplyShape` with `type Wire = SerializedReply`
 covers the reply position) leaves byte-for-byte and attaches a
-plain policy - `.publisher(MemoryPublish)`, or nothing for the broker's default. There is one
+plain policy - `.publisher(Publish)`, or nothing for the broker's default. There is one
 `.reply()` and one publisher step for both wires. A page reply always publishes through the
 reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
 `Outs<(Slot<Marker, W, Enc>,)>`, where `W` is the wired live value and `Enc` the include site's
@@ -390,7 +389,7 @@ where
 // the reply chain seals with `.build()`, and the include site binds the arena
 b.include(subscriber("orders", Confirm).reply().to("confirmations").build());
 b.include(subscriber("mirror", Mirror).build())
-    .out(Primary, MemoryPublish)
+    .out(Primary, Publish)
     .build();
 ```
 

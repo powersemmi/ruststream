@@ -13,10 +13,8 @@ use std::time::Duration;
 
 use common::{Event, Wire, connected, expect_id, observed_memory};
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream};
+use ruststream::memory::prelude::*;
 use ruststream::testing::{Outcome, TestApp, expect_published};
-use ruststream::{Broker, Publisher, subscriber};
 
 /// The destination is computed per message: exactly the case reply publishing cannot cover and
 /// the injected publisher exists for.
@@ -38,7 +36,7 @@ async fn an_injected_publisher_reaches_the_handler_live() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward).publisher(MemoryPublish);
+        b.include(forward).publisher(Publish);
     });
     let running = app.start().await.expect("startup failed");
 
@@ -68,7 +66,7 @@ async fn crossing(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcom
 async fn decode_failures_are_recorded_for_out_handlers() {
     let app =
         RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(forward).publisher(MemoryPublish);
+            b.include(forward).publisher(Publish);
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -98,7 +96,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let observer = connected(other.broker()).await;
 
     // --8<-- [start:cross_broker]
-    let to_other = other.bind(MemoryPublish);
+    let to_other = other.bind(Publish);
     let app = RustStream::new(AppInfo::new("cross", "0.1.0"))
         .with_broker(other, |b| {
             let _ = b; // the target broker may mount its own handlers here
@@ -137,7 +135,7 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward_page).publisher(MemoryPublish);
+        b.include(forward_page).publisher(Publish);
     });
     let running = app.start().await.expect("startup failed");
 
@@ -184,7 +182,7 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(broker, |b| {
-        b.include(gate).out(DefaultSlot, MemoryPublish).build();
+        b.include(gate).out(DefaultSlot, Publish).build();
     });
     let running = app.start().await.expect("startup failed");
 
@@ -230,9 +228,7 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
-        b.include(settle_page)
-            .out(DefaultSlot, MemoryPublish)
-            .build();
+        b.include(settle_page).out(DefaultSlot, Publish).build();
     });
     let running = app.start().await.expect("startup failed");
 

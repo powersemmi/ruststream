@@ -563,6 +563,23 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 }
 ```
 
+## Прелюдия
+
+Прелюдия крейта - это то, что подключает точка монтирования: прелюдия ядра, затем брокер и его
+дескриптор, затем политики под едиными именами
+([контракт](index.md#broker-prelude)).
+
+<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+```rust
+pub use ruststream::prelude::*;
+
+pub use crate::{NatsBroker, NatsError, NatsSource};
+pub use crate::NatsPublish as Publish;
+
+// The capabilities this broker implements on its live values.
+pub use ruststream::{Positioned, RequestReply, Seekable, Seeker};
+```
+
 ## Связывание с приложением
 
 Когда брокер готов, приложение выглядит ровно так же, как любое другое: ни в обработчиках, ни в
@@ -570,12 +587,12 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
+use ruststream_nats::prelude::*;
 
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-        // NatsPublish is the crate's publish policy; the runtime pairs it after connect.
-        b.include(confirm).publisher(TypedPublisher::new(NatsPublish::default()));
+        // `Publish` is this crate's publish policy; the runtime pairs it after connect.
+        b.include(confirm).publisher(TypedPublisher::new(Publish::default()));
     });
 ```
 

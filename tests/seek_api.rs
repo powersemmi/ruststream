@@ -15,10 +15,8 @@ mod common;
 
 use tokio::sync::Notify;
 
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, SeekHandle};
-use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, RustStream};
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, Publisher, Seeker, subscriber};
 
 use common::{Event, Wire};
 
@@ -169,7 +167,7 @@ async fn an_out_parameter_and_a_seek_key_combine_in_one_handler() {
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("combo", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward_skipping).publisher(MemoryPublish);
+        b.include(forward_skipping).publisher(Publish);
     });
     let tb = TestApp::start(app).await.expect("harness start");
 

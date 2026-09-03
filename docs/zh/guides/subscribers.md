@@ -497,7 +497,7 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 带 `#[derive(Serialized)]` 的 newtype 自带字节，按字节原样发出，和处理器返回时一模一样。直接返回
 这个回复，或者写成 `Result<Export, HandlerOutcome>`，后者提供与编码写法相同的显式 ack 控制。
 
-发布者来自挂载点：`Serialized` 回复附加一个普通的发布策略（`b.include(relay).publisher(MemoryPublish)`），
+发布者来自挂载点：`Serialized` 回复附加一个普通的发布策略（`b.include(relay).publisher(Publish)`），
 编码的回复则把同一个策略包进 `TypedPublisher::new(..)`；一次调用都不写时，回复就由 Broker 的默认
 发布策略送出。回复发布失败会让这次投递 nack 并重新入队，和编码路径上完全一样：
 

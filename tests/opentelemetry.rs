@@ -17,10 +17,8 @@ use opentelemetry::Context as OtelContext;
 use opentelemetry::propagation::{Extractor, TextMapPropagator};
 use opentelemetry::trace::{SpanContext, TraceContextExt};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::memory::prelude::*;
 use ruststream::otel::OpenTelemetry;
-use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
-use ruststream::{HeaderMap, subscriber};
 use tokio::sync::Notify;
 
 #[subscriber("in", publish("out"))]
@@ -70,7 +68,7 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
     // The reply wiring propagates the delivery's trace context onto each reply.
-    let reply_pub = TypedPublisher::new(MemoryPublish).transform(otel.propagation());
+    let reply_pub = TypedPublisher::new(Publish).transform(otel.propagation());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         // The consume layer opens a span per delivery and records the consumer's trace context.

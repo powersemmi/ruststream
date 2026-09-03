@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use common::{Order, Receipt, wait_for};
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, TypedPublisher};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
 
 static PLAIN_ON: AtomicUsize = AtomicUsize::new(0);
 static BATCH: AtomicUsize = AtomicUsize::new(0);
@@ -99,14 +97,12 @@ async fn scope_codec_include_family_dispatches() {
             b.include(plain_on);
             b.include(batch);
             b.include(batch_on);
-            b.include(relay)
-                .publisher(TypedPublisher::new(MemoryPublish));
-            b.include(relay_on)
-                .publisher(TypedPublisher::new(MemoryPublish));
+            b.include(relay).publisher(TypedPublisher::new(Publish));
+            b.include(relay_on).publisher(TypedPublisher::new(Publish));
             b.include(batch_relay)
-                .publisher(TypedPublisher::new(MemoryPublish));
+                .publisher(TypedPublisher::new(Publish));
             b.include(batch_relay_on)
-                .publisher(TypedPublisher::new(MemoryPublish));
+                .publisher(TypedPublisher::new(Publish));
             b.include(pout_check);
             b.include(pout_on_check);
             b.include(bpout_check);
@@ -196,9 +192,9 @@ async fn default_codec_include_family_dispatches() {
         b.include(d_plain_on);
         b.include(d_batch_on);
         b.include(d_relay_on)
-            .publisher(TypedPublisher::new(MemoryPublish));
+            .publisher(TypedPublisher::new(Publish));
         b.include(d_batch_relay_on)
-            .publisher(TypedPublisher::new(MemoryPublish));
+            .publisher(TypedPublisher::new(Publish));
         b.include(d_pout_on_check);
         b.include(d_bpout_on_check);
     });

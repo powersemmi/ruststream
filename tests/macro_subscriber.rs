@@ -12,14 +12,10 @@ use std::time::Duration;
 
 use common::wait_for;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
-};
-use ruststream::runtime::{
-    AppInfo, HandlerOutcome, Outgoing, PublishExt, PublishLayer, PublishNext, PublishTransform,
-    RustStream, TypedPublisher,
-};
-use ruststream::{Broker, MessageInfo, Publisher, Subscribe, SubscriptionSource, subscriber};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
+use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishTransform};
+use ruststream::{Subscribe, SubscriptionSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -269,7 +265,7 @@ async fn static_publish_layer_transforms_reply() {
 
     // The static layer is composed onto the policy stack at compile time - no dyn dispatch.
     let egress = egress.bindable();
-    let egress_pub = egress.bind(TypedPublisher::new(MemoryPublish).transform(StaticEnvelope));
+    let egress_pub = egress.bind(TypedPublisher::new(Publish).transform(StaticEnvelope));
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(egress, |b| {
             b.include(check);
@@ -350,7 +346,7 @@ async fn macro_publisher_replies_cross_broker() {
 
     // The reply is published cross-broker: a token bound to egress; name from the macro.
     let egress = egress.bindable();
-    let egress_pub = egress.bind(TypedPublisher::new(MemoryPublish));
+    let egress_pub = egress.bind(TypedPublisher::new(Publish));
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
         .with_broker(egress, |b| {

@@ -32,9 +32,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ruststream::ServerSpec;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::prelude::*;
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{App, AppInfo, RustStream};
 
 use crate::domain::{Repository, ServiceError};
 use crate::observability::Observe;

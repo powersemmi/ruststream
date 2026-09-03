@@ -14,8 +14,7 @@ use std::convert::Infallible;
 use std::future::{Future, ready};
 
 use ruststream::codec::Codec;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{
     ContainsMessage, Input, MessageWire, OutMessages, OutgoingMessageMetadata, PublishedThrough,
     SerializedWire, SlotPos, SoloDeserialized,
@@ -325,7 +324,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("chunks.raw", Convert).build())
-                .out(Events, MemoryPublish)
+                .out(Events, Publish)
                 .build();
             b.include(
                 subscriber("jobs.status-requests", Status)

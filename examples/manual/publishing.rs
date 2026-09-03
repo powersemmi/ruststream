@@ -14,8 +14,7 @@ use std::fmt::Display;
 use std::future::{Future, ready};
 
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{
     BoundSegment, MissingSegment, OutMessages, OutgoingMessageMetadata, PublishAt, PublishContext,
     PublishError, PublishLayer, PublishNext, PublishPipeline, PublishTransform, PublishedThrough,
@@ -486,7 +485,7 @@ fn app() -> impl App {
             // the first publish: runs once connected and subscribed, with the transactional
             // wiring already paired
             b.after_startup(
-                TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional(),
+                TypedPublisher::with_codec(TransactionalPublish, JsonCodec).transactional(),
                 async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
             );
             // --8<-- [start:reply_mount]
@@ -496,7 +495,7 @@ fn app() -> impl App {
                 subscriber("requests", Respond)
                     .reply()
                     .to("responses")
-                    .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform))
+                    .publisher(TypedPublisher::new(Publish).transform(EnvelopeTransform))
                     .build(),
             );
             // the default reply wiring: the broker's default policy under the default codec
@@ -509,13 +508,13 @@ fn app() -> impl App {
             // --8<-- [end:reply_mount]
             // --8<-- [start:forward_mount]
             b.include(subscriber("ingress", Forward).build())
-                .publisher(MemoryPublish);
+                .publisher(Publish);
             // --8<-- [end:forward_mount]
             // --8<-- [start:slots_mount]
             // each named slot binds by marker; the call order does not matter
             b.include(subscriber("mirror", Mirror).build())
-                .out(Shadow, MemoryPublish)
-                .out(Primary, MemoryPublish)
+                .out(Shadow, Publish)
+                .out(Primary, Publish)
                 .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
@@ -527,13 +526,13 @@ fn app() -> impl App {
                     .to("gateway-responses")
                     .build(),
             )
-            .out(DefaultSlot, MemoryPublish)
+            .out(DefaultSlot, Publish)
             .build();
             // --8<-- [end:publish_out_mount]
             // --8<-- [start:declared_mount]
             // the slot lists what it may publish; where each message goes is its own declaration
             b.include(subscriber("orders.incoming", Route).build())
-                .out(Orders, MemoryPublish)
+                .out(Orders, Publish)
                 .build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
@@ -543,7 +542,7 @@ fn app() -> impl App {
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(TypedPublisher::new(MemoryPublish).transactional())
+                    .publisher(TypedPublisher::new(TransactionalPublish).transactional())
                     .build(),
             );
             // --8<-- [end:batch_publishing_mount]

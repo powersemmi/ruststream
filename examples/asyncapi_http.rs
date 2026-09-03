@@ -15,10 +15,9 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
+use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;
-use ruststream::{MessageInfo, SecurityScheme, ServerSpec, subscriber};
+use ruststream::{SecurityScheme, ServerSpec};
 use serde::Deserialize;
 
 // --8<-- [start:payload]

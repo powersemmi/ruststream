@@ -8,10 +8,9 @@
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemorySource};
 // The attribute and the value constructor share the name in different namespaces, so the one glob
 // brings both into scope.
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 // The manual registration at the bottom is documented by default, which is where the schema

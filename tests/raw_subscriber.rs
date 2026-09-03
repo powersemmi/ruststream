@@ -12,15 +12,10 @@ use std::future::ready;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish, MemoryPublisher,
-};
-use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Router, RustStream, State};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher};
 use ruststream::testing::TestApp;
-use ruststream::{
-    BuildContext, ContextField, Deserialized, FromRef, IncomingMessage, Outgoing, OutgoingMessage,
-    PairError, PublishPolicy, Publisher, Serialized, subscriber,
-};
+use ruststream::{BuildContext, ContextField, OutgoingMessage, PairError};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
@@ -104,7 +99,7 @@ async fn relay_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_round_trips_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(relay).publisher(MemoryPublish);
+        b.include(relay).publisher(Publish);
         b.include(relay_capture);
     });
 
@@ -182,7 +177,7 @@ async fn relay_checked_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_result_form_controls_the_publish() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(relay_checked).publisher(MemoryPublish);
+        b.include(relay_checked).publisher(Publish);
         b.include(relay_checked_capture);
     });
 
@@ -310,8 +305,8 @@ mod typed_in {
     use serde::Deserialize;
 
     use super::{
-        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, MemoryPublish, RustStream,
-        TestApp, Wire, subscriber,
+        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, Publish, RustStream, TestApp,
+        Wire, subscriber,
     };
 
     #[derive(Debug, Deserialize)]
@@ -347,7 +342,7 @@ mod typed_in {
         let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(gateway).publisher(MemoryPublish);
+                b.include(gateway).publisher(Publish);
                 b.include(gateway_capture);
             },
         );
@@ -593,7 +588,7 @@ async fn routed_relay(frame: &Frame<'_>) -> Export {
 async fn router_mounts_a_byte_reply_definition() {
     let router = Router::<MemoryBroker>::new()
         .include(routed_relay)
-        .publisher(MemoryPublish);
+        .publisher(Publish);
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
 

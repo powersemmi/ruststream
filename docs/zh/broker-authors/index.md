@@ -262,6 +262,26 @@ seeker，它只带句柄、不带位置。
 各自的约束之下，竞技场条目还会在包含点的编解码器和标记的字典之上给出该能力的类型化形态 - 发布构建
 器、事务作用域、拥有式事务、带关联的请求 - 所以服务要用到它们，只需你在实时发布者上实现该 trait。
 
+### 你的 crate 要提供的 prelude { #broker-prelude }
+
+你的类型由挂载点来写，而不是主体，这正是你的 crate prelude 的用处。提供一个 `prelude` 模块，按这个
+顺序分三层：
+
+1. `pub use ruststream::prelude::*;`，让一个 glob 就能服务整个文件；
+2. 服务会写到的、你自己的那部分表面：Broker、它的订阅源、它的错误，以及主体会读的 `ContextField` 键；
+3. 你的发布策略，放在每个 Broker 都用的那套统一名字下 - `Publish`，以及在你有的时候还有
+   `TransactionalPublish` 和 `Request`（`pub use crate::KafkaTransactionalPublish as
+   TransactionalPublish;`）。再把你在实时值上实现的能力 trait 作为一份清单加进去，这样带来策略的那个
+   glob 也会把它们的操作带进作用域。
+
+这三个名字是策略的名字，因此核心 prelude 在这些名字下什么都不导出：挂载点在哪个 Broker 上读起来都
+一样，换 Broker 换的只是那个 glob。绝不要把策略取名成核心 trait 的名字（`Publisher`、
+`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`），也不要在这些名字下重导出别的东西：
+同时 glob 了两个 prelude 的主体，必须仍然把这些名字解析成核心 trait。如果某个 trait 的方法会和核心的
+默认方法冲突，就把它留在外面 - 实践中就是 `Partitioned::partition_key` 与
+`IncomingMessage::partition_key` - 让需要它的服务显式导入。可以参照的现成例子是
+`ruststream::memory::prelude`。
+
 ### 扩展 `Out` 槽位的词汇
 
 处理器参数 `Out<impl X, Marker>` 接受运行时的 `SlotPublisher` 包装器实现了的任意 `X`；核心会转发它

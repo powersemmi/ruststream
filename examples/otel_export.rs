@@ -14,11 +14,9 @@ use std::process::ExitCode;
 use opentelemetry::KeyValue;
 use opentelemetry::global;
 use opentelemetry::metrics::Counter;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::prelude::*;
 use ruststream::otel::Otel;
 use ruststream::runtime::cli::run_main;
-use ruststream::runtime::{App, AppInfo, HandlerOutcome, RustStream, State};
-use ruststream::{FromRef, subscriber};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

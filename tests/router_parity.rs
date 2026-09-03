@@ -15,12 +15,8 @@ mod common;
 
 use common::{Event, Wire, connected, expect_id, observed_memory};
 
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, SeekHandle};
-use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, Router, RustStream};
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{
-    Broker, Deserialized, OutSlot, Outgoing, Publisher, Seeker, Serialized, subscriber,
-};
 
 /// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -54,7 +50,7 @@ async fn a_router_mounts_a_single_out_slot() {
 
     let router = Router::<MemoryBroker>::new()
         .include(forward)
-        .publisher(MemoryPublish);
+        .publisher(Publish);
     let app = RustStream::new(AppInfo::new("rp-out", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -112,8 +108,8 @@ async fn a_router_binds_named_out_slots_by_marker() {
     // Deliberately bound in the opposite of the signature order.
     let router = Router::<MemoryBroker>::new()
         .include(transcode)
-        .out(Audit, MemoryPublish)
-        .out(Encoded, MemoryPublish)
+        .out(Audit, Publish)
+        .out(Encoded, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-slots", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -159,7 +155,7 @@ async fn copy_out(frame: &Frame<'_>, Out(out): Out<impl Publisher, Wires>) -> Ha
 async fn a_router_publishes_a_serialized_message_through_a_slot() {
     let router = Router::<MemoryBroker>::new()
         .include(copy_out)
-        .out(Wires, MemoryPublish)
+        .out(Wires, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-wire", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -202,7 +198,7 @@ async fn a_router_mounts_a_batch_out_slot() {
 
     let router = Router::<MemoryBroker>::new()
         .include(forward_page)
-        .publisher(MemoryPublish);
+        .publisher(Publish);
     let app = RustStream::new(AppInfo::new("rp-page", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -314,7 +310,7 @@ async fn echo_frame_on(frame: &Frame<'_>) -> Export {
 async fn a_router_takes_an_explicit_serialized_reply_policy() {
     let router = Router::<MemoryBroker>::new()
         .include(echo_frame_on)
-        .publisher(MemoryPublish);
+        .publisher(Publish);
     let app = RustStream::new(AppInfo::new("rp-raw-on", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("harness start");
@@ -357,7 +353,7 @@ async fn a_router_composes_a_default_reply_with_out_slots() {
 
     let router = Router::<MemoryBroker>::new()
         .include(gate)
-        .out(ruststream::runtime::DefaultSlot, MemoryPublish)
+        .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-gate", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -391,7 +387,7 @@ async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Ex
 async fn a_router_composes_a_byte_reply_with_out_slots() {
     let router = Router::<MemoryBroker>::new()
         .include(audited_relay)
-        .out(ruststream::runtime::DefaultSlot, MemoryPublish)
+        .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-audit", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -441,14 +437,12 @@ async fn settle_page(
 /// The batch two-attachment form, with the reply side named explicitly this time.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_composes_a_batch_reply_with_out_slots() {
-    use ruststream::runtime::TypedPublisher;
-
     let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(settle_page)
-        .publisher(TypedPublisher::new(MemoryPublish))
-        .out(ruststream::runtime::DefaultSlot, MemoryPublish)
+        .publisher(TypedPublisher::new(Publish))
+        .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-ledger", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -472,7 +466,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_accepts_a_cross_broker_bind_token() {
     let egress_broker = MemoryBroker::new().bindable();
-    let egress = egress_broker.bind(MemoryPublish);
+    let egress = egress_broker.bind(Publish);
     let observer = connected(egress_broker.broker()).await;
 
     let ingress_broker = MemoryBroker::new();
@@ -562,12 +556,12 @@ fn the_registration_builders_name_themselves() {
 
     let slots = Router::<MemoryBroker>::new().include(transcode);
     assert!(format!("{slots:?}").starts_with("RouterSlots"), "{slots:?}");
-    let _ = slots.out(Audit, MemoryPublish).out(Encoded, MemoryPublish);
+    let _ = slots.out(Audit, Publish).out(Encoded, Publish);
 
     let with_reply = Router::<MemoryBroker>::new().include(gate);
     assert!(
         format!("{with_reply:?}").starts_with("RouterSlotsWithReply"),
         "{with_reply:?}"
     );
-    let _ = with_reply.out(ruststream::runtime::DefaultSlot, MemoryPublish);
+    let _ = with_reply.out(DefaultSlot, Publish);
 }

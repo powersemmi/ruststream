@@ -17,8 +17,8 @@ use std::future::{Future, ready};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use ruststream::memory::{MemoryBroker, MemoryMessage};
-use ruststream::prelude::*;
+use ruststream::memory::MemoryMessage;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{DynMiddleware, DynStack, Handler, Identity, Layer, Next, Stack};
 use serde::Deserialize;
 

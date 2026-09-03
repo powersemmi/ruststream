@@ -22,19 +22,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use ruststream::codec::CborCodec;
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
-};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, DefaultSlot, Handle, HandlerOutcome, HealthState, IntoSource, Out, Outgoing,
-    PublishContext, PublishError, PublishExt, PublishTransform, RustStream, RustStreamError,
-    TypedPublisher, subscriber as subscriber_def,
+    HealthState, IntoSource, Outgoing, PublishContext, PublishError, PublishTransform,
+    RustStreamError, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
-use ruststream::{
-    Broker, ConnectedBroker, DescribeServer, Deserialized, Publisher, Serialized, ServerSpec,
-    SubscriptionSource, subscriber,
-};
+use ruststream::{ConnectedBroker, DescribeServer, ServerSpec, SubscriptionSource};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
@@ -613,9 +608,7 @@ async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Ex
 async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
     let app =
         RustStream::new(AppInfo::new("cov-audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(audited_relay)
-                .out(DefaultSlot, MemoryPublish)
-                .build();
+            b.include(audited_relay).out(DefaultSlot, Publish).build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -653,8 +646,8 @@ async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
     let app =
         RustStream::new(AppInfo::new("cov-gate", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(gate)
-                .publisher(TypedPublisher::new(MemoryPublish).transform(Envelope))
-                .out(DefaultSlot, MemoryPublish)
+                .publisher(TypedPublisher::new(Publish).transform(Envelope))
+                .out(DefaultSlot, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -695,15 +688,15 @@ fn the_include_builders_render_a_debug_form() {
         RustStream::new(AppInfo::new("cov-debug", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             let reply = b.include(debug_reply);
             assert_debug_form(&reply, "IncludeWith");
-            reply.publisher(TypedPublisher::new(MemoryPublish));
+            reply.publisher(TypedPublisher::new(Publish));
 
             let slots = b.include(debug_slot);
             assert_debug_form(&slots, "IncludeSlots");
-            slots.publisher(MemoryPublish);
+            slots.publisher(Publish);
 
             let both = b.include(gate);
             assert_debug_form(&both, "IncludeSlotsWithReply");
-            both.out(DefaultSlot, MemoryPublish).build();
+            both.out(DefaultSlot, Publish).build();
         });
 }
 

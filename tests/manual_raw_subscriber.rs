@@ -13,8 +13,7 @@ use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::sync::Mutex;
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{Input, MessageWire, SerializedReply, SerializedWire, SoloDeserialized};
 use ruststream::testing::TestApp;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
@@ -181,7 +180,7 @@ async fn raw_reply_round_trips_exact_bytes() {
             subscriber("relay-in", Relay)
                 .reply()
                 .to("relay-out")
-                .publisher(MemoryPublish)
+                .publisher(Publish)
                 .build(),
         );
         b.include(subscriber("relay-out", RelayCapture).build());
@@ -215,8 +214,7 @@ async fn raw_reply_round_trips_exact_bytes() {
 mod typed_in {
     use std::future::{Future, ready};
 
-    use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::prelude::*;
+    use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
     use serde::Deserialize;
 
@@ -272,7 +270,7 @@ mod typed_in {
                     subscriber("gateway-in", Gateway)
                         .reply()
                         .to("gateway-out")
-                        .publisher(MemoryPublish)
+                        .publisher(Publish)
                         .build(),
                 );
                 b.include(subscriber("gateway-out", GatewayCapture).build());

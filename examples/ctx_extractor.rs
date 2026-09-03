@@ -8,10 +8,10 @@
 //! cargo run --example ctx_extractor --features testing,macros,memory,json
 //! ```
 
-use ruststream::memory::{MemoryBroker, MemoryMessage};
-use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, RustStream};
+use ruststream::memory::MemoryMessage;
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{BuildContext, ContextField, IncomingMessage, Outgoing, subscriber};
+use ruststream::{BuildContext, ContextField};
 use serde::{Deserialize, Serialize};
 
 #[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]

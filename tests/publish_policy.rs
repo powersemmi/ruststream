@@ -11,12 +11,11 @@ mod common;
 
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemoryRequest};
-use ruststream::runtime::{
-    AppInfo, Outgoing, PublishContext, PublishExt, PublishTransform, RustStream, TypedPublisher,
-};
+use ruststream::OutgoingMessage;
+use ruststream::memory::MemoryPublisher;
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{Outgoing, PublishContext, PublishTransform};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, OutgoingMessage, PublishPolicy, RequestReply, subscriber};
 
 use common::{Order, Receipt, Wire, connected};
 
@@ -35,7 +34,7 @@ async fn a_bare_policy_pairs_into_a_live_publisher() {
         .connect()
         .await
         .expect("memory connect is infallible");
-    let publisher = MemoryPublish
+    let publisher = Publish
         .pair(&connected)
         .await
         .expect("memory pairing is infallible");
@@ -58,7 +57,7 @@ async fn a_request_policy_pairs_into_a_requester() {
         .connect()
         .await
         .expect("memory connect is infallible");
-    let requester = MemoryRequest
+    let requester = Request
         .pair(&connected)
         .await
         .expect("memory pairing is infallible");
@@ -88,7 +87,7 @@ async fn a_typed_policy_stack_pairs_functorially() {
     // The stack itself is a policy: pairing it manually against a connected clone yields the
     // same wiring type over the live leaf (the functorial half of the seam)...
     let live = connected(&broker).await;
-    let paired = TypedPublisher::new(MemoryPublish)
+    let paired = TypedPublisher::new(Publish)
         .transform(Envelope)
         .pair(&live)
         .await
@@ -96,7 +95,7 @@ async fn a_typed_policy_stack_pairs_functorially() {
     let _type_check: TypedPublisher<MemoryPublisher, _, _> = paired;
 
     // ...while the registration takes the unpaired stack and the runtime pairs it at startup.
-    let replies = TypedPublisher::new(MemoryPublish).transform(Envelope);
+    let replies = TypedPublisher::new(Publish).transform(Envelope);
     let app = RustStream::new(AppInfo::new("policy", "0.1.0")).with_broker(broker, |b| {
         b.include(respond).publisher(replies);
     });

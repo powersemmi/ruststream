@@ -11,8 +11,7 @@ mod routes;
 
 use std::error::Error;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream};
+use ruststream::memory::prelude::*;
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {

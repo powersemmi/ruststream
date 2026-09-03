@@ -55,7 +55,7 @@ impl Handle<Order, Confirmation> for Confirm {
 // --8<-- [end:handler]
 
 // --8<-- [start:test]
-use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -64,7 +64,7 @@ async fn confirms_valid_orders() {
     let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            let replies = TypedPublisher::new(MemoryPublish);
+            let replies = TypedPublisher::new(Publish);
             b.include(
                 subscriber("orders", Confirm)
                     .reply()

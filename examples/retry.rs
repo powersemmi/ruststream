@@ -7,9 +7,7 @@
 
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

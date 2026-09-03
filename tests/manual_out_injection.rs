@@ -11,8 +11,7 @@ mod common;
 use common::{connected, expect_id};
 
 use ruststream::codec::Codec;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 
@@ -72,7 +71,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let observer = connected(other.broker()).await;
 
     // --8<-- [start:cross_broker]
-    let to_other = other.bind(MemoryPublish);
+    let to_other = other.bind(Publish);
     let app = RustStream::new(AppInfo::new("cross", "0.1.0"))
         .with_broker(other, |b| {
             let _ = b; // the target broker may mount its own handlers here

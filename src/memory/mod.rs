@@ -15,8 +15,12 @@
 //! [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
 //! [`MemoryPublisher`], partition keys on [`MemoryMessage`], and log repositioning through
 //! [`MemorySeeker`] over the per-name publish log.
+//!
+//! A service mounting on this broker globs [`prelude`], which carries the core prelude plus this
+//! broker's surface and its publish policies under the uniform names a mount site writes.
 
 mod capability;
+pub mod prelude;
 
 use capability::SeekControl;
 pub use capability::{

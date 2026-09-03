@@ -3,8 +3,7 @@
 //! Keeping registration in its own module lets the handlers stay broker-agnostic - a router binds
 //! to a concrete broker only when `main` mounts it.
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{Router, RouterDef, TypedPublisher};
+use ruststream::memory::prelude::*;
 
 use crate::orders;
 
@@ -18,7 +17,7 @@ use crate::orders;
 /// terminal (`.publisher(..)`, or `.mount()` for the broker's default policy) and the calls chain;
 /// the registration list is opaque, hence `impl RouterDef`.
 pub fn orders() -> impl RouterDef<MemoryBroker> {
-    let confirmations = TypedPublisher::new(MemoryPublish);
+    let confirmations = TypedPublisher::new(Publish);
 
     Router::new()
         .include(orders::confirm)

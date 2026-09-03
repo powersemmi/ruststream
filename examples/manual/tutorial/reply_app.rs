@@ -9,8 +9,7 @@ mod orders;
 
 use std::error::Error;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 
 // --8<-- [start:reply]
 use crate::orders::{Confirm, Receive};

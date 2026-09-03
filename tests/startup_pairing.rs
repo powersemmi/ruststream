@@ -11,10 +11,9 @@ mod common;
 
 use std::time::Duration;
 
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
+use ruststream::memory::ConnectedMemoryBroker;
+use ruststream::memory::prelude::*;
 use ruststream::testing::expect_published;
-use ruststream::{Broker, subscriber};
 
 use common::{Event, Wire, connected};
 
@@ -39,7 +38,7 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
 
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
         b.include(consume);
-        b.after_startup(MemoryPublish, async move |publisher| {
+        b.after_startup(Publish, async move |publisher| {
             publisher
                 .message(&Wire::of(b"first"))
                 .to("pairing.seeded")
@@ -59,7 +58,7 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
 async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
     let broker = MemoryBroker::new().bindable();
     let observer = connected(broker.broker()).await;
-    let egress = broker.bind(MemoryPublish);
+    let egress = broker.bind(Publish);
 
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
         b.include(consume);
@@ -86,7 +85,7 @@ async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
 #[tokio::test]
 async fn pairing_before_startup_reports_a_clear_error() {
     let broker = MemoryBroker::new().bindable();
-    let token = broker.bind(MemoryPublish);
+    let token = broker.bind(Publish);
     let _app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |_b| {});
 
     let err = token

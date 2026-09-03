@@ -13,9 +13,8 @@ use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::prelude::*;
 use ruststream::metrics::Metrics;
-use ruststream::prelude::*;
 use ruststream::runtime::{Input, SoloDeserialized};
 
 /// The payload view the body takes: whatever bytes arrive, undecoded, so the test's subject
@@ -134,9 +133,8 @@ async fn consume_metrics_are_recorded_through_a_router() {
 mod publish {
     use super::common::{Req, Resp};
     use super::{Duration, wait_for};
-    use ruststream::memory::{MemoryBroker, MemoryPublish};
+    use ruststream::memory::prelude::*;
     use ruststream::metrics::Metrics;
-    use ruststream::prelude::*;
 
     #[subscriber("requests", publish("responses"))]
     async fn reply(req: &Req) -> Resp {
@@ -151,7 +149,7 @@ mod publish {
         let ingress_pub = ingress.publisher();
 
         let egress = egress.bindable();
-        let egress_pub = egress.bind(TypedPublisher::new(MemoryPublish));
+        let egress_pub = egress.bind(TypedPublisher::new(Publish));
         let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
             .publish_layer(metrics.publish_layer())
             .with_broker(egress, |_b| {})

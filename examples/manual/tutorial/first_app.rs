@@ -12,8 +12,7 @@ mod orders;
 
 use std::error::Error;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 
 use crate::orders::Receive;
 

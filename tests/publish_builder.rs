@@ -7,14 +7,10 @@
     feature = "testing"
 ))]
 
+use ruststream::OutgoingMessage;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, RustStream, TypedPublisher};
+use ruststream::memory::prelude::*;
 use ruststream::testing::{TestApp, TestableBroker};
-use ruststream::{
-    Broker, HeaderMap, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, Publisher,
-    Serialized, Transaction, subscriber,
-};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Outgoing, PartialEq, Serialize, Deserialize)]
@@ -151,8 +147,8 @@ async fn every_destination_form_resolves_through_one_builder() {
     let app =
         RustStream::new(AppInfo::new("builder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(convert)
-                .out(Events, MemoryPublish)
-                .out(Frames, MemoryPublish)
+                .out(Events, Publish)
+                .out(Frames, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -316,8 +312,8 @@ async fn a_batch_publishing_handler_carries_the_builder() {
     let app =
         RustStream::new(AppInfo::new("bulk", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(settle)
-                .publisher(TypedPublisher::new(MemoryPublish))
-                .out(Events, MemoryPublish)
+                .publisher(TypedPublisher::new(Publish))
+                .out(Events, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");

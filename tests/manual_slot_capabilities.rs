@@ -8,8 +8,7 @@
 use std::time::Duration;
 
 use ruststream::codec::Codec;
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryRequest};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::PublishedThrough;
 use ruststream::testing::TestApp;
 use ruststream::{
@@ -118,7 +117,7 @@ async fn a_transactional_entry_settles_its_scope_atomically() {
     let app =
         RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("ledger.orders", SettleAtomically).build())
-                .out(Journal, MemoryPublish)
+                .out(Journal, TransactionalPublish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -212,7 +211,7 @@ async fn an_owned_transactional_entry_commits_its_buffer() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("ledger.orders", SettleOwned).build())
-                .out(Ledger, MemoryPublish)
+                .out(Ledger, TransactionalPublish)
                 .build();
         },
     );
@@ -353,10 +352,10 @@ async fn a_request_reply_entry_correlates_its_reply() {
     let app =
         RustStream::new(AppInfo::new("quotes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("quotes.ask", Respond).build())
-                .out(Answers, MemoryPublish)
+                .out(Answers, Publish)
                 .build();
             b.include(subscriber("quotes.orders", AskQuote).build())
-                .out(Quotes, MemoryRequest)
+                .out(Quotes, Request)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");

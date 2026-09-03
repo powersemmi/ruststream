@@ -18,11 +18,10 @@ use std::sync::{Arc, LazyLock, Mutex, Once};
 use std::time::Duration;
 
 use futures::StreamExt;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, PublishExt, RustStream, RustStreamError, TypedPublisher};
-use ruststream::{
-    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, Subscriber, subscriber,
-};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::runtime::RustStreamError;
+use ruststream::{OutgoingMessage, PairError, Subscriber};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber as TracingSubscriber};
 use tracing_subscriber::Layer;
@@ -116,7 +115,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for FailsOncePolicy {
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(FailsOnce {
             armed: AtomicBool::new(true),
-            inner: MemoryPublish.pair(connected).await?,
+            inner: Publish.pair(connected).await?,
         })
     }
 }

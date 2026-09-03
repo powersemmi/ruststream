@@ -547,18 +547,34 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 }
 ```
 
+## 这个 crate 的 prelude
+
+crate 的 prelude 就是挂载点会 glob 的东西：先是核心 prelude，再是 Broker 和它的描述符，最后是统一
+名字下的策略（见[契约](index.md#broker-prelude)）。
+
+<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+```rust
+pub use ruststream::prelude::*;
+
+pub use crate::{NatsBroker, NatsError, NatsSource};
+pub use crate::NatsPublish as Publish;
+
+// The capabilities this broker implements on its live values.
+pub use ruststream::{Positioned, RequestReply, Seekable, Seeker};
+```
+
 ## 接入到应用里
 
 有了该 Broker，应用写起来和其他任何应用完全一样；处理器和编解码器都没有任何 NATS 专有的东西。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
+use ruststream_nats::prelude::*;
 
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-        // NatsPublish is the crate's publish policy; the runtime pairs it after connect.
-        b.include(confirm).publisher(TypedPublisher::new(NatsPublish::default()));
+        // `Publish` is this crate's publish policy; the runtime pairs it after connect.
+        b.include(confirm).publisher(TypedPublisher::new(Publish::default()));
     });
 ```
 

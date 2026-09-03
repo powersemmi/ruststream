@@ -5,8 +5,7 @@
 
 use std::future::{Future, ready};
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 
 /// The raw input type: the derive gives the newtype the delivery's bytes as they arrive.
 #[derive(Deserialized)]

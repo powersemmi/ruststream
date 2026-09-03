@@ -19,8 +19,7 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::layers::TracingLayer;
 use ruststream::runtime::{Identity, Stack};
 use serde::Deserialize;

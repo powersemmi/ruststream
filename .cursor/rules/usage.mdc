@@ -4,18 +4,24 @@ globs: examples/**/*.rs
 alwaysApply: false
 ---
 
-- A service imports one glob: `use ruststream::prelude::*;`. It carries the application builder,
-  the handler surface (`HandlerOutcome`, `Context`), every extractor (`State`, `Ctx`, `Headers`,
-  `Out`), the mount-site settings, `TypedPublisher`, and the attribute macros and derives. On a
-  broker crate, glob that crate's prelude instead (`use ruststream_nats::prelude::*;`): it
-  re-exports the core prelude plus the broker, its subscription descriptor and its publish
-  policies, so importing it *is* the service's broker statement. Two broker preludes can be
-  globbed side by side - the core items they share resolve to the same types.
-- Only what a given service actually reaches for stays an explicit import: the in-core broker
-  (`ruststream::memory`), codecs (`ruststream::codec`), and the optional feature modules
-  (`ruststream::testing`, `asyncapi`, `metrics`, `logging`, `otel`). `RouterDef`, `DefaultSlot`,
-  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `nonzero!` and the manual path's
-  `Handle` / `subscriber` pair are all in the prelude.
+- A handler body imports one glob: `use ruststream::prelude::*;`. It carries the application
+  builder, the handler surface (`HandlerOutcome`, `Context`), every extractor (`State`, `Ctx`,
+  `Headers`, `Out`), the mount-site settings, `TypedPublisher`, the publisher capability traits a
+  slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`),
+  and the attribute macros and derives. A body never names a publish policy, so it never knows
+  which broker runs it.
+- A mount site imports the BROKER's glob (`use ruststream_nats::prelude::*;`,
+  `use ruststream::memory::prelude::*;`): it re-exports the core prelude, the broker, its
+  subscription descriptor and its context keys, plus its publish policies under the uniform names
+  `Publish`, `TransactionalPublish` and `Request`, so the chain reads the same whichever broker it
+  is on and swapping brokers swaps the glob. A file holding both a body and its mount site is
+  served by the broker glob alone. Two broker preludes can be globbed side by side - the core
+  items they share resolve to the same types.
+- Only what a given service actually reaches for stays an explicit import: codecs
+  (`ruststream::codec`) and the optional feature modules (`ruststream::testing`, `asyncapi`,
+  `metrics`, `logging`, `otel`). `RouterDef`, `DefaultSlot`, `FailurePolicies` / `FailurePolicy`,
+  `Workers`, `Unnamed`, `nonzero!` and the manual path's `Handle` / `subscriber` pair are all in
+  the prelude.
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
   payload, and its type alone picks the form: `&T` is one message and `&[T]` a page, while the
   lane is the type's own business - `T: serde::Deserialize` decodes with the codec, a
@@ -51,8 +57,7 @@ alwaysApply: false
 The macro turns `handle` into a value named after the function; mount it with `include`.
 
 ```rust
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -179,8 +184,7 @@ Return the reply value and add `publish("subject")`. The reply publisher is the 
 policy unless the mount names one with `.publisher(..)`.
 
 ```rust
-use ruststream::memory::MemoryPublish;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -196,7 +200,7 @@ async fn confirm(order: &Order) -> Confirmation {
 
 // in with_broker(broker, |b| { ... }):
 b.include(confirm);                                    // broker's default publish policy
-b.include(confirm).publisher(TypedPublisher::new(MemoryPublish));  // an explicit one
+b.include(confirm).publisher(TypedPublisher::new(Publish));  // an explicit one
 ```
 
 Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` publishes and acks,
@@ -258,7 +262,7 @@ async fn relay(frame: &Frame<'_>) -> Export {
 ```
 
 A `Serialized` reply attaches a plain publish policy at the include site
-(`b.include(relay).publisher(MemoryPublish)`, or nothing for the broker's default), where an
+(`b.include(relay).publisher(Publish)`, or nothing for the broker's default), where an
 encoded one wraps the policy in `TypedPublisher::new(..)`.
 
 For a custom serialization format you want *typed* handlers for, implement `Codec` instead and
@@ -271,8 +275,7 @@ runtime pairs it with the connected broker at startup, so the handler always hol
 publisher - no registry, no erased lookup, no state plumbing.
 
 ```rust
-use ruststream::memory::MemoryPublish;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Serialize;
 
 #[derive(Debug, Serialize, Outgoing)]
@@ -289,7 +292,7 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
 }
 
 // in with_broker(broker, |b| { ... }): the single unnamed slot is DefaultSlot
-b.include(forward).publisher(MemoryPublish);
+b.include(forward).publisher(Publish);
 ```
 
 ### Several publishers: one marker per path
@@ -322,8 +325,8 @@ async fn route(
 }
 
 b.include(route)
-    .out(Audit, MemoryPublish)
-    .out(Orders, MemoryPublish)
+    .out(Audit, Publish)
+    .out(Orders, Publish)
     .build();
 ```
 
@@ -416,8 +419,7 @@ Build the state once in `on_startup`; `#[derive(FromRef)]` makes every field inj
 ```rust
 use std::convert::Infallible;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 
 #[derive(Clone)]
 struct Database; // connection pool, etc.
@@ -453,11 +455,10 @@ returns `Result<(), E>` for any `E: std::error::Error + Send + Sync`.
 The policy is the broker's own - usually there is nothing to wrap:
 
 ```rust
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 
 // in with_broker(broker, |b| { ... }):
-b.after_startup(MemoryPublish, async move |publisher| {
+b.after_startup(Publish, async move |publisher| {
     // `publisher` is the live MemoryPublisher, already connected
     publisher
         .message(&Region { code: "eu-west" })
@@ -476,15 +477,15 @@ Reach for `TypedPublisher` only when you are changing something about how the va
 use ruststream::codec::CborCodec;
 
 // a codec other than the crate default
-b.after_startup(TypedPublisher::with_codec(MemoryPublish, CborCodec), async move |p| seed(p).await);
+b.after_startup(TypedPublisher::with_codec(Publish, CborCodec), async move |p| seed(p).await);
 
 // a per-publisher transform, e.g. stamping an envelope header on everything this handle sends
-b.after_startup(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform), hook);
+b.after_startup(TypedPublisher::new(Publish).transform(EnvelopeTransform), hook);
 
 // an atomic seed: `.transactional()` marks the wiring, and pairing then checks that the live
 // publisher is transactional
 b.after_startup(
-    TypedPublisher::new(MemoryPublish).transactional(),
+    TypedPublisher::new(TransactionalPublish).transactional(),
     async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
 );
 ```
@@ -602,8 +603,7 @@ middleware (tracing propagation, broker envelopes such as Kafka's Schema Registr
 added app-wide with `.publish_layer(..)` before `with_broker`.
 
 ```rust
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::RouterDef; // the only router item outside the prelude
 
 fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
@@ -664,8 +664,7 @@ no server, injects input through the broker bus, and exposes per-broker assertio
 is a real broker here, driven through the same dispatch path as production.
 
 ```rust
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 
 let tb = TestApp::start(service()).await?;

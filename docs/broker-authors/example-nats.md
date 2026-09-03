@@ -556,6 +556,22 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 }
 ```
 
+## The prelude
+
+The crate's prelude is what a mount site globs: the core prelude, then the broker and its
+descriptor, then the policies under the uniform names ([the contract](index.md#broker-prelude)).
+
+<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+```rust
+pub use ruststream::prelude::*;
+
+pub use crate::{NatsBroker, NatsError, NatsSource};
+pub use crate::NatsPublish as Publish;
+
+// The capabilities this broker implements on its live values.
+pub use ruststream::{Positioned, RequestReply, Seekable, Seeker};
+```
+
 ## Wiring it into an app
 
 With the broker in hand, an application looks exactly like any other; nothing about the handlers or
@@ -563,12 +579,12 @@ codecs is NATS-specific.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
-use ruststream::runtime::{AppInfo, RustStream, TypedPublisher};
+use ruststream_nats::prelude::*;
 
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-        // NatsPublish is the crate's publish policy; the runtime pairs it after connect.
-        b.include(confirm).publisher(TypedPublisher::new(NatsPublish::default()));
+        // `Publish` is this crate's publish policy; the runtime pairs it after connect.
+        b.include(confirm).publisher(TypedPublisher::new(Publish::default()));
     });
 ```
 

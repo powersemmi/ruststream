@@ -17,8 +17,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::Identity;
 use serde::Deserialize;
 

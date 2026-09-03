@@ -16,6 +16,31 @@ use ruststream::memory::MemoryBroker;
 let broker = MemoryBroker::new();
 ```
 
+## The prelude a mount site imports { #prelude }
+
+`ruststream::memory::prelude` is this broker's glob, shaped like every broker crate's: it
+re-exports the core prelude, then the broker's own surface (`MemoryBroker`, `MemorySource`,
+`MemoryError`, the context keys `MemoryContext` / `MemoryBatchContext` / `Position` /
+`SeekHandle` and `MemoryPosition`), then the publish policies under the uniform names a mount
+site writes - `Publish`, `TransactionalPublish` and `Request`, all three aliases of
+`MemoryPublish` / `MemoryRequest`. Because the in-memory publisher carries both transaction
+kinds, `TransactionalPublish` is the same policy as `Publish` here; a broker with a separate
+transactional configuration aliases a different one.
+
+<!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
+```rust
+use ruststream::memory::prelude::*;
+```
+
+The glob also brings the capability traits this broker implements on its live values
+(`TransactionalPublisher`, `OwnedTransactions`, `Transaction`, `RequestReply`, `Positioned`,
+`Seeker`), so the operations they carry are in scope wherever the policies are. `Partitioned` is
+left out on purpose: in scope it makes `msg.partition_key()` ambiguous with the defaulted
+`IncomingMessage` method, so a service reading partition keys imports it explicitly. A handler
+body keeps `use ruststream::prelude::*;` - it names capabilities, never policies, so it does not
+know which broker runs it - and a file holding both a body and its mount site is served by the
+broker glob alone.
+
 ## Semantics
 
 - **Exact name matching.** A subscription to `orders` receives messages published to `orders`; no
@@ -88,7 +113,7 @@ example:
 === "Macros"
 
     ```rust
-    use ruststream::memory::MemorySource;
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/routed_service/orders.rs:descriptor"
     ```
@@ -96,7 +121,7 @@ example:
 === "Manual"
 
     ```rust
-    use ruststream::memory::{MemoryPublish, MemorySource};
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```

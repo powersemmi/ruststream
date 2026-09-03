@@ -16,8 +16,7 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemorySource};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{Input, SoloDeserialized};
 use serde::Deserialize;
 

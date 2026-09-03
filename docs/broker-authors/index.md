@@ -286,6 +286,28 @@ entry also offers that capability's typed form over the include site's codec and
 dictionary - the publish builder, a transaction scope, an owned transaction, a correlated request
 - so implementing the trait on your live publisher is all a service needs to reach them.
 
+### The prelude your crate ships { #broker-prelude }
+
+Your types are named at the mount site, not in the body, and that is what your crate's prelude is
+for. Ship a `prelude` module in three layers, in this order:
+
+1. `pub use ruststream::prelude::*;` so one glob serves the whole file;
+2. your own surface a service names: the broker, its subscription source, its error, the
+   `ContextField` keys a body reads;
+3. your publish policies under the uniform names every broker uses - `Publish`, and where you
+   have them `TransactionalPublish` and `Request` (`pub use crate::KafkaTransactionalPublish as
+   TransactionalPublish;`). Add the capability traits you implement on your live values as a
+   manifest, so the glob that names the policies also puts their operations in scope.
+
+Those three names are policy names, so the core prelude exports nothing under them: a mount site
+reads the same whichever broker it is on, and swapping brokers swaps the glob. Never alias a
+policy to a core trait name (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
+`RequestReply`) or re-export something else under one: a body that globs both preludes has to keep
+resolving those to the core traits. Leave out a trait whose methods would collide with a defaulted
+core method - `Partitioned::partition_key` against `IncomingMessage::partition_key` is the case in
+practice - and let a service that needs it import it explicitly.
+`ruststream::memory::prelude` is the worked example.
+
 ### Extending the `Out` slot vocabulary
 
 An `Out<impl X, Marker>` handler parameter accepts any `X` the runtime's `SlotPublisher`

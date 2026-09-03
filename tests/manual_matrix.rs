@@ -10,8 +10,7 @@
 use std::future::{Future, ready};
 
 use ruststream::codec::Codec;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::PublishedThrough;
 use ruststream::testing::TestApp;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
@@ -234,7 +233,7 @@ async fn a_pair_input_reaches_every_single_message_cell() {
     let app =
         RustStream::new(AppInfo::new("matrix", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("matrix.mirror", MirrorPair).build())
-                .out(Analytics, MemoryPublish)
+                .out(Analytics, Publish)
                 .build();
             b.include(
                 subscriber("matrix.confirm", ConfirmPair)
@@ -248,7 +247,7 @@ async fn a_pair_input_reaches_every_single_message_cell() {
                     .to("matrix.gateway-confirmations")
                     .build(),
             )
-            .out(Analytics, MemoryPublish)
+            .out(Analytics, Publish)
             .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -300,7 +299,7 @@ async fn a_pair_input_reaches_every_page_cell() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("matrix.mirror-page", MirrorPairPage).build())
-                .out(Analytics, MemoryPublish)
+                .out(Analytics, Publish)
                 .build();
             b.include(
                 subscriber("matrix.confirm-page", ConfirmPairPage)
@@ -314,7 +313,7 @@ async fn a_pair_input_reaches_every_page_cell() {
                     .to("matrix.gateway-page-confirmations")
                     .build(),
             )
-            .out(Analytics, MemoryPublish)
+            .out(Analytics, Publish)
             .build();
         },
     );

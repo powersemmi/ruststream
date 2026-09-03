@@ -8,10 +8,8 @@
     feature = "testing"
 ))]
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
 /// A self-deserializing view over the payload: the framework's codec never runs on this lane.
 #[derive(Deserialized)]
@@ -149,7 +147,7 @@ async fn a_serialized_out_type_is_a_dictionary_member() {
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(broker, |b| {
-        b.include(export).publisher(MemoryPublish);
+        b.include(export).publisher(Publish);
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -213,7 +211,7 @@ fn the_typed_form_keeps_the_serialized_metadata() {
 
     let app =
         RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(export).publisher(MemoryPublish);
+            b.include(export).publisher(Publish);
         });
     let spec = build_spec(&app);
 

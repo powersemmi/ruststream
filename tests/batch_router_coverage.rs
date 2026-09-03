@@ -11,15 +11,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use common::{Order, Receipt, Wire, wait_for};
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
-    MemoryPublisher, MemorySubscriber,
-};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, Handle, HandlerMetadata, HandlerOutcome, PublishExt, Router, RouterHandlers,
-    RustStream, RustStreamError, TypedPublisher, subscriber as subscriber_def,
+    HandlerMetadata, RouterHandlers, RustStreamError, subscriber as subscriber_def,
 };
-use ruststream::{IncomingMessage, PairError, PublishPolicy, SubscriptionSource, subscriber};
+use ruststream::{PairError, SubscriptionSource};
 
 #[subscriber("brc-in", publish("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {
@@ -104,9 +101,9 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
         )
         .include(subscriber_def("brc-meta-batch", MetaBatch).build())
         .include(brc_relay)
-        .publisher(TypedPublisher::new(MemoryPublish))
+        .publisher(TypedPublisher::new(Publish))
         .include(brc_batch_relay)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .publisher(TypedPublisher::new(Publish));
 
     assert!(format!("{router:?}").contains("Router"));
 
@@ -222,7 +219,7 @@ async fn batch_publishing_route_reports_a_refused_reply_publisher() {
 async fn publishing_route_reports_a_source_that_never_opens() {
     let router = Router::<MemoryBroker>::new()
         .include(brc_closed_relay)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .publisher(TypedPublisher::new(Publish));
 
     let app = RustStream::new(AppInfo::new("brc-source", "0.1.0")).with_broker(
         MemoryBroker::new(),

@@ -87,8 +87,7 @@ cargo install ruststream --features cli
 ## Write a service
 
 ```rust
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

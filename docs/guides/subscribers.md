@@ -543,7 +543,7 @@ byte-for-byte, exactly as the handler returned it. Return the reply directly, or
 `Result<Export, HandlerOutcome>` for the same explicit ack control the encoded form has.
 
 The publisher comes from the include site: a `Serialized` reply attaches a plain publish policy
-(`b.include(relay).publisher(MemoryPublish)`), an encoded one wraps the policy in
+(`b.include(relay).publisher(Publish)`), an encoded one wraps the policy in
 `TypedPublisher::new(..)`, and with no call at all the broker's default publish policy carries
 the reply. A failed reply publish nacks the delivery with requeue, exactly as on the encoded
 path:

@@ -6,12 +6,8 @@
 //! cargo run --example middleware_app_scope --features macros,memory,json -- run
 //! ```
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, BlanketLayer, Context, Handler, HandlerOutcome, Identity, Layer, Router, RustStream,
-    Stack,
-};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{BlanketLayer, Handler, Identity, Layer, Stack};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

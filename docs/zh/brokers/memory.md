@@ -15,6 +15,27 @@ use ruststream::memory::MemoryBroker;
 let broker = MemoryBroker::new();
 ```
 
+## 挂载点导入的 prelude { #prelude }
+
+`ruststream::memory::prelude` 是这个 Broker 的 glob，形状和每个 Broker crate 的一样：先重导出核心
+prelude，再是该 Broker 自己的表面（`MemoryBroker`、`MemorySource`、`MemoryError`，以及上下文键
+`MemoryContext` / `MemoryBatchContext` / `Position` / `SeekHandle` 和 `MemoryPosition`），最后是
+挂载点所写的那套统一名字下的发布策略 - `Publish`、`TransactionalPublish` 和 `Request`，三者都是
+`MemoryPublish` / `MemoryRequest` 的别名。由于进程内发布者同时具备两种事务，这里的
+`TransactionalPublish` 就是 `Publish` 那一个策略；拥有独立事务配置的 Broker 会把别名指向另一个。
+
+<!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
+```rust
+use ruststream::memory::prelude::*;
+```
+
+这个 glob 还会带进该 Broker 在其实时值上实现的能力 trait（`TransactionalPublisher`、
+`OwnedTransactions`、`Transaction`、`RequestReply`、`Positioned`、`Seeker`），因此它们携带的操作在
+策略所在之处同样可用。`Partitioned` 是特意留在外面的：它一旦进入作用域，`msg.partition_key()` 就会与
+`IncomingMessage` 的默认方法产生歧义，所以要读分区键的服务显式导入它。处理器主体仍写
+`use ruststream::prelude::*;` - 它写的是能力而不是策略，因此并不知道由哪个 Broker 运行它 - 而同时
+放着主体和挂载点的文件，只用这一个 Broker glob 就够了。
+
 ## 语义
 
 - **名字精确匹配。** 对 `orders` 的订阅只会收到发布到 `orders` 的消息；没有通配符，也没有模式匹配
@@ -74,7 +95,7 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
 === "宏"
 
     ```rust
-    use ruststream::memory::MemorySource;
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/routed_service/orders.rs:descriptor"
     ```
@@ -82,7 +103,7 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
 === "手写"
 
     ```rust
-    use ruststream::memory::{MemoryPublish, MemorySource};
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```

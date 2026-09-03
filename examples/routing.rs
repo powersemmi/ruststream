@@ -5,9 +5,7 @@
 //! cargo run --example routing --features macros,memory,json -- run
 //! ```
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, Router, RouterDef, RustStream};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

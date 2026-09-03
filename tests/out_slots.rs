@@ -12,15 +12,11 @@ mod common;
 
 use common::{Event, Wire};
 
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{
-    AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream, SlotPublisher,
-};
+use ruststream::PairError;
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::runtime::SlotPublisher;
 use ruststream::testing::TestApp;
-use ruststream::{
-    Broker, Deserialized, HeaderMap, OutSlot, OwnedTransactions, PairError, PublishPolicy,
-    Publisher, subscriber,
-};
 
 /// The payload view the slot-publishing body takes: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -75,8 +71,8 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
     let app =
         RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(transcode)
-                .out(Audit, MemoryPublish)
-                .out(Encoded, MemoryPublish)
+                .out(Audit, Publish)
+                .out(Encoded, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -113,13 +109,13 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
 async fn a_slot_binds_a_foreign_broker_through_a_token() {
     let ingress = MemoryBroker::new();
     let other = MemoryBroker::new().bindable();
-    let to_other = other.bind(MemoryPublish);
+    let to_other = other.bind(Publish);
 
     let app = RustStream::new(AppInfo::new("slots-cross", "0.1.0"))
         .with_broker_labeled("other", other, |_b| {})
         .with_broker_labeled("ingress", ingress, |b| {
             b.include(transcode)
-                .out(Encoded, MemoryPublish)
+                .out(Encoded, Publish)
                 .out(Audit, to_other)
                 .build();
         });
@@ -165,7 +161,7 @@ async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) ->
 async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
     let app =
         RustStream::new(AppInfo::new("slots-txn", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle).out(Encoded, MemoryPublish).build();
+            b.include(settle).out(Encoded, TransactionalPublish).build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -229,7 +225,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(LaneRouter {
-            publisher: MemoryPublish.pair(connected).await?,
+            publisher: Publish.pair(connected).await?,
         })
     }
 }

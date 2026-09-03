@@ -10,13 +10,13 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use common::{Req, Resp};
-use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
+use ruststream::memory::MemoryMessage;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
-    PublishExt, PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream,
-    TypedPublisher, for_batch,
+    Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishLayer,
+    PublishNext, PublishPipeline, PublishTransform, for_batch,
 };
-use ruststream::{Broker, BuildContext, Field, HeaderMap, IncomingMessage, Publisher, subscriber};
+use ruststream::{BuildContext, Field};
 use tokio::sync::Notify;
 
 /// A broker context built from the incoming message: it lifts the correlation id off the headers so
@@ -79,8 +79,7 @@ async fn delivery_context_propagates_to_the_reply() {
     let ingress_pub = ingress.publisher();
 
     let egress = egress.bindable();
-    let egress_pub =
-        egress.bind(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation));
+    let egress_pub = egress.bind(TypedPublisher::new(Publish).transform(PropagateCorrelation));
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(egress, |b| {
             b.include(capture);
@@ -142,7 +141,7 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let ingress_pub = broker.publisher();
     // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
     // single-message mounts would reject a publisher carrying it.
-    let reply_pub = TypedPublisher::new(MemoryPublish).batch_transform(for_batch(MarkBatched));
+    let reply_pub = TypedPublisher::new(Publish).batch_transform(for_batch(MarkBatched));
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         b.include(batch_echo).publisher(reply_pub);

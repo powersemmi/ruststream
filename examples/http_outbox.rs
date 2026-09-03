@@ -21,11 +21,9 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{
-    AppInfo, HandlerOutcome, HealthProbe, HealthState, PublishExt, RustStream,
-};
-use ruststream::{Broker, Outgoing, subscriber};
+use ruststream::memory::MemoryPublisher;
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{HealthProbe, HealthState};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -120,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --8<-- [start:wiring]
     let broker = MemoryBroker::new().bindable();
     // A token, not a publisher: minted before registration, paired after start.
-    let egress = broker.bind(MemoryPublish);
+    let egress = broker.bind(Publish);
     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
         b.include(fulfil);
     });

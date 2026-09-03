@@ -6,9 +6,7 @@
 //! cargo run --example post_settle --features macros,memory,json -- run
 //! ```
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

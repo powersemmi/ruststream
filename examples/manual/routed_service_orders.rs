@@ -17,8 +17,7 @@ use std::error::Error;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemorySource};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// An order placed by a customer, delivered on the `orders` channel.
@@ -124,14 +123,14 @@ impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
 /// The mount, and the whole declaration the attribute's clauses carried: the broker's own
 /// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
 /// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays a
-/// chain step on both paths: `TypedPublisher::new(MemoryPublish)` pairs the policy with the
+/// chain step on both paths: `TypedPublisher::new(Publish)` pairs the policy with the
 /// default codec at startup.
 fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
     Router::<MemoryBroker>::new().include(
         subscriber(MemorySource::new("orders"), Confirm)
             .reply()
             .to("confirmations")
-            .publisher(TypedPublisher::new(MemoryPublish))
+            .publisher(TypedPublisher::new(Publish))
             .describe("Confirms an order and replies on `confirmations`.")
             .build(),
     )
