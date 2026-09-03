@@ -35,10 +35,10 @@ message(&export)  ->          bytes -> broker    （Serialized 的值本身就�
     ```
 
 用普通的 `include` 挂载它。如果不再多说什么，回复就会以默认编解码器、经由 Broker 的默认发布策略发出；
-要指定回复的编解码器或者加上变换，就用 `.publisher(..)` 链上一个架在 Broker 发布策略之上的
-[`TypedPublisher`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.TypedPublisher.html)
-栈（`TypedPublisher::new` 用默认编解码器，`TypedPublisher::with_codec` 则可以指定一个）。该栈是一份
-声明：运行时会在启动时把它与已连接的 Broker 配对。
+`.publisher(Publish)` 指定 Broker 前奏导出的发布策略，其后的步骤把回复接线补齐：`.codec(..)`
+指定回复的编解码器，`.transform(..)` 加上静态发布变换，`.transactional()` 让一页回复走同一个 Broker
+事务。每个步骤各占一个槽位、只填一次，因此写第二个 `.codec(..)` 是编译错误，而不是被悄悄覆盖。这套
+接线是一份声明：运行时会在启动时把它与已连接的 Broker 配对。
 
 === "宏"
 
@@ -53,12 +53,12 @@ message(&export)  ->          bytes -> broker    （Serialized 的值本身就�
     ```
 
 入站请求的解码遵循作用域（用 `with_broker_codec` 设定的作用域编解码器，没有设定则用默认编解码器）；
-回复的编解码器则随着附加上去的栈一起走。参见[编解码器](codecs.md#the-publish-side)。
+回复的编解码器则随着这条链搭好的接线一起走。参见[编解码器](codecs.md#the-publish-side)。
 
 一个子句服务于两种传输方式，因为这个选择属于回复的类型，而不属于子句。实现了 `serde::Serialize`
-的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此附加的是一个
-普通的发布策略：这种传输方式没有编解码器可命名，也就没有 `TypedPublisher` 要把它包进去。参见
-[原始字节订阅者](subscribers.md#raw-subscribers)。
+的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此它的
+`.publisher(..)` 只接一个策略、别的都不接：这种传输方式没有编解码器可命名，其后写 `.codec(..)`
+不会通过编译。参见[原始字节订阅者](subscribers.md#raw-subscribers)。
 
 ## 控制确认行为
 
@@ -325,9 +325,9 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
 
 消息离开进程之前会跑过两类变换，而且它们可以组合：
 
-- **`TypedPublisher` 上的静态 `PublishTransform`**，用 `.transform(..)` 添加。这是零成本、按目的地
-  生效的变换（一层信封、一个固定的 content type，或者把这次投递的链路追踪 / 关联 id 盖到回复上）。
-  它们最先运行，离值最近。
+- **回复接线上的静态 `PublishTransform`**，在 `.publisher(..)` 之后用 `.transform(..)` 添加。这是
+  零成本、按目的地生效的变换（一层信封、一个固定的 content type，或者把这次投递的链路追踪 /
+  关联 id 盖到回复上）。它们最先运行，离值最近。
 - **应用上的静态 `PublishLayer`**，用 `.publish_layer(..)` 添加。这是横切关注点（发布指标、死信包装），
   作用于每一条发布出去的消息，包在发送外面，因此能观察到发送的结果。整条链会组合成一个具体类型，
   于是它成为应用类型的一部分。构建器通常返回 `impl App`，从不把它写出来；
@@ -367,8 +367,9 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
     --8<-- "examples/manual/publishing.rs:pipeline"
     ```
 
-这条管线跑在回复路径上（`publish(..)` 那种写法）。注入的 `Out` 发布者是所附策略的活形态，直接使用，
-因此按发布者生效的变换要在挂载点用 `TypedPublisher::transform` 组合进策略里。完整的程序见
+这条管线跑在回复路径上（`publish(..)` 那种写法）。注入的 `Out` 发布者是所绑定策略的活形态，直接使用：
+`.out(marker, policy)` 自己没有变换栈，因此需要变换的消息要么走回复路径，要么交给应用级的
+`publish_layer` 去盖。完整的程序见
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs)。
 
 ## 批量回复与事务
@@ -403,16 +404,16 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
     --8<-- "examples/manual/publishing.rs:batch_publishing_mount"
     ```
 
-用普通的 `TypedPublisher` 时，每条回复各自独立发布；批量中途失败会重试整批，因此先前那些回复可能在
-重新投递时再发一次（至少一次）。在 `TypedPublisher` 上调用 `.transactional()`，会把这套接线切换成
+不写 `.transactional()` 时，每条回复各自独立发布；批量中途失败会重试整批，因此先前那些回复可能在
+重新投递时再发一次（至少一次）。在 `.publisher(..)` 之后链上 `.transactional()`，会把这套接线切换成
 每批一个 Broker 事务：运行时开启事务，发布每一条回复，提交，然后才 ack 入站的这一批；任何失败都会中止
 事务，所以回复绝不会只露出一半。事务性这项要求在消费接线的地方强制执行：挂载它要求策略的活发布者
-是事务性的，因此没有事务的 Broker 依然无法通过编译。单条消息的回复写法仍然接受普通的
-`TypedPublisher` 栈。
+是事务性的，因此没有事务的 Broker 依然无法通过编译。单条消息的回复没有一页内容可做成原子的，因此
+`.transactional()` 只挂得上分页的写法。
 
 ## 手动事务
 
-在批量回复这条路径之外，可以手动驱动事务：在事务性接线上调用 `begin()`，会开启一个拥有该事务的
+在批量回复这条路径之外，可以手动驱动事务：在任何事务性发布者上调用 `begin()`，会开启一个拥有该事务的
 `TransactionScope`。发布都经由该作用域进行，而 `commit()` / `abort()` 会消费它，于是没有 begin 就
 commit、第二次 commit、结算之后再发布，都是编译错误，而不是运行时的意外：
 
@@ -434,19 +435,20 @@ commit、第二次 commit、结算之后再发布，都是编译错误，而不�
 
 该作用域属于借用式的事务：它借用句柄上唯一的 Broker 侧事务，因此每个句柄同一时刻只有一个作用域
 处于打开状态。如果某个 Broker 的事务是客户端缓冲区而不是 producer 状态，它还会实现拥有式的那种，即
-`OwnedTransactions`：每次调用 `transaction()` 都会开启一个独立的事务，其缓冲区就存放在返回的
+`OwnedTransactions`：每次调用都会开启一个独立的事务，其缓冲区就存放在返回的
 `TypedTransaction` 里，因此同一个句柄上可以并发打开任意多个，结算其中一个也绝不会碰到另一个。
 `message(..).publish()` 把内容缓冲进该值，`commit()` / `abort()` 消费它，这与作用域一样是“结算即消费”
 的纪律；而丢弃一个这样的事务只是丢掉它的缓冲区（并记录一条警告），不会留下一个打开着的 Broker 事务。
 像 Kafka 那样客户端每个 producer 恰好持有一个事务的 Broker，只实现借用式的那种。
 
-拥有式的那种在两种表面上的写法也一样：发布者在客户端缓冲事务的 `TypedPublisher` 提供
-`transaction()`，带 `Out<impl OwnedTransactions, Ledger>` 约束的槽位同样提供。
-`transaction()` 会开启一个 `TypedTransaction`，它拥有该 Broker 事务，并用该表面的编解码器编码，写作
-`let mut txn = typed.transaction().await?;`，然后是 `txn.message(&value).publish().await?;` 和
-`txn.commit().await?;`。`.transactional()` 加 `begin()` 给出的是借用式作用域（每个句柄一个），而在同
-一个 `TypedPublisher` 上，同一时刻可以打开任意多个 `TypedTransaction`。拥有式事务的缓冲区在槽位之外
-结算，因此它的发布会落在 Broker 的发布日志里，而不是槽位自己的记录里。
+拥有式的那种在两种表面上的写法也一样：在客户端缓冲事务的发布者提供 `owned_transaction()`，带
+`Out<impl OwnedTransactions, Ledger>` 约束的槽位提供 `transaction()`。两者都会开启一个
+`TypedTransaction`，它拥有该 Broker 事务，并用该表面的编解码器编码，写作
+`let mut txn = publisher.owned_transaction().await?;`，然后是 `txn.message(&value).publish().await?;`
+和 `txn.commit().await?;`。`begin()` 给出的是借用式作用域（每个句柄一个），而在同一个发布者上，同一
+时刻可以打开任意多个 `TypedTransaction`。（名字里写出 *owned*，是因为 Broker 自己的
+`OwnedTransactions::transaction` 总在同一处可见。）拥有式事务的缓冲区在槽位之外结算，因此它的发布
+会落在 Broker 的发布日志里，而不是槽位自己的记录里。
 
 ## 批量发布
 

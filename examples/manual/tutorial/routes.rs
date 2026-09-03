@@ -10,14 +10,13 @@ use crate::orders::{Confirm, Receive};
 // destination and the publisher it leaves through. The publisher wiring is still a publish
 // policy - pure declaration, so the router needs no broker at all.
 pub(crate) fn orders() -> impl RouterDef<MemoryBroker> {
-    let replies = TypedPublisher::new(Publish);
     Router::new()
         .include(subscriber("orders", Receive).build())
         .include(
             subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
-                .publisher(replies)
+                .publisher(Publish)
                 .build(),
         )
 }

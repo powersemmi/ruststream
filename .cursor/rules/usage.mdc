@@ -6,10 +6,10 @@ alwaysApply: false
 
 - A handler body imports one glob: `use ruststream::prelude::*;`. It carries the application
   builder, the handler surface (`HandlerOutcome`, `Context`), every extractor (`State`, `Ctx`,
-  `Headers`, `Out`), the mount-site settings, `TypedPublisher`, the publisher capability traits a
-  slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`),
-  and the attribute macros and derives. A body never names a publish policy, so it never knows
-  which broker runs it.
+  `Headers`, `Out`), the mount-site settings, the publish builder (`PublishExt`), the publisher
+  capability traits a slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
+  `RequestReply`), and the attribute macros and derives. A body never names a publish policy, so it
+  never knows which broker runs it.
 - A mount site imports the BROKER's glob (`use ruststream_nats::prelude::*;`,
   `use ruststream::memory::prelude::*;`): it re-exports the core prelude, the broker, its
   subscription descriptor and its context keys, plus its publish policies under the uniform names
@@ -200,8 +200,15 @@ async fn confirm(order: &Order) -> Confirmation {
 
 // in with_broker(broker, |b| { ... }):
 b.include(confirm);                                    // broker's default publish policy
-b.include(confirm).publisher(TypedPublisher::new(Publish));  // an explicit one
+b.include(confirm).publisher(Publish);                 // an explicit one
+b.include(confirm).publisher(Publish).codec(CborCodec).transform(Envelope);  // the whole wiring
 ```
+
+The steps after `.publisher(..)` fill the reply wiring, each once: `.codec(..)` names the reply
+codec (the default codec applies without it), `.transform(..)` composes a static
+`PublishTransform`, `.batch_transform(..)` does the same on a page's replies, and
+`.transactional()` publishes a page's replies inside one broker transaction. A second `.codec(..)`,
+or any of these on a `Serialized` (byte-for-byte) reply, is a compile error.
 
 Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` publishes and acks,
 `Err(outcome)` publishes nothing and the dispatcher acts on the returned `HandlerOutcome`. Spell the
@@ -261,9 +268,9 @@ async fn relay(frame: &Frame<'_>) -> Export {
 }
 ```
 
-A `Serialized` reply attaches a plain publish policy at the include site
-(`b.include(relay).publisher(Publish)`, or nothing for the broker's default), where an
-encoded one wraps the policy in `TypedPublisher::new(..)`.
+A `Serialized` reply names its publish policy at the include site the same way an encoded one does
+(`b.include(relay).publisher(Publish)`, or nothing for the broker's default); what it does not take
+is the wiring steps after it, since its bytes leave with no codec and no transform stack.
 
 For a custom serialization format you want *typed* handlers for, implement `Codec` instead and
 keep the typed path.
@@ -470,22 +477,20 @@ b.after_startup(Publish, async move |publisher| {
 
 Every `Publisher` gets `.message(&value)` from `PublishExt`, which the prelude carries - a
 `Serialize` value encodes with `DefaultCodec`, a `Serialized` value's bytes leave as they are -
-so a bare policy is enough for an ordinary typed publish.
-Reach for `TypedPublisher` only when you are changing something about how the value travels:
+so a bare policy is all a hook ever takes. Name a codec at the call, and open a transaction
+straight on the publisher:
 
 ```rust
 use ruststream::codec::CborCodec;
 
-// a codec other than the crate default
-b.after_startup(TypedPublisher::with_codec(Publish, CborCodec), async move |p| seed(p).await);
+// a codec other than the crate default, named at the publish
+b.after_startup(Publish, async move |p| {
+    p.message(&Seed { id: 1 }).with_codec(CborCodec).publish().await
+});
 
-// a per-publisher transform, e.g. stamping an envelope header on everything this handle sends
-b.after_startup(TypedPublisher::new(Publish).transform(EnvelopeTransform), hook);
-
-// an atomic seed: `.transactional()` marks the wiring, and pairing then checks that the live
-// publisher is transactional
+// an atomic seed: `begin()` opens the scope a transactional publisher owns
 b.after_startup(
-    TypedPublisher::new(TransactionalPublish).transactional(),
+    TransactionalPublish,
     async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
 );
 ```

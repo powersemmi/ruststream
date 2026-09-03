@@ -574,7 +574,7 @@ use ruststream_nats::prelude::*;
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
         // `Publish` is this crate's publish policy; the runtime pairs it after connect.
-        b.include(confirm).publisher(TypedPublisher::new(Publish::default()));
+        b.include(confirm).publisher(Publish::default());
     });
 ```
 

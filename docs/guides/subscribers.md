@@ -542,11 +542,12 @@ through the reply codec, a `#[derive(Serialized)]` newtype carries its own bytes
 byte-for-byte, exactly as the handler returned it. Return the reply directly, or as
 `Result<Export, HandlerOutcome>` for the same explicit ack control the encoded form has.
 
-The publisher comes from the include site: a `Serialized` reply attaches a plain publish policy
-(`b.include(relay).publisher(Publish)`), an encoded one wraps the policy in
-`TypedPublisher::new(..)`, and with no call at all the broker's default publish policy carries
-the reply. A failed reply publish nacks the delivery with requeue, exactly as on the encoded
-path:
+The publisher comes from the include site: both wires name the policy the same way
+(`b.include(relay).publisher(Publish)`), and with no call at all the broker's default publish
+policy carries the reply. The difference is what chains after it - an encoded reply takes
+`.codec(..)`, `.transform(..)` and `.transactional()`, while a `Serialized` reply's bytes leave
+untouched, so those steps do not exist there. A failed reply publish nacks the delivery with
+requeue, exactly as on the encoded path:
 
 === "Macros"
 

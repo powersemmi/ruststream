@@ -114,8 +114,8 @@ use parse::{SubscriberArgs, doc_description};
 /// returns `Vec<Reply>` (or
 /// `Result<Vec<Reply>, HandlerOutcome>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
-/// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply
-/// publishes, or `.transactional()` for one transaction per batch.
+/// the whole batch is acked after. Name the reply's policy with `.publisher(..)` for independent
+/// reply publishes, and chain `.transactional()` for one transaction per batch.
 ///
 /// A `workers(n)` clause processes up to `n` deliveries (or batches) of this subscriber
 /// concurrently, each in its own task; global processing order is lost by design, and

@@ -9,14 +9,12 @@
 
 use std::error::Error;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::{
     Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline, PublishTransform,
-    Transactional,
 };
 use serde::{Deserialize, Serialize};
 
@@ -222,12 +220,10 @@ async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerOutcome> {
 // --8<-- [start:manual_transaction]
 /// Seeds the reference events inside one broker transaction: both records become visible
 /// together on commit, or not at all. The scope owns the transaction, so a commit without a
-/// begin, a second commit, or a publish after settling do not compile. The wiring arrives
+/// begin, a second commit, or a publish after settling do not compile. The publisher arrives
 /// already paired (the scope's `after_startup` hands it over live), so seeding cannot race the
 /// broker connect; the bound names the capability the seeding needs, not the broker's publisher.
-async fn seed_events<P>(
-    seeder: Transactional<P, JsonCodec>,
-) -> Result<(), Box<dyn Error + Send + Sync>>
+async fn seed_events<P>(seeder: P) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     P: TransactionalPublisher,
 {
@@ -259,15 +255,15 @@ fn app() -> impl App {
         .with_broker(broker, |b| {
             // the first publish: runs once connected and subscribed, with the transactional
             // wiring already paired
-            b.after_startup(
-                TypedPublisher::with_codec(TransactionalPublish, JsonCodec).transactional(),
-                async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
-            );
+            b.after_startup(TransactionalPublish, async move |seeder| {
+                seed_events(seeder).await.map_err(std::io::Error::other)
+            });
             // --8<-- [start:reply_mount]
-            // static, per-publisher: a policy stack, composed at compile time and paired with
-            // the connected broker at startup
+            // static, per-reply: the chain names the policy and composes the transform at
+            // compile time; the runtime pairs it with the connected broker at startup
             b.include(respond)
-                .publisher(TypedPublisher::new(Publish).transform(EnvelopeTransform));
+                .publisher(Publish)
+                .transform(EnvelopeTransform);
             // the default reply wiring: the broker's default policy under the default codec
             b.include(validate);
             // --8<-- [end:reply_mount]
@@ -294,7 +290,8 @@ fn app() -> impl App {
             // .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher is transactional. Without it, each reply publishes independently.
             b.include(confirm)
-                .publisher(TypedPublisher::new(TransactionalPublish).transactional());
+                .publisher(TransactionalPublish)
+                .transactional();
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

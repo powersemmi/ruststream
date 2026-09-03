@@ -40,12 +40,12 @@ sends it:
     ```
 
 Mount it with plain `include`. With nothing else said, the reply goes out through the broker's
-default publish policy under the default codec; to name the reply codec or add transforms, chain
-`.publisher(..)` with a
-[`TypedPublisher`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.TypedPublisher.html)
-stack over the broker's publish policy
-(`TypedPublisher::new` uses the default codec; name one with `TypedPublisher::with_codec`). The
-stack is a declaration: the runtime pairs it with the connected broker at startup.
+default publish policy under the default codec; `.publisher(Publish)` names the policy the broker
+prelude exports, and the steps after it fill the rest of the reply wiring - `.codec(..)` for the
+reply codec, `.transform(..)` for a static publish transform, `.transactional()` for a page's
+replies in one broker transaction. Each step fills its own slot once, so naming a codec twice is a
+compile error rather than a silent overwrite. The wiring is a declaration: the runtime pairs it
+with the connected broker at startup.
 
 === "Macros"
 
@@ -60,13 +60,13 @@ stack is a declaration: the runtime pairs it with the connected broker at startu
     ```
 
 Decoding of the incoming request follows the scope (the scope codec set with
-`with_broker_codec`, else the default codec); the reply codec travels on the attached stack. See
-[Codecs](codecs.md#the-publish-side).
+`with_broker_codec`, else the default codec); the reply codec travels on the wiring the chain
+built. See [Codecs](codecs.md#the-publish-side).
 
 One clause serves both wires, because the choice belongs to the reply type rather than to the
 clause. A `serde::Serialize` reply encodes, as above. A `#[derive(Serialized)]` reply carries
-its own bytes and leaves byte-for-byte, so it attaches a plain publish policy: there is no codec
-to name on that wire, and therefore no `TypedPublisher` to wrap it in. See
+its own bytes and leaves byte-for-byte, so its `.publisher(..)` takes the policy and nothing else:
+there is no codec to name on that wire, and `.codec(..)` after it does not compile. See
 [raw subscribers](subscribers.md#raw-subscribers).
 
 ## Controlling the acknowledgement
@@ -363,9 +363,10 @@ still carries the handle's argument.
 
 Two kinds of transform run before a message leaves the process, and they compose:
 
-- **Static `PublishTransform`** on a `TypedPublisher`, added with `.transform(..)`. Zero-cost,
-  per-destination transforms (an envelope, a fixed content type, or stamping the delivery's trace /
-  correlation id onto the reply). They run first, closest to the value.
+- **Static `PublishTransform`** on the reply wiring, chained with `.transform(..)` after
+  `.publisher(..)`. Zero-cost, per-destination transforms (an envelope, a fixed content type, or
+  stamping the delivery's trace / correlation id onto the reply). They run first, closest to the
+  value.
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can observe its result. The chain composes into a concrete type, so it becomes part
@@ -410,8 +411,9 @@ Both levels compose on the application:
     ```
 
 The pipeline runs on the reply path (the `publish(..)` form). An injected `Out` publisher is the
-attached policy's live form, used directly, so compose any per-publisher transforms into the
-policy at the include site with `TypedPublisher::transform`. The full program is
+bound policy's live form, used directly: `.out(marker, policy)` carries no transform stack of its
+own, so a message that needs one is either published through the reply path or stamped by the
+app-wide `publish_layer`. The full program is
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs).
 
 ## Batch replies and transactions
@@ -448,20 +450,21 @@ Mount it with `include`, chaining the reply wiring with `.publisher(..)`:
     --8<-- "examples/manual/publishing.rs:batch_publishing_mount"
     ```
 
-With a plain `TypedPublisher`, each reply publishes independently; a mid-batch failure retries
+Without `.transactional()`, each reply publishes independently; a mid-batch failure retries
 the whole batch, so the earlier replies may be published again on redelivery (at-least-once).
-Calling `.transactional()` on the `TypedPublisher` switches the wiring to one broker transaction
+Chaining `.transactional()` after `.publisher(..)` switches the wiring to one broker transaction
 per batch: the runtime begins a transaction, publishes every reply, commits, and only then acks
 the incoming batch; any failure aborts, so replies are never half-visible. The transactional
 requirement is enforced where the wiring is consumed: mounting it needs a policy whose live
-publisher is transactional, so a broker without transactions still fails to compile. The
-single-message reply forms keep taking a plain `TypedPublisher` stack.
+publisher is transactional, so a broker without transactions still fails to compile. A
+single-message reply has no page to make atomic, so `.transactional()` mounts on the page forms
+only.
 
 ## Manual transactions
 
-Outside the batch-reply path, drive a transaction by hand: `begin()` on the transactional wiring
-opens a `TransactionScope` that owns the transaction. Publishes go through the scope, and
-`commit()` / `abort()` consume it - so a commit without a begin, a second commit, or a publish
+Outside the batch-reply path, drive a transaction by hand: `begin()` on any transactional
+publisher opens a `TransactionScope` that owns the transaction. Publishes go through the scope,
+and `commit()` / `abort()` consume it - so a commit without a begin, a second commit, or a publish
 after settling are compile errors, not runtime surprises:
 
 ```rust
@@ -484,24 +487,23 @@ the test harness.
 
 The scope is the borrowed transaction kind: it borrows the handle's single broker-side
 transaction, so one scope per handle is open at a time. Brokers whose transactions are client
-buffers rather than producer state also implement the owned kind, `OwnedTransactions`: every
-`transaction()` call opens an independent transaction whose buffer lives in the returned
-`TypedTransaction`, so any number can be open concurrently on one handle and settling one never
-touches another. `message(..).publish()` buffers into the value and `commit()` / `abort()`
-consume it - the same settle-by-consuming discipline as the scope - while dropping one merely
-discards its buffer (with a warning) instead of leaving a broker transaction open. Kafka-like
-brokers, whose client holds exactly one transaction per producer, implement only the borrowed
-kind.
+buffers rather than producer state also implement the owned kind, `OwnedTransactions`: every call
+opens an independent transaction whose buffer lives in the returned `TypedTransaction`, so any
+number can be open concurrently on one handle and settling one never touches another.
+`message(..).publish()` buffers into the value and `commit()` / `abort()` consume it - the same
+settle-by-consuming discipline as the scope - while dropping one merely discards its buffer (with
+a warning) instead of leaving a broker transaction open. Kafka-like brokers, whose client holds
+exactly one transaction per producer, implement only the borrowed kind.
 
-The owned kind reads the same on both surfaces: a `TypedPublisher` whose publisher buffers
-client-side transactions offers `transaction()`, and so does a slot bound with
-`Out<impl OwnedTransactions, Ledger>`. It opens a `TypedTransaction` that owns the broker
-transaction and encodes with the surface's codec -
-`let mut txn = typed.transaction().await?;`, then `txn.message(&value).publish().await?;` and
-`txn.commit().await?;`. Where `.transactional()` + `begin()` gives the borrowed scope (one per
-handle), any number of `TypedTransaction`s can be open on one `TypedPublisher` at a time. An
-owned transaction's buffer settles outside the slot, so its publishes land in the broker's
-publish log rather than the slot's own capture.
+The owned kind reads the same on both surfaces: a publisher that buffers client-side transactions
+offers `owned_transaction()`, and a slot bound with `Out<impl OwnedTransactions, Ledger>` offers
+`transaction()`. Both open a `TypedTransaction` that owns the broker transaction and encodes with
+the surface's codec - `let mut txn = publisher.owned_transaction().await?;`, then
+`txn.message(&value).publish().await?;` and `txn.commit().await?;`. Where `begin()` gives the
+borrowed scope (one per handle), any number of `TypedTransaction`s can be open on one publisher at
+a time. (The name spells out *owned* because a broker's own `OwnedTransactions::transaction` is in
+scope wherever this is.) An owned transaction's buffer settles outside the slot, so its publishes
+land in the broker's publish log rather than the slot's own capture.
 
 ## Batch publishing
 

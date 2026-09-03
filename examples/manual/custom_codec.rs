@@ -132,8 +132,8 @@ impl Handle<Order> for Audit {
 
 /// The replying handler. `publish("receipts")` is a reply clause on the definition, so without it
 /// the handler owns both halves of the reply: the publisher it sends through and the codec that
-/// frames what it sends. Holding the codec rather than a `TypedPublisher` is what keeps the
-/// framing per handler - the publish names it at the call, the most specific rung of the codec
+/// frames what it sends. Holding the codec rather than naming one on a reply chain is what keeps
+/// the framing per handler - the publish names it at the call, the most specific rung of the codec
 /// ladder.
 struct Bill {
     receipts: MemoryPublisher,

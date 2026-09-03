@@ -123,15 +123,15 @@ impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
 /// The mount, and the whole declaration the attribute's clauses carried: the broker's own
 /// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
 /// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays a
-/// chain step on both paths: `TypedPublisher::new(Publish)` pairs the policy with the
-/// default codec at startup.
+/// chain step on both paths: `.publisher(Publish)` names the policy, which pairs with the
+/// connected broker at startup and encodes with the default codec.
 fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
     Router::<MemoryBroker>::new().include(
         subscriber(MemorySource::new("orders"), Confirm)
             .reply()
             .to("confirmations")
-            .publisher(TypedPublisher::new(Publish))
             .describe("Confirms an order and replies on `confirmations`.")
+            .publisher(Publish)
             .build(),
     )
 }

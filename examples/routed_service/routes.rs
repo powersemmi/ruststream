@@ -18,25 +18,24 @@ use crate::{orders, payments};
 /// The order-lifecycle router: a publishing handler that replies to `confirmations`, plus the
 /// cancellation handler.
 ///
-/// `confirm` needs a publisher for its reply; `TypedPublisher::new` pairs the `Publish`
-/// policy with the default codec, and `.transform(StampSource)` composes a static publish
-/// transform onto it that stamps a provenance header on every confirmation - publisher settings
-/// live here, on the `TypedPublisher`, not in the `publish("..")` decorator (which only names the
-/// destination).
+/// `confirm` needs a publisher for its reply; `.publisher(Publish)` names the policy and
+/// `.transform(StampSource)` composes a static publish transform onto it that stamps a provenance
+/// header on every confirmation - reply settings live on this chain, not in the `publish("..")`
+/// decorator (which only names the destination).
 /// The reply wiring is a publish policy stack, pure declaration: the runtime pairs it with the
 /// connected broker at startup, so the router borrows no broker. `on_cancel` has no reply, so it
-/// is mounted with `include`. The router is a consuming builder, so the calls chain; the
-/// registration list is opaque, hence `impl RouterDef`.
+/// is mounted with `include`. The router is a consuming builder, so the calls chain and each
+/// attachment closes with `.build()`; the registration list is opaque, hence `impl RouterDef`.
 ///
 /// `use<>` opts out of capturing the `metrics` borrow: the router owns its layer (`Arc`-backed),
 /// so the caller can still mutate the scope to mount it.
 pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
-    let confirmations = TypedPublisher::new(Publish).transform(StampSource);
-
     Router::new()
         .layer(metrics.consume_layer())
         .include(orders::confirm)
-        .publisher(confirmations)
+        .publisher(Publish)
+        .transform(StampSource)
+        .build()
         .include(orders::on_cancel)
 }
 
@@ -48,11 +47,11 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
 /// the `TransactionalPublish` policy pairs into a transactional publisher; a broker without
 /// transactions fails to compile at the registration.
 pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
-    let settlements = TypedPublisher::new(TransactionalPublish).transactional();
-
     Router::new()
         .layer(metrics.consume_layer())
         .include(payments::process_payment)
         .include(payments::settle)
-        .publisher(settlements)
+        .publisher(TransactionalPublish)
+        .transactional()
+        .build()
 }

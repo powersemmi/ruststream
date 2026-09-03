@@ -123,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(TypedPublisher::new(Publish))
+                    .publisher(Publish)
                     .build(),
             );
         });

@@ -56,10 +56,10 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 /// A static publish-side layer: stamps a provenance header on every message a publisher sends.
 ///
 /// This is the other kind of publisher customisation. Where the consume `Observe` layer wraps
-/// handlers, a [`PublishTransform`] is composed onto one [`TypedPublisher`](ruststream::runtime::TypedPublisher)
-/// at build time with `.layer(..)` - zero-cost and scoped to that publisher, unlike the dynamic,
-/// app-wide metrics middleware added with `RustStream::publish_layer`. [`routes`](crate::routes)
-/// attaches it to the confirmations publisher, so every confirmation carries the header.
+/// handlers, a [`PublishTransform`] is composed onto one registration's reply wiring at build
+/// time with `.transform(..)` - zero-cost and scoped to that reply, unlike the dynamic, app-wide
+/// metrics middleware added with `RustStream::publish_layer`. [`routes`](crate::routes) chains it
+/// onto the confirmations reply, so every confirmation carries the header.
 pub(crate) struct StampSource;
 
 impl<C> PublishTransform<C> for StampSource {

@@ -62,7 +62,7 @@ alwaysApply: false
   a clause for you, so what the attribute would have declared you write as a trait impl.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
   feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerOutcome`,
-  `Name`, `Publisher`, `PublishExt`, `TypedPublisher`, and the whole manual path (the `subscriber`
+  `Name`, `Publisher`, `PublishExt`, and the whole manual path (the `subscriber`
   constructor, the body trait `Handle` with its input spellings `Message` and `Deserialized`, the
   reply traits `Serialized` / `ReplyShape`, the injections arena `Outs` / `Slot` and the publisher
   capability traits a slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
@@ -350,14 +350,14 @@ A payload that already is bytes implements `Serialized` the same way - `fn bytes
 plus the wire spellings (`MessageWire`, `ReplyShape`), exactly what `#[derive(Serialized)]`
 writes - and rides the same `message(..)` entry with no codec on the path.
 
-`TypedPublisher`, `after_startup`, publish transforms and `publish_layer` are all runtime API and
-work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the chain -
-`.to(dest)` names the destination the reply type does not declare itself - and the wire follows the
-reply *type*, not the chain: a `serde::Serialize` `R` encodes through the codec, so it attaches
-`.publisher(TypedPublisher::new(policy))` (or nothing, for the broker's default), while an `R`
-implementing `Serialized` (the impls above; `ReplyShape` with `type Wire = SerializedReply`
-covers the reply position) leaves byte-for-byte and attaches a
-plain policy - `.publisher(Publish)`, or nothing for the broker's default. There is one
+The reply wiring chain, `after_startup`, publish transforms and `publish_layer` are all runtime API
+and work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the
+chain - `.to(dest)` names the destination the reply type does not declare itself - and the wire
+follows the reply *type*, not the chain: both wires name the policy with `.publisher(policy)` (or
+nothing, for the broker's default), and what differs is what chains after it. A `serde::Serialize`
+`R` encodes through the codec, so it takes `.codec(..)`, `.transform(..)` and `.transactional()`;
+an `R` implementing `Serialized` (the impls above; `ReplyShape` with `type Wire = SerializedReply`
+covers the reply position) leaves byte-for-byte, so those steps do not compile on it. There is one
 `.reply()` and one publisher step for both wires. A page reply always publishes through the
 reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
 `Outs<(Slot<Marker, W, Enc>,)>`, where `W` is the wired live value and `Enc` the include site's
