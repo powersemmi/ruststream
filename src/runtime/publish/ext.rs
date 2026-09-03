@@ -1,16 +1,9 @@
 //! The publish builder's entry points on a bare [`Publisher`].
 
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::OutgoingDestination;
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::DefaultCodec;
-use crate::{CallerName, Publisher};
+use crate::{CallerName, OutgoingDestination, Publisher};
 
-use super::builder::{HeadersUnset, PublishBuilder, RawBody, raw_of};
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use super::builder::{MessageBody, message_of};
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use super::sink::CallCodec;
+use super::builder::{HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of};
+use super::sink::UnnamedCodec;
 
 /// The publish builder on any [`Publisher`]: `message(..)` for a value, `raw(..)` for bytes.
 ///
@@ -62,18 +55,19 @@ pub trait PublishExt: Publisher {
     /// [`Serialized`](super::Serialized) value's bytes leave as they are instead - the wire is
     /// the type's own ([`MessageWire`](super::MessageWire)), and no codec runs on it.
     ///
-    /// Available when a codec feature is enabled; with none, every publish names its codec.
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    /// The entry point exists whatever the build; what a build without a codec feature cannot do
+    /// is *encode*, so a `Serialize` value published through it is a compile error naming the
+    /// three ways out, and a `Serialized` value publishes as it always did.
     fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, UnnamedCodec, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
-        // A bare publisher has no codec of its own, so the bottom of the ladder (the crate
-        // default) rides in the call position - the only one this surface has.
-        message_of(self, value, CallCodec(DefaultCodec::default()))
+        // A bare publisher has no codec of its own, so the position stays unnamed and resolves to
+        // the crate default - the bottom of the ladder, and the only rung this surface has.
+        message_of(self, value, UnnamedCodec::new())
     }
 }
 

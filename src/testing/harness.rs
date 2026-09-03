@@ -12,18 +12,17 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-// The default-codec publish helpers are gated on a codec feature, like the codec itself.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+// The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
+// builder entry points do not, because the value's own wire decides whether a codec is needed.
 use crate::OutgoingDestination;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::runtime::{CallCodec, MessageBody, message_of};
 use crate::runtime::{
     ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
     PublishIdentity, PublishSink, RawBody, RegisteredBroker, RustStream, RustStreamError, Starter,
     TestParts, raw_of,
 };
+use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{CallerName, OutgoingMessage};
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
@@ -541,21 +540,14 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> PublishBuilder<
-        InjectSink<'a>,
-        MessageBody<'a, T>,
-        CallCodec<DefaultCodec>,
-        HeadersUnset,
-        T::Form,
-    >
+    ) -> PublishBuilder<InjectSink<'a>, MessageBody<'a, T>, UnnamedCodec, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
-        message_of(self.sole_sink(), value, CallCodec(DefaultCodec::default()))
+        message_of(self.sole_sink(), value, UnnamedCodec::new())
     }
 
     /// Starts a byte injection on the only registered broker, a convenience for single-broker
@@ -813,23 +805,16 @@ impl<'a> BrokerHandle<'a> {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn message<'v, T>(
         &self,
         value: &'v T,
-    ) -> PublishBuilder<
-        InjectSink<'a>,
-        MessageBody<'v, T>,
-        CallCodec<DefaultCodec>,
-        HeadersUnset,
-        T::Form,
-    >
+    ) -> PublishBuilder<InjectSink<'a>, MessageBody<'v, T>, UnnamedCodec, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
-        // The harness carries no codec of its own, so the crate default rides in the call
-        // position - the same bottom of the ladder a bare publisher uses.
-        message_of(self.sink(), value, CallCodec(DefaultCodec::default()))
+        // The harness carries no codec of its own, so the position stays unnamed - the same
+        // bottom of the ladder a bare publisher uses.
+        message_of(self.sink(), value, UnnamedCodec::new())
     }
 
     /// Starts a byte injection onto this broker: the payload travels as it is, to the

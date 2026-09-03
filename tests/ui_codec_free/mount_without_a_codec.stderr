@@ -1,0 +1,17 @@
+error[E0277]: no codec is available to decode this subscriber's input
+  --> tests/ui_codec_free/mount_without_a_codec.rs:20:15
+   |
+20 |             b.include(handle);
+   |               ^^^^^^^ nothing in this chain names a codec
+   |
+   = help: the trait `ruststream::runtime::DefinitionInputCodec<runtime::input::Decoded<Order>, ()>` is not implemented for `()`
+   = note: enable a codec feature on `ruststream` (`json`, `cbor` or `msgpack`), name one for the scope (`with_broker_codec(broker, JsonCodec, |b| ..)`) or the registration (`.codec(JsonCodec)`), or give the input type its own decoding with `#[derive(Deserialized)]` so no codec is needed
+help: the trait `ruststream::runtime::DefinitionInputCodec<Input, Surface>` is conditionally implemented for `()`
+  --> src/runtime/settings.rs
+   |
+   | impl<Input, Surface: InputCodec<Input>> DefinitionInputCodec<Input, Surface> for () {
+   | ^^^^^^^^^^^^^^^^^^^^^-----------------^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                      |
+   |                      unsatisfied requirement introduced here: `(): runtime::router::mount::InputCodec<runtime::input::Decoded<Order>>`
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>` to implement `ruststream::runtime::MountsWith<runtime::input::Decoded<Order>, ()>`
+   = note: required for `Subscribing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>>`
