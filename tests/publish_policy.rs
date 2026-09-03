@@ -18,7 +18,7 @@ use ruststream::runtime::{
 use ruststream::testing::expect_published;
 use ruststream::{Broker, OutgoingMessage, PublishPolicy, RequestReply, subscriber};
 
-use common::{Order, Receipt, connected};
+use common::{Order, Receipt, Wire, connected};
 
 /// Stamps every outgoing reply, so the test can prove the transform stack survived pairing.
 struct Envelope;
@@ -41,7 +41,7 @@ async fn a_bare_policy_pairs_into_a_live_publisher() {
         .expect("memory pairing is infallible");
 
     publisher
-        .raw(b"paired")
+        .message(&Wire::of(b"paired"))
         .to("policy.out")
         .publish()
         .await
@@ -103,7 +103,7 @@ async fn a_typed_policy_stack_pairs_functorially() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&serde_json::to_vec(&Order { id: 7 }).unwrap())
+        .message(&Order { id: 7 })
         .to("policy.requests")
         .publish()
         .await

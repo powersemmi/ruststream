@@ -12,9 +12,9 @@ use crate::memory::{
 };
 use crate::nonzero;
 use crate::runtime::{
-    Context, Deserialized, Handle, HandlerOutcome, Input, Message, Outs, Publish, ReplyShape,
-    Router, RouterDef, Serialized, SerializedReply, Slot, SoloDeserialized, SubscriberSettings,
-    Verdict, subscriber,
+    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, Outs, Publish,
+    ReplyShape, Router, RouterDef, Serialized, SerializedReply, SerializedWire, Slot,
+    SoloDeserialized, SubscriberSettings, Verdict, subscriber,
 };
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -46,6 +46,10 @@ impl Serialized for Export {
     fn bytes(&self) -> &[u8] {
         &self.0
     }
+}
+
+impl MessageWire for Export {
+    type Wire = SerializedWire;
 }
 
 impl ReplyShape for Export {
@@ -269,7 +273,7 @@ impl crate::MessageHeaders for Event {
 impl crate::runtime::PublishedThrough<Analytics> for Event {}
 
 // A serialized out type is a first-class dictionary member: it declares its destination and
-// membership like any model, and its bytes leave through the slot's raw builder.
+// membership like any model, and its bytes leave through the same typed builder, uncoded.
 impl crate::OutgoingDestination for Export {
     type Form = crate::CallerName;
 }
@@ -298,7 +302,7 @@ where
         let export = Export(order.id.to_be_bytes().to_vec());
         if outs
             .get(Analytics)
-            .raw(export.bytes())
+            .message(&export)
             .to("order-exports")
             .publish()
             .await

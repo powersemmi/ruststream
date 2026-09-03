@@ -20,7 +20,7 @@ use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Out, PublishExt, RustStr
 use ruststream::testing::TestApp;
 use ruststream::{Deserialized, Publisher, Seeker, subscriber};
 
-use common::{Event, payload};
+use common::{Event, Wire};
 
 /// The payload view the byte-level handler below takes: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -60,7 +60,7 @@ async fn a_seek_key_repositions_from_inside_the_handler() {
     // message and resume at the third.
     for id in [0, 1, 2] {
         ingress
-            .raw(&payload(id))
+            .message(&Event { id })
             .to("seek.jobs")
             .publish()
             .await
@@ -96,7 +96,7 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
     // Published before the app exists: only the chosen start position makes them visible.
     for id in [1, 2] {
         ingress
-            .raw(&payload(id))
+            .message(&Event { id })
             .to("seek.history")
             .publish()
             .await
@@ -111,7 +111,7 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
     // The publish keeps the reaction in flight until the startup replay is applied, so
     // `settle` waits for the history too.
     ingress
-        .raw(&payload(3))
+        .message(&Event { id: 3 })
         .to("seek.history")
         .publish()
         .await
@@ -151,9 +151,8 @@ async fn forward_skipping(
         }
         return HandlerOutcome::ack();
     }
-    let payload = serde_json::to_vec(event).expect("serializable");
     if out
-        .raw(&payload)
+        .message(event)
         .to("seek.combo.out")
         .publish()
         .await
@@ -178,7 +177,7 @@ async fn an_out_parameter_and_a_seek_key_combine_in_one_handler() {
     // the third reaches the forwarding branch.
     for id in [0, 1, 2] {
         ingress
-            .raw(&payload(id))
+            .message(&Event { id })
             .to("seek.combo")
             .publish()
             .await
@@ -230,7 +229,7 @@ async fn a_raw_handler_composes_with_a_seek_key() {
 
     for payload in [b"poison".as_slice(), b"skipped", b"kept"] {
         ingress
-            .raw(payload)
+            .message(&Wire::of(payload))
             .to("seek.frames")
             .publish()
             .await
@@ -286,7 +285,7 @@ async fn a_publishing_handler_composes_with_a_seek_key() {
     // only the third reaches the replying branch.
     for id in [0, 1, 2] {
         ingress
-            .raw(&payload(id))
+            .message(&Event { id })
             .to("seek.gate")
             .publish()
             .await

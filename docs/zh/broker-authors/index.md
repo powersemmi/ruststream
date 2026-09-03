@@ -121,8 +121,8 @@ pub trait Publisher: Send + Sync {
 `OutgoingMessage` 借用自己的名字和载荷，因此发布不会强制带来一次分配。
 
 这是发布接口，而不是服务代码要写的那一个：应用通过构建器发布
-（`publisher.message(&value).publish()`、`publisher.raw(&bytes).to(dest).publish()`），由构建器解析
-目的地、编解码器和消息头，然后恰好调用一次该方法。实现 `publish`，整个构建器就随之而来；没有别的
+（`publisher.message(&value).publish()`），由构建器解析目的地、编解码器（在这条线需要它的时候）
+和消息头，然后恰好调用一次该方法。实现 `publish`，整个构建器就随之而来；没有别的
 东西要提供。
 
 一个为一整串消息携带同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），

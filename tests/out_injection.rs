@@ -11,7 +11,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Event, connected, expect_id, observed_memory};
+use common::{Event, Wire, connected, expect_id, observed_memory};
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream};
@@ -27,8 +27,7 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
     } else {
         "out.odd"
     };
-    let payload = serde_json::to_vec(event).expect("serializable");
-    if out.raw(&payload).to(dest).publish().await.is_err() {
+    if out.message(event).to(dest).publish().await.is_err() {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
@@ -45,7 +44,7 @@ async fn an_injected_publisher_reaches_the_handler_live() {
 
     for id in [2u64, 3u64] {
         ingress
-            .raw(&serde_json::to_vec(&Event { id }).unwrap())
+            .message(&Event { id })
             .to("out.in")
             .publish()
             .await
@@ -59,8 +58,7 @@ async fn an_injected_publisher_reaches_the_handler_live() {
 
 #[subscriber("out.crossing")]
 async fn crossing(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
-    let payload = serde_json::to_vec(event).expect("serializable");
-    if out.raw(&payload).to("out.other").publish().await.is_err() {
+    if out.message(event).to("out.other").publish().await.is_err() {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
@@ -77,11 +75,11 @@ async fn decode_failures_are_recorded_for_out_handlers() {
     // Not valid JSON for `Event`: the Out wrapper fails to decode, the handler never runs, and
     // the harness must classify the delivery as a decode failure, exactly like the typed path.
     tb.broker::<MemoryBroker>()
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("out.in")
         .publish()
         .await
-        .expect("raw publish");
+        .expect("publish");
 
     tb.broker::<MemoryBroker>()
         .subscriber("out.in")
@@ -112,7 +110,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .raw(&serde_json::to_vec(&Event { id: 9 }).unwrap())
+        .message(&Event { id: 9 })
         .to("out.crossing")
         .publish()
         .await
@@ -127,8 +125,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
 #[subscriber("out.page")]
 async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for event in events {
-        let payload = serde_json::to_vec(event).expect("serializable");
-        if out.raw(&payload).to("out.paged").publish().await.is_err() {
+        if out.message(event).to("out.paged").publish().await.is_err() {
             return HandlerOutcome::retry();
         }
     }
@@ -146,7 +143,7 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
 
     for id in [4u64, 5u64] {
         ingress
-            .raw(&serde_json::to_vec(&Event { id }).unwrap())
+            .message(&Event { id })
             .to("out.page")
             .publish()
             .await
@@ -170,9 +167,8 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
 /// injected publisher: publish and Out compose, each side with its own attachment.
 #[subscriber("out.gate", publish("out.gate.reply"))]
 async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, HandlerOutcome> {
-    let payload = serde_json::to_vec(event).expect("serializable");
     if out
-        .raw(&payload)
+        .message(event)
         .to("out.gate.audit")
         .publish()
         .await
@@ -193,7 +189,7 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .raw(&serde_json::to_vec(&Event { id: 7 }).unwrap())
+        .message(&Event { id: 7 })
         .to("out.gate")
         .publish()
         .await
@@ -214,9 +210,8 @@ async fn settle_page(
     let page = Event {
         id: u64::try_from(events.len()).expect("a page fits in u64"),
     };
-    let payload = serde_json::to_vec(&page).expect("serializable");
     if out
-        .raw(&payload)
+        .message(&page)
         .to("out.ledger.pages")
         .publish()
         .await
@@ -243,7 +238,7 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
 
     // One publish, one page: the audit copy and the receipt are both deterministic.
     ingress
-        .raw(&serde_json::to_vec(&Event { id: 7 }).unwrap())
+        .message(&Event { id: 7 })
         .to("out.ledger")
         .publish()
         .await

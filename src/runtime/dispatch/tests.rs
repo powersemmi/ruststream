@@ -8,7 +8,6 @@ use futures::StreamExt;
 
 use super::*;
 use crate::memory::MemoryBroker;
-use crate::runtime::PublishExt;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::HandlerOutcome;
 use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher};
@@ -342,9 +341,7 @@ async fn native_support_defers_to_the_broker_nack_after() {
     let mut sub = broker.subscribe("orders");
     let publisher = broker.publisher();
     publisher
-        .raw(b"native")
-        .to("orders")
-        .publish()
+        .publish(OutgoingMessage::new("orders", b"native"))
         .await
         .unwrap();
 

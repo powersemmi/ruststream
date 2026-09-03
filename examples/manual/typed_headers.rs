@@ -16,8 +16,8 @@ use std::future::{Future, ready};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
 use ruststream::runtime::{
-    ContainsMessage, Input, OutMessages, OutgoingMessageMetadata, PublishedThrough, SlotPos,
-    SoloDeserialized,
+    ContainsMessage, Input, MessageWire, OutMessages, OutgoingMessageMetadata, PublishedThrough,
+    SerializedWire, SlotPos, SoloDeserialized,
 };
 use ruststream::schemars::{JsonSchema, schema_for};
 use ruststream::testing::TestApp;
@@ -140,6 +140,30 @@ impl OutSlot for Events {
 impl PublishedThrough<Events> for ChunkDone {}
 impl PublishedThrough<Events> for Progress {}
 // --8<-- [end:dictionary]
+
+// The producer's side of the byte input below: a chunk as it arrives from outside, with no model
+// of its own. What `#[derive(Serialized)]` writes is the bytes plus the wire spelling that routes
+// the type onto the serialized wire, so no codec touches them; the contract is the same one the
+// handler extracts, and no destination is declared, so the call site names one.
+struct RawChunk(Vec<u8>);
+
+impl Serialized for RawChunk {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl MessageWire for RawChunk {
+    type Wire = SerializedWire;
+}
+
+impl OutgoingDestination for RawChunk {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for RawChunk {
+    type Contract = WithHeaders<ChunkMeta>;
+}
 
 // `Headers<ChunkMeta>` is an extractor, so the body resolves it before its own work, under the
 // subscriber's `on_failure(decode = ..)` policy (drop by default) - the call the attribute inserts
@@ -320,7 +344,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chunks_total: 12,
     };
     tb.broker::<MemoryBroker>()
-        .raw(&[0_u8; 16])
+        .message(&RawChunk(vec![0; 16]))
         .with_headers(&meta)
         .to("chunks.raw")
         .publish()

@@ -98,19 +98,17 @@ pub use publish::{
     MessageWire, MissingSegment, Outgoing, PublishAt, PublishBuilder, PublishCodec, PublishContext,
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders,
     PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack,
-    PublishTransform, PublishTransformIdentity, PublishTransformStack, RawBody, ReplyPublisher,
-    ReplyWiring, ResolvedName, SatisfiesContract, SerializedWire, SuppliedName, TemplateAddress,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, ReplyPublisher, ReplyWiring,
+    ResolvedName, SatisfiesContract, SerializedWire, SuppliedName, TemplateAddress,
     TransactionPublishError, TransactionScope, Transactional, TypedHeaders, TypedPublisher,
     TypedTransaction, UnnamedCodec, for_batch,
 };
 #[doc(hidden)]
 pub use publish::{WireBytes, WirePayload};
-// The builder's entry points, for the surfaces outside `runtime` that offer one: the test
-// harness injects through the same positions as a live publish.
+// The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
+// injects through the same positions as a live publish.
 #[cfg(feature = "testing")]
 pub(crate) use publish::message_of;
-#[cfg(feature = "testing")]
-pub(crate) use publish::raw_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]

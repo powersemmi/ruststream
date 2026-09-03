@@ -16,7 +16,7 @@ use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::testing::expect_published;
 use ruststream::{Broker, subscriber};
 
-use common::{Event, connected};
+use common::{Event, Wire, connected};
 
 #[subscriber("pairing.seeded")]
 async fn consume(_event: &Event) -> HandlerOutcome {
@@ -40,7 +40,11 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
         b.include(consume);
         b.after_startup(MemoryPublish, async move |publisher| {
-            publisher.raw(b"first").to("pairing.seeded").publish().await
+            publisher
+                .message(&Wire::of(b"first"))
+                .to("pairing.seeded")
+                .publish()
+                .await
         });
     });
 
@@ -67,7 +71,7 @@ async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
         .await
         .expect("pairing after start is infallible for memory");
     publisher
-        .raw(b"late")
+        .message(&Wire::of(b"late"))
         .to("pairing.sibling")
         .publish()
         .await

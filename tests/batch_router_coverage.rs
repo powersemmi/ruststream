@@ -10,7 +10,7 @@ use std::future::{Future, ready};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Order, Receipt, wait_for};
+use common::{Order, Receipt, Wire, wait_for};
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
     MemoryPublisher, MemorySubscriber,
@@ -61,7 +61,7 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(b"ping")
+        .message(&Wire::of(b"ping"))
         .to("brc-handle")
         .publish()
         .await

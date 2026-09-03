@@ -13,12 +13,12 @@ use std::marker::PhantomData;
 use bytes::Bytes;
 
 use crate::RawMessage;
+use crate::codec::Codec;
+// Only the DEFAULT codec is feature-dependent; the assertions that take a codec are always here.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::{Codec, DefaultCodec};
+use crate::codec::DefaultCodec;
 use crate::runtime::HandlerOutcome;
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use serde::de::DeserializeOwned;
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use std::fmt::Debug;
 
 use super::coordinator::{Coordinator, Delivered, Outcome, Record};
@@ -143,7 +143,6 @@ impl<'a> SubscriberAssertions<'a> {
     /// # Panics
     ///
     /// Panics if any received payload fails to decode as `T`.
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     #[must_use]
     pub fn received_with<T, C>(&self, codec: &C) -> Vec<T>
     where
@@ -204,7 +203,6 @@ impl<'a> SubscriberAssertions<'a> {
     ///
     /// Panics if the subscriber was not called, the payload fails to decode, or the decoded value
     /// differs from `expected`.
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub fn with_codec<T, C>(self, codec: &C, expected: &T) -> Self
     where
         T: DeserializeOwned + PartialEq + Debug,
@@ -433,7 +431,12 @@ where
     pub fn with(self, expected: &T) -> Self {
         self.with_codec(&DefaultCodec::default(), expected)
     }
+}
 
+impl<T> PublishedAssertions<T>
+where
+    T: DeserializeOwned + PartialEq + Debug,
+{
     /// Like [`with`](Self::with), but decodes the published payload with `codec` - use it when the
     /// publisher was built with a non-default codec.
     ///
@@ -472,7 +475,9 @@ impl<T: DeserializeOwned> PublishedAssertions<T> {
     pub fn decoded(&self) -> Vec<T> {
         self.decoded_with(&DefaultCodec::default())
     }
+}
 
+impl<T: DeserializeOwned> PublishedAssertions<T> {
     /// Like [`decoded`](Self::decoded), but decodes with `codec` - use it when the publisher was
     /// built with a non-default codec.
     ///

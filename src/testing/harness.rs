@@ -15,15 +15,15 @@ use tokio_util::task::TaskTracker;
 // The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
 // builder entry points do not, because the value's own wire decides whether a codec is needed.
 use crate::OutgoingDestination;
+use crate::OutgoingMessage;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::{
     ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
-    PublishIdentity, PublishSink, RawBody, RegisteredBroker, RustStream, RustStreamError, Starter,
-    TestParts, raw_of,
+    PublishIdentity, PublishSink, RegisteredBroker, RustStream, RustStreamError, Starter,
+    TestParts,
 };
 use crate::runtime::{MessageBody, UnnamedCodec, message_of};
-use crate::{CallerName, OutgoingMessage};
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
 use super::broker::{TestableBroker, TestableRegistration};
@@ -430,12 +430,18 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
     /// use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
     /// use ruststream::testing::TestApp;
-    /// use ruststream::{Deserialized, OutSlot, Publisher, subscriber};
+    /// use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
     ///
     /// #[derive(Deserialized)]
     /// struct Chunk<'a>(&'a [u8]);
     ///
+    /// // The frame on the way out: a serialized type carries its own bytes, so what the
+    /// // handler republishes is byte-for-byte what it received.
+    /// #[derive(Outgoing, Serialized)]
+    /// struct Frame(Vec<u8>);
+    ///
     /// #[derive(OutSlot)]
+    /// #[publishes(Frame)]
     /// struct Encoded;
     ///
     /// #[subscriber("chunks")]
@@ -443,7 +449,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///     chunk: &Chunk<'_>,
     ///     Out(out): Out<impl Publisher, Encoded>,
     /// ) -> HandlerOutcome {
-    ///     if out.raw(chunk.0).to("encoded").publish().await.is_err() {
+    ///     let frame = Frame(chunk.0.to_vec());
+    ///     if out.message(&frame).to("encoded").publish().await.is_err() {
     ///         return HandlerOutcome::retry();
     ///     }
     ///     HandlerOutcome::ack()
@@ -454,7 +461,11 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///         b.include(transcode).out(Encoded, MemoryPublish).build();
     ///     });
     /// let tb = TestApp::start(app).await?;
-    /// tb.broker::<MemoryBroker>().raw(b"frame").to("chunks").publish().await?;
+    /// tb.broker::<MemoryBroker>()
+    ///     .message(&Frame(b"frame".to_vec()))
+    ///     .to("chunks")
+    ///     .publish()
+    ///     .await?;
     /// tb.out::<Encoded>().assert_called_once().with_raw(b"frame");
     /// # Ok(())
     /// # }
@@ -548,21 +559,6 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         T: OutgoingDestination,
     {
         message_of(self.sole_sink(), value, UnnamedCodec::new())
-    }
-
-    /// Starts a byte injection on the only registered broker, a convenience for single-broker
-    /// apps: `tb.raw(b"frame").to("frames").publish().await?`.
-    ///
-    /// The scoped [`BrokerHandle::raw`] with the broker chosen for you; ambiguity is reported
-    /// the same way [`message`](Self::message) reports it.
-    pub fn raw<'a, B>(
-        &'a self,
-        payload: &'a B,
-    ) -> PublishBuilder<InjectSink<'a>, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(self.sole_sink(), payload)
     }
 
     /// The sole broker's sink, or the ambiguous one when the app registered more than one.
@@ -711,16 +707,16 @@ impl fmt::Debug for BrokerHandle<'_> {
 /// It injects the message onto a broker's in-process transport the way an external producer
 /// would, then drives the resulting reaction to a standstill before the publish returns.
 ///
-/// Produced by the `message(..)` and `raw(..)` entry points of [`TestApp`] and [`BrokerHandle`],
-/// so a test injects through the same positions - destination, typed headers, codec - that the
-/// service itself publishes through. You never name this type.
+/// Produced by the `message(..)` entry point of [`TestApp`] and [`BrokerHandle`], so a test
+/// injects through the same positions - destination, typed headers, codec - that the service
+/// itself publishes through. You never name this type.
 pub struct InjectSink<'a>(Target<'a>);
 
 /// What an [`InjectSink`] sends into: a resolved broker, or none because the unscoped entry
 /// point had more than one to choose from.
 ///
-/// The unscoped `message(..)` / `raw(..)` exist whatever the app registered, so the ambiguity
-/// rides here and surfaces from the publish.
+/// The unscoped `message(..)` exists whatever the app registered, so the ambiguity rides here
+/// and surfaces from the publish.
 enum Target<'a> {
     Broker {
         coordinator: &'a Coordinator,
@@ -815,53 +811,6 @@ impl<'a> BrokerHandle<'a> {
         // The harness carries no codec of its own, so the position stays unnamed - the same
         // bottom of the ladder a bare publisher uses.
         message_of(self.sink(), value, UnnamedCodec::new())
-    }
-
-    /// Starts a byte injection onto this broker: the payload travels as it is, to the
-    /// destination named with `to(..)`.
-    ///
-    /// The undecodable-payload path of a test, and the only one for a raw subscriber. Awaiting
-    /// the publish drives the resulting reaction to a standstill.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-    /// use ruststream::testing::TestApp;
-    /// use ruststream::{Deserialized, subscriber};
-    ///
-    /// #[derive(Deserialized)]
-    /// struct Frame<'a>(&'a [u8]);
-    ///
-    /// #[subscriber("frames")]
-    /// async fn handle(frame: &Frame<'_>) -> HandlerOutcome {
-    ///     let _ = frame.0.len();
-    ///     HandlerOutcome::ack()
-    /// }
-    ///
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
-    /// let tb = TestApp::start(app).await?;
-    ///
-    /// tb.broker::<MemoryBroker>()
-    ///     .raw(b"frame")
-    ///     .to("frames")
-    ///     .publish()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn raw<'p, B>(
-        &self,
-        payload: &'p B,
-    ) -> PublishBuilder<InjectSink<'a>, RawBody<'p>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(self.sink(), payload)
     }
 
     /// This handle's transport as a publish sink. It borrows the app, not the handle, so a

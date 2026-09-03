@@ -8,10 +8,29 @@
 
 mod common;
 
-use common::{Event, connected, expect_id};
+use common::{connected, expect_id};
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
+use serde::{Deserialize, Serialize};
+
+/// What crosses the two brokers. Declared here rather than taken from `common`, whose own
+/// declaration rides the `Outgoing` derive: the point of this file is that the publish side
+/// stands with the attribute off.
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+struct Event {
+    id: u64,
+}
+
+// The `Outgoing` derive by hand: no declared name, so each call site names its destination.
+impl OutgoingDestination for Event {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Event {
+    type Contract = NoHeaders;
+}
 
 /// The handler body over its injected publisher. The slot's publisher type is a parameter of the
 /// impl, so the definition stays a zero-sized value the mount site builds for free.
@@ -27,10 +46,9 @@ where
         outs: &Outs<(Slot<DefaultSlot, Egress, Enc>,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        let payload = serde_json::to_vec(event).expect("serializable");
         if outs
             .get(DefaultSlot)
-            .raw(&payload)
+            .message(event)
             .to("out.other")
             .publish()
             .await
@@ -65,7 +83,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let running = app.start().await.expect("startup failed");
 
     ingress
-        .raw(&serde_json::to_vec(&Event { id: 9 }).unwrap())
+        .message(&Event { id: 9 })
         .to("out.crossing")
         .publish()
         .await

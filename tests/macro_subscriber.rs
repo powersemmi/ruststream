@@ -23,7 +23,9 @@ use ruststream::{Broker, MessageInfo, Publisher, Subscribe, SubscriptionSource, 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
-#[derive(Debug, Serialize, Deserialize)]
+// The derive is spelled out: `runtime::Outgoing` above is the publish transform's message view,
+// a different item that happens to share the name.
+#[derive(Debug, Serialize, Deserialize, ruststream::Outgoing)]
 struct Order {
     id: u32,
     total: f64,
@@ -101,9 +103,8 @@ async fn macro_descriptor_in_decorator() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
     publisher
-        .raw(&payload)
+        .message(&Order { id: 6, total: 1.0 })
         .to("ctor.stream")
         .publish()
         .await
@@ -139,9 +140,8 @@ async fn macro_builder_chain_in_decorator() {
     let running = app.start().await.expect("startup failed");
 
     // The `at(..)` option won: the subscription binds to "chain.stream".
-    let payload = serde_json::to_vec(&Order { id: 7, total: 1.0 }).unwrap();
     publisher
-        .raw(&payload)
+        .message(&Order { id: 7, total: 1.0 })
         .to("chain.stream")
         .publish()
         .await
@@ -180,9 +180,8 @@ async fn macro_subscriber_dispatches() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
     publisher
-        .raw(&payload)
+        .message(&Order { id: 5, total: 1.0 })
         .to("orders")
         .publish()
         .await
@@ -217,9 +216,8 @@ async fn scope_default_codec_drops_per_call_codec() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Order { id: 9, total: 1.0 }).unwrap();
     publisher
-        .raw(&payload)
+        .message(&Order { id: 9, total: 1.0 })
         .to("orders-default")
         .publish()
         .await
@@ -241,7 +239,7 @@ impl<C> PublishTransform<C> for StaticEnvelope {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ruststream::Outgoing)]
 struct Ping {
     n: u32,
 }
@@ -282,9 +280,8 @@ async fn static_publish_layer_transforms_reply() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Ping { n: 7 }).unwrap();
     ingress_pub
-        .raw(&payload)
+        .message(&Ping { n: 7 })
         .to("ping-in")
         .publish()
         .await
@@ -301,7 +298,7 @@ async fn static_publish_layer_transforms_reply() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ruststream::Outgoing)]
 struct Request {
     n: u32,
 }
@@ -365,9 +362,8 @@ async fn macro_publisher_replies_cross_broker() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Request { n: 21 }).unwrap();
     ingress_pub
-        .raw(&payload)
+        .message(&Request { n: 21 })
         .to("requests")
         .publish()
         .await
@@ -430,9 +426,8 @@ async fn publishing_result_form_controls_ack_and_publish() {
     let running = app.start().await.expect("startup failed");
 
     // Err(HandlerOutcome) skips the publish entirely.
-    let rejected = serde_json::to_vec(&Order { id: 0, total: 0.0 }).unwrap();
     ingress
-        .raw(&rejected)
+        .message(&Order { id: 0, total: 0.0 })
         .to("confirm-in")
         .publish()
         .await
@@ -448,9 +443,8 @@ async fn publishing_result_form_controls_ack_and_publish() {
     );
 
     // Ok(reply) publishes and acks.
-    let accepted = serde_json::to_vec(&Order { id: 6, total: 1.0 }).unwrap();
     ingress
-        .raw(&accepted)
+        .message(&Order { id: 6, total: 1.0 })
         .to("confirm-in")
         .publish()
         .await
@@ -498,9 +492,8 @@ async fn publishing_handler_reads_context_state() {
 
     let running = app.start().await.expect("startup failed");
 
-    let payload = serde_json::to_vec(&Request { n: 1 }).unwrap();
     ingress
-        .raw(&payload)
+        .message(&Request { n: 1 })
         .to("ctx-in")
         .publish()
         .await
@@ -541,9 +534,8 @@ async fn retry_after_redelivers_through_the_dispatcher() {
     let running = app.start().await.expect("startup failed");
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
-    let payload = serde_json::to_vec(&Order { id: 5, total: 1.0 }).unwrap();
     publisher
-        .raw(&payload)
+        .message(&Order { id: 5, total: 1.0 })
         .to("deferred")
         .publish()
         .await

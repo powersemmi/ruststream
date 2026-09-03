@@ -17,7 +17,7 @@ use ruststream::memory::MemoryBroker;
 // needs no import (matching the `examples/publishing.rs` pattern).
 use ruststream::runtime::{AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream};
 use ruststream::testing::{Outcome, TestApp, TestError};
-use ruststream::{Outgoing, subscriber};
+use ruststream::{Outgoing, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -30,6 +30,11 @@ struct Order {
 struct Event {
     id: u64,
 }
+
+/// Bytes injected as themselves: what the decode-failure case sends, where the payload is
+/// deliberately not a model. It declares no name, so the injection names its subject.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
 
 /// Acks every order; panics on id 0 (a deliberate negative-test trigger) under the default
 /// `panic = fail_fast`.
@@ -119,7 +124,7 @@ async fn records_decode_failure() {
 
     // Not valid JSON for `Order`: the typed adapter fails to decode, the handler never runs.
     tb.broker::<MemoryBroker>()
-        .raw(b"not json")
+        .message(&Wire(b"not json".to_vec()))
         .to("orders")
         .publish()
         .await
@@ -221,7 +226,7 @@ async fn assert_not_called_when_no_input() {
 #[cfg(feature = "cbor")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn custom_codec_assertions_use_the_handlers_codec() {
-    use ruststream::codec::{CborCodec, Codec};
+    use ruststream::codec::CborCodec;
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_codec(
         MemoryBroker::new(),
@@ -230,10 +235,10 @@ async fn custom_codec_assertions_use_the_handlers_codec() {
     );
     let tb = TestApp::start(app).await.unwrap();
 
-    // Inject CBOR-encoded input (the default-codec `publish` would be JSON the handler can't read).
-    let bytes = CborCodec.encode(&Order { id: 7 }).unwrap();
+    // Inject CBOR-encoded input (the default codec would be JSON the handler can't read).
     tb.broker::<MemoryBroker>()
-        .raw(&bytes)
+        .message(&Order { id: 7 })
+        .with_codec(CborCodec)
         .to("orders")
         .publish()
         .await

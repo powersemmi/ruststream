@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, order_bytes, wait_for};
+use common::{Order, wait_for};
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 use tokio::sync::Barrier;
@@ -47,7 +47,7 @@ async fn pool_processes_deliveries_concurrently() {
     // would deadlock on the barrier and the wait below would time out.
     for id in 1..=4u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("jobs")
             .publish()
             .await
@@ -97,7 +97,7 @@ async fn by_key_lanes_preserve_per_key_order() {
             let mut headers = HeaderMap::new();
             headers.insert("partition-key", key);
             publisher
-                .raw(&order_bytes(id))
+                .message(&Order { id })
                 .with_headers(headers)
                 .to("keyed")
                 .publish()
@@ -152,7 +152,7 @@ async fn batch_pool_dispatches_batches() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("pages")
         .publish()
         .await
@@ -213,7 +213,7 @@ async fn closure_subscription_pool_runs_concurrently() {
     // and the wait below would time out.
     for id in 1..=3u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("fn-jobs")
             .publish()
             .await
@@ -263,7 +263,7 @@ async fn closure_batch_subscription_receives_batches() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("fn-pages")
         .publish()
         .await

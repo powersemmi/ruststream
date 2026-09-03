@@ -107,7 +107,7 @@ mod transform;
 
 pub use builder::{
     BoundSegment, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MessageWire,
-    MissingSegment, PublishAt, PublishBuilder, PublishError, PublishHeaders, RawBody, ResolvedName,
+    MissingSegment, PublishAt, PublishBuilder, PublishError, PublishHeaders, ResolvedName,
     SatisfiesContract, Serialized, SerializedWire, SuppliedName, TemplateAddress, TypedHeaders,
     WireBytes, WirePayload,
 };

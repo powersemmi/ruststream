@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::Event;
+use common::{Event, Wire};
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
@@ -26,10 +26,14 @@ use ruststream::{
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
+// Both slots carry a payload that is not a model of its own (a transcoded frame, a length
+// receipt), so the wire type is the whole dictionary each of them publishes.
 #[derive(OutSlot)]
+#[publishes(Wire)]
 struct Encoded;
 
 #[derive(OutSlot)]
+#[publishes(Wire)]
 struct Audit;
 
 /// Two slots in one handler; no broker publisher type appears anywhere in the signature.
@@ -42,7 +46,7 @@ async fn transcode(
     let mut headers = HeaderMap::new();
     headers.insert("source", "slots.in");
     if encoded
-        .raw(chunk.0)
+        .message(&Wire::of(chunk.0))
         .with_headers(headers)
         .to("slots.encoded")
         .publish()
@@ -53,7 +57,7 @@ async fn transcode(
     }
     let receipt = chunk.0.len().to_be_bytes();
     if audit
-        .raw(&receipt)
+        .message(&Wire::of(receipt))
         .to("slots.audit")
         .publish()
         .await
@@ -79,11 +83,11 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
 
     // --8<-- [start:slot_capture]
     tb.broker::<MemoryBroker>()
-        .raw(b"frame")
+        .message(&Wire::of(b"frame"))
         .to("slots.in")
         .publish()
         .await
-        .expect("raw publish");
+        .expect("publish");
 
     let encoded = tb.out::<Encoded>().assert_called_once().with_raw(b"frame");
     let recorded = &encoded.messages()[0];
@@ -122,11 +126,11 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker_named("ingress")
-        .raw(b"xy")
+        .message(&Wire::of(b"xy"))
         .to("slots.in")
         .publish()
         .await
-        .expect("raw publish");
+        .expect("publish");
 
     // Both slots captured regardless of which broker each policy pairs against.
     tb.out::<Encoded>().assert_called_once().with_raw(b"xy");
@@ -231,8 +235,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 #[subscriber("slots.sharded")]
 async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerOutcome {
     let (publisher, dest) = lanes.lane(event.id);
-    let payload = serde_json::to_vec(event).expect("serializable");
-    if publisher.raw(&payload).to(dest).publish().await.is_err() {
+    if publisher.message(event).to(dest).publish().await.is_err() {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()

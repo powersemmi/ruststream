@@ -7,14 +7,14 @@ use serde::Serialize;
 use super::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, HeadersUnset,
     MessageBody, Outgoing, PublishBuilder, PublishContext, PublishPipeline, PublishTransform,
-    PublishTransformIdentity, PublishTransformStack, RawBody, message_of, raw_of,
+    PublishTransformIdentity, PublishTransformStack, message_of,
 };
 use crate::codec::Codec;
 use crate::runtime::lifecycle::BoxError;
 // `DefaultCodec` only exists when a codec feature is on.
+use crate::OutgoingDestination;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-use crate::{CallerName, OutgoingDestination};
 use crate::{ConnectedBroker, PairError, PublishPolicy, Publisher, TransactionalPublisher};
 
 /// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishTransform`] stack, ready to send
@@ -179,18 +179,6 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
         T: OutgoingDestination,
     {
         message_of(&self.publisher, value, &self.codec)
-    }
-
-    /// Starts a byte publish through this publisher: the payload travels as it is, to the
-    /// destination named with `to(..)`. No codec position, by construction.
-    pub fn raw<'a, B>(
-        &'a self,
-        payload: &'a B,
-    ) -> PublishBuilder<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(&self.publisher, payload)
     }
 }
 

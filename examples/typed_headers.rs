@@ -12,7 +12,7 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
 
 // The header contracts: flat structs whose fields name headers. On the wire every value is a
@@ -55,6 +55,14 @@ struct Progress {
 #[publishes(ChunkDone, Progress)]
 struct Events;
 // --8<-- [end:dictionary]
+
+/// The producer's side of the byte input below: a chunk as it arrives from outside, with no model
+/// of its own. `Serialized` says the bytes are already the payload, so no codec touches them; the
+/// contract is the same one the handler extracts, and no destination is declared, so the call site
+/// names one.
+#[derive(Outgoing, Serialized)]
+#[outgoing(headers = ChunkMeta)]
+struct RawChunk(Vec<u8>);
 
 // Headers parses the delivery headers into the contract before the body runs; a missing or
 // unparsable header settles the delivery by `on_failure(decode = ..)` (drop by default). The
@@ -168,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chunks_total: 12,
     };
     tb.broker::<MemoryBroker>()
-        .raw(&[0_u8; 16])
+        .message(&RawChunk(vec![0; 16]))
         .with_headers(&meta)
         .to("chunks.raw")
         .publish()

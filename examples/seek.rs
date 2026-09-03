@@ -13,11 +13,12 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, SeekHandle};
 use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, PublishExt, RustStream};
-use ruststream::{Seeker, subscriber};
+use ruststream::{Outgoing, Seeker, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
-#[derive(Debug, Serialize, Deserialize)]
+/// The job model, published to whichever log the call site names.
+#[derive(Debug, Outgoing, Serialize, Deserialize)]
 struct Job {
     id: u64,
 }
@@ -58,8 +59,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Published before the app even exists; only the chosen start position below makes these
     // visible to the audit subscription.
     for id in 1..=2u64 {
-        let payload = serde_json::to_vec(&Job { id })?;
-        ingress.raw(&payload).to("audit").publish().await?;
+        ingress.message(&Job { id }).to("audit").publish().await?;
     }
 
     // --8<-- [start:mount]
@@ -75,8 +75,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The jobs stream hits a poison marker at the second position; the handler's own seek
     // jumps it to the fourth, so id 3 is never processed.
     for id in [1, 999, 3, 4] {
-        let payload = serde_json::to_vec(&Job { id })?;
-        ingress.raw(&payload).to("jobs").publish().await?;
+        ingress.message(&Job { id }).to("jobs").publish().await?;
     }
     // A demo-only pause so the dispatch loops drain; a real service reacts to its own signals.
     sleep(Duration::from_millis(100)).await;

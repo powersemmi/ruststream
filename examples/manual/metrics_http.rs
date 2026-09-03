@@ -26,8 +26,10 @@ use axum::routing::{get, post};
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::metrics::Metrics;
 use ruststream::runtime::{
-    AppInfo, Context, Handle, HandlerOutcome, PublishExt, RustStream, TypedPublisher, subscriber,
+    AppInfo, Context, Handle, HandlerOutcome, MessageWire, PublishExt, RustStream, Serialized,
+    SerializedWire, TypedPublisher, subscriber,
 };
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -40,6 +42,31 @@ struct Order {
 struct Confirmation {
     id: u64,
     accepted: bool,
+}
+
+/// The HTTP request body on its way to the bus: bytes that arrived from outside, with no model of
+/// their own. What `#[derive(Outgoing, Serialized)]` writes is these three impls - the bytes are
+/// already the payload so no codec runs on them, the wire spelling routes the publish onto that
+/// lane, and no destination is declared, so the call site names one. The axum buffer moves in
+/// whole; nothing is copied on the way to the broker.
+struct Ingest(Bytes);
+
+impl Serialized for Ingest {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl MessageWire for Ingest {
+    type Wire = SerializedWire;
+}
+
+impl OutgoingDestination for Ingest {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Ingest {
+    type Contract = NoHeaders;
 }
 
 /// The body `#[subscriber("orders", publish("confirmations"))]` generates. A reply-publishing
@@ -69,7 +96,12 @@ struct AppState {
 }
 
 async fn publish_order(State(state): State<Arc<AppState>>, body: Bytes) -> &'static str {
-    let _ = state.ingest.raw(body.as_ref()).to("orders").publish().await;
+    let _ = state
+        .ingest
+        .message(&Ingest(body))
+        .to("orders")
+        .publish()
+        .await;
     "published\n"
 }
 

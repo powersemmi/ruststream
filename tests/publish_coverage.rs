@@ -28,7 +28,7 @@ use tracing::{Event, Level, Subscriber as TracingSubscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
 
-use common::{Order, order_bytes};
+use common::{Order, Wire};
 
 /// Every warning this binary emitted, one string of `field=value` pairs per event.
 static EVENTS: LazyLock<Arc<Mutex<Vec<String>>>> =
@@ -147,7 +147,7 @@ async fn a_fail_fast_decode_failure_tears_the_service_down_and_says_why() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("pubff")
         .publish()
         .await
@@ -190,7 +190,7 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
 
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(&order_bytes(7))
+        .message(&Order { id: 7 })
         .to("flaky")
         .publish()
         .await

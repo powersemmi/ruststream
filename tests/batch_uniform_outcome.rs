@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Order, order_bytes, wait_for};
+use common::{Order, wait_for};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::subscriber;
@@ -41,7 +41,7 @@ async fn a_uniform_refusal_settles_every_element_of_the_page() {
 
     for id in 0..3u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("uniform-drop")
             .publish()
             .await
@@ -89,7 +89,7 @@ async fn a_uniform_ack_runs_its_attached_work_once_for_the_page() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(9))
+        .message(&Order { id: 9 })
         .to("uniform-after")
         .publish()
         .await

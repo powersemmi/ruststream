@@ -8,10 +8,9 @@ use std::pin::pin;
 
 use futures::{FutureExt, Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryError, MemoryMessage};
-use ruststream::runtime::PublishExt;
 use ruststream::{
-    Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions, Subscriber,
-    Transaction,
+    Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions, Publisher,
+    Subscriber, Transaction,
 };
 
 /// Drains the next already-enqueued delivery (acking it), or `None` when the queue is empty.
@@ -54,9 +53,7 @@ async fn concurrent_transactions_commit_independently_and_atomically() {
 
     // The handle stays direct while both transactions are open.
     publisher
-        .raw(b"direct")
-        .to("orders")
-        .publish()
+        .publish(OutgoingMessage::new("orders", b"direct".as_slice()))
         .await
         .expect("direct publish failed");
 
@@ -111,9 +108,7 @@ async fn abort_discards_the_owned_buffer() {
 
     // The handle is unaffected by the settled transaction.
     publisher
-        .raw(b"kept")
-        .to("orders")
-        .publish()
+        .publish(OutgoingMessage::new("orders", b"kept".as_slice()))
         .await
         .expect("direct publish failed");
     assert_eq!(

@@ -70,15 +70,13 @@ use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::inject::FromStartup;
 use crate::runtime::inject::{InjectCall, InjectDef};
 use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publish::{
-    HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of,
-};
+use crate::runtime::publish::{HeadersUnset, MessageBody, PublishBuilder, message_of};
 use crate::runtime::router::IncludeDef;
 use crate::runtime::slot::{
     BindSlots, ContainsMessage, HasSlots, OutSlot, PublishedThrough, SlotPublisher,
 };
 use crate::{
-    CallerName, Connected, ConnectedBroker, HeaderMap, Name, OutgoingDestination, OutgoingMessage,
+    Connected, ConnectedBroker, HeaderMap, Name, OutgoingDestination, OutgoingMessage,
     OwnedTransactions, PairError, PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
     Unnamed,
 };
@@ -102,7 +100,7 @@ use super::value::{HandleValue, Sealed};
 /// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply)) and
 /// any broker-defined capability trait alike, so a body pins the entry to the broker's concrete
 /// live type (or bounds `W` with the broker's trait) and calls it directly. A publisher-shaped
-/// entry additionally offers the typed and raw publish builders through [`Publish`].
+/// entry additionally offers the typed publish builder through [`Publish`].
 ///
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
 /// `#[subscriber]` parameter's third `Out` position narrows it; [`message`](Self::message)
@@ -133,7 +131,7 @@ impl<M, W, E, Body> Deref for Slot<M, W, E, Body> {
 }
 
 /// The publish capability of a wired slot: what a body's mandatory bound names to start typed
-/// (or raw) publishes through the slot.
+/// publishes through the slot.
 ///
 /// The bound is stated on the whole entry (`Slot<Marker, W, E>: Publish`), and holds exactly
 /// when the bound policy's live form is a [`Publisher`] and the include site's codec encodes.
@@ -258,20 +256,6 @@ impl<M: OutSlot, W, E, Body> Slot<M, W, E, Body> {
         T: OutgoingDestination + PublishedThrough<M>,
     {
         message_of(self.leaf(), value, self.encode_codec())
-    }
-
-    /// Starts a byte publish through the slot: the payload travels as it is, to the destination
-    /// named with `to(..)`. Neither the dictionary nor a declared message set restricts this
-    /// path - bytes carry no message type.
-    pub fn raw<'a, B>(
-        &'a self,
-        payload: &'a B,
-    ) -> PublishBuilder<&'a <Self as Publish>::Leaf, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        Self: Publish,
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(self.leaf(), payload)
     }
 }
 

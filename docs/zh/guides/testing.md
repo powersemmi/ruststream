@@ -71,10 +71,12 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 不带作用域的 `tb.message(&value).to(name)` 是给单 Broker 应用准备的便捷写法，一旦注册了不止一个
 Broker，它就报告 `TestError::Ambiguous`。
 
-输入走的是服务自己发布时用的同一个发布构建器：`message(&value)` 编码带 `#[derive(Outgoing)]` 的值，
-`raw(bytes)` 原样发送字节（负载无法解码的场景，也是把数据送给[自己反序列化字节](subscribers.md#raw-subscribers)
-的处理器的方式），`with_headers(&meta)`
-附上类型化的消息头契约，而当值的类型没有声明目的地时，由 `to(name)` 指定 subject。
+输入走的是服务自己发布时用的同一个发布构建器：`message(&value)` 把带 `#[derive(Outgoing)]` 的值
+按它的类型选定的那条线发出，`with_headers(&meta)` 附上类型化的消息头契约，而当值的类型没有声明
+目的地时，由 `to(name)` 指定 subject。本身不是模型的字节 - 用来触发解码策略的无法解码的载荷，或者
+[自己反序列化字节](subscribers.md#raw-subscribers)的处理器的输入 - 包在一个
+`#[derive(Outgoing, Serialized)]` 的 newtype 里走同一个入口，于是测试说得出自己注入的是什么，而不是
+往 subject 上丢一串匿名字节。
 
 ### 对处理器做断言
 
@@ -82,13 +84,19 @@ Broker，它就报告 `TestError::Ambiguous`。
 
 | 方法 | 断言内容 |
 |---|---|
-| `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | 投递次数 |
-| `with(&value)` | 最近一次投递解码（用默认编解码器）之后等于 `value` |
-| `with_raw(bytes)` | 最近一次的原始载荷 |
-| `settled(HandlerOutcome::ack())` | 结算的方式 |
+| `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | 调用次数 |
+| `with(&value)` | 最近一次调用的那唯一一条投递解码（用默认编解码器）之后等于 `value` |
+| `with_raw(bytes)` | 最近一次调用的那唯一一份原始载荷 |
+| `settled(HandlerOutcome::ack())` | 最近一次调用所承载的一切是怎样结算的 |
 | `assert_outcome(Outcome::Drop)` | 归类之后的结算结果（ack / nack / drop / 解码失败 / panic） |
-| `panicked()` | 处理器在最后一次投递上发生了 panic |
+| `panicked()` | 处理器在最后一次调用上发生了 panic |
 | `assert_last_failed_to_decode()` | 载荷解码失败 |
+
+这些方法数的是处理器的调用，不是消息。单条消息的处理器每来一次投递就被调用一次，两者因此重合；
+批处理器每来一页被调用一次，所以 `assert_called_once()` 表示到达了一页，不论它有多大，
+`settled(..)` 覆盖这一页的每个元素，而 `received_raw()` 仍然逐个列出这些元素。指名一份期望载荷的
+那两个断言（`with`、`with_raw`）会报出页的大小，而不是默默去检查其中某一个元素。在处理器主体运行
+之前就被解码策略拒掉的元素，由该策略结算，因此不在处理器看到的那一页里。
 
 `tb.broker::<B>().published::<T>(name)` 断言处理器向下游发布了什么，数据取自 Broker 的发布日志：
 `.assert_called_once().with(&Receipt { id: 1 })`。

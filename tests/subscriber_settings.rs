@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Order, order_bytes, wait_for};
+use common::{Order, Wire, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
 use ruststream::runtime::{
     AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, PublishExt, Router, RustStream,
@@ -44,7 +44,7 @@ async fn a_bare_attribute_is_named_at_the_mount_site() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(11))
+        .message(&Order { id: 11 })
         .to(&*subject)
         .publish()
         .await
@@ -77,7 +77,7 @@ async fn a_named_kind_is_built_from_the_name_the_mount_site_gives() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(3))
+        .message(&Order { id: 3 })
         .to("record-kind")
         .publish()
         .await
@@ -115,7 +115,7 @@ async fn the_builder_supplies_the_worker_policy() {
 
     for id in 0..4u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("workers-from-builder")
             .publish()
             .await
@@ -146,13 +146,13 @@ async fn the_builder_supplies_the_failure_policies() {
 
     // The undecodable payload is skipped by the mount-site policy; the next one still arrives.
     publisher
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("failures-from-builder")
         .publish()
         .await
         .expect("publish failed");
     publisher
-        .raw(&order_bytes(9))
+        .message(&Order { id: 9 })
         .to("failures-from-builder")
         .publish()
         .await
@@ -181,7 +181,7 @@ async fn the_builder_supplies_the_start_position() {
     let publisher = broker.publisher();
     // Published before the service exists: only a subscription opened at the start sees it.
     publisher
-        .raw(&order_bytes(42))
+        .message(&Order { id: 42 })
         .to("replay")
         .publish()
         .await
@@ -229,7 +229,7 @@ async fn the_builder_supplies_the_buffer() {
 
     for id in 0..3u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("correlate")
             .publish()
             .await
@@ -269,7 +269,7 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
 
     for frame in [b"one".as_slice(), b"two".as_slice()] {
         publisher
-            .raw(frame)
+            .message(&Wire::of(frame))
             .to("frames")
             .publish()
             .await
@@ -303,7 +303,7 @@ async fn a_router_mounts_the_settings_builder() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(5))
+        .message(&Order { id: 5 })
         .to("routed")
         .publish()
         .await
@@ -334,15 +334,23 @@ mod codec_override {
     use ruststream::runtime::{
         AppInfo, HandlerOutcome, Message, PublishExt, RustStream, SubscriberSettings,
     };
-    use ruststream::subscriber;
+    use ruststream::{Outgoing, subscriber};
     use serde::{Deserialize, Serialize};
 
-    use super::{Frame, Order, order_bytes, wait_for};
+    use super::{Frame, Order, Wire, wait_for};
 
     /// The contract the paired case reads off the delivery's headers.
     #[derive(Serialize, Deserialize, Debug, PartialEq, schemars::JsonSchema)]
     struct Meta {
         shard: u8,
+    }
+
+    /// The outgoing side of the paired case: an [`Order`] body declaring the contract the
+    /// subscriber pairs it with, so the publish is asked for the headers it must carry.
+    #[derive(Serialize, Outgoing)]
+    #[outgoing(headers = Meta)]
+    struct PairedOrder {
+        id: u32,
     }
 
     static DECODED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -389,20 +397,20 @@ mod codec_override {
         let running = app.start().await.expect("startup failed");
 
         publisher
-            .raw(&order_bytes(1))
+            .message(&Order { id: 1 })
             .to("codec-decoded")
             .publish()
             .await
             .expect("publish failed");
         publisher
-            .raw(&order_bytes(2))
+            .message(&PairedOrder { id: 2 })
             .to("codec-paired")
             .with_headers(&Meta { shard: 7 })
             .publish()
             .await
             .expect("publish failed");
         publisher
-            .raw(b"\x00\xffnot json")
+            .message(&Wire::of(b"\x00\xffnot json"))
             .to("codec-provided")
             .publish()
             .await

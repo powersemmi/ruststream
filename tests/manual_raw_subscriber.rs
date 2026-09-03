@@ -15,11 +15,43 @@ use std::sync::Mutex;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
-use ruststream::runtime::{Input, SerializedReply, SoloDeserialized};
+use ruststream::runtime::{Input, MessageWire, SerializedReply, SerializedWire, SoloDeserialized};
 use ruststream::testing::TestApp;
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
+
+/// The wire this suite injects its frames through, with the impls `#[derive(Serialized)]` and
+/// `#[derive(Outgoing)]` write: publishing is typed, so bytes that are not a model still travel
+/// as a declared type, and the serialized wire is what keeps every codec off them. It declares
+/// no name, so each call site names its own destination.
+struct Wire(Vec<u8>);
+
+impl Serialized for Wire {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl MessageWire for Wire {
+    type Wire = SerializedWire;
+}
+
+impl OutgoingDestination for Wire {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Wire {
+    type Contract = NoHeaders;
+}
+
+impl Wire {
+    /// The wire form of `bytes`, for the call sites that hold a slice or a literal.
+    fn of(bytes: impl AsRef<[u8]>) -> Self {
+        Self(bytes.as_ref().to_vec())
+    }
+}
 
 // --- the plain form: the handler sees the exact published bytes ---
 
@@ -70,7 +102,7 @@ async fn raw_handler_receives_exact_bytes() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("frames")
         .publish()
         .await
@@ -157,7 +189,7 @@ async fn raw_reply_round_trips_exact_bytes() {
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
-        .raw(FRAME)
+        .message(&Wire::of(FRAME))
         .to("relay-in")
         .publish()
         .await

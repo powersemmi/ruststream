@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{BackgroundRun, wait_for};
+use common::{BackgroundRun, Wire, wait_for};
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -119,8 +119,18 @@ async fn broker_contributed_field_reaches_handler_by_key() {
 
     let run = BackgroundRun::spawn(app);
 
-    publisher.raw(b"a").to("orders").publish().await.unwrap();
-    publisher.raw(b"b").to("orders").publish().await.unwrap();
+    publisher
+        .message(&Wire::of(b"a"))
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
+    publisher
+        .message(&Wire::of(b"b"))
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").len() >= 2,
@@ -243,8 +253,18 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
 
     let run = BackgroundRun::spawn(app);
 
-    publisher.raw(b"a").to("orders").publish().await.unwrap();
-    publisher.raw(b"b").to("orders").publish().await.unwrap();
+    publisher
+        .message(&Wire::of(b"a"))
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
+    publisher
+        .message(&Wire::of(b"b"))
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").len() >= 2,
@@ -287,7 +307,12 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
 
     let run = BackgroundRun::spawn(app);
 
-    publisher.raw(b"x").to("orders").publish().await.unwrap();
+    publisher
+        .message(&Wire::of(b"x"))
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
 
     wait_for(
         || seen.lock().expect("poisoned").is_some(),

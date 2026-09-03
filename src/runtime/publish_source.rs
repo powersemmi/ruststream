@@ -229,8 +229,8 @@ mod tests {
     use futures::StreamExt;
 
     use crate::memory::{MemoryBroker, MemoryPublish};
-    use crate::runtime::{AppInfo, PublishExt, RustStream};
-    use crate::{Broker, IncomingMessage, Subscriber};
+    use crate::runtime::{AppInfo, RustStream};
+    use crate::{Broker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
 
     /// Cloning a token duplicates the binding, not the broker: both clones pair against the one
     /// instance the wrapper registered, and neither can pair before it is connected.
@@ -266,9 +266,7 @@ mod tests {
         for (token, payload) in [(token, b"one"), (spare, b"two")] {
             let publisher = token.live().await.expect("pairing after startup failed");
             publisher
-                .raw(payload.as_slice())
-                .to("bound.out")
-                .publish()
+                .publish(OutgoingMessage::new("bound.out", payload))
                 .await
                 .expect("publish through the paired token failed");
         }

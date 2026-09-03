@@ -1,19 +1,23 @@
 //! The publish builder's entry points on a bare [`Publisher`].
 
-use crate::{CallerName, OutgoingDestination, Publisher};
+use crate::{OutgoingDestination, Publisher};
 
-use super::builder::{HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of};
+use super::builder::{HeadersUnset, MessageBody, PublishBuilder, message_of};
 use super::sink::UnnamedCodec;
 
-/// The publish builder on any [`Publisher`]: `message(..)` for a value, `raw(..)` for bytes.
+/// The publish builder on any [`Publisher`]: `message(..)`, the one entry point of a publish.
 ///
 /// Blanket-implemented for every publisher, so a broker publisher held in the application state
 /// publishes through the same builder as an [`Out`](crate::runtime::Out) slot. The difference is
 /// the codec ladder: a bare publisher carries no codec of its own, so `message(..)` encodes with
 /// the crate's [`DefaultCodec`](crate::codec::DefaultCodec) unless the call names one with
 /// `with_codec(..)`. A surface that has a codec (an `Out` slot, a
-/// [`TypedPublisher`](super::TypedPublisher), a transaction scope) shadows these with its own
-/// entry points and uses that codec instead.
+/// [`TypedPublisher`](super::TypedPublisher), a transaction scope) shadows this entry point with
+/// its own and uses that codec instead.
+///
+/// One entry point covers both wires. A `serde::Serialize` value takes the resolved codec; a
+/// [`Serialized`](super::Serialized) value carries its own bytes and no codec runs on them, which
+/// is how a payload that is not a model of its own still travels as a declared type.
 ///
 /// # Examples
 ///
@@ -22,7 +26,7 @@ use super::sink::UnnamedCodec;
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::PublishExt;
-/// use ruststream::Outgoing;
+/// use ruststream::{Outgoing, Serialized};
 /// use serde::Serialize;
 ///
 /// #[derive(Outgoing, Serialize)]
@@ -31,25 +35,22 @@ use super::sink::UnnamedCodec;
 ///     id: u64,
 /// }
 ///
+/// // Bytes that are already the payload, under a name of their own. It declares no
+/// // destination, so the call site names one.
+/// #[derive(Outgoing, Serialized)]
+/// struct Audit(Vec<u8>);
+///
 /// let publisher = MemoryBroker::new().publisher();
 /// publisher.message(&OrderDone { id: 7 }).publish().await?;
-/// publisher.raw(b"{}").to("orders.audit").publish().await?;
+/// publisher
+///     .message(&Audit(b"{}".to_vec()))
+///     .to("orders.audit")
+///     .publish()
+///     .await?;
 /// # Ok(())
 /// # }
 /// ```
 pub trait PublishExt: Publisher {
-    /// Starts a byte publish: the payload travels as it is, to the destination named with
-    /// `to(..)`.
-    fn raw<'a, B>(
-        &'a self,
-        payload: &'a B,
-    ) -> PublishBuilder<&'a Self, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(self, payload)
-    }
-
     /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with the crate's
     /// default codec (name another one with `with_codec(..)`). A
     /// [`Serialized`](super::Serialized) value's bytes leave as they are instead - the wire is

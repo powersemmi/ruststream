@@ -2,7 +2,8 @@
 //!
 //! The codec unit tests in `src/codec/*` prove each codec round-trips in isolation; this drives a
 //! `CborCodec` and a `MsgpackCodec` end to end - named on a router with `with_codec`, mounted on a
-//! live app, fed wire bytes that codec produced, and decoded back into a typed handler argument.
+//! live app, fed a publish that names the same codec, and decoded back into a typed handler
+//! argument.
 #![cfg(all(feature = "macros", feature = "cbor", feature = "msgpack"))]
 
 mod common;
@@ -11,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use common::{Order, wait_for};
-use ruststream::codec::{CborCodec, Codec, MsgpackCodec};
+use ruststream::codec::{CborCodec, MsgpackCodec};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, Router, RustStream};
 use ruststream::subscriber;
@@ -55,16 +56,18 @@ async fn non_default_codecs_dispatch_through_the_router() {
     // `start` resolves only once subscriptions are open, so one publish per codec suffices.
     let running = app.start().await.expect("startup failed");
 
-    let cbor_bytes = CborCodec.encode(&Order { id: 7 }).unwrap();
-    let msgpack_bytes = MsgpackCodec.encode(&Order { id: 7 }).unwrap();
+    // Each publish names the router's own codec, so the bytes on the wire are the ones that
+    // router decodes with.
     publisher
-        .raw(&cbor_bytes)
+        .message(&Order { id: 7 })
+        .with_codec(CborCodec)
         .to("orders-cbor")
         .publish()
         .await
         .expect("publish");
     publisher
-        .raw(&msgpack_bytes)
+        .message(&Order { id: 7 })
+        .with_codec(MsgpackCodec)
         .to("orders-msgpack")
         .publish()
         .await

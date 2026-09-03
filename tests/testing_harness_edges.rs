@@ -20,7 +20,7 @@ use std::time::Duration;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::testing::{TestApp, TestError};
-use ruststream::{Broker, ConnectedBroker, Deserialized, subscriber};
+use ruststream::{Broker, ConnectedBroker, Deserialized, Outgoing, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -32,6 +32,11 @@ struct Order {
 /// The payload view the byte-injection case below takes.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
+
+/// Bytes injected as themselves: what that case sends, since its payload is a frame rather than
+/// a model. It declares no name, so the injection names its subject.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
 
 #[subscriber("orders")]
 async fn handle_orders(order: &Order) -> HandlerOutcome {
@@ -155,15 +160,19 @@ async fn a_mirror_state_addressing_a_duplicated_broker_type_names_it() {
     .await;
 }
 
-/// The unscoped byte entry point picks the sole broker the same way the typed one does, so a raw
-/// injection into a single-broker app needs no addressing either.
+/// The unscoped entry point picks the sole broker, so an injection into a single-broker app needs
+/// no addressing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_unscoped_byte_injection_picks_the_sole_broker() {
+async fn the_unscoped_injection_picks_the_sole_broker() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include(ingest));
     let tb = TestApp::start(app).await.expect("start");
 
-    tb.raw(b"frame").to("frames").publish().await.expect("raw");
+    tb.message(&Wire(b"frame".to_vec()))
+        .to("frames")
+        .publish()
+        .await
+        .expect("inject");
 
     tb.broker::<MemoryBroker>()
         .subscriber("frames")

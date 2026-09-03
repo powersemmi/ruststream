@@ -21,10 +21,18 @@ struct Frame<'a>(&'a [u8]);
 #[derive(Serialized)]
 struct Export(Vec<u8>);
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema, PartialEq)]
+#[derive(
+    Debug, Outgoing, serde::Serialize, serde::Deserialize, schemars::JsonSchema, PartialEq,
+)]
 struct Report {
     len: usize,
 }
+
+/// Bytes injected as themselves: what the tests feed the `Deserialized` lanes, where the payload
+/// is deliberately not a model. It declares no name, so each injection names its subject - unlike
+/// [`WireExport`], whose declaration fixes one.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
 
 /// Raw in, raw out: both lanes are the user's own.
 #[subscriber("lanes.mirror", publish("lanes.mirror.out"))]
@@ -67,25 +75,25 @@ async fn the_lanes_compose_end_to_end() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     ingress
-        .raw(b"\x00\x01\x02".as_slice())
+        .message(&Wire(b"\x00\x01\x02".to_vec()))
         .to("lanes.mirror")
         .publish()
         .await
         .expect("publish");
     ingress
-        .raw(b"four".as_slice())
+        .message(&Wire(b"four".to_vec()))
         .to("lanes.measure")
         .publish()
         .await
         .expect("publish");
     ingress
-        .raw(br#"{"len":7}"#.as_slice())
+        .message(&Report { len: 7 })
         .to("lanes.encode")
         .publish()
         .await
         .expect("publish");
     ingress
-        .raw(b"page".as_slice())
+        .message(&Wire(b"page".to_vec()))
         .to("lanes.frames")
         .publish()
         .await
@@ -146,7 +154,7 @@ async fn a_serialized_out_type_is_a_dictionary_member() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     ingress
-        .raw(b"chunk".as_slice())
+        .message(&Wire(b"chunk".to_vec()))
         .to("lanes.chunks")
         .publish()
         .await

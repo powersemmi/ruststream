@@ -25,7 +25,7 @@ use ruststream::{Broker, ConnectedBroker, subscriber};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
-use common::{Order, order_bytes};
+use common::{Order, Wire};
 
 // Notifies keyed per handler so the parallel tests do not interfere; each handler is used by one
 // test only. `notify_one` stores a permit, so the handler may fire before the test awaits.
@@ -65,7 +65,7 @@ async fn start_resolves_running_and_shutdown_completes() {
     // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("started.orders")
         .publish()
         .await
@@ -91,7 +91,7 @@ async fn stopping_resolves_on_fail_fast_and_shutdown_surfaces_it() {
     // `stopping()` stays pending while the service is healthy and resolves when the panicking
     // handler triggers the fail-fast teardown.
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("started.boom")
         .publish()
         .await
@@ -168,7 +168,7 @@ async fn start_is_reachable_through_the_app_trait() {
 
     let running = service(broker).start().await.expect("startup failed");
     publisher
-        .raw(&order_bytes(7))
+        .message(&Order { id: 7 })
         .to("started.trait")
         .publish()
         .await
@@ -254,7 +254,7 @@ async fn failed_after_startup_waits_for_post_settle_continuations() {
     let mut start_task = tokio::spawn(app.start());
     HOOK_READY.notified().await;
     publisher
-        .raw(b"go")
+        .message(&Wire::of(b"go"))
         .to("unwind.work")
         .publish()
         .await
@@ -321,7 +321,7 @@ async fn failed_connect_unwinds_already_connected_brokers() {
     assert!(matches!(err, RustStreamError::Connect(_)), "got: {err:?}");
     // The first broker had connected; the unwind must shut it down, not leave it live.
     let err = publisher
-        .raw(b"x")
+        .message(&Wire::of(b"x"))
         .to("started.unwind")
         .publish()
         .await
@@ -344,7 +344,7 @@ async fn failed_after_startup_unwinds_connected_brokers() {
     assert!(matches!(err, RustStreamError::Startup(_)), "got: {err:?}");
     // The hook failed after the broker connected and dispatch spawned; both are unwound.
     let err = publisher
-        .raw(b"x")
+        .message(&Wire::of(b"x"))
         .to("started.quiet")
         .publish()
         .await

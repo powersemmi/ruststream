@@ -4,7 +4,6 @@ use super::super::{MemoryBroker, MemorySource};
 use super::*;
 #[cfg(feature = "testing")]
 use crate::Subscribe;
-use crate::runtime::PublishExt;
 #[cfg(feature = "testing")]
 use crate::testing::{TestableBroker, coordinator::Coordinator};
 use crate::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource};
@@ -15,7 +14,10 @@ async fn batches_drain_buffered_deliveries() {
     let mut sub = broker.subscribe("batch");
     let publisher = broker.publisher();
     for i in 0..5u8 {
-        publisher.raw(&[i]).to("batch").publish().await.unwrap();
+        publisher
+            .publish(OutgoingMessage::new("batch", &[i]))
+            .await
+            .unwrap();
     }
 
     let mut stream = std::pin::pin!(sub.batches());
@@ -35,9 +37,7 @@ async fn batch_limit_caps_each_batch() {
     let publisher = broker.publisher();
     for i in 0..3u8 {
         publisher
-            .raw(&[i])
-            .to("batch.capped")
-            .publish()
+            .publish(OutgoingMessage::new("batch.capped", &[i]))
             .await
             .unwrap();
     }
@@ -59,8 +59,14 @@ async fn transaction_buffers_until_commit() {
     let publisher = broker.publisher();
 
     publisher.begin_transaction().await.unwrap();
-    publisher.raw(b"a").to("txn").publish().await.unwrap();
-    publisher.raw(b"b").to("txn").publish().await.unwrap();
+    publisher
+        .publish(OutgoingMessage::new("txn", b"a"))
+        .await
+        .unwrap();
+    publisher
+        .publish(OutgoingMessage::new("txn", b"b"))
+        .await
+        .unwrap();
 
     // Fanout is synchronous, so an empty queue here proves nothing was published yet.
     let mut stream = std::pin::pin!(sub.stream());
@@ -83,9 +89,7 @@ async fn abort_discards_buffered_publishes() {
 
     publisher.begin_transaction().await.unwrap();
     publisher
-        .raw(b"gone")
-        .to("txn.abort")
-        .publish()
+        .publish(OutgoingMessage::new("txn.abort", b"gone"))
         .await
         .unwrap();
     publisher.abort().await.unwrap();
@@ -94,9 +98,7 @@ async fn abort_discards_buffered_publishes() {
     assert!(futures::poll!(stream.next()).is_pending());
 
     publisher
-        .raw(b"kept")
-        .to("txn.abort")
-        .publish()
+        .publish(OutgoingMessage::new("txn.abort", b"kept"))
         .await
         .unwrap();
     let msg = stream.next().await.unwrap().unwrap();
@@ -112,17 +114,13 @@ async fn clone_does_not_join_transaction() {
 
     transactional.begin_transaction().await.unwrap();
     transactional
-        .raw(b"buffered")
-        .to("txn.clone")
-        .publish()
+        .publish(OutgoingMessage::new("txn.clone", b"buffered"))
         .await
         .unwrap();
 
     let independent = transactional.clone();
     independent
-        .raw(b"direct")
-        .to("txn.clone")
-        .publish()
+        .publish(OutgoingMessage::new("txn.clone", b"direct"))
         .await
         .unwrap();
 
@@ -162,9 +160,7 @@ async fn commit_after_shutdown_errors() {
 
     publisher.begin_transaction().await.unwrap();
     publisher
-        .raw(b"buffered")
-        .to("txn.down")
-        .publish()
+        .publish(OutgoingMessage::new("txn.down", b"buffered"))
         .await
         .unwrap();
     let connected = broker.connect().await.unwrap();
@@ -268,7 +264,10 @@ async fn request_resolves_on_reply() {
         let msg = stream.next().await.unwrap().unwrap();
         assert_eq!(msg.payload(), b"ping");
         let reply_to = msg.headers().reply_to().unwrap().to_owned();
-        publisher.raw(b"pong").to(reply_to).publish().await.unwrap();
+        publisher
+            .publish(OutgoingMessage::new(&reply_to, b"pong"))
+            .await
+            .unwrap();
         msg.ack().await.unwrap();
     };
     let request = requester.request(
@@ -317,9 +316,7 @@ async fn seek_back_redelivers_from_the_captured_position() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.back")
-            .publish()
+            .publish(OutgoingMessage::new("seek.back", payload))
             .await
             .unwrap();
     }
@@ -352,9 +349,7 @@ async fn constructed_position_seeks_forward_skipping_queued() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.fwd")
-            .publish()
+            .publish(OutgoingMessage::new("seek.fwd", payload))
             .await
             .unwrap();
     }
@@ -380,9 +375,7 @@ async fn stale_requeue_racing_a_seek_is_dropped() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.stale")
-            .publish()
+            .publish(OutgoingMessage::new("seek.stale", payload))
             .await
             .unwrap();
     }
@@ -402,9 +395,7 @@ async fn stale_requeue_racing_a_seek_is_dropped() {
     assert!(futures::poll!(stream.next()).is_pending());
 
     publisher
-        .raw(b"d")
-        .to("seek.stale")
-        .publish()
+        .publish(OutgoingMessage::new("seek.stale", b"d"))
         .await
         .unwrap();
     let live = stream.next().await.unwrap().unwrap();
@@ -420,9 +411,7 @@ async fn seek_past_the_end_skips_the_queue_and_resumes_with_the_next_publish() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.end")
-            .publish()
+            .publish(OutgoingMessage::new("seek.end", payload))
             .await
             .unwrap();
     }
@@ -433,7 +422,10 @@ async fn seek_past_the_end_skips_the_queue_and_resumes_with_the_next_publish() {
     let mut stream = std::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 
-    publisher.raw(b"c").to("seek.end").publish().await.unwrap();
+    publisher
+        .publish(OutgoingMessage::new("seek.end", b"c"))
+        .await
+        .unwrap();
     let live = stream.next().await.unwrap().unwrap();
     assert_eq!(live.payload(), b"c");
     live.ack().await.unwrap();
@@ -446,9 +438,7 @@ async fn start_at_replays_the_log_into_a_fresh_subscription() {
     let publisher = connected.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .raw(payload.as_slice())
-            .to("start.replay")
-            .publish()
+            .publish(OutgoingMessage::new("start.replay", payload))
             .await
             .unwrap();
     }
@@ -474,9 +464,7 @@ async fn start_at_end_skips_history_and_sees_the_next_publish() {
     let connected = broker.connect().await.unwrap();
     let publisher = connected.publisher();
     publisher
-        .raw(b"old")
-        .to("start.end")
-        .publish()
+        .publish(OutgoingMessage::new("start.end", b"old"))
         .await
         .unwrap();
 
@@ -488,9 +476,7 @@ async fn start_at_end_skips_history_and_sees_the_next_publish() {
     assert!(futures::poll!(stream.next()).is_pending());
 
     publisher
-        .raw(b"new")
-        .to("start.end")
-        .publish()
+        .publish(OutgoingMessage::new("start.end", b"new"))
         .await
         .unwrap();
     let live = stream.next().await.unwrap().unwrap();
@@ -520,9 +506,7 @@ async fn batches_replay_after_a_seek() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.batch")
-            .publish()
+            .publish(OutgoingMessage::new("seek.batch", payload))
             .await
             .unwrap();
     }
@@ -552,9 +536,7 @@ async fn position_is_stable_across_a_requeue() {
     let mut sub = broker.subscribe("seek.requeue");
     let publisher = broker.publisher();
     publisher
-        .raw(b"a")
-        .to("seek.requeue")
-        .publish()
+        .publish(OutgoingMessage::new("seek.requeue", b"a"))
         .await
         .unwrap();
 
@@ -577,7 +559,10 @@ async fn seek_wakes_a_parked_stream() {
     let mut sub = broker.subscribe("seek.wake");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
-    publisher.raw(b"a").to("seek.wake").publish().await.unwrap();
+    publisher
+        .publish(OutgoingMessage::new("seek.wake", b"a"))
+        .await
+        .unwrap();
     {
         let mut stream = std::pin::pin!(sub.stream());
         stream.next().await.unwrap().unwrap().ack().await.unwrap();
@@ -620,9 +605,7 @@ async fn batches_drop_stale_requeues_after_a_seek() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.batch.stale")
-            .publish()
+            .publish(OutgoingMessage::new("seek.batch.stale", payload))
             .await
             .unwrap();
     }
@@ -645,9 +628,7 @@ async fn batches_drop_stale_requeues_after_a_seek() {
 
     // A stale copy behind a live delivery: the batch-fill loop filters it out.
     publisher
-        .raw(b"d")
-        .to("seek.batch.stale")
-        .publish()
+        .publish(OutgoingMessage::new("seek.batch.stale", b"d"))
         .await
         .unwrap();
     held_a.nack(true).await.unwrap();
@@ -674,9 +655,7 @@ async fn seek_keeps_the_coordinator_in_flight_count_balanced() {
     let publisher = connected.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.balance")
-            .publish()
+            .publish(OutgoingMessage::new("seek.balance", payload))
             .await
             .unwrap();
     }
@@ -710,9 +689,7 @@ async fn seek_scope_is_one_subscriber_instance() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .raw(payload.as_slice())
-            .to("seek.scope")
-            .publish()
+            .publish(OutgoingMessage::new("seek.scope", payload))
             .await
             .unwrap();
     }
@@ -747,13 +724,13 @@ async fn partition_key_reads_well_known_header() {
     let mut headers = HeaderMap::new();
     headers.insert(PARTITION_KEY_HEADER, b"user-42".as_slice());
     publisher
-        .raw(b"a")
-        .with_headers(headers)
-        .to("keyed")
-        .publish()
+        .publish(OutgoingMessage::new("keyed", b"a").with_headers(headers))
         .await
         .unwrap();
-    publisher.raw(b"b").to("keyed").publish().await.unwrap();
+    publisher
+        .publish(OutgoingMessage::new("keyed", b"b"))
+        .await
+        .unwrap();
 
     let mut stream = std::pin::pin!(sub.stream());
     let keyed = stream.next().await.unwrap().unwrap();

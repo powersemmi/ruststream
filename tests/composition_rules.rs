@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, Receipt, connected, order_bytes, wait_for};
+use common::{Order, Receipt, connected, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::expect_published;
@@ -49,7 +49,7 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     // Four orders, each published once; expect one committed receipt per handled order.
     for id in 1..=4u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("tx-in")
             .publish()
             .await
@@ -101,7 +101,7 @@ async fn buffered_sources_compose_with_a_batch_pool() {
     // Six deliveries against a size cap of two: they cannot all fit in one batch.
     for id in 1..=6u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("buf-in")
             .publish()
             .await
@@ -150,7 +150,7 @@ async fn publishing_replies_compose_with_a_worker_pool() {
 
     for id in 1..=4u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("pub-in")
             .publish()
             .await

@@ -26,15 +26,16 @@ use super::sink::{CallCodec, PublishCodec, PublishSink};
 
 /// A publish under construction: the entry point's payload plus the positions still open.
 ///
-/// Built by the `message(..)` and `raw(..)` entry points of every publish surface (an
+/// Built by the `message(..)` entry point of every publish surface (an
 /// [`Out`](crate::runtime::Out) slot, a [`TypedPublisher`](super::TypedPublisher), a transaction
 /// scope, any [`Publisher`](crate::Publisher) through [`PublishExt`](super::PublishExt)), and
 /// finished by
 /// [`publish`](Self::publish). The type parameters are the positions:
 ///
 /// * `Sink` - where the bytes go, a [`PublishSink`].
-/// * `Body` - [`MessageBody`] (a value to encode) or [`RawBody`] (bytes as they are).
-/// * `Enc` - the codec position ([`PublishCodec`]); `()` on the byte entry point, which has none.
+/// * `Body` - [`MessageBody`], the value to encode. The runtime also fills this position with a
+///   crate-internal byte body where it republishes a delivery it already holds as bytes.
+/// * `Enc` - the codec position ([`PublishCodec`]); `()` on the byte body, which has none.
 /// * `Hdrs` - [`HeadersUnset`], [`TypedHeaders`] or [`MapHeaders`].
 /// * `Dest` - the destination: [`FixedName`] and [`SuppliedName`] are resolved, [`CallerName`]
 ///   and [`NameTemplate`] are still waiting for the call site.

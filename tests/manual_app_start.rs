@@ -5,17 +5,30 @@
 //! same way with the attribute off; only the definition changes.
 #![cfg(all(feature = "memory", feature = "json"))]
 
-mod common;
-
 use std::future::{Future, ready};
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
+use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
-use common::{Order, order_bytes};
+/// What the service carries; the run machinery, not the payload, is the subject.
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+struct Order {
+    id: u32,
+}
+
+// The `Outgoing` derive by hand: no declared name, so the test names the destination itself.
+impl OutgoingDestination for Order {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Order {
+    type Contract = NoHeaders;
+}
 
 // `notify_one` stores a permit, so the handler may fire before the test awaits.
 static SEEN: Notify = Notify::const_new();
@@ -49,7 +62,7 @@ async fn start_resolves_running_and_shutdown_completes() {
     // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.
     let running = app.start().await.expect("startup failed");
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("started.orders")
         .publish()
         .await

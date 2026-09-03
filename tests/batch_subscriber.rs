@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-use common::{Order, connected, order_bytes, wait_for};
+use common::{Order, Wire, connected, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, HandlerOutcome, PublishExt, Router, RustStream, TypedPublisher,
@@ -50,7 +50,7 @@ async fn batch_macro_def_receives_batches() {
     // The three publishes may buffer into one batch or arrive split across several.
     for id in 0..3u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("orders")
             .publish()
             .await
@@ -98,19 +98,19 @@ async fn undecodable_elements_never_reach_the_handler() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(1))
+        .message(&Order { id: 1 })
         .to("mixed")
         .publish()
         .await
         .expect("publish failed");
     publisher
-        .raw(b"not json")
+        .message(&Wire::of(b"not json"))
         .to("mixed")
         .publish()
         .await
         .expect("publish failed");
     publisher
-        .raw(&order_bytes(2))
+        .message(&Order { id: 2 })
         .to("mixed")
         .publish()
         .await
@@ -156,7 +156,7 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(7))
+        .message(&Order { id: 7 })
         .to("events")
         .publish()
         .await
@@ -202,7 +202,7 @@ async fn per_element_outcomes_retry_individually() {
     // The page is published exactly once, so the retry accounting below is deterministic.
     for id in [10u32, 11, 12] {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("pages")
             .publish()
             .await
@@ -276,7 +276,7 @@ async fn batch_replies_publish_transactionally() {
     let running = app.start().await.expect("startup failed");
 
     publisher
-        .raw(&order_bytes(7))
+        .message(&Order { id: 7 })
         .to("requests")
         .publish()
         .await
@@ -356,7 +356,7 @@ async fn batch_handler_reads_typed_state() {
 
     for id in 1..4u32 {
         publisher
-            .raw(&order_bytes(id))
+            .message(&Order { id })
             .to("scale")
             .publish()
             .await

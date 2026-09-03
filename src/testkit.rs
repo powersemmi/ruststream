@@ -93,28 +93,26 @@ pub(crate) mod log_capture {
 pub(crate) mod batch {
     use futures::StreamExt;
 
-    use crate::BatchSubscriber;
     use crate::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
-    use crate::runtime::PublishExt;
+    use crate::{BatchSubscriber, OutgoingMessage, Publisher};
 
     /// Publishes each number as its JSON encoding, so a `Decoded<u32>` handler sees them.
     pub(crate) async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
-        let publisher = broker.publisher();
         for n in numbers {
-            publisher
-                .raw(&serde_json::to_vec(n).unwrap())
-                .to(name)
-                .publish()
-                .await
-                .unwrap();
+            publish_payloads(broker, name, &[&serde_json::to_vec(n).unwrap()]).await;
         }
     }
 
-    /// Publishes raw payloads, for the cases where the bytes must not be valid JSON.
+    /// Puts payloads on the bus as they are. These tests drive the transport itself, so they
+    /// publish through the broker SPI (`Publisher::publish`) rather than the typed builder a
+    /// service uses.
     pub(crate) async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
         let publisher = broker.publisher();
         for payload in payloads {
-            publisher.raw(payload).to(name).publish().await.unwrap();
+            publisher
+                .publish(OutgoingMessage::new(name, payload))
+                .await
+                .unwrap();
         }
     }
 

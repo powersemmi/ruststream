@@ -77,10 +77,12 @@ their subjects collide. The unscoped `tb.message(&value).to(name)` is a convenie
 single-broker apps and reports `TestError::Ambiguous` when more than one broker is registered.
 
 Input goes in through the same publish builder the service publishes through: `message(&value)`
-encodes a `#[derive(Outgoing)]` value, `raw(bytes)` sends bytes as they are (the undecodable-payload
-case, and the way to feed a handler that
-[deserializes the bytes itself](subscribers.md#raw-subscribers)), `with_headers(&meta)` attaches
-a typed header contract, and `to(name)` names the subject when the value's type does not.
+publishes a `#[derive(Outgoing)]` value on the wire its type selects, `with_headers(&meta)`
+attaches a typed header contract, and `to(name)` names the subject when the value's type does not.
+Bytes that are not a model - an undecodable payload for a decode policy, or the input of a handler
+that [deserializes the bytes itself](subscribers.md#raw-subscribers) - travel as a
+`#[derive(Outgoing, Serialized)]` newtype through that same entry, so a test says what it is
+injecting rather than dropping anonymous bytes on the subject.
 
 ### Asserting on a handler
 
@@ -88,13 +90,21 @@ a typed header contract, and `to(name)` names the subject when the value's type 
 
 | Method | Asserts |
 |---|---|
-| `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | the delivery count |
-| `with(&value)` | the most recent delivery decodes to `value` (with the default codec) |
-| `with_raw(bytes)` | the most recent raw payload |
-| `settled(HandlerOutcome::ack())` | how it settled |
+| `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | the call count |
+| `with(&value)` | the most recent call's sole delivery decodes to `value` (with the default codec) |
+| `with_raw(bytes)` | the most recent call's sole raw payload |
+| `settled(HandlerOutcome::ack())` | how everything the most recent call carried settled |
 | `assert_outcome(Outcome::Drop)` | the classified outcome (ack / nack / drop / decode-failure / panic) |
-| `panicked()` | the handler panicked on the last delivery |
+| `panicked()` | the handler panicked on the last call |
 | `assert_last_failed_to_decode()` | the payload failed to decode |
+
+What these count is the handler CALL, not the message. A single-message handler is called once per
+delivery, so the two coincide; a batch handler is called once per page, so `assert_called_once()`
+means one page arrived whatever its size, `settled(..)` covers every element of it, and
+`received_raw()` still lists the elements one by one. The two assertions that name a single
+expected payload (`with`, `with_raw`) report the page size rather than silently checking one
+element of it. An element the decode policy rejected before the body ran is settled by that policy
+and is not part of the page the handler saw, so it does not appear.
 
 `tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
 the broker's publish log: `.assert_called_once().with(&Receipt { id: 1 })`.
