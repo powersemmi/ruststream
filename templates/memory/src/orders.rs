@@ -4,7 +4,7 @@
 //! definition (a value named after the function) that `routes` collects into a `Router`. `confirm`
 //! consumes `orders` and replies on `confirmations`; `on_cancel` handles `cancellations`.
 
-use ruststream::runtime::HandlerResult;
+use ruststream::runtime::HandlerOutcome;
 use ruststream::subscriber;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,9 +38,9 @@ pub async fn confirm(order: &Order) -> Confirmation {
     }
 }
 
-/// Logs cancellations, bound by plain name. No reply, so it returns a plain `HandlerResult`.
+/// Logs cancellations, bound by plain name. No reply, so it returns a plain `HandlerOutcome`.
 #[subscriber("cancellations")]
-pub async fn on_cancel(order: &Order) -> HandlerResult {
+pub async fn on_cancel(order: &Order) -> HandlerOutcome {
     println!("order {} ({}) cancelled", order.id, order.item);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
