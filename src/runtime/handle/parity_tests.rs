@@ -1,5 +1,9 @@
 //! The completion artifact of the manual path: every input spelling, reply shape, injection
 //! set and chain axis, mounted on both surfaces. A missing spelling fails this module's build.
+//!
+//! The two runtime suites here keep `start()` rather than the `TestApp` harness: what they pin is
+//! that every spelling MOUNTS, so they must build wherever this module does - and the harness
+//! lives behind the `testing` feature this module's gate deliberately leaves out.
 
 use std::future::{Future, ready};
 
