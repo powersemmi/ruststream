@@ -1,8 +1,5 @@
 //! Mount tokens and the commit trait every registration builder resolves through.
 
-// The typed default-reply commits build a `TypedPublisher`, so the codec import is gated.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::DefaultCodec;
 use crate::{
     Broker, BuildContext, Connected, DefaultPublish, PublishPolicy, Subscriber, SubscriptionSource,
 };
@@ -13,7 +10,7 @@ use crate::runtime::input::DecodeWith;
 use crate::runtime::middleware::Layer;
 use crate::runtime::publish::PublishPipeline;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::runtime::publish::TypedPublisher;
+use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
@@ -48,14 +45,14 @@ impl<B, Layers, C, State, Pipeline, Def> CommitVia<PublishMount, B, Layers, C, S
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
-    WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>:
+    WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>:
         CommitVia<PublishMount, B, Layers, C, State, Pipeline, Def>,
 {
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
         // The typed default reply: the broker's plain publish policy under the default codec,
-        // committed as if the user had chained `.publisher(TypedPublisher::new(<policy>))`.
+        // committed as if the user had chained `.publisher(<policy>)`.
         CommitVia::commit(
-            WithSource::new(TypedPublisher::new(
+            WithSource::new(ReplyWiring::new(
                 <B::Connected as DefaultPublish>::Policy::default(),
             )),
             def,

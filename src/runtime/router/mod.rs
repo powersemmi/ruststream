@@ -40,12 +40,12 @@ pub use builders::{RouterCommit, RouterSlotCommit};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;
-#[doc(hidden)]
-pub use mount::RouterMount;
 pub(crate) use mount::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, InjectMount, InputCodec,
     MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
 };
+#[doc(hidden)]
+pub use mount::{ReplyAttachment, RouterMount};
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 

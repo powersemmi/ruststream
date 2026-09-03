@@ -18,7 +18,8 @@ use super::scope::BrokerScope;
 // through the same tokens.
 pub(crate) use crate::runtime::router::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultReply, InjectMount,
-    MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, forms,
+    MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
+    ReplyAttachment, forms,
 };
 
 /// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in

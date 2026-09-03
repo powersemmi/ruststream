@@ -32,8 +32,8 @@ use super::SourceMessage;
 use super::routes::{MountRoute, RouteMeta};
 use super::sink::RouterSink;
 
-/// One reply-publishing registration whose reply travels the encoded wiring: a
-/// [`TypedPublisher`] stack naming the reply codec and transforms. An implementation detail of
+/// One reply-publishing registration whose reply travels the encoded wiring: the stack naming
+/// the reply codec and transforms. An implementation detail of
 /// [`Router`](crate::runtime::Router)'s registration list.
 ///
 /// `Extra` is the include-site attachment the definition's startup injections resolve against:

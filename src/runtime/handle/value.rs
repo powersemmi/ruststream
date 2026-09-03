@@ -6,7 +6,9 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 
-use crate::runtime::publish::{Transactional, TypedPublisher};
+use crate::runtime::publish::{
+    AddBatchReplyTransform, AddReplyTransform, NameReplyCodec, ReplyWiring, TransactionalReply,
+};
 use crate::runtime::router::DefaultReply;
 use crate::runtime::settings::SubscriberBuilder;
 use crate::runtime::slot::WithSource;
@@ -38,18 +40,6 @@ type ReplyStart<A, R, O, C, H, Doc, Attach, Src, State, DC> =
 
 /// The sealed chain [`build`](SubscriberBuilder::build) hands back.
 type SealedChain<V, Src, State, DC> = SubscriberBuilder<Sealed<V>, Src, State, DC>;
-
-/// The chain [`publisher`](SubscriberBuilder::publisher) hands back: the wrapped attachment.
-type WiredReplyChain<A, R, O, C, H, Doc, Dest, Wire, Fam, Src, State, DC> = SubscriberBuilder<
-    ReplyValue<
-        HandleValue<A, R, O, C, H, Doc>,
-        Dest,
-        <Wire as ReplyAttach<<R as ReplyRoute<Fam>>::Wire>>::Attach,
-    >,
-    Src,
-    State,
-    DC,
->;
 
 /// The fresh chain [`subscriber`] hands back.
 type FreshChain<A, R, O, C, H, Src> = super::ValueBuilder<HandleValue<A, R, O, C, H>, Src>;
@@ -226,52 +216,36 @@ pub struct EncodedReply;
 #[derive(Debug, Clone, Copy)]
 pub struct SerializedReply;
 
-/// What [`publisher`](SubscriberBuilder::publisher) accepts on the reply chain, per the reply
-/// type's wire.
+/// What [`publisher`](SubscriberBuilder::publisher) makes of the policy it is handed, per the
+/// reply type's wire.
 ///
-/// The wire follows the reply type: a `serde::Serialize` reply encodes through a
-/// [`TypedPublisher`] (or its [`Transactional`] batch wiring), a
-/// [`Serialized`](super::Serialized) reply takes the publish policy itself and its bytes leave
+/// The wire follows the reply type: a `serde::Serialize` reply opens a [`ReplyWiring`] the rest
+/// of the chain grows (`.codec(..)`, `.transform(..)`, `.transactional()`), while a
+/// [`Serialized`](super::Serialized) reply carries the publish policy itself and its bytes leave
 /// as they are.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` does not attach this reply's publisher",
-    note = "an encoded reply (`serde::Serialize`) takes `TypedPublisher::new(policy)` \
-            (`.transactional()` publishes a page's replies in one transaction); a `Serialized` \
-            reply takes the publish policy itself"
-)]
+#[doc(hidden)]
 pub trait ReplyAttach<Wire> {
-    /// The attach the chain stores.
-    #[doc(hidden)]
-    type Attach;
+    /// The wiring the chain carries until it seals.
+    type Wiring;
 
-    /// Wraps the attachment for the chain.
-    #[doc(hidden)]
-    fn into_attach(self) -> Self::Attach;
+    /// Opens it.
+    fn into_wiring(self) -> Self::Wiring;
 }
 
-impl<P, C, PL, BL> ReplyAttach<EncodedReply> for TypedPublisher<P, C, PL, BL> {
-    type Attach = WithSource<Self>;
+impl<Policy> ReplyAttach<EncodedReply> for Policy {
+    type Wiring = ReplyWiring<Policy>;
 
-    fn into_attach(self) -> WithSource<Self> {
-        WithSource::new(self)
+    fn into_wiring(self) -> ReplyWiring<Policy> {
+        ReplyWiring::new(self)
     }
 }
 
-impl<P, C, PL, BL> ReplyAttach<EncodedReply> for Transactional<P, C, PL, BL> {
-    type Attach = WithSource<Self>;
-
-    fn into_attach(self) -> WithSource<Self> {
-        WithSource::new(self)
-    }
-}
-
-// Any policy attaches to a serialized reply: the wire needs no codec, so there is nothing to
-// wrap the policy in.
+// A serialized reply needs no codec and has no transform stack, so the policy travels bare.
 impl<Policy> ReplyAttach<SerializedReply> for Policy {
-    type Attach = WithSource<Policy>;
+    type Wiring = Policy;
 
-    fn into_attach(self) -> WithSource<Policy> {
-        WithSource::new(self)
+    fn into_wiring(self) -> Policy {
+        self
     }
 }
 
@@ -435,30 +409,132 @@ impl DefaultReplyAttach for DefaultReply {}
 impl<A, R, O, C, H, Doc, Dest, Attach: DefaultReplyAttach, Src, State, DC>
     SubscriberBuilder<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Attach>, Src, State, DC>
 {
-    /// Attaches the reply publish policy. Policies are connection-free declarations, so the
-    /// definition carries the attachment; without this call the broker's default policy
-    /// applies.
+    /// Names the reply's publish policy and opens the reply wiring. Policies are connection-free
+    /// declarations, so the definition carries the attachment; without this call the broker's
+    /// default policy applies.
     ///
-    /// The reply type's wire decides the argument's form (see [`ReplyAttach`]): an encoded
-    /// reply takes a [`TypedPublisher`] naming the reply codec (or its [`Transactional`] batch
-    /// wiring), a [`Serialized`](super::Serialized) reply takes the publish policy itself.
+    /// The reply type's wire decides what the call opens (see [`ReplyAttach`]): an encoded reply
+    /// gets a wiring the chain grows with [`codec`](ReplyWiringChain::codec),
+    /// [`transform`](ReplyWiringChain::transform),
+    /// [`batch_transform`](ReplyWiringChain::batch_transform) and
+    /// [`transactional`](ReplyWiringChain::transactional), while a
+    /// [`Serialized`](super::Serialized) reply carries the policy alone. Either way the chain
+    /// seals with [`build`](ReplyWiringChain::build).
     // Every parameter is one axis or chain state the wire step carries through; the count is
     // the typestate itself, not incidental nesting an alias could hide.
     #[allow(clippy::type_complexity)]
-    #[must_use]
-    pub fn publisher<Wire>(
+    pub fn publisher<Policy>(
         self,
-        wire: Wire,
-    ) -> WiredReplyChain<A, R, O, C, H, Doc, Dest, Wire, A::Family, Src, State, DC>
+        policy: Policy,
+    ) -> ReplyWiringChain<
+        UnwiredReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC>,
+        <Policy as ReplyAttach<<R as ReplyRoute<A::Family>>::Wire>>::Wiring,
+    >
     where
         A: Axis,
         R: ReplyRoute<A::Family>,
-        Wire: ReplyAttach<R::Wire>,
+        Policy: ReplyAttach<R::Wire>,
     {
-        self.map_def(|def| ReplyValue {
-            value: def.value,
-            dest: def.dest,
-            attach: wire.into_attach(),
+        ReplyWiringChain {
+            chain: self.map_def(|def| ReplyValue {
+                value: def.value,
+                dest: def.dest,
+                attach: (),
+            }),
+            wiring: policy.into_wiring(),
+        }
+    }
+}
+
+/// The reply chain with its wiring lifted out: what [`publisher`](SubscriberBuilder::publisher)
+/// keeps hold of while the wiring steps run.
+pub type UnwiredReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> =
+    ReplyChain<HandleValue<A, R, O, C, H, Doc>, Dest, (), Src, State, DC>;
+
+/// The reply wiring under construction: what `.publisher(..)` opens on the manual path.
+///
+/// [`codec`](Self::codec), [`transform`](Self::transform),
+/// [`batch_transform`](Self::batch_transform) and [`transactional`](Self::transactional) fill the
+/// wiring's slots - each once, so naming one twice does not compile - and [`build`](Self::build)
+/// folds it back into the definition and seals it for
+/// [`include`](crate::runtime::Router::include). The subscriber settings
+/// ([`workers`](crate::runtime::SubscriberSettings::workers), ...) chain on either side of the
+/// wiring; the value steps (`.describe(..)`, `.undocumented()`, `.batch(..)`) come before it.
+#[must_use = "the reply wiring seals with .build()"]
+pub struct ReplyWiringChain<Chain, W> {
+    chain: Chain,
+    wiring: W,
+}
+
+impl<Chain, W> fmt::Debug for ReplyWiringChain<Chain, W> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReplyWiringChain").finish_non_exhaustive()
+    }
+}
+
+impl<Chain, W> ReplyWiringChain<Chain, W> {
+    /// Encodes the reply with `codec` instead of the
+    /// [`DefaultCodec`](crate::codec::DefaultCodec). Named once per registration.
+    pub fn codec<Cd>(self, codec: Cd) -> ReplyWiringChain<Chain, W::Out>
+    where
+        W: NameReplyCodec<Cd>,
+    {
+        ReplyWiringChain {
+            chain: self.chain,
+            wiring: self.wiring.name_codec(codec),
+        }
+    }
+
+    /// Composes a static [`PublishTransform`](crate::runtime::PublishTransform) onto every reply
+    /// of this registration. The first one added runs first (closest to the encoded value).
+    pub fn transform<N>(self, transform: N) -> ReplyWiringChain<Chain, W::Out>
+    where
+        W: AddReplyTransform<N>,
+    {
+        ReplyWiringChain {
+            chain: self.chain,
+            wiring: self.wiring.add_transform(transform),
+        }
+    }
+
+    /// Composes a [`BatchPublishTransform`](crate::runtime::BatchPublishTransform) onto every
+    /// reply of a page, after the per-message stack.
+    pub fn batch_transform<N>(self, transform: N) -> ReplyWiringChain<Chain, W::Out>
+    where
+        W: AddBatchReplyTransform<N>,
+    {
+        ReplyWiringChain {
+            chain: self.chain,
+            wiring: self.wiring.add_batch_transform(transform),
+        }
+    }
+
+    /// Publishes a page's replies inside one broker transaction: they all become visible
+    /// atomically on commit, or none of them do. The policy's live publisher has to be a
+    /// [`TransactionalPublisher`](crate::TransactionalPublisher), which the mount checks against
+    /// its own broker.
+    pub fn transactional(self) -> ReplyWiringChain<Chain, W::Out>
+    where
+        W: TransactionalReply,
+    {
+        ReplyWiringChain {
+            chain: self.chain,
+            wiring: self.wiring.into_transactional(),
+        }
+    }
+}
+
+impl<V, Dest, Src, State, DC, W> ReplyWiringChain<ReplyChain<V, Dest, (), Src, State, DC>, W> {
+    /// Folds the wiring back into the definition and seals it for `include`.
+    #[must_use]
+    pub fn build(self) -> SealedChain<ReplyValue<V, Dest, WithSource<W>>, Src, State, DC> {
+        let wiring = self.wiring;
+        self.chain.map_def(|def| {
+            Sealed(ReplyValue {
+                value: def.value,
+                dest: def.dest,
+                attach: WithSource::new(wiring),
+            })
         })
     }
 }

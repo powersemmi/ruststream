@@ -5,9 +5,14 @@ use std::marker::PhantomData;
 
 use crate::Broker;
 
+use crate::runtime::publish::{
+    AddBatchReplyTransform, AddReplyTransform, NameReplyCodec, TransactionalReply,
+};
 use crate::runtime::slot::{BindSlot, OutSlot, WithSource};
 
-use super::{BatchPublishInjectMount, PublishInjectMount, RawReplyInjectMount, SlotCommit};
+use super::{
+    BatchPublishInjectMount, PublishInjectMount, RawReplyInjectMount, ReplyAttachment, SlotCommit,
+};
 use crate::runtime::app::scope::BrokerScope;
 
 /// A registration builder for a publishing handler that also takes
@@ -107,15 +112,20 @@ where
         (def, reply, slots, scope)
     }
 
-    /// Attaches the reply source, like [`IncludeWith::publisher`](crate::runtime::IncludeWith::publisher).
+    /// Names the reply's publish policy, like
+    /// [`IncludeWith::publisher`](crate::runtime::IncludeWith::publisher); the wiring steps
+    /// ([`codec`](Self::codec), [`transform`](Self::transform),
+    /// [`batch_transform`](Self::batch_transform), [`transactional`](Self::transactional)) chain
+    /// onto it, next to the slot side's [`out`](Self::out).
     ///
     /// # Panics
     ///
     /// Never in practice: the internal expects guard builder invariants that hold until the
     /// commit consumes them.
-    pub fn publisher<NewSource>(
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn publisher<Policy>(
         self,
-        source: NewSource,
+        policy: Policy,
     ) -> IncludeSlotsWithReply<
         's,
         Mount,
@@ -125,11 +135,14 @@ where
         State,
         Pipeline,
         Def,
-        WithSource<NewSource>,
+        WithSource<Mount::Wiring>,
         Slots,
-    > {
+    >
+    where
+        Mount: ReplyAttachment<Policy>,
+    {
         let (def, _default, slots, scope) = self.take();
-        IncludeSlotsWithReply::new(def, WithSource::new(source), slots, scope)
+        IncludeSlotsWithReply::new(def, WithSource::new(Mount::wire(policy)), slots, scope)
     }
 
     /// Binds one named [`Out`](crate::runtime::Out) slot, like [`IncludeSlots::out`](crate::runtime::IncludeSlots::out): by
@@ -182,6 +195,119 @@ where
     {
         let (def, reply, slots, scope) = self.take();
         (reply, slots).commit(def, scope);
+    }
+}
+
+impl<'s, Mount, B, Layers, C, State, Pipeline, Def, W, Slots>
+    IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W>, Slots>
+where
+    B: Broker + 'static,
+{
+    /// Rebuilds the builder over a grown reply wiring, keeping the definition, the slots and the
+    /// scope.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit consumes them.
+    fn map_wiring<W2>(
+        self,
+        f: impl FnOnce(W) -> W2,
+    ) -> IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W2>, Slots>
+    {
+        let (def, wiring, slots, scope) = self.take();
+        IncludeSlotsWithReply::new(def, wiring.map(f), slots, scope)
+    }
+
+    /// See [`IncludeWith::codec`](crate::runtime::IncludeWith::codec).
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn codec<Cd>(
+        self,
+        codec: Cd,
+    ) -> IncludeSlotsWithReply<
+        's,
+        Mount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        WithSource<W::Out>,
+        Slots,
+    >
+    where
+        W: NameReplyCodec<Cd>,
+    {
+        self.map_wiring(|wiring| wiring.name_codec(codec))
+    }
+
+    /// See [`IncludeWith::transform`](crate::runtime::IncludeWith::transform).
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn transform<N>(
+        self,
+        transform: N,
+    ) -> IncludeSlotsWithReply<
+        's,
+        Mount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        WithSource<W::Out>,
+        Slots,
+    >
+    where
+        W: AddReplyTransform<N>,
+    {
+        self.map_wiring(|wiring| wiring.add_transform(transform))
+    }
+
+    /// See [`IncludeWith::batch_transform`](crate::runtime::IncludeWith::batch_transform).
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn batch_transform<N>(
+        self,
+        transform: N,
+    ) -> IncludeSlotsWithReply<
+        's,
+        Mount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        WithSource<W::Out>,
+        Slots,
+    >
+    where
+        W: AddBatchReplyTransform<N>,
+    {
+        self.map_wiring(|wiring| wiring.add_batch_transform(transform))
+    }
+
+    /// See [`IncludeWith::transactional`](crate::runtime::IncludeWith::transactional).
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn transactional(
+        self,
+    ) -> IncludeSlotsWithReply<
+        's,
+        Mount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        WithSource<W::Out>,
+        Slots,
+    >
+    where
+        W: TransactionalReply,
+    {
+        self.map_wiring(TransactionalReply::into_transactional)
     }
 }
 

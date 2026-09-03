@@ -81,10 +81,12 @@ pub use reply::{ReplyShape, Serialized};
 pub use reply_slots::{SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut};
 pub use value::{
     DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented, NamedDest,
-    ReplyAttach, ReplyValue, Sealed, SerializedReply, subscriber,
+    ReplyValue, ReplyWiringChain, Sealed, SerializedReply, subscriber,
 };
 #[doc(hidden)]
-pub use value::{ProbedReplyDef, UnbuiltDefinition, probed_def, probed_reply_def};
+pub use value::{
+    ProbedReplyDef, ReplyAttach, UnbuiltDefinition, UnwiredReplyChain, probed_def, probed_reply_def,
+};
 pub use verdict::Verdict;
 #[doc(hidden)]
 pub use verdict::{OneByOne, Paged, VerdictFamily};

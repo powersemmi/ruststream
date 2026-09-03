@@ -6,7 +6,7 @@ use futures::StreamExt;
 
 use super::super::dispatch::Delivery;
 use super::super::handler::HandlerResult;
-use super::super::publish::TypedPublisher;
+use super::super::publish::{Transactional, TypedPublisher};
 use super::*;
 use crate::codec::JsonCodec;
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
@@ -84,7 +84,7 @@ async fn transactional_replies_publish_atomically_then_ack() {
     let handler = BatchPublishingHandler {
         def: Confirm::new("confirmations"),
         codec: JsonCodec,
-        publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
+        publisher: Transactional::live(TypedPublisher::with_codec(broker.publisher(), JsonCodec)),
         pipeline: PublishIdentity,
         injections: (),
         decode: FailurePolicy::Drop,
@@ -120,7 +120,7 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
     let handler = BatchPublishingHandler {
         def: Confirm::failing("confirmations", HandlerResult::retry()),
         codec: JsonCodec,
-        publisher: TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional(),
+        publisher: Transactional::live(TypedPublisher::with_codec(broker.publisher(), JsonCodec)),
         pipeline: PublishIdentity,
         injections: (),
         decode: FailurePolicy::Drop,

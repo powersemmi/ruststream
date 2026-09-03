@@ -9,6 +9,7 @@
 use crate::Broker;
 use crate::codec::Codec;
 use crate::runtime::input::{Decoded, DecodedPair, Provided};
+use crate::runtime::publish::ReplyWiring;
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
@@ -153,6 +154,56 @@ pub struct RawReplyInjectMount;
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishInjectMount;
+
+/// What `.publisher(policy)` attaches on one mount, per the reply's wire.
+///
+/// An encoded reply wraps the policy in a [`ReplyWiring`] the rest of the chain grows
+/// (`.codec(..)`, `.transform(..)`, `.transactional()`); a byte-for-byte reply takes the policy
+/// itself, because its bytes leave with no codec and no transform stack to name. Machinery; the
+/// chain reads it off its own mount token.
+#[doc(hidden)]
+pub trait ReplyAttachment<Policy> {
+    /// The wiring the chain carries from `.publisher(..)` to the commit.
+    type Wiring;
+
+    /// Wraps the policy for this mount.
+    fn wire(policy: Policy) -> Self::Wiring;
+}
+
+/// Implements [`ReplyAttachment`] for the mounts whose reply travels the encoded wiring.
+macro_rules! impl_encoded_reply_attachment {
+    ($($mount:ident),+ $(,)?) => {$(
+        impl<Policy> ReplyAttachment<Policy> for $mount {
+            type Wiring = ReplyWiring<Policy>;
+
+            fn wire(policy: Policy) -> ReplyWiring<Policy> {
+                ReplyWiring::new(policy)
+            }
+        }
+    )+};
+}
+
+impl_encoded_reply_attachment!(
+    PublishMount,
+    PublishInjectMount,
+    BatchPublishMount,
+    BatchPublishInjectMount,
+);
+
+/// Implements [`ReplyAttachment`] for the mounts whose reply leaves byte-for-byte.
+macro_rules! impl_raw_reply_attachment {
+    ($($mount:ident),+ $(,)?) => {$(
+        impl<Policy> ReplyAttachment<Policy> for $mount {
+            type Wiring = Policy;
+
+            fn wire(policy: Policy) -> Policy {
+                policy
+            }
+        }
+    )+};
+}
+
+impl_raw_reply_attachment!(RawReplyMount, RawReplyInjectMount);
 
 /// Form-token dispatch for [`Router::include`](super::Router::include): implemented by the
 /// tokens in [`forms`](super::forms), generic over the definition and the router chain.

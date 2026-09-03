@@ -2,9 +2,6 @@
 
 use serde::Serialize;
 
-// The typed default-reply commits build a `TypedPublisher`, so the codec import is gated.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::DefaultCodec;
 use crate::{BatchSubscriber, Broker, Connected, PublishPolicy, Subscriber, SubscriptionSource};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::{DefaultPublish, Publisher};
@@ -14,7 +11,7 @@ use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::inject::FromStartup;
 use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::runtime::publish::TypedPublisher;
+use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publish::{PublishPipeline, ReplyPublisher};
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
@@ -122,7 +119,7 @@ where
     fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
         let codec = def.mounted_codec(&scope.codec);
         let source = def.source();
-        let reply = TypedPublisher::new(<B::Connected as DefaultPublish>::Policy::default());
+        let reply = ReplyWiring::new(<B::Connected as DefaultPublish>::Policy::default());
         scope.mount_batch_publishing_source(source, def, codec, reply, ((),));
     }
 }
@@ -183,7 +180,7 @@ where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
     (
-        WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>,
+        WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
         Slots,
     ): SlotCommit<BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>,
 {
@@ -191,7 +188,7 @@ where
         // The typed default reply, as if the user had chained `.publisher(..)` themselves.
         SlotCommit::commit(
             (
-                WithSource::new(TypedPublisher::new(
+                WithSource::new(ReplyWiring::new(
                     <B::Connected as DefaultPublish>::Policy::default(),
                 )),
                 self.1,

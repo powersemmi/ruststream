@@ -25,17 +25,25 @@
 //! # Examples
 //!
 //! ```
-//! # #[cfg(all(feature = "memory", feature = "json"))]
-//! # {
-//! use ruststream::memory::MemoryBroker;
+//! # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+//! # mod demo {
+//! use ruststream::memory::prelude::*;
 //! use ruststream::otel::OpenTelemetry;
-//! use ruststream::runtime::TypedPublisher;
+//! # use ruststream::subscriber;
+//! # #[derive(serde::Deserialize, schemars::JsonSchema)]
+//! # struct Order { id: u64 }
+//! # #[derive(serde::Serialize, schemars::JsonSchema)]
+//! # struct Confirmation { id: u64 }
+//! # #[subscriber("orders", publish("confirmations"))]
+//! # async fn confirm(order: &Order) -> Confirmation { Confirmation { id: order.id } }
 //!
-//! let otel = OpenTelemetry::new();
-//! let broker = MemoryBroker::new();
-//! // Replies carry the delivery's trace context.
-//! let publisher = TypedPublisher::new(broker.publisher()).transform(otel.propagation());
-//! # let _ = publisher;
+//! fn app() -> RustStream {
+//!     let otel = OpenTelemetry::new();
+//!     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+//!         // Replies carry the delivery's trace context.
+//!         b.include(confirm).publisher(Publish).transform(otel.propagation());
+//!     })
+//! }
 //! # }
 //! ```
 
@@ -133,9 +141,9 @@ impl OpenTelemetry {
         OpenTelemetryLayer
     }
 
-    /// The publish-side [`PublishTransform`]: copies the delivery's `traceparent` onto every reply. Bake
-    /// it onto a [`TypedPublisher`](crate::runtime::TypedPublisher) with
-    /// [`transform`](crate::runtime::TypedPublisher::transform) (or, for a batch publisher, via
+    /// The publish-side [`PublishTransform`]: copies the delivery's `traceparent` onto every
+    /// reply. Compose it onto a reply's wiring with the mount site's `.transform(..)` step (or,
+    /// on a page reply, `.batch_transform(for_batch(..))` - see
     /// [`for_batch`](crate::runtime::for_batch)).
     ///
     /// # Examples

@@ -299,7 +299,7 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Body> Slot<M, W, E, 
     /// ```
     pub async fn begin(
         &self,
-    ) -> Result<TransactionScope<'_, SlotPublisher<W, M>, E, Self>, W::Error> {
+    ) -> Result<TransactionScope<'_, SlotPublisher<W, M>, &'_ E, Self>, W::Error> {
         TransactionScope::open(&self.wired, &self.codec).await
     }
 }
@@ -362,7 +362,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Body> Slot<M, W, E, Body>
     // trait path.
     pub async fn transaction(
         &self,
-    ) -> Result<TypedTransaction<'_, W::Transaction, E, Self>, W::Error> {
+    ) -> Result<TypedTransaction<W::Transaction, &'_ E, Self>, W::Error> {
         TypedTransaction::open(&self.wired, &self.codec).await
     }
 }

@@ -27,9 +27,8 @@ use super::sink::{CallCodec, PublishCodec, PublishSink};
 /// A publish under construction: the entry point's payload plus the positions still open.
 ///
 /// Built by the `message(..)` entry point of every publish surface (an
-/// [`Out`](crate::runtime::Out) slot, a [`TypedPublisher`](super::TypedPublisher), a transaction
-/// scope, any [`Publisher`](crate::Publisher) through [`PublishExt`](super::PublishExt)), and
-/// finished by
+/// [`Out`](crate::runtime::Out) slot, a transaction scope, any [`Publisher`](crate::Publisher)
+/// through [`PublishExt`](super::PublishExt)), and finished by
 /// [`publish`](Self::publish). The type parameters are the positions:
 ///
 /// * `Sink` - where the bytes go, a [`PublishSink`].
@@ -174,9 +173,9 @@ impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
 ///
 /// A `Serialized` value leaves the service byte-for-byte with no codec anywhere on the path,
 /// selected purely by the type, on every typed surface: the `message(&value)` entry of a
-/// publish builder (an [`Out`](crate::runtime::Out) slot, a
-/// [`TypedPublisher`](super::TypedPublisher), a transaction scope), and the reply position (the
-/// same `.reply()` chain and `publish("dest")` clause an encoded reply uses).
+/// publish builder (an [`Out`](crate::runtime::Out) slot, a transaction scope, any publisher),
+/// and the reply position (the same `.reply()` chain and `publish("dest")` clause an encoded
+/// reply uses).
 ///
 /// # Implementing by hand
 ///

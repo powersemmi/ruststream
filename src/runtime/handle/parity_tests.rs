@@ -11,9 +11,9 @@ use crate::memory::{
 };
 use crate::nonzero;
 use crate::runtime::{
-    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, Outs, ReplyShape,
-    Router, RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
-    SubscriberSettings, Verdict, subscriber,
+    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, Outgoing, Outs,
+    PublishContext, PublishTransform, ReplyShape, Router, RouterDef, Serialized, SerializedReply,
+    SerializedWire, Slot, SoloDeserialized, SubscriberSettings, Verdict, for_batch, subscriber,
 };
 use crate::{Publisher, Seeker};
 
@@ -418,7 +418,7 @@ fn every_eager_spelling_mounts() {
 /// with an explicit and the broker's default publisher - selected by the reply type alone),
 /// the page form, and typed reply headers.
 fn reply_axes() -> impl RouterDef<MemoryBroker> {
-    use crate::runtime::TypedPublisher;
+    use crate::codec::JsonCodec;
 
     Router::<MemoryBroker>::new()
         .include(
@@ -431,7 +431,17 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
-                .publisher(TypedPublisher::new(MemoryPublish))
+                .publisher(MemoryPublish)
+                .build(),
+        )
+        // the wiring steps after `.publisher(..)`: a named codec and a static transform
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .codec(JsonCodec)
+                .transform(StampReply)
                 .build(),
         )
         .include(subscriber("orders", IssueReceipt).reply().build())
@@ -450,12 +460,33 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .batch(nonzero!(8))
                 .build(),
         )
+        // the page wiring: one broker transaction per page, with a batch-only transform
+        .include(
+            subscriber("orders", ConfirmPages)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .batch_transform(for_batch(StampReply))
+                .transactional()
+                .build(),
+        )
         .include(
             subscriber("orders", ConfirmWithMeta)
                 .reply()
                 .to("confirmations")
                 .build(),
         )
+}
+
+/// A publish transform the reply chain composes on: it only has to exist for the mount to
+/// type-check, so it stamps one header and leaves the payload alone.
+#[derive(Clone, Copy)]
+struct StampReply;
+
+impl<Cx> PublishTransform<Cx> for StampReply {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, Cx>) {
+        out.headers_mut().insert("x-stamped", "1");
+    }
 }
 
 #[test]
@@ -520,8 +551,6 @@ where
 /// The slot arena mounts on both families, bound at the include site - the generic and the
 /// concrete-typed spelling alike.
 fn slot_axes() -> impl RouterDef<MemoryBroker> {
-    use crate::runtime::TypedPublisher;
-
     Router::<MemoryBroker>::new()
         .include(subscriber("orders", Mirror).build())
         .out(Analytics, MemoryPublish)
@@ -547,7 +576,8 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", Gateway)
                 .reply()
                 .to("confirmations")
-                .publisher(TypedPublisher::new(MemoryPublish))
+                .publisher(MemoryPublish)
+                .codec(JsonCodec)
                 .build(),
         )
         .out(Analytics, MemoryPublish)
@@ -625,7 +655,7 @@ async fn seek_reaches_the_body_through_the_context() {
 async fn a_subscriber_dispatches_end_to_end() {
     use crate::OutgoingMessage;
     use crate::Publisher;
-    use crate::runtime::{AppInfo, RustStream, TypedPublisher};
+    use crate::runtime::{AppInfo, RustStream};
 
     let app = RustStream::new(AppInfo::new("handle-parity", "0.0.0")).with_broker(
         MemoryBroker::new(),
@@ -650,7 +680,8 @@ async fn a_subscriber_dispatches_end_to_end() {
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(TypedPublisher::new(MemoryPublish))
+                    .publisher(MemoryPublish)
+                    .codec(JsonCodec)
                     .build(),
             );
             b.include(subscriber("orders", RawMirror).build())

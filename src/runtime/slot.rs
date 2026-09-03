@@ -371,6 +371,15 @@ impl<Source> WithSource<Source> {
     pub(crate) fn new(source: Source) -> Self {
         Self(source)
     }
+
+    /// Grows the wrapped source in place: how a mount site's reply chain adds one step to the
+    /// wiring it already attached.
+    pub(crate) fn map<NewSource>(
+        self,
+        f: impl FnOnce(Source) -> NewSource,
+    ) -> WithSource<NewSource> {
+        WithSource(f(self.0))
+    }
 }
 
 impl<Source> IntoSlotSource for WithSource<Source> {

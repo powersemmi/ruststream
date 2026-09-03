@@ -12,8 +12,6 @@
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::DefaultCodec;
 use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSource};
 
 use crate::runtime::SourceSubscriber;
@@ -22,7 +20,7 @@ use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::inject::InjectDef;
 use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::runtime::publish::TypedPublisher;
+use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
@@ -408,12 +406,12 @@ macro_rules! impl_default_typed_reply_slot_commit {
             B: Broker + 'static,
             B::Connected: DefaultPublish,
             (
-                WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>,
+                WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
                 Slots,
             ): RouterSlotCommit<$mount, B, Routes, RouteCodec, RouteLayers, Def>,
         {
             type Out = <(
-                WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>,
+                WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
                 Slots,
             ) as RouterSlotCommit<$mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out;
 
@@ -423,7 +421,7 @@ macro_rules! impl_default_typed_reply_slot_commit {
                 router: Router<B, Routes, RouteCodec, RouteLayers>,
             ) -> Self::Out {
                 (
-                    WithSource::new(TypedPublisher::new(
+                    WithSource::new(ReplyWiring::new(
                         <B::Connected as DefaultPublish>::Policy::default(),
                     )),
                     self.1,

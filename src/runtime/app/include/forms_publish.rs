@@ -1,8 +1,5 @@
 //! Mount forms for reply publishing, alone and combined with Out slots.
 
-// The typed default-reply commits build a `TypedPublisher`, so the codec import is gated.
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::DefaultCodec;
 use crate::{Broker, BuildContext, Connected, DefaultPublish, PublishPolicy, SubscriptionSource};
 
 use crate::runtime::handler::Handler;
@@ -11,7 +8,7 @@ use crate::runtime::input::DecodeWith;
 use crate::runtime::middleware::Layer;
 use crate::runtime::publish::PublishPipeline;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::runtime::publish::TypedPublisher;
+use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
@@ -73,7 +70,7 @@ where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
     (
-        WithSource<TypedPublisher<<B::Connected as DefaultPublish>::Policy, DefaultCodec>>,
+        WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
         Slots,
     ): SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def>,
 {
@@ -81,7 +78,7 @@ where
         // The typed default reply, as if the user had chained `.publisher(..)` themselves.
         SlotCommit::commit(
             (
-                WithSource::new(TypedPublisher::new(
+                WithSource::new(ReplyWiring::new(
                     <B::Connected as DefaultPublish>::Policy::default(),
                 )),
                 self.1,

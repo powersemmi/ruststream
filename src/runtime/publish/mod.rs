@@ -89,7 +89,7 @@ impl<'a> Outgoing<'a> {
 
 mod sealed {
     /// Seals [`ReplyPublisher`](super::ReplyPublisher): the reply-publishing strategies are the
-    /// two wirings above, not an extension point.
+    /// two live sinks above, not an extension point.
     pub trait Sealed {}
 
     impl<P, C, PL, BL> Sealed for super::TypedPublisher<P, C, PL, BL> {}
@@ -104,6 +104,7 @@ mod reply;
 mod sink;
 mod transaction;
 mod transform;
+mod wiring;
 
 pub use builder::{
     BoundSegment, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MessageWire,
@@ -118,12 +119,18 @@ pub use pipeline::{
     PublishPipeline, PublishStack,
 };
 pub use publisher::{Transactional, TypedPublisher};
-pub use reply::{ReplyPublisher, ReplyWiring};
+pub use reply::ReplyPublisher;
 pub use sink::{CallCodec, PublishCodec, PublishSink, UnnamedCodec};
-pub use transaction::{Admits, TransactionPublishError, TransactionScope, TypedTransaction};
+pub use transaction::{
+    Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
+};
 pub use transform::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch,
     PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack, for_batch,
+};
+pub use wiring::{
+    AddBatchReplyTransform, AddReplyTransform, Direct, InTransaction, NameReplyCodec, ReplyWiring,
+    TransactionalReply,
 };
 
 #[cfg(test)]

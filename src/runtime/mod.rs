@@ -64,14 +64,15 @@ pub use handle::{
 };
 pub use handle::{
     Deserialized, Documentable, Documented, EncodedReply, Handle, Input, IntoSource, Message, Outs,
-    PageDeserialized, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
-    Undocumented, ValueBuilder, Verdict, subscriber,
+    PageDeserialized, ReplyShape, ReplyWiringChain, Serialized, SerializedReply, Slot,
+    SoloDeserialized, Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
     EntryMarkers, OutPos, ReplyAttach, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute,
     SealedBatchPublishing, SealedBatchPublishingOut, SealedPublishing, SealedPublishingOut,
-    SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach, UnbuiltDefinition, WireDocs,
+    SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach, UnbuiltDefinition,
+    UnwiredReplyChain, WireDocs,
 };
 #[doc(hidden)]
 pub use handler::IntoOutcome;
@@ -92,18 +93,24 @@ pub(crate) use lifecycle::ConnectedLifecycle;
 pub use lifecycle::ConnectedSlot;
 pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+// The reply wiring a mount site's chain builds, the live sinks it pairs into, and the step traits
+// the chain resolves through: the chain names them for the user, so none of it is spelled in
+// service code.
 #[doc(hidden)]
-pub use publish::{Admits, WireBytes, WirePayload};
+pub use publish::{
+    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, Direct, InTransaction,
+    NameReplyCodec, ReplyPublisher, ReplyWiring, Transactional, TransactionalReply, TypedPublisher,
+    WireBytes, WirePayload,
+};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, EncodedWire, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
     MessageWire, MissingSegment, Outgoing, PublishAt, PublishBuilder, PublishCodec, PublishContext,
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders,
     PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack,
-    PublishTransform, PublishTransformIdentity, PublishTransformStack, ReplyPublisher, ReplyWiring,
-    ResolvedName, SatisfiesContract, SerializedWire, SuppliedName, TemplateAddress,
-    TransactionPublishError, TransactionScope, Transactional, TypedHeaders, TypedPublisher,
-    TypedTransaction, UnnamedCodec, for_batch,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, ResolvedName,
+    SatisfiesContract, SerializedWire, SuppliedName, TemplateAddress, TransactionPublishError,
+    TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec, for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.
@@ -112,7 +119,7 @@ pub(crate) use publish::message_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]
-pub use router::{DefaultReply, RouterCommit, RouterMount, RouterSlotCommit};
+pub use router::{DefaultReply, ReplyAttachment, RouterCommit, RouterMount, RouterSlotCommit};
 pub use router::{
     IncludeDef, Router, RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterDef,
     RouterHandlers, RouterOut, RouterPublishing, RouterPublishingOut, RouterRawReply,
