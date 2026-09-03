@@ -161,6 +161,41 @@ async fn a_serialized_out_type_is_a_dictionary_member() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
+/// The other end of the same wire: whatever the test client injects on it arrives as it was
+/// sent, so the assertion below reads the delivery raw.
+#[subscriber("lanes.exports")]
+async fn absorb(frame: &Frame<'_>) -> HandlerOutcome {
+    let _ = frame.0.len();
+    HandlerOutcome::ack()
+}
+
+/// The test client is the service's publish path, so it owes the lanes the same parity: a
+/// `Serialized` value injected with `message(..)` takes its destination from the declaration
+/// (no `to(..)` in the call) and leaves the bytes alone (no codec between value and wire).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_test_client_injects_a_serialized_value_verbatim() {
+    let app =
+        RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(absorb);
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&WireExport(vec![0xde, 0xad, 0xbe, 0xef]))
+        .publish()
+        .await
+        .expect("inject");
+
+    // An encoding step between the value and the wire would have rewritten these bytes.
+    tb.broker::<MemoryBroker>()
+        .subscriber("lanes.exports")
+        .assert_called_once()
+        .with_raw(b"\xde\xad\xbe\xef")
+        .settled(HandlerOutcome::ack());
+
+    tb.shutdown().await.expect("graceful shutdown");
+}
+
 /// The typed form reports the metadata the raw seam reported: the serialized member is
 /// schema-free by design, listed under its own name, and never a coverage gap.
 #[cfg(feature = "asyncapi")]
