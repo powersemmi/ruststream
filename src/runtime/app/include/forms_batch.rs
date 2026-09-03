@@ -12,9 +12,11 @@ use crate::runtime::inject::FromStartup;
 use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
-use crate::runtime::publish::{PublishPipeline, ReplyPublisher};
+use crate::runtime::publish::{LowerOutTransforms, PublishPipeline, ReplyPublisher};
 use crate::runtime::settings::{DefMountCodec, MountsWith};
-use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
+use crate::runtime::slot::{
+    BindSlots, HasSlots, InitSlots, IntoSlotSource, OutAttachment, WithSource,
+};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::{
@@ -30,14 +32,21 @@ use crate::runtime::app::scope::BrokerScope;
 /// Implements the slot-tuple commit of the batch Out form for each slot arity, for fully-bound
 /// tuples only. `Bound` / `Extra` name the definition's [`BindSlots`] outputs.
 macro_rules! impl_batch_inject_out_commit {
-    ($(($($attach:ident),+))+) => {$(
-        impl<B, Layers, C, State, Pipeline, Def, Bound, Extra, $($attach),+>
+    ($(($($attach:ident / $layers:ident),+))+) => {$(
+        impl<B, Layers, C, State, Pipeline, Def, Bound, Extra, $($attach, $layers),+>
             SlotCommit<BatchInjectMount, B, Layers, C, State, Pipeline, Def>
-            for ($(WithSource<$attach>,)+)
+            for ($(WithSource<OutAttachment<$attach, $layers>>,)+)
         where
             B: Broker + 'static,
             C: MountCodec,
-            Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
+            Pipeline: Clone,
+            $($layers: LowerOutTransforms<Pipeline>,)+
+            Def: BindSlots<
+                Connected<B>,
+                ($(($attach, C::Codec, <$layers as LowerOutTransforms<Pipeline>>::Out),)+),
+                Bound = Bound,
+                Extra = Extra,
+            >,
             Def: MountsWith<<Bound as BatchInjectDef>::Input, C>,
             Bound: BatchInjectCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
@@ -54,10 +63,15 @@ macro_rules! impl_batch_inject_out_commit {
             fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
-                // Surface codec for the slots, override-aware codec for the decode.
+                // See the single-message Out commit: surface codec for the slots, and the app's
+                // publish pipeline under each slot's own transforms.
                 let codec = scope.codec.mount_codec();
                 let decode = def.mounted_codec(&scope.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach
+                        .into_source()
+                        .wire(codec.clone(), scope.pipeline.clone()),
+                )+));
                 let source = def.source();
                 scope.mount_batch_inject(source, def, decode, extra);
             }
@@ -66,9 +80,9 @@ macro_rules! impl_batch_inject_out_commit {
 }
 
 impl_batch_inject_out_commit! {
-    (A0)
-    (A0, A1)
-    (A0, A1, A2)
+    (A0 / L0)
+    (A0 / L0, A1 / L1)
+    (A0 / L0, A1 / L1, A2 / L2)
 }
 
 impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>
@@ -202,14 +216,32 @@ where
 /// Implements the slot-tuple commit of the batch-publishing-with-Out form for each slot arity,
 /// for fully-bound tuples only. `Bound` / `Extra` name the definition's [`BindSlots`] outputs.
 macro_rules! impl_batch_publishing_out_commit {
-    ($(($($attach:ident),+))+) => {$(
-        impl<B, Layers, C, State, Pipeline, Def, Source, BatchReply, Bound, Extra, $($attach),+>
+    ($(($($attach:ident / $layers:ident),+))+) => {$(
+        impl<
+            B,
+            Layers,
+            C,
+            State,
+            Pipeline,
+            Def,
+            Source,
+            BatchReply,
+            Bound,
+            Extra,
+            $($attach, $layers),+
+        >
             SlotCommit<BatchPublishInjectMount, B, Layers, C, State, Pipeline, Def>
-            for (WithSource<Source>, ($(WithSource<$attach>,)+))
+            for (WithSource<Source>, ($(WithSource<OutAttachment<$attach, $layers>>,)+))
         where
             B: Broker + 'static,
             C: MountCodec,
-            Def: BindSlots<Connected<B>, ($(($attach, C::Codec),)+), Bound = Bound, Extra = Extra>,
+            $($layers: LowerOutTransforms<Pipeline>,)+
+            Def: BindSlots<
+                Connected<B>,
+                ($(($attach, C::Codec, <$layers as LowerOutTransforms<Pipeline>>::Out),)+),
+                Bound = Bound,
+                Extra = Extra,
+            >,
             Def: MountsWith<<Bound as BatchPublishingDef>::Input, C>,
             Bound: BatchPublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
@@ -231,10 +263,15 @@ macro_rules! impl_batch_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
-                // Surface codec for the slots, override-aware codec for the decode.
+                // Surface codec for the slots, override-aware codec for the decode; the page's
+                // replies and the slots ride the same app-wide pipeline.
                 let codec = scope.codec.mount_codec();
                 let decode = def.mounted_codec(&scope.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach
+                        .into_source()
+                        .wire(codec.clone(), scope.pipeline.clone()),
+                )+));
                 let source = def.source();
                 scope.mount_batch_publishing_source(
                     source,
@@ -249,9 +286,9 @@ macro_rules! impl_batch_publishing_out_commit {
 }
 
 impl_batch_publishing_out_commit! {
-    (A0)
-    (A0, A1)
-    (A0, A1, A2)
+    (A0 / L0)
+    (A0 / L0, A1 / L1)
+    (A0 / L0, A1 / L1, A2 / L2)
 }
 
 impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>

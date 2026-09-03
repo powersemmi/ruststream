@@ -360,10 +360,16 @@ fn slot_binding_impls(
     let codecs: Vec<Ident> = (0..outs.len())
         .map(|index| Ident::new(&format!("__RsCodec{index}"), name.span()))
         .collect();
+    // The slot's publish pipeline: what the mount site composed from its `.transform(..)` steps
+    // and the app's own middleware. The definition stays generic over it, so one handler mounts
+    // under any of them.
+    let pipelines: Vec<Ident> = (0..outs.len())
+        .map(|index| Ident::new(&format!("__RsPipeline{index}"), name.span()))
+        .collect();
     let bound_entries: Vec<TokenStream2> = outs
         .iter()
-        .zip(policies.iter().zip(&codecs))
-        .map(|(out, (policy, codec))| {
+        .zip(policies.iter().zip(codecs.iter().zip(&pipelines)))
+        .map(|(out, (policy, (codec, pipeline)))| {
             let marker = &out.marker;
             let body = body_ty(out.bodies.as_ref());
             quote! {
@@ -371,6 +377,7 @@ fn slot_binding_impls(
                     #marker,
                     <#policy as ::ruststream::PublishPolicy<__RsConn>>::Live,
                     #codec,
+                    #pipeline,
                     #body,
                 >
             }
@@ -383,19 +390,22 @@ fn slot_binding_impls(
             type Markers = (#(#markers,)*);
         }
 
-        impl<__RsConn, #(#policies,)* #(#codecs,)*>
-            ::ruststream::runtime::BindSlots<__RsConn, (#((#policies, #codecs),)*)>
+        impl<__RsConn, #(#policies,)* #(#codecs,)* #(#pipelines,)*>
+            ::ruststream::runtime::BindSlots<
+                __RsConn,
+                (#((#policies, #codecs, #pipelines),)*),
+            >
             for #name
         where
             __RsConn: ::ruststream::ConnectedBroker,
             #(#policies: ::ruststream::PublishPolicy<__RsConn>,)*
         {
             type Bound = #bound_ty;
-            type Extra = (#((#policies, #codecs),)*);
+            type Extra = (#((#policies, #codecs, #pipelines),)*);
 
             fn bind(
                 self,
-                sources: (#((#policies, #codecs),)*),
+                sources: (#((#policies, #codecs, #pipelines),)*),
             ) -> (Self::Bound, Self::Extra) {
                 (#def_expr, sources)
             }
@@ -538,9 +548,10 @@ fn form_token(
 struct ArenaPieces {
     /// The `O` axis of the `Handle` impl: `()` without slots, `Outs<(Slot<..>,)>` with them.
     o_ty: TokenStream2,
-    /// The per-slot `W` / `E` generic parameters, in declaration order.
+    /// The per-slot `W` / `E` / pipeline generic parameters, in declaration order.
     we_params: Vec<Ident>,
-    /// The bounds of those generics: the user's capability bounds on `W`, the codec's on `E`.
+    /// The bounds of those generics: the user's capability bounds on `W`, the codec's on `E`,
+    /// and the publish path's on the pipeline.
     bounds: Vec<TokenStream2>,
     /// The body bindings: `let out = __rs_outs.get(Marker);` per parameter.
     bindings: Vec<TokenStream2>,
@@ -563,12 +574,16 @@ impl ArenaPieces {
         for (index, out) in outs.iter().enumerate() {
             let wired = Ident::new(&format!("__RsOutW{index}"), name.span());
             let codec = Ident::new(&format!("__RsOutE{index}"), name.span());
+            let pipeline = Ident::new(&format!("__RsOutP{index}"), name.span());
             let marker = &out.marker;
             let capability = out.bounds;
             let body = body_ty(out.bodies.as_ref());
-            entries.push(quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #body>));
+            entries.push(
+                quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #pipeline, #body>),
+            );
             // The dispatch machinery shares the arena across worker tasks, so Send + Sync are
-            // structural; the codec bound is what the entry's typed publishes encode with.
+            // structural; the codec bound is what the entry's typed publishes encode with, and
+            // the pipeline bound is the publish path the mount site composed for the slot.
             bounds.push(quote! {
                 #wired: #capability + ::core::marker::Send + ::core::marker::Sync + 'static
             });
@@ -578,9 +593,13 @@ impl ArenaPieces {
                     + ::core::marker::Sync
                     + 'static
             });
+            bounds.push(quote! {
+                #pipeline: ::ruststream::runtime::OutPipeline + 'static
+            });
             bindings.push(arena_binding(out.pat, marker));
             we_params.push(wired);
             we_params.push(codec);
+            we_params.push(pipeline);
         }
         Self {
             o_ty: quote!(::ruststream::runtime::Outs<(#(#entries,)*)>),

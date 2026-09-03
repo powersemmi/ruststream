@@ -6,12 +6,14 @@ use crate::runtime::handler::Handler;
 use crate::runtime::inject::FromStartup;
 use crate::runtime::input::DecodeWith;
 use crate::runtime::middleware::Layer;
-use crate::runtime::publish::PublishPipeline;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
+use crate::runtime::publish::{LowerOutTransforms, PublishPipeline};
 use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 use crate::runtime::settings::{DefMountCodec, MountsWith};
-use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
+use crate::runtime::slot::{
+    BindSlots, HasSlots, InitSlots, IntoSlotSource, OutAttachment, WithSource,
+};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::builder::IncludeRawReply;
@@ -132,19 +134,24 @@ where
 /// named `Bound` / `Extra` here), the reply source pairs at startup, and the injections
 /// resolve against the slot extras.
 macro_rules! impl_publishing_out_commit {
-    ($(($($attach:ident),+))+) => {$(
-        impl<B, Layers, C, State, Pipeline, Def, Source, Bound, Extra, $($attach),+>
+    ($(($($attach:ident / $layers:ident),+))+) => {$(
+        impl<B, Layers, C, State, Pipeline, Def, Source, Bound, Extra, $($attach, $layers),+>
             SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def>
-            for (WithSource<Source>, ($(WithSource<$attach>,)+))
+            for (WithSource<Source>, ($(WithSource<OutAttachment<$attach, $layers>>,)+))
         where
             B: Broker + 'static,
             // Two codec questions, and they are not the same one: the slots encode what leaves
             // through them (`MountCodec`), while the input decodes with whatever its kind asks
             // for - nothing, on the byte path - under the definition's own override.
             C: MountCodec,
+            $($layers: LowerOutTransforms<Pipeline>,)+
             Def: BindSlots<
                 Connected<B>,
-                ($(($attach, <C as MountCodec>::Codec),)+),
+                ($((
+                    $attach,
+                    <C as MountCodec>::Codec,
+                    <$layers as LowerOutTransforms<Pipeline>>::Out,
+                ),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
@@ -183,10 +190,15 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
-                // Surface codec for the slots, override-aware codec for the decode.
+                // Surface codec for the slots, override-aware codec for the decode; the reply
+                // and the slots ride the same app-wide pipeline, each under its own transforms.
                 let codec = scope.codec.mount_codec();
                 let decode = def.mounted_codec(&scope.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach
+                        .into_source()
+                        .wire(codec.clone(), scope.pipeline.clone()),
+                )+));
                 let source = def.source();
                 scope.mount_publishing_source(source, def, decode, reply.into_source(), extra);
             }
@@ -195,9 +207,9 @@ macro_rules! impl_publishing_out_commit {
 }
 
 impl_publishing_out_commit! {
-    (A0)
-    (A0, A1)
-    (A0, A1, A2)
+    (A0 / L0)
+    (A0 / L0, A1 / L1)
+    (A0 / L0, A1 / L1, A2 / L2)
 }
 
 impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, State, Pipeline, Def>

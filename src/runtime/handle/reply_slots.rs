@@ -56,15 +56,15 @@ where
 /// See the plain arena's `BindSlots`: the declared entries unify with their markers' paired
 /// live values, so the definition is its own bound form.
 macro_rules! impl_reply_bind_slots {
-    ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
-        impl<Conn, A, R, C, H, Doc, Dest, Attach, $($m, $p, $e),+>
-            BindSlots<Conn, ($(($p, $e),)+)>
+    ($(($($m:ident / $p:ident: $e:ident / $pipe:ident),+))+) => {$(
+        impl<Conn, A, R, C, H, Doc, Dest, Attach, $($m, $p, $e, $pipe),+>
+            BindSlots<Conn, ($(($p, $e, $pipe),)+)>
             for Sealed<
                 ReplyValue<
                     HandleValue<
                         A,
                         R,
-                        Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e>,)+)>,
+                        Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e, $pipe>,)+)>,
                         C,
                         H,
                         Doc,
@@ -81,9 +81,9 @@ macro_rules! impl_reply_bind_slots {
             )+
         {
             type Bound = Self;
-            type Extra = ($(($p, $e),)+);
+            type Extra = ($(($p, $e, $pipe),)+);
 
-            fn bind(self, sources: ($(($p, $e),)+)) -> (Self, Self::Extra) {
+            fn bind(self, sources: ($(($p, $e, $pipe),)+)) -> (Self, Self::Extra) {
                 (self, sources)
             }
         }
@@ -91,9 +91,9 @@ macro_rules! impl_reply_bind_slots {
 }
 
 impl_reply_bind_slots! {
-    (M0 / P0: E0)
-    (M0 / P0: E0, M1 / P1: E1)
-    (M0 / P0: E0, M1 / P1: E1, M2 / P2: E2)
+    (M0 / P0: E0 / Pipe0)
+    (M0 / P0: E0 / Pipe0, M1 / P1: E1 / Pipe1)
+    (M0 / P0: E0 / Pipe0, M1 / P1: E1 / Pipe1, M2 / P2: E2 / Pipe2)
 }
 
 // ------------------------------------------------------------------------- the solo reply def

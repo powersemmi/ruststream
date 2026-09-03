@@ -9,6 +9,14 @@
 //!
 //! Like every other form, the subscription source comes from the definition - here from the one
 //! the bound slots instantiate, which is why the commit resolves it rather than the entry point.
+//!
+//! A slot's publish pipeline is fixed here, at the registration, so a router's slots carry their
+//! own `.transform(..)` steps over [`PublishIdentity`] and not the app-wide publish middleware:
+//! binding a slot instantiates the definition, and the entry's pipeline is part of that
+//! instantiated type, while the app a router is mounted into (and the middleware it carries)
+//! exists only later. A handler whose slot publishes have to travel the app-wide
+//! [`publish_layer`](crate::runtime::RustStream::publish_layer) chain mounts on the broker scope
+//! (`b.include(..)`), which knows it.
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
@@ -21,9 +29,12 @@ use crate::runtime::inject::InjectDef;
 use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
+use crate::runtime::publish::{LowerOutTransforms, PublishIdentity};
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{DefMountCodec, MountsWith};
-use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
+use crate::runtime::slot::{
+    BindSlots, HasSlots, InitSlots, IntoSlotSource, OutAttachment, WithSource,
+};
 
 use super::builder::Router;
 use super::builders::{
@@ -118,16 +129,21 @@ slot_reply_form! {
 // `<Def::Bound as ..>` projections.
 
 macro_rules! impl_inject_out_commit {
-    ($(($($attach:ident),+))+) => {$(
-        impl<B, Routes, RouteCodec, RouteLayers, Def, Bound, Extra, $($attach),+>
+    ($(($($attach:ident / $layers:ident),+))+) => {$(
+        impl<B, Routes, RouteCodec, RouteLayers, Def, Bound, Extra, $($attach, $layers),+>
             RouterSlotCommit<InjectMount, B, Routes, RouteCodec, RouteLayers, Def>
-            for ($(WithSource<$attach>,)+)
+            for ($(WithSource<OutAttachment<$attach, $layers>>,)+)
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
+            $($layers: LowerOutTransforms<PublishIdentity>,)+
             Def: BindSlots<
                 Connected<B>,
-                ($(($attach, RouteCodec::Codec),)+),
+                ($((
+                    $attach,
+                    RouteCodec::Codec,
+                    <$layers as LowerOutTransforms<PublishIdentity>>::Out,
+                ),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
@@ -159,7 +175,9 @@ macro_rules! impl_inject_out_commit {
                 // definition's own override.
                 let codec = router.codec.mount_codec();
                 let decode = def.mounted_codec(&router.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach.into_source().wire(codec.clone(), PublishIdentity),
+                )+));
                 let source = def.source();
                 router.mount_inject(source, def, decode, extra)
             }
@@ -168,22 +186,27 @@ macro_rules! impl_inject_out_commit {
 }
 
 impl_inject_out_commit! {
-    (A0)
-    (A0, A1)
-    (A0, A1, A2)
+    (A0 / L0)
+    (A0 / L0, A1 / L1)
+    (A0 / L0, A1 / L1, A2 / L2)
 }
 
 macro_rules! impl_batch_inject_out_commit {
-    ($(($($attach:ident),+))+) => {$(
-        impl<B, Routes, RouteCodec, RouteLayers, Def, Bound, Extra, $($attach),+>
+    ($(($($attach:ident / $layers:ident),+))+) => {$(
+        impl<B, Routes, RouteCodec, RouteLayers, Def, Bound, Extra, $($attach, $layers),+>
             RouterSlotCommit<BatchInjectMount, B, Routes, RouteCodec, RouteLayers, Def>
-            for ($(WithSource<$attach>,)+)
+            for ($(WithSource<OutAttachment<$attach, $layers>>,)+)
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
+            $($layers: LowerOutTransforms<PublishIdentity>,)+
             Def: BindSlots<
                 Connected<B>,
-                ($(($attach, RouteCodec::Codec),)+),
+                ($((
+                    $attach,
+                    RouteCodec::Codec,
+                    <$layers as LowerOutTransforms<PublishIdentity>>::Out,
+                ),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
@@ -216,7 +239,9 @@ macro_rules! impl_batch_inject_out_commit {
                 // codec for the decode.
                 let codec = router.codec.mount_codec();
                 let decode = def.mounted_codec(&router.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach.into_source().wire(codec.clone(), PublishIdentity),
+                )+));
                 let source = def.source();
                 router.mount_batch_inject(source, def, decode, extra)
             }
@@ -225,22 +250,27 @@ macro_rules! impl_batch_inject_out_commit {
 }
 
 impl_batch_inject_out_commit! {
-    (A0)
-    (A0, A1)
-    (A0, A1, A2)
+    (A0 / L0)
+    (A0 / L0, A1 / L1)
+    (A0 / L0, A1 / L1, A2 / L2)
 }
 
 macro_rules! impl_publishing_out_commit {
-    ($(($($attach:ident),+))+) => {$(
-        impl<B, Routes, RouteCodec, RouteLayers, Def, Policy, Bound, Extra, $($attach),+>
+    ($(($($attach:ident / $layers:ident),+))+) => {$(
+        impl<B, Routes, RouteCodec, RouteLayers, Def, Policy, Bound, Extra, $($attach, $layers),+>
             RouterSlotCommit<PublishInjectMount, B, Routes, RouteCodec, RouteLayers, Def>
-            for (WithSource<Policy>, ($(WithSource<$attach>,)+))
+            for (WithSource<Policy>, ($(WithSource<OutAttachment<$attach, $layers>>,)+))
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
+            $($layers: LowerOutTransforms<PublishIdentity>,)+
             Def: BindSlots<
                 Connected<B>,
-                ($(($attach, RouteCodec::Codec),)+),
+                ($((
+                    $attach,
+                    RouteCodec::Codec,
+                    <$layers as LowerOutTransforms<PublishIdentity>>::Out,
+                ),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
@@ -275,21 +305,28 @@ macro_rules! impl_publishing_out_commit {
                 // Surface codec for the slots, override-aware codec for the decode.
                 let codec = router.codec.mount_codec();
                 let decode = def.mounted_codec(&router.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach.into_source().wire(codec.clone(), PublishIdentity),
+                )+));
                 let source = def.source();
                 router.mount_publishing_source(source, def, decode, reply.into_source(), extra)
             }
         }
 
-        impl<B, Routes, RouteCodec, RouteLayers, Def, Policy, Bound, Extra, $($attach),+>
+        impl<B, Routes, RouteCodec, RouteLayers, Def, Policy, Bound, Extra, $($attach, $layers),+>
             RouterSlotCommit<RawReplyInjectMount, B, Routes, RouteCodec, RouteLayers, Def>
-            for (WithSource<Policy>, ($(WithSource<$attach>,)+))
+            for (WithSource<Policy>, ($(WithSource<OutAttachment<$attach, $layers>>,)+))
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
+            $($layers: LowerOutTransforms<PublishIdentity>,)+
             Def: BindSlots<
                 Connected<B>,
-                ($(($attach, RouteCodec::Codec),)+),
+                ($((
+                    $attach,
+                    RouteCodec::Codec,
+                    <$layers as LowerOutTransforms<PublishIdentity>>::Out,
+                ),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
@@ -324,21 +361,28 @@ macro_rules! impl_publishing_out_commit {
                 // Surface codec for the slots, override-aware codec for the decode.
                 let codec = router.codec.mount_codec();
                 let decode = def.mounted_codec(&router.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach.into_source().wire(codec.clone(), PublishIdentity),
+                )+));
                 let source = def.source();
                 router.mount_raw_reply_source(source, def, decode, reply.into_source(), extra)
             }
         }
 
-        impl<B, Routes, RouteCodec, RouteLayers, Def, Policy, Bound, Extra, $($attach),+>
+        impl<B, Routes, RouteCodec, RouteLayers, Def, Policy, Bound, Extra, $($attach, $layers),+>
             RouterSlotCommit<BatchPublishInjectMount, B, Routes, RouteCodec, RouteLayers, Def>
-            for (WithSource<Policy>, ($(WithSource<$attach>,)+))
+            for (WithSource<Policy>, ($(WithSource<OutAttachment<$attach, $layers>>,)+))
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
+            $($layers: LowerOutTransforms<PublishIdentity>,)+
             Def: BindSlots<
                 Connected<B>,
-                ($(($attach, RouteCodec::Codec),)+),
+                ($((
+                    $attach,
+                    RouteCodec::Codec,
+                    <$layers as LowerOutTransforms<PublishIdentity>>::Out,
+                ),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
@@ -373,7 +417,9 @@ macro_rules! impl_publishing_out_commit {
                 // Surface codec for the slots, override-aware codec for the decode.
                 let codec = router.codec.mount_codec();
                 let decode = def.mounted_codec(&router.codec);
-                let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
+                let (def, extra) = def.bind(($(
+                    $attach.into_source().wire(codec.clone(), PublishIdentity),
+                )+));
                 let source = def.source();
                 router.mount_batch_publishing_source(
                     source,
@@ -388,9 +434,9 @@ macro_rules! impl_publishing_out_commit {
 }
 
 impl_publishing_out_commit! {
-    (A0)
-    (A0, A1)
-    (A0, A1, A2)
+    (A0 / L0)
+    (A0 / L0, A1 / L1)
+    (A0 / L0, A1 / L1, A2 / L2)
 }
 
 // The defaulted reply sides, committed as if `.publisher(..)` had been chained with the

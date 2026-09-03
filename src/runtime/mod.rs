@@ -99,16 +99,17 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use publish::{
     AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, Direct,
-    InTransaction, NameReplyCodec, PublishingDirectly, ReplyPublisher, ReplyWiring, Transactional,
-    TransactionalReply, TypedPublisher, WireBytes, WirePayload,
+    InTransaction, LowerOutTransforms, NameReplyCodec, PublishingDirectly, ReplyPublisher,
+    ReplyWiring, Transactional, TransactionalReply, TypedPublisher, WireBytes, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, EncodedWire, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
-    MessageWire, MissingSegment, Outgoing, PublishAt, PublishBuilder, PublishCodec, PublishContext,
-    PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders,
-    PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack,
-    PublishTransform, PublishTransformIdentity, PublishTransformStack, ResolvedName,
+    MessageWire, MissingSegment, OutPipeline, OutTransform, OutTransformIdentity,
+    OutTransformStack, Outgoing, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec,
+    PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt,
+    PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink,
+    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, ResolvedName,
     SatisfiesContract, SerializedWire, SuppliedName, TemplateAddress, TransactionPublishError,
     TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec, for_batch,
 };
@@ -132,7 +133,10 @@ pub use settings::{
 #[doc(hidden)]
 pub use settings::{DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
-pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
+pub use slot::{
+    BindSlot, InitSlots, IntoSlotSource, MissingSlot, NamedStep, NoOutBound, OutAttachment,
+    ReplyLast, SlotPos, TransformAt, TransformLast, WithSource,
+};
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
     SlotPublisher, Unrestricted,

@@ -18,7 +18,10 @@ use crate::runtime::publish::{
     AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, NameReplyCodec, PublishingDirectly,
     TransactionalReply,
 };
-use crate::runtime::slot::{BindSlot, MissingSlot, OutSlot, WithSource};
+use crate::runtime::slot::{
+    BindSlot, MissingSlot, NamedStep, NoOutBound, OutAttachment, OutSlot, ReplyLast, TransformAt,
+    TransformLast, WithSource,
+};
 
 use super::builder::Router;
 use super::mount::{
@@ -251,15 +254,20 @@ where
 ///
 /// Each [`out`](Self::out) call binds one named slot (in any order) and the terminal
 /// [`build`](Self::build) commits - it exists only once every slot is bound, so a forgotten
-/// binding is a compile error naming the slot. A handler with a single slot skips naming it:
+/// binding is a compile error naming the slot. [`transform`](Self::transform) composes an
+/// [`OutTransform`](crate::runtime::OutTransform) onto the slot the `.out(..)` before it bound. A
+/// handler with a single slot skips naming it:
 /// [`publisher`](Self::publisher) binds that one slot. The per-form names are aliases:
 /// [`RouterOut`], [`RouterBatchOut`].
 ///
 /// The subscription source is not carried here: a slot-taking definition is only instantiated
 /// once the sources are bound, so its source comes from the instantiated definition at the
 /// commit.
+///
+/// `Last` is the slot the chain named most recently, which is what a `.transform(..)` applies to;
+/// it starts as [`NoOutBound`](crate::runtime::NoOutBound), where the step does not exist.
 #[must_use = "a router registration is only added once .publisher(policy) or .out(..) + .build() commits it"]
-pub struct RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
+pub struct RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots, Last = NoOutBound>
 where
     B: Broker + 'static,
 {
@@ -267,10 +275,11 @@ where
     slots: Slots,
     router: Router<B, Routes, RouteCodec, RouteLayers>,
     _attachment: PhantomData<fn() -> Mount>,
+    _last: PhantomData<fn() -> Last>,
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
-    RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots, Last>
+    RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots, Last>
 where
     B: Broker + 'static,
 {
@@ -284,6 +293,7 @@ where
             slots,
             router,
             _attachment: PhantomData,
+            _last: PhantomData,
         }
     }
 
@@ -307,15 +317,48 @@ where
         RouteCodec,
         RouteLayers,
         Def,
-        <Slots as BindSlot<M, Policy, Index>>::Out,
+        <Slots as BindSlot<M, OutAttachment<Policy>, Index>>::Out,
+        Index,
     >
     where
         M: OutSlot,
-        Slots: BindSlot<M, Policy, Index>,
+        Slots: BindSlot<M, OutAttachment<Policy>, Index>,
     {
         // The marker is inference input only; its value carries no data.
         let _ = marker;
-        RouterSlots::new(self.def, self.slots.bind(policy), self.router)
+        RouterSlots::new(
+            self.def,
+            self.slots.bind(OutAttachment::new(policy)),
+            self.router,
+        )
+    }
+
+    /// See [`IncludeSlots::transform`](crate::runtime::IncludeSlots::transform): composes an
+    /// [`OutTransform`](crate::runtime::OutTransform) onto the slot the [`out`](Self::out) call
+    /// before it bound.
+    ///
+    /// A router's slots carry their transforms and nothing else: the app-wide
+    /// [`publish_layer`](crate::runtime::RustStream::publish_layer) chain is fixed after the
+    /// router's routes are, so it reaches the slots of handlers mounted with
+    /// [`include`](crate::runtime::BrokerScope::include) on the broker scope.
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn transform<N>(
+        self,
+        transform: N,
+    ) -> RouterSlots<
+        Mount,
+        B,
+        Routes,
+        RouteCodec,
+        RouteLayers,
+        Def,
+        <Slots as TransformAt<N, Last>>::Out,
+        Last,
+    >
+    where
+        Slots: TransformAt<N, Last, Step: NamedStep>,
+    {
+        RouterSlots::new(self.def, self.slots.transform_at(transform), self.router)
     }
 
     /// Commits the registration. Exists only once every slot is bound: a chain that still has
@@ -330,19 +373,36 @@ where
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, M>
-    RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, (MissingSlot<M>,)>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, M, Last>
+    RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, (MissingSlot<M>,), Last>
 where
     B: Broker + 'static,
 {
     /// Binds the handler's single [`Out`](crate::runtime::Out) slot without naming its marker:
     /// the one-slot shorthand (`router.include(forward).publisher(Publish).build()`).
+    ///
+    /// The slot is bound but not named, so a [`transform`](Self::transform) after it has no
+    /// position to apply to; a single slot that also names one binds by marker
+    /// (`.out(DefaultSlot, Publish).transform(..)`, with the handler's own marker in place of
+    /// [`DefaultSlot`](crate::runtime::DefaultSlot) when it declares one).
     #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
     pub fn publisher<Policy>(
         self,
         policy: Policy,
-    ) -> RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, (WithSource<Policy>,)> {
-        RouterSlots::new(self.def, (WithSource::new(policy),), self.router)
+    ) -> RouterSlots<
+        Mount,
+        B,
+        Routes,
+        RouteCodec,
+        RouteLayers,
+        Def,
+        (WithSource<OutAttachment<Policy>>,),
+    > {
+        RouterSlots::new(
+            self.def,
+            (WithSource::new(OutAttachment::new(policy)),),
+            self.router,
+        )
     }
 }
 
@@ -353,8 +413,17 @@ where
 /// each slot binds with [`out`](Self::out), and the terminal [`build`](Self::build) commits. The
 /// per-form names are aliases: [`RouterPublishingOut`], [`RouterBatchPublishingOut`].
 #[must_use = "a router registration is only added once .build() commits it"]
-pub struct RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
-where
+pub struct RouterSlotsWithReply<
+    Mount,
+    B,
+    Routes,
+    RouteCodec,
+    RouteLayers,
+    Def,
+    Reply,
+    Slots,
+    Last = NoOutBound,
+> where
     B: Broker + 'static,
 {
     def: Def,
@@ -362,10 +431,12 @@ where
     slots: Slots,
     router: Router<B, Routes, RouteCodec, RouteLayers>,
     _attachment: PhantomData<fn() -> Mount>,
+    // The step the chain named last: what a `.transform(..)` after it applies to.
+    _last: PhantomData<fn() -> Last>,
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
-    RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots, Last>
+    RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots, Last>
 where
     B: Broker + 'static,
 {
@@ -381,6 +452,7 @@ where
             slots,
             router,
             _attachment: PhantomData,
+            _last: PhantomData,
         }
     }
 
@@ -401,6 +473,7 @@ where
         Def,
         WithSource<Mount::Wiring>,
         Slots,
+        ReplyLast,
     >
     where
         Mount: ReplyAttachment<Policy>,
@@ -429,15 +502,47 @@ where
         RouteLayers,
         Def,
         Reply,
-        <Slots as BindSlot<M, Policy, Index>>::Out,
+        <Slots as BindSlot<M, OutAttachment<Policy>, Index>>::Out,
+        Index,
     >
     where
         M: OutSlot,
-        Slots: BindSlot<M, Policy, Index>,
+        Slots: BindSlot<M, OutAttachment<Policy>, Index>,
     {
         // The marker is inference input only; its value carries no data.
         let _ = marker;
-        RouterSlotsWithReply::new(self.def, self.reply, self.slots.bind(policy), self.router)
+        RouterSlotsWithReply::new(
+            self.def,
+            self.reply,
+            self.slots.bind(OutAttachment::new(policy)),
+            self.router,
+        )
+    }
+
+    /// See
+    /// [`IncludeSlotsWithReply::transform`](crate::runtime::IncludeSlotsWithReply::transform):
+    /// composes a transform onto the step the chain named last, the reply's after a
+    /// [`publisher`](Self::publisher) call and one slot's after an [`out`](Self::out) call.
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn transform<N>(
+        self,
+        transform: N,
+    ) -> RouterSlotsWithReply<
+        Mount,
+        B,
+        Routes,
+        RouteCodec,
+        RouteLayers,
+        Def,
+        <(Reply, Slots) as TransformLast<N, Last>>::Reply,
+        <(Reply, Slots) as TransformLast<N, Last>>::Slots,
+        Last,
+    >
+    where
+        (Reply, Slots): TransformLast<N, Last, Step: NamedStep>,
+    {
+        let (reply, slots) = (self.reply, self.slots).transform_last(transform);
+        RouterSlotsWithReply::new(self.def, reply, slots, self.router)
     }
 
     /// Commits the registration (reply attachment plus every bound slot). Exists only once
@@ -454,17 +559,27 @@ where
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, W, Slots>
-    RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, WithSource<W>, Slots>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, W, Slots, Last>
+    RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, WithSource<W>, Slots, Last>
 where
     B: Broker + 'static,
 {
     /// Rebuilds the builder over a grown reply wiring, keeping the slots.
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
     fn map_wiring<W2>(
         self,
         f: impl FnOnce(W) -> W2,
-    ) -> RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, WithSource<W2>, Slots>
-    {
+    ) -> RouterSlotsWithReply<
+        Mount,
+        B,
+        Routes,
+        RouteCodec,
+        RouteLayers,
+        Def,
+        WithSource<W2>,
+        Slots,
+        Last,
+    > {
         RouterSlotsWithReply::new(self.def, self.reply.map(f), self.slots, self.router)
     }
 
@@ -482,32 +597,12 @@ where
         Def,
         WithSource<W::Out>,
         Slots,
+        Last,
     >
     where
         W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
     {
         self.map_wiring(|wiring| wiring.name_codec(codec))
-    }
-
-    /// See [`IncludeWith::transform`](crate::runtime::IncludeWith::transform).
-    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
-    pub fn transform<N>(
-        self,
-        transform: N,
-    ) -> RouterSlotsWithReply<
-        Mount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Def,
-        WithSource<W::Out>,
-        Slots,
-    >
-    where
-        W: AddReplyTransform<N>,
-    {
-        self.map_wiring(|wiring| wiring.add_transform(transform))
     }
 
     /// See [`IncludeWith::batch_transform`](crate::runtime::IncludeWith::batch_transform).
@@ -524,6 +619,7 @@ where
         Def,
         WithSource<W::Out>,
         Slots,
+        Last,
     >
     where
         W: AddBatchReplyTransform<N>,
@@ -544,6 +640,7 @@ where
         Def,
         WithSource<W::Out>,
         Slots,
+        Last,
     >
     where
         W: TransactionalReply<State: PublishingDirectly>,
@@ -562,8 +659,8 @@ where
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots> fmt::Debug
-    for RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots, Last> fmt::Debug
+    for RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots, Last>
 where
     B: Broker + 'static,
 {
@@ -572,8 +669,8 @@ where
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> fmt::Debug
-    for RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
+impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots, Last> fmt::Debug
+    for RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots, Last>
 where
     B: Broker + 'static,
 {

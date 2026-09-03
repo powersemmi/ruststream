@@ -21,6 +21,9 @@ use std::marker::PhantomData;
 use std::time::Duration;
 
 use crate::runtime::metadata::OutgoingMessageMetadata;
+use crate::runtime::publish::{
+    AddReplyTransform, LowerOutTransforms, OutTransformIdentity, OutTransformStack,
+};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
@@ -361,6 +364,182 @@ impl<M> MissingSlot<M> {
     }
 }
 
+/// What one `.out(marker, policy)` call attaches: the slot's publish policy and the
+/// [`OutTransform`] stack the `.transform(..)` steps after it compose.
+///
+/// The stack is pure declaration, like the policy: it lowers onto the app's publish pipeline at
+/// the mount ([`LowerOutTransforms`]), and the composed pipeline is what the slot entry publishes
+/// through. Machinery; the chain builds it and the mount consumes it, so it is never named in
+/// service code.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct OutAttachment<Policy, Layers = OutTransformIdentity> {
+    policy: Policy,
+    layers: Layers,
+}
+
+impl<Policy> OutAttachment<Policy> {
+    /// The attachment a bare `.out(marker, policy)` produces: the policy, no transforms.
+    pub(crate) fn new(policy: Policy) -> Self {
+        Self {
+            policy,
+            layers: OutTransformIdentity,
+        }
+    }
+}
+
+impl<Policy, Layers> OutAttachment<Policy, Layers> {
+    /// Composes one more transform on top of the stack: the `.transform(..)` step.
+    pub(crate) fn add_transform<N>(
+        self,
+        transform: N,
+    ) -> OutAttachment<Policy, OutTransformStack<Layers, N>> {
+        OutAttachment {
+            policy: self.policy,
+            layers: OutTransformStack {
+                inner: self.layers,
+                outer: transform,
+            },
+        }
+    }
+
+    /// Splits the attachment into what one slot resolves from at startup: the policy the runtime
+    /// pairs, the mount site's encode codec, and the pipeline the entry publishes through (this
+    /// slot's transforms lowered onto the app's own).
+    pub(crate) fn wire<Codec, Pipeline>(
+        self,
+        codec: Codec,
+        pipeline: Pipeline,
+    ) -> (Policy, Codec, Layers::Out)
+    where
+        Layers: LowerOutTransforms<Pipeline>,
+    {
+        (self.policy, codec, self.layers.lower(pipeline))
+    }
+}
+
+/// The step a mount site's chain has named so far, before it has named any.
+///
+/// It is not a [`NamedStep`], so a `.transform(..)` here fails on that bound rather than on a
+/// missing method, and the call site reads the guidance.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoOutBound;
+
+/// A step a `.transform(..)` can ride: what the chain named right before it.
+///
+/// The step traits below report it as an associated type ([`TransformAt::Step`],
+/// [`TransformLast::Step`]) rather than refusing to apply, so the transform's own bound is what
+/// fails and this note is what the call site reads.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this `.transform(..)` has no step to apply to",
+    label = "no `.out(marker, policy)` or `.publisher(policy)` call precedes it in this chain",
+    note = "a transform rides the step named right before it: \
+            `.out(Marker, Policy).transform(..)` for a slot, `.publisher(Policy).transform(..)` \
+            for a reply"
+)]
+pub trait NamedStep {}
+
+impl<const POS: usize> NamedStep for SlotPos<POS> {}
+
+/// Grows the transform stack of the slot bound at `Index`: the `.transform(..)` step of a mount
+/// site's outs chain. Machinery; never named directly.
+///
+/// The index is the position the preceding `.out(marker, policy)` bound, carried by the builder,
+/// so the step reads as "on the slot just named" rather than repeating the marker.
+#[doc(hidden)]
+pub trait TransformAt<N, Index> {
+    /// The step the transform rides, or [`NoOutBound`] when the chain has named none.
+    type Step;
+
+    /// The attachment tuple with that slot's stack grown.
+    type Out;
+
+    /// Composes it.
+    fn transform_at(self, transform: N) -> Self::Out;
+}
+
+// The "nothing named yet" arm: it exists so the step resolves as a method and fails on
+// `Step: NamedStep`, which is where the guidance lives. It never runs.
+impl<N, Slots> TransformAt<N, NoOutBound> for Slots {
+    type Step = NoOutBound;
+    type Out = Slots;
+
+    fn transform_at(self, _transform: N) -> Slots {
+        self
+    }
+}
+
+/// The position a `.transform(..)` step applies to when the chain last named the reply's
+/// publisher rather than a slot.
+///
+/// Only the mounts that carry both a reply and slots have both, and there `.transform(..)` reads
+/// as "on the step before it": after `.publisher(..)` it grows the reply's wiring, after
+/// `.out(..)` the slot's own.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReplyLast;
+
+impl NamedStep for ReplyLast {}
+
+/// Grows the transform stack of whatever a mount site's chain named last: the reply's wiring
+/// ([`ReplyLast`]) or one bound slot ([`SlotPos`]). Machinery; never named directly.
+#[doc(hidden)]
+pub trait TransformLast<N, Last> {
+    /// The step the transform rides, as [`TransformAt::Step`] reports it.
+    type Step;
+
+    /// The reply attachment after the step (grown when the reply is what it applied to).
+    type Reply;
+
+    /// The slot tuple after the step (grown when a slot is what it applied to).
+    type Slots;
+
+    /// Composes it.
+    fn transform_last(self, transform: N) -> (Self::Reply, Self::Slots);
+}
+
+impl<N, W, Slots> TransformLast<N, ReplyLast> for (WithSource<W>, Slots)
+where
+    W: AddReplyTransform<N>,
+{
+    type Step = ReplyLast;
+    type Reply = WithSource<W::Out>;
+    type Slots = Slots;
+
+    fn transform_last(self, transform: N) -> (Self::Reply, Slots) {
+        let (reply, slots) = self;
+        (reply.map(|wiring| wiring.add_transform(transform)), slots)
+    }
+}
+
+impl<N, const POS: usize, Reply, Slots> TransformLast<N, SlotPos<POS>> for (Reply, Slots)
+where
+    Slots: TransformAt<N, SlotPos<POS>>,
+{
+    type Step = SlotPos<POS>;
+    type Reply = Reply;
+    type Slots = Slots::Out;
+
+    fn transform_last(self, transform: N) -> (Reply, Self::Slots) {
+        let (reply, slots) = self;
+        (reply, slots.transform_at(transform))
+    }
+}
+
+// See `TransformAt`'s own arm: present so the step fails on `Step: NamedStep` and never on a
+// missing method.
+impl<N, Reply, Slots> TransformLast<N, NoOutBound> for (Reply, Slots) {
+    type Step = NoOutBound;
+    type Reply = Reply;
+    type Slots = Slots;
+
+    fn transform_last(self, _transform: N) -> (Reply, Slots) {
+        self
+    }
+}
+
 /// A user-attached publisher source, wrapped so the bound and unbound attachment states live on
 /// different type constructors (disjoint impls, no negative reasoning needed).
 #[doc(hidden)]
@@ -501,6 +680,38 @@ macro_rules! impl_bind_slot {
 }
 
 impl_bind_slot! {
+    (@ 0)
+    (@ 0, A1)
+    (A0, @ 1)
+    (@ 0, A1, A2)
+    (A0, @ 1, A2)
+    (A0, A1, @ 2)
+}
+
+/// Implements [`TransformAt`] for each (arity, position) pair: the attachment at the position the
+/// last `.out(..)` bound (`@ <position>`) grows its stack, the surrounding elements pass through.
+macro_rules! impl_transform_at {
+    ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
+        impl<N, Policy, Layers $(, $before)* $(, $after)*> TransformAt<N, SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<Policy, Layers>>, $($after,)*)
+        {
+            type Step = SlotPos<$pos>;
+            type Out = (
+                $($before,)*
+                WithSource<OutAttachment<Policy, OutTransformStack<Layers, N>>>,
+                $($after,)*
+            );
+
+            fn transform_at(self, transform: N) -> Self::Out {
+                #[allow(non_snake_case)]
+                let ($($before,)* bound, $($after,)*) = self;
+                ($($before,)* bound.map(|slot| slot.add_transform(transform)), $($after,)*)
+            }
+        }
+    )+};
+}
+
+impl_transform_at! {
     (@ 0)
     (@ 0, A1)
     (A0, @ 1)

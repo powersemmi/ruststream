@@ -6,10 +6,11 @@ use std::marker::PhantomData;
 use crate::Broker;
 
 use crate::runtime::publish::{
-    AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, NameReplyCodec, PublishingDirectly,
-    TransactionalReply,
+    AddBatchReplyTransform, CodecSlotOpen, NameReplyCodec, PublishingDirectly, TransactionalReply,
 };
-use crate::runtime::slot::{BindSlot, OutSlot, WithSource};
+use crate::runtime::slot::{
+    BindSlot, NamedStep, NoOutBound, OutAttachment, OutSlot, ReplyLast, TransformLast, WithSource,
+};
 
 use super::{
     BatchPublishInjectMount, PublishInjectMount, RawReplyInjectMount, ReplyAttachment, SlotCommit,
@@ -25,13 +26,27 @@ use crate::runtime::app::scope::BrokerScope;
 /// binding is a compile error naming the slot. The per-form names are aliases:
 /// [`IncludePublishingOut`], [`IncludeBatchPublishingOut`].
 #[must_use = "a publishing handler with Out slots registers nothing until .out(..)+.build() commits it"]
-pub struct IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots>
-where
+pub struct IncludeSlotsWithReply<
+    's,
+    Mount,
+    B,
+    Layers,
+    C,
+    State,
+    Pipeline,
+    Def,
+    Reply,
+    Slots,
+    Last = NoOutBound,
+> where
     B: Broker + 'static,
 {
     scope: Option<&'s mut BrokerScope<B, Layers, C, State, Pipeline>>,
     parts: Option<(Def, Reply, Slots)>,
     _mount: PhantomData<Mount>,
+    // The slot the chain named most recently: what a `.transform(..)` after an `.out(..)`
+    // applies to. The reply side's own `.transform(..)` reads the reply wiring instead.
+    _last: PhantomData<fn() -> Last>,
 }
 
 /// The builder [`BrokerScope::include`] returns for a `publish("dest")` definition whose
@@ -75,8 +90,8 @@ pub type IncludeBatchPublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply
         Slots,
     >;
 
-impl<'s, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots>
-    IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots>
+impl<'s, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots, Last>
+    IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots, Last>
 where
     B: Broker + 'static,
 {
@@ -90,6 +105,7 @@ where
             scope: Some(scope),
             parts: Some((def, reply, slots)),
             _mount: PhantomData,
+            _last: PhantomData,
         }
     }
 
@@ -138,6 +154,7 @@ where
         Def,
         WithSource<Mount::Wiring>,
         Slots,
+        ReplyLast,
     >
     where
         Mount: ReplyAttachment<Policy>,
@@ -170,16 +187,56 @@ where
         Pipeline,
         Def,
         Reply,
-        <Slots as BindSlot<M, NewSource, Index>>::Out,
+        <Slots as BindSlot<M, OutAttachment<NewSource>, Index>>::Out,
+        Index,
     >
     where
         M: OutSlot,
-        Slots: BindSlot<M, NewSource, Index>,
+        Slots: BindSlot<M, OutAttachment<NewSource>, Index>,
     {
         // The marker is inference input only; its value carries no data.
         let _ = marker;
         let (def, reply, slots, scope) = self.take();
-        IncludeSlotsWithReply::new(def, reply, slots.bind(source), scope)
+        IncludeSlotsWithReply::new(def, reply, slots.bind(OutAttachment::new(source)), scope)
+    }
+
+    /// Composes a transform onto the step the chain named last: the reply's
+    /// [`PublishTransform`](crate::runtime::PublishTransform) stack after a
+    /// [`publisher`](Self::publisher) call, one slot's
+    /// [`OutTransform`](crate::runtime::OutTransform) stack after an [`out`](Self::out) call.
+    ///
+    /// Both stacks grow, and in both the first transform added runs first, so a mount can name
+    /// one on each side:
+    /// `.publisher(Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`.
+    /// Before either call the step does not exist, and the call fails naming the fix.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the internal expects guard builder invariants that hold until the
+    /// commit consumes them.
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
+    pub fn transform<N>(
+        self,
+        transform: N,
+    ) -> IncludeSlotsWithReply<
+        's,
+        Mount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        <(Reply, Slots) as TransformLast<N, Last>>::Reply,
+        <(Reply, Slots) as TransformLast<N, Last>>::Slots,
+        Last,
+    >
+    where
+        (Reply, Slots): TransformLast<N, Last, Step: NamedStep>,
+    {
+        let (def, reply, slots, scope) = self.take();
+        let (reply, slots) = (reply, slots).transform_last(transform);
+        IncludeSlotsWithReply::new(def, reply, slots, scope)
     }
 
     /// Commits the registration (reply attachment plus every bound slot). Exists only once
@@ -199,8 +256,8 @@ where
     }
 }
 
-impl<'s, Mount, B, Layers, C, State, Pipeline, Def, W, Slots>
-    IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W>, Slots>
+impl<'s, Mount, B, Layers, C, State, Pipeline, Def, W, Slots, Last>
+    IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W>, Slots, Last>
 where
     B: Broker + 'static,
 {
@@ -211,11 +268,23 @@ where
     ///
     /// Never in practice: the internal expects guard builder invariants that hold until the
     /// commit consumes them.
+    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
     fn map_wiring<W2>(
         self,
         f: impl FnOnce(W) -> W2,
-    ) -> IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W2>, Slots>
-    {
+    ) -> IncludeSlotsWithReply<
+        's,
+        Mount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        WithSource<W2>,
+        Slots,
+        Last,
+    > {
         let (def, wiring, slots, scope) = self.take();
         IncludeSlotsWithReply::new(def, wiring.map(f), slots, scope)
     }
@@ -236,34 +305,12 @@ where
         Def,
         WithSource<W::Out>,
         Slots,
+        Last,
     >
     where
         W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
     {
         self.map_wiring(|wiring| wiring.name_codec(codec))
-    }
-
-    /// See [`IncludeWith::transform`](crate::runtime::IncludeWith::transform).
-    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
-    pub fn transform<N>(
-        self,
-        transform: N,
-    ) -> IncludeSlotsWithReply<
-        's,
-        Mount,
-        B,
-        Layers,
-        C,
-        State,
-        Pipeline,
-        Def,
-        WithSource<W::Out>,
-        Slots,
-    >
-    where
-        W: AddReplyTransform<N>,
-    {
-        self.map_wiring(|wiring| wiring.add_transform(transform))
     }
 
     /// See [`IncludeWith::batch_transform`](crate::runtime::IncludeWith::batch_transform).
@@ -282,6 +329,7 @@ where
         Def,
         WithSource<W::Out>,
         Slots,
+        Last,
     >
     where
         W: AddBatchReplyTransform<N>,
@@ -304,6 +352,7 @@ where
         Def,
         WithSource<W::Out>,
         Slots,
+        Last,
     >
     where
         W: TransactionalReply<State: PublishingDirectly>,
@@ -312,8 +361,8 @@ where
     }
 }
 
-impl<Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots> fmt::Debug
-    for IncludeSlotsWithReply<'_, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots>
+impl<Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots, Last> fmt::Debug
+    for IncludeSlotsWithReply<'_, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots, Last>
 where
     B: Broker + 'static,
 {
@@ -323,8 +372,8 @@ where
     }
 }
 
-impl<Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots> Drop
-    for IncludeSlotsWithReply<'_, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots>
+impl<Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots, Last> Drop
+    for IncludeSlotsWithReply<'_, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots, Last>
 where
     B: Broker + 'static,
 {

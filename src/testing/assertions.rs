@@ -414,6 +414,32 @@ impl<T> PublishedAssertions<T> {
         );
         self
     }
+
+    /// Asserts the most recent published message carries the header `name` with `value`.
+    ///
+    /// What a publish transform or an app-wide
+    /// [`publish_layer`](crate::runtime::RustStream::publish_layer) put on the message is read
+    /// here: the assertion sees the message as it left, so a stamp added on the way out shows up
+    /// on the reply channel and on `tb.out::<Marker>()` alike.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing was published, the header is absent, or its value differs.
+    pub fn with_header(self, name: &str, value: &[u8]) -> Self {
+        let message = self.last("the published headers");
+        let actual = message.headers().get(name).unwrap_or_else(|| {
+            panic!(
+                "channel {:?} published a message without the {name:?} header",
+                self.name,
+            )
+        });
+        assert_eq!(
+            actual, value,
+            "channel {:?} published an unexpected {name:?} header",
+            self.name,
+        );
+        self
+    }
 }
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]

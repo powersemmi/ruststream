@@ -98,6 +98,7 @@ mod sealed {
 
 mod builder;
 mod ext;
+mod out;
 mod pipeline;
 mod publisher;
 mod reply;
@@ -114,6 +115,10 @@ pub use builder::{
 };
 pub(crate) use builder::{message_of, raw_of};
 pub use ext::PublishExt;
+pub use out::{
+    LowerOutTransforms, OutPipeline, OutTransform, OutTransformIdentity, OutTransformStack,
+    PipelinePublishError,
+};
 pub use pipeline::{
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,
     PublishPipeline, PublishStack,
