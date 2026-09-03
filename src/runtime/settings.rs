@@ -55,7 +55,7 @@ pub struct Open;
 pub struct Fixed;
 
 /// The settings state of a definition whose attribute named none of them.
-pub type AllOpen = (Open, Open, Open);
+pub type AllOpen = (Open, Open, Open, Open);
 
 /// A value `include` accepts: a `#[subscriber]` definition, or a settings builder over one.
 ///
@@ -96,7 +96,10 @@ impl<T: IncludeDef> Declared for T {
 /// attribute-named setting and a mount-site one take the same path.
 ///
 /// The `State` parameter records which settings are still open, as
-/// `(workers, failure policies, start position)` over [`Open`] / [`Fixed`]. The subscription's
+/// `(workers, failure policies, start position, page supply)` over [`Open`] / [`Fixed`] - the
+/// last one shared by [`buffered`](SubscriberSettings::buffered) and
+/// [`batch`](SubscriberSettings::batch), which are the two ways to size a page and so exclude
+/// each other. The subscription's
 /// name is recorded in `Src` instead: an unnamed definition carries [`Unnamed<S>`], which is no
 /// [`SubscriptionSource`](crate::SubscriptionSource) at all, so mounting it is a compile error.
 /// The `DefCodec` parameter is the decode codec [`codec`](Self::codec) named, `()` while the
@@ -369,8 +372,8 @@ pub trait WorkersStep: Sized {
     fn apply_workers(self, workers: Workers) -> Self::Out;
 }
 
-impl<Def, Src, F, P, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P), DC> {
-    type Out = SubscriberBuilder<Def, Src, (Fixed, F, P), DC>;
+impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P, B), DC> {
+    type Out = SubscriberBuilder<Def, Src, (Fixed, F, P, B), DC>;
 
     fn apply_workers(self, workers: Workers) -> Self::Out {
         let (def, source, _default, failures, codec) = self.into_parts();
@@ -393,8 +396,8 @@ pub trait FailureStep: Sized {
     fn apply_failures(self, policies: FailurePolicies) -> Self::Out;
 }
 
-impl<Def, Src, W, P, DC> FailureStep for SubscriberBuilder<Def, Src, (W, Open, P), DC> {
-    type Out = SubscriberBuilder<Def, Src, (W, Fixed, P), DC>;
+impl<Def, Src, W, P, B, DC> FailureStep for SubscriberBuilder<Def, Src, (W, Open, P, B), DC> {
+    type Out = SubscriberBuilder<Def, Src, (W, Fixed, P, B), DC>;
 
     fn apply_failures(self, policies: FailurePolicies) -> Self::Out {
         let (def, source, workers, _defaults, codec) = self.into_parts();
@@ -418,8 +421,8 @@ pub trait StartAtStep<P>: Sized {
     fn apply_start_at(self, position: P) -> Self::Out;
 }
 
-impl<Def, Src, W, F, P, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W, F, Open), DC> {
-    type Out = SubscriberBuilder<Def, StartAt<Src, P>, (W, F, Fixed), DC>;
+impl<Def, Src, W, F, P, B, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W, F, Open, B), DC> {
+    type Out = SubscriberBuilder<Def, StartAt<Src, P>, (W, F, Fixed, B), DC>;
 
     fn apply_start_at(self, position: P) -> Self::Out {
         let (def, source, workers, failures, codec) = self.into_parts();
@@ -434,6 +437,13 @@ impl<Def, Src, W, F, P, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W, F
 }
 
 /// Wrapping the source in the framework's own buffer. See [`SubscriberSettings::buffered`].
+#[diagnostic::on_unimplemented(
+    message = "this subscriber's page supply is already fixed",
+    label = "the page size is named once",
+    note = "`buffered(max, wait)` makes pages out of single deliveries on the client and \
+            `batch(max)` caps the pages the broker already delivers: they are alternatives, so \
+            name one"
+)]
 pub trait BufferedStep: Sized {
     /// The builder over the buffered source.
     type Out;
@@ -442,13 +452,64 @@ pub trait BufferedStep: Sized {
     fn apply_buffered(self, max_size: NonZeroUsize, max_wait: Duration) -> Self::Out;
 }
 
-impl<Def, Src, State, DC> BufferedStep for SubscriberBuilder<Def, Src, State, DC> {
-    type Out = SubscriberBuilder<Def, Buffered<Src>, State, DC>;
+impl<Def, Src, W, F, P, DC> BufferedStep for SubscriberBuilder<Def, Src, (W, F, P, Open), DC> {
+    type Out = SubscriberBuilder<Def, Buffered<Src>, (W, F, P, Fixed), DC>;
 
     fn apply_buffered(self, max_size: NonZeroUsize, max_wait: Duration) -> Self::Out {
         let (def, source, workers, failures, codec) = self.into_parts();
         let buffered = Buffered::new(source).max_size(max_size).max_wait(max_wait);
         Self::from_parts(def, buffered, workers, failures, codec)
+    }
+}
+
+/// A definition whose deliveries are pages the runtime hands to the body itself, so a cap on
+/// them has something to cap: the plain page forms of the value definition, and nothing else.
+///
+/// A page reply publishes its whole page in one transaction and a slot-carrying page dispatches
+/// through the injections machinery; neither chunks, so neither takes a cap at all rather than
+/// accepting one that would do nothing. Machinery behind
+/// [`batch`](SubscriberSettings::batch); never named in user code.
+#[diagnostic::on_unimplemented(
+    message = "this subscriber has no native pages to cap",
+    label = "`batch(..)` caps the pages a page body is handed",
+    note = "the cap applies to a page body that settles its own page (`&[T]`, `&[F<'_>]`, \
+            `&[Message<H, P>]`, returning outcomes); a single-message body has no page, and a \
+            page that replies or publishes through an `Out` slot settles as a whole. To batch \
+            single deliveries on the client instead, name the framework's buffer with \
+            `buffered(max, wait)`"
+)]
+#[doc(hidden)]
+pub trait CapsPages: Sized {
+    /// Records the cap on the definition.
+    #[must_use]
+    fn cap_pages(self, max: NonZeroUsize) -> Self;
+}
+
+/// Capping the pages the body is handed. See [`SubscriberSettings::batch`].
+#[diagnostic::on_unimplemented(
+    message = "this subscriber's page supply is already fixed",
+    label = "the page size is named once",
+    note = "`batch(max)` caps the pages the broker already delivers and `buffered(max, wait)` \
+            makes pages out of single deliveries on the client: they are alternatives, so name \
+            one"
+)]
+pub trait BatchStep: Sized {
+    /// The builder with the page cap fixed.
+    type Out;
+
+    /// Caps the pages handed to the body at `max` elements.
+    fn apply_batch(self, max: NonZeroUsize) -> Self::Out;
+}
+
+impl<Def, Src, W, F, P, DC> BatchStep for SubscriberBuilder<Def, Src, (W, F, P, Open), DC>
+where
+    Def: CapsPages,
+{
+    type Out = SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC>;
+
+    fn apply_batch(self, max: NonZeroUsize) -> Self::Out {
+        let (def, source, workers, failures, codec) = self.into_parts();
+        Self::from_parts(def.cap_pages(max), source, workers, failures, codec)
     }
 }
 
@@ -483,7 +544,9 @@ where
 /// The order in a chain follows from what each step does to the source: [`name`](Self::name)
 /// comes first because it constructs the source, a broker's own settings then transform it
 /// through [`map_source`](Self::map_source), and [`buffered`](Self::buffered) wraps it last -
-/// broker methods bound to the unwrapped source type stop applying past the wrap.
+/// broker methods bound to the unwrapped source type stop applying past the wrap. The steps
+/// that touch the definition rather than the source ([`batch`](Self::batch)) are free of that
+/// order.
 ///
 /// # Examples
 ///
@@ -562,7 +625,9 @@ pub trait SubscriberSettings: Declared {
     /// batches on a broker whose subscription does not batch by itself.
     ///
     /// A batch closes at `max_size` deliveries, or `max_wait` after its first one. Broker-native
-    /// batching is a different thing, configured through the broker's own settings.
+    /// batching is a different thing, configured through the broker's own settings and capped
+    /// with [`batch`](Self::batch); this and that one size the same page, so a registration
+    /// names one of them.
     fn buffered(
         self,
         max_size: NonZeroUsize,
@@ -572,6 +637,25 @@ pub trait SubscriberSettings: Declared {
         Self::Settings: BufferedStep,
     {
         self.declare().apply_buffered(max_size, max_wait)
+    }
+
+    /// Caps a page at `max` elements: a larger batch is handed to the body in chunks of at most
+    /// `max`, each settled on its own.
+    ///
+    /// Where the pages come from is the broker's business - its own subscription options size
+    /// them - and this is the cap the framework applies on top; making pages out of single
+    /// deliveries is [`buffered`](Self::buffered) instead, which is why the two exclude each
+    /// other.
+    ///
+    /// Available on a page body that settles its own page (`&[T]` and friends): a
+    /// single-message body has no page, and a page that replies or publishes through an `Out`
+    /// slot settles as a whole, so there the cap has nothing to chunk and the step is not
+    /// offered at all.
+    fn batch(self, max: NonZeroUsize) -> <Self::Settings as BatchStep>::Out
+    where
+        Self::Settings: BatchStep,
+    {
+        self.declare().apply_batch(max)
     }
 
     /// Transforms the source under construction.

@@ -343,7 +343,8 @@ attribute says it.
     --8<-- "examples/manual/subscribers.rs:batch"
     ```
 
-Mount it with `include`, like any other form - the definition carries the batch shape:
+Mount it with `include`, like any other form - the definition carries the batch shape, and
+`batch(n)` caps how much of one page the handler is handed at a time:
 
 === "Macros"
 
@@ -356,6 +357,13 @@ Mount it with `include`, like any other form - the definition carries the batch 
     ```rust
     --8<-- "examples/manual/subscribers.rs:batch_mount"
     ```
+
+How big a delivered page is, is the broker's business: its subscription options size the batches
+it ships. `batch(n)` is the cap the framework applies on top, so a handler written for a bounded
+page keeps that bound whatever the broker hands over - a larger page reaches it in chunks of at
+most `n`, each settled on its own. The cap is offered where there is a page to chunk: a
+single-message handler has none, and a page that replies or publishes through an `Out` slot
+settles as a whole, so naming it there does not compile.
 
 The signature says the handler wants several messages at once; whether they arrive that way is a
 property of the broker, so it is settled where the definition is mounted. The subscription's
@@ -379,7 +387,9 @@ size or by a deadline after its first delivery:
 
 Batches come either from the broker (configured by the broker's own settings) or from this wrap;
 the setting is named after the adapter to keep the two apart. The wrap changes the subscription
-type, so it goes last - broker settings bound to the unwrapped type stop applying past it.
+type, so it goes last - broker settings bound to the unwrapped type stop applying past it. It is
+also where the page size comes from once it is there, so a mount names `buffered(..)` or
+`batch(n)`, never both.
 
 The semantics differ from single-message handlers in a few ways:
 

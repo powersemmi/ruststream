@@ -1,0 +1,15 @@
+error[E0277]: this subscriber's page supply is already fixed
+  --> tests/ui/subscriber_batch_after_buffered.rs:25:10
+   |
+25 |         .batch(nonzero!(64));
+   |          ^^^^^ the page size is named once
+   |
+   = help: the trait `BatchStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Buffered<Name>, (Open, Open, Open, Fixed)>`
+   = note: `batch(max)` caps the pages the broker already delivers and `buffered(max, wait)` makes pages out of single deliveries on the client: they are alternatives, so name one
+help: the trait `BatchStep` is implemented for `SubscriberBuilder<Def, Src, (W, F, P, Open), DC>`
+  --> src/runtime/settings.rs
+   |
+   | / impl<Def, Src, W, F, P, DC> BatchStep for SubscriberBuilder<Def, Src, (W, F, P, Open), DC>
+   | | where
+   | |     Def: CapsPages,
+   | |___________________^

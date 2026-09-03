@@ -26,8 +26,8 @@ alwaysApply: false
   (`BuildBatchContext`, built once per page) on the page ones - and `S` the application state the
   body reads with `ctx.state()`. What the signature does
   not carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
-  `.on_failure`, `.buffered`, `.start_at`, `.codec`), the reply wiring (`.reply()`, `.to(dest)`,
-  `.publisher(policy)`), the native page cap `.batch(n)` and the document controls
+  `.on_failure`, `.buffered`, `.batch`, `.start_at`, `.codec`), the reply wiring (`.reply()`,
+  `.to(dest)`, `.publisher(policy)`) and the document controls
   (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and `include` mounts it. Nothing
   else to implement; the registration metadata is derived from the source and the body's input
   type.
@@ -439,8 +439,9 @@ spellings of the one constructor, and the decoded one resolves the chain's codec
 
 Every form is reachable through that one constructor, so none is locked behind the definition
 traits: the application state, the typed broker context and the injections are all axes read off
-the body's own `impl Handle`, and the reply, page-cap and document steps ride the chain
-(`.reply()` / `.to(..)` / `.publisher(..)`, `.batch(n)`, `.describe(..)`, `.undocumented()`).
+the body's own `impl Handle`, and the reply and document steps ride the chain
+(`.reply()` / `.to(..)` / `.publisher(..)`, `.describe(..)`, `.undocumented()`) next to the
+declarative settings the attribute path shares, the page cap `.batch(n)` among them.
 Registrations are documented by default under `asyncapi`, which is why the
 message types need `schemars::JsonSchema` and `.undocumented()` is the per-registration exit.
 What is left for the definition traits is being the attribute's own expansion target, and a fully
@@ -471,7 +472,8 @@ impl SubscriberDef for Receive {
 // attribute's clauses parsed into.
 impl Declared for Receive {
     type Form = forms::Subscribing;
-    type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open)>;
+    // (workers, failure policies, start position, page supply)
+    type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open, Open)>;
 
     fn declare(self) -> Self::Settings {
         SubscriberBuilder::new(self, Name::new("orders"))

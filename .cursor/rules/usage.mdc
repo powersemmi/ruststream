@@ -168,6 +168,10 @@ b.include(
 
 // client-side batching for subscriptions without native batches
 b.include(drain.name("orders").buffered(nonzero!(128), Duration::from_millis(20)));
+
+// a page body on a broker that batches natively: cap how much of one page reaches the body at
+// a time (`buffered(..)` and `batch(n)` size the same thing, so a mount names one of them)
+b.include(settle.name("orders").batch(nonzero!(64)));
 ```
 
 `workers(n)` and `on_failure(..)` can also be written as attribute clauses

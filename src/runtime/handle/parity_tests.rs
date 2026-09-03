@@ -446,11 +446,12 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .build(),
         )
         .include(subscriber("frames", RawEcho).reply().to("echoes").build())
+        // No page cap here: a page reply publishes its whole page in one transaction, so the
+        // cap has nothing to chunk and the step is not offered on this chain at all.
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
                 .to("confirmations")
-                .batch(nonzero!(8))
                 .build(),
         )
         .include(

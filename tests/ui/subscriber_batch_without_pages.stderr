@@ -1,0 +1,21 @@
+error[E0277]: this subscriber has no native pages to cap
+  --> tests/ui/subscriber_batch_without_pages.rs:19:26
+   |
+19 |     let _capped = handle.batch(nonzero!(64));
+   |                          ^^^^^ `batch(..)` caps the pages a page body is handed
+   |
+   = help: the trait `ruststream::runtime::CapsPages` is not implemented for `HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>`
+   = note: the cap applies to a page body that settles its own page (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`, returning outcomes); a single-message body has no page, and a page that replies or publishes through an `Out` slot settles as a whole. To batch single deliveries on the client instead, name the framework's buffer with `buffered(max, wait)`
+help: the following other types implement trait `ruststream::runtime::CapsPages`
+  --> src/runtime/handle/value.rs
+   |
+   | impl<T, C, H, Doc> CapsPages for HandleValue<Page<T>, (), (), C, H, Doc> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<Page<T>, (), (), C, H, Doc>`
+...
+   | impl<F, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, (), (), C, H, Doc> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<PageDeserialized<F>, (), (), C, H, Doc>`
+...
+   | impl<Hd, P, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, (), (), C, H, Doc> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<PagePair<Hd, P>, (), (), C, H, Doc>`
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>` to implement `ruststream::runtime::CapsPages`
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `BatchStep`

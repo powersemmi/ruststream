@@ -189,7 +189,7 @@ where
 /// The dispatch adapter of a page body.
 ///
 /// Awaits the verdict, checks the per-element contract, and settles the page by it. Carries
-/// the [`batch`](crate::runtime::SubscriberBuilder::batch) cap, feeding an oversized page to
+/// the [`batch`](crate::runtime::SubscriberSettings::batch) cap, feeding an oversized page to
 /// the body in chunks.
 pub struct PageBody<A, H> {
     body: H,

@@ -3,7 +3,12 @@
 //!
 //! Apps come up through `start()`, which resolves only after subscriptions are open, so each
 //! message is published exactly once; the tests wait on the handlers' recorded state.
-#![cfg(feature = "macros")]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
@@ -17,6 +22,7 @@ use ruststream::runtime::{
     AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, PublishExt, Router, RustStream,
     SubscriberSettings,
 };
+use ruststream::testing::TestApp;
 use ruststream::{Deserialized, nonzero, subscriber};
 
 /// The payload view the raw batch body below takes, one element per delivery in the page.
@@ -243,6 +249,57 @@ async fn the_builder_supplies_the_buffer() {
     let flattened: Vec<u32> = BUFFERED.lock().unwrap().iter().flatten().copied().collect();
     assert_eq!(flattened, vec![0, 1, 2]);
     running.shutdown().await.expect("shutdown failed");
+}
+
+/// The same page shape, taking the broker's own batches instead of the framework's buffer: the
+/// mount site caps how much of one page reaches the body at a time. The body records nothing;
+/// the harness reports both the page the broker delivered and the slices the body was handed.
+#[subscriber]
+async fn paginate(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders.len();
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_builder_supplies_the_page_cap() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    // The whole run is in the log before the subscription opens, so the opening replay hands the
+    // subscription one native page of three: nothing but the cap can split it. The harness
+    // injects after startup and settles per message, so the entries are published here.
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("paginate")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            paginate
+                .name("paginate")
+                .start_at(MemoryPosition::start())
+                .batch(nonzero!(2)),
+        );
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed page settles");
+
+    let subscriber = tb.broker::<MemoryBroker>();
+    let subscriber = subscriber.subscriber("paginate");
+    assert_eq!(
+        subscriber.received::<Order>(),
+        [Order { id: 0 }, Order { id: 1 }, Order { id: 2 }],
+    );
+    subscriber
+        // One page arrived, carrying every replayed entry in publish order...
+        .assert_called_once()
+        // ... and the cap is what the body saw it through.
+        .assert_page_sizes(&[2, 1])
+        .settled(HandlerOutcome::ack());
+    tb.shutdown().await.expect("shutdown failed");
 }
 
 static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());

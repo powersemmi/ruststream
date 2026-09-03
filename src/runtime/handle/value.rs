@@ -8,10 +8,10 @@ use std::num::NonZeroUsize;
 
 use crate::runtime::publish::{Transactional, TypedPublisher};
 use crate::runtime::router::DefaultReply;
-use crate::runtime::settings::SubscriberBuilder;
+use crate::runtime::settings::{CapsPages, SubscriberBuilder};
 use crate::runtime::slot::WithSource;
 
-use super::axis::{Axis, Input, PagedAxis};
+use super::axis::{Axis, Input, Page, PageDeserialized, PagePair};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::reply::ReplyRoute;
 use super::{Handle, IntoSource};
@@ -83,6 +83,12 @@ impl<A, R, O, C, H, Doc> fmt::Debug for HandleValue<A, R, O, C, H, Doc> {
 }
 
 impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
+    /// Records the page cap the settings step named.
+    fn with_page_cap(mut self, max: NonZeroUsize) -> Self {
+        self.page_cap = Some(max);
+        self
+    }
+
     /// Rewraps the value at another documentation state, keeping everything else.
     fn with_doc<NewDoc>(self) -> HandleValue<A, R, O, C, H, NewDoc> {
         HandleValue {
@@ -104,8 +110,8 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
 /// [`buffered`](crate::runtime::SubscriberSettings::buffered), ...), the reply wiring
 /// ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to),
-/// [`publisher`](SubscriberBuilder::publisher)), the native page cap
-/// ([`batch`](SubscriberBuilder::batch)) and the documentation opt-out
+/// [`publisher`](SubscriberBuilder::publisher)), the page cap
+/// ([`batch`](crate::runtime::SubscriberSettings::batch)) and the documentation opt-out
 /// ([`undocumented`](SubscriberBuilder::undocumented)) - and
 /// [`build`](SubscriberBuilder::build) seals the definition for
 /// [`include`](crate::runtime::Router::include).
@@ -325,6 +331,42 @@ impl<V> fmt::Debug for Sealed<V> {
     }
 }
 
+// The cap rides the definition, and only a page body that settles its own page has anywhere to
+// spend it: the page reply publishes its whole page in one transaction and the slot-carrying
+// page dispatches through the injections machinery, so neither chunks. Leaving those forms
+// without the impl is what turns `.batch(..)` on them into a compile error instead of a setting
+// that quietly does nothing.
+//
+// The three page spellings are named one by one rather than through a `PagedAxis` bound on one
+// impl: a bound inside a matching impl is what the compiler reports back, and the axis marker's
+// name is machinery. With no impl matching a single-message definition, the missing `CapsPages`
+// carries the message instead.
+impl<T, C, H, Doc> CapsPages for HandleValue<Page<T>, (), (), C, H, Doc> {
+    fn cap_pages(self, max: NonZeroUsize) -> Self {
+        self.with_page_cap(max)
+    }
+}
+
+impl<F, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, (), (), C, H, Doc> {
+    fn cap_pages(self, max: NonZeroUsize) -> Self {
+        self.with_page_cap(max)
+    }
+}
+
+impl<Hd, P, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, (), (), C, H, Doc> {
+    fn cap_pages(self, max: NonZeroUsize) -> Self {
+        self.with_page_cap(max)
+    }
+}
+
+// The seal is transparent to the step, so the attribute path caps the very definition the
+// `subscriber(..)` chain does.
+impl<V: CapsPages> CapsPages for Sealed<V> {
+    fn cap_pages(self, max: NonZeroUsize) -> Self {
+        Self(self.0.cap_pages(max))
+    }
+}
+
 // ------------------------------------------------------------------ steps on the plain chain
 
 impl<A, R, O, C, H, Doc, Src, State, DC>
@@ -351,22 +393,6 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
         Doc: IsDocumented,
     {
         self.map_def(HandleValue::with_doc)
-    }
-
-    /// Caps a native page at `max` elements: a larger batch is fed to the body in chunks of at
-    /// most `max`, each settled on its own.
-    ///
-    /// Only a page body (`&[T]` and friends) has pages to cap; client-side batching over a
-    /// single-message subscription is [`buffered`](crate::runtime::SubscriberSettings::buffered).
-    #[must_use]
-    pub fn batch(self, max: NonZeroUsize) -> Self
-    where
-        A: PagedAxis,
-    {
-        self.map_def(|mut def| {
-            def.page_cap = Some(max);
-            def
-        })
     }
 
     /// Declares the body's reply wired for publishing: the reply type's declared destination
@@ -463,8 +489,8 @@ impl<A, R, O, C, H, Doc, Dest, Attach: DefaultReplyAttach, Src, State, DC>
     }
 }
 
-// The inner-value steps stay reachable after `.reply()`: `.batch(..)`, `.describe(..)` and
-// `.undocumented()` reach through the wrapper, so the chain order is free.
+// The inner-value steps stay reachable after `.reply()`: `.describe(..)` and `.undocumented()`
+// reach through the wrapper, so the chain order is free.
 impl<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC>
     SubscriberBuilder<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Attach>, Src, State, DC>
 {
@@ -486,20 +512,6 @@ impl<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC>
         Doc: IsDocumented,
     {
         self.map_def(|def| def.map_value(HandleValue::with_doc))
-    }
-
-    /// See [`batch`](SubscriberBuilder::batch) on the plain chain.
-    #[must_use]
-    pub fn batch(self, max: NonZeroUsize) -> Self
-    where
-        A: PagedAxis,
-    {
-        self.map_def(|def| {
-            def.map_value(|mut value| {
-                value.page_cap = Some(max);
-                value
-            })
-        })
     }
 
     /// Seals the definition for `include`.

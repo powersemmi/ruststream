@@ -144,7 +144,9 @@ fn app() -> RustStream {
         // --8<-- [end:name_mount]
         b.include(archive.name("archive"));
         // --8<-- [start:batch_mount]
-        b.include(settle);
+        // The broker sizes its own batches; `batch(n)` caps how much of one page the body is
+        // handed at a time, and each chunk settles on its own.
+        b.include(settle.batch(nonzero!(64)));
         // --8<-- [end:batch_mount]
         b.include(ingest);
         b.include(reconcile);
