@@ -670,7 +670,7 @@ register the same handler.
     --8<-- "examples/subscribers.rs:manual"
     ```
 
-The manual body returns a verdict: the `Ok` side carries what the handler produces (the reply, or
+The manual body returns a `Result`: the `Ok` side carries what the handler produces (the reply, or
 nothing) and the `Err` side carries the settlement, so `Ok(())` acks and
 `Err(HandlerOutcome::retry())` requeues; a page body settles element-wise with
 `Err(Vec<HandlerOutcome>)`. Between `subscriber(..)` and `.build()`, the chain takes the same
