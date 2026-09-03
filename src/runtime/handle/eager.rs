@@ -388,3 +388,45 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{BatchResult, HandlerOutcome, extend_settles};
+
+    /// A uniform chunk outcome fans its status out per element, and the one continuation rides
+    /// the last of them.
+    #[test]
+    fn a_uniform_chunk_outcome_fans_out_per_element() {
+        let mut settles = Vec::new();
+        extend_settles(&mut settles, BatchResult::Uniform(HandlerOutcome::ack()), 3);
+        assert_eq!(settles.len(), 3);
+        assert!(settles.iter().all(HandlerOutcome::is_ack));
+    }
+
+    /// A chunk with nothing in it settles nothing: `chunks` never yields one, so this is the
+    /// guard that keeps the fan-out arithmetic from underflowing if it ever did.
+    #[test]
+    fn an_empty_chunk_settles_nothing() {
+        let mut settles = vec![HandlerOutcome::ack()];
+        extend_settles(
+            &mut settles,
+            BatchResult::Uniform(HandlerOutcome::drop()),
+            0,
+        );
+        assert_eq!(settles.len(), 1);
+        assert!(settles[0].is_ack());
+    }
+
+    /// A per-element chunk outcome extends by its own outcomes, unchanged.
+    #[test]
+    fn a_per_element_chunk_outcome_extends_by_its_own_outcomes() {
+        let mut settles = Vec::new();
+        extend_settles(
+            &mut settles,
+            BatchResult::PerElement(vec![HandlerOutcome::drop(), HandlerOutcome::retry()]),
+            2,
+        );
+        assert!(settles[0].is_drop());
+        assert!(settles[1].is_retry());
+    }
+}

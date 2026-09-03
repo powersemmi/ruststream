@@ -58,6 +58,8 @@ mod value;
 mod verdict;
 
 #[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
+mod matrix_tests;
+#[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
 mod parity_tests;
 
 #[doc(hidden)]

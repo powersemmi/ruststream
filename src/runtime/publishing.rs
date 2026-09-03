@@ -410,6 +410,7 @@ mod tests {
     use crate::Name;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
+    use crate::runtime::failure::FailurePolicies;
     use crate::runtime::handler::HandlerOutcome;
 
     /// A hand-written publishing def overriding nothing optional, pinning the trait defaults that
@@ -451,8 +452,11 @@ mod tests {
     async fn defaults_metadata_and_call() {
         let def = ManualPub;
         assert_eq!(def.workers(), Workers::sequential());
+        assert_eq!(def.failure_policies(), FailurePolicies::default());
         assert!(def.description().is_none());
         assert!(def.input_schema().is_none());
+        assert!(def.headers_schema().is_none());
+        assert!(def.outgoing().is_empty());
         assert!(def.message_name().is_none());
         assert!(def.message_description().is_none());
         assert_eq!(def.reply_name(), "out");

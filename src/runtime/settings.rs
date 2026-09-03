@@ -621,6 +621,7 @@ mod tests {
     use crate::runtime::failure::{FailurePolicies, FailurePolicy};
     use crate::runtime::forms;
     use crate::runtime::input::Decoded;
+    use crate::runtime::router::IncludeDef;
     use crate::runtime::subscriber_def::SubscriberDef;
     use crate::{Name, Unnamed, nonzero};
 
@@ -675,6 +676,33 @@ mod tests {
     fn keyed_lanes_are_the_same_slot_as_the_pool() {
         let built = Stub.name("orders").workers_by_key(nonzero!(2));
         assert_eq!(built.workers, Workers::keyed(nonzero!(2)));
+    }
+
+    /// A definition that names its own form instead of expanding into a settings builder: the
+    /// shape a hand-written low-level definition has.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Handwritten;
+
+    impl IncludeDef for Handwritten {
+        type Form = forms::RawSubscribing;
+    }
+
+    #[test]
+    fn a_hand_written_definition_is_its_own_settings() {
+        // The blanket over `IncludeDef` is what lets `include` drive such a definition directly:
+        // it carries its settings itself, so declaring it hands the definition back unchanged.
+        assert_eq!(Handwritten.declare(), Handwritten);
+    }
+
+    #[test]
+    fn the_wrapped_definition_keeps_its_own_surface() {
+        // A step moves the definition around; it never replaces what the definition answers for.
+        // The mount reads the source off the builder, but the definition still names its own,
+        // and it is still the definition the handler comes out of.
+        let built = Stub.name("orders");
+        let source = SubscriberDef::source(&built.def);
+        assert!(format!("{source:?}").contains("stub"));
+        built.def.into_handler();
     }
 
     #[test]

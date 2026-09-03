@@ -316,3 +316,113 @@ async fn a_router_mounts_the_settings_builder() {
     assert_eq!(ROUTED.lock().unwrap().as_slice(), [5]);
     running.shutdown().await.expect("shutdown failed");
 }
+
+/// The per-registration codec, the top rung of the codec ladder: a scope decoding with CBOR, and
+/// registrations that name JSON for themselves.
+///
+/// One case per input kind the override resolves against - a decoded body, a body paired with its
+/// typed header contract, and a self-deserializing one. The last reads no codec at all, so naming
+/// one there changes nothing and the delivery's bytes still arrive untouched; the first two would
+/// fail to decode the JSON payloads below if the scope's CBOR had won.
+#[cfg(feature = "cbor")]
+mod codec_override {
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use ruststream::codec::{CborCodec, JsonCodec};
+    use ruststream::memory::MemoryBroker;
+    use ruststream::runtime::{
+        AppInfo, HandlerOutcome, Message, PublishExt, RustStream, SubscriberSettings,
+    };
+    use ruststream::subscriber;
+    use serde::{Deserialize, Serialize};
+
+    use super::{Frame, Order, order_bytes, wait_for};
+
+    /// The contract the paired case reads off the delivery's headers.
+    #[derive(Serialize, Deserialize, Debug, PartialEq, schemars::JsonSchema)]
+    struct Meta {
+        shard: u8,
+    }
+
+    static DECODED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    static PAIRED: Mutex<Vec<(u32, u8)>> = Mutex::new(Vec::new());
+    static PROVIDED: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+
+    #[subscriber]
+    async fn decoded(order: &Order) -> HandlerOutcome {
+        DECODED.lock().unwrap().push(order.id);
+        HandlerOutcome::ack()
+    }
+
+    #[subscriber]
+    async fn paired(order: &Message<Meta, Order>) -> HandlerOutcome {
+        PAIRED
+            .lock()
+            .unwrap()
+            .push((order.body.id, order.headers.shard));
+        HandlerOutcome::ack()
+    }
+
+    /// A self-deserializing body with a reply, which is the shape that resolves a codec for a
+    /// byte input: the plain self-deserializing mount reads none at all.
+    #[subscriber(publish("codec-provided-out"))]
+    async fn provided(frame: &Frame<'_>) -> Order {
+        PROVIDED.lock().unwrap().push(frame.0.to_vec());
+        Order { id: 0 }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_builder_overrides_the_scope_codec_per_registration() {
+        let broker = MemoryBroker::new();
+        let publisher = broker.publisher();
+
+        let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_codec(
+            broker,
+            CborCodec,
+            |b| {
+                b.include(decoded.name("codec-decoded").codec(JsonCodec));
+                b.include(paired.name("codec-paired").codec(JsonCodec));
+                b.include(provided.name("codec-provided").codec(JsonCodec));
+            },
+        );
+        let running = app.start().await.expect("startup failed");
+
+        publisher
+            .raw(&order_bytes(1))
+            .to("codec-decoded")
+            .publish()
+            .await
+            .expect("publish failed");
+        publisher
+            .raw(&order_bytes(2))
+            .to("codec-paired")
+            .with_headers(&Meta { shard: 7 })
+            .publish()
+            .await
+            .expect("publish failed");
+        publisher
+            .raw(b"\x00\xffnot json")
+            .to("codec-provided")
+            .publish()
+            .await
+            .expect("publish failed");
+
+        wait_for(
+            || {
+                !DECODED.lock().unwrap().is_empty()
+                    && !PAIRED.lock().unwrap().is_empty()
+                    && !PROVIDED.lock().unwrap().is_empty()
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(DECODED.lock().unwrap().as_slice(), [1]);
+        assert_eq!(PAIRED.lock().unwrap().as_slice(), [(2, 7)]);
+        assert_eq!(
+            PROVIDED.lock().unwrap().as_slice(),
+            [b"\x00\xffnot json".to_vec()],
+        );
+        running.shutdown().await.expect("shutdown failed");
+    }
+}

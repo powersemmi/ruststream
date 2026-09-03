@@ -309,3 +309,139 @@ where
         self.def.call(view, &self.injections, ctx).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::future::ready;
+
+    use super::{InjectCall, InjectDef, InjectHandler};
+    use crate::Name;
+    use crate::runtime::context::Context;
+    use crate::runtime::dispatch::Workers;
+    use crate::runtime::failure::{FailurePolicies, FailurePolicy};
+    use crate::runtime::handler::HandlerOutcome;
+    use crate::runtime::input::Decoded;
+
+    /// A hand-written injected def overriding nothing optional, pinning the trait defaults that
+    /// the macro always fills in.
+    struct ManualInject;
+
+    impl InjectDef for ManualInject {
+        type Input = Decoded<u32>;
+        type Context = ();
+        type Source = Name;
+        type Injections = ();
+
+        fn source(&self) -> Name {
+            Name::new("in")
+        }
+    }
+
+    // Ignores the app state, so it is generic over it (mounts on any app).
+    impl<S: Send + Sync> InjectCall<S> for ManualInject {
+        fn call(
+            &self,
+            input: &u32,
+            (): &(),
+            _ctx: &mut Context<'_, (), S>,
+        ) -> impl Future<Output = HandlerOutcome> {
+            let _ = *input;
+            ready(HandlerOutcome::ack())
+        }
+    }
+
+    #[test]
+    fn the_defaults_declare_nothing_the_macro_would_have_filled_in() {
+        let def = ManualInject;
+        assert_eq!(def.workers(), Workers::sequential());
+        assert_eq!(def.failure_policies(), FailurePolicies::default());
+        assert!(def.description().is_none());
+        assert!(def.input_schema().is_none());
+        assert!(def.headers_schema().is_none());
+        assert!(def.outgoing().is_empty());
+        assert!(def.message_name().is_none());
+        assert!(def.message_description().is_none());
+        assert!(format!("{:?}", def.source()).contains("in"));
+    }
+
+    #[test]
+    fn the_handler_names_itself() {
+        let handler = InjectHandler {
+            def: ManualInject,
+            codec: (),
+            injections: (),
+            decode: FailurePolicy::Drop,
+        };
+        assert!(format!("{handler:?}").contains("InjectHandler"));
+    }
+
+    /// The decode diagnostic of the injected path. It is asserted on the handler itself because
+    /// the subject is the warning's content, and a field value is only evaluated while a
+    /// subscriber listens.
+    #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
+    mod diagnostics {
+        use futures::StreamExt;
+
+        use super::ManualInject;
+        use crate::codec::JsonCodec;
+        use crate::memory::{MemoryBroker, MemoryMessage};
+        use crate::runtime::context::Context;
+        use crate::runtime::dispatch::Delivery;
+        use crate::runtime::failure::FailurePolicy;
+        use crate::runtime::handler::Handler;
+        use crate::runtime::inject::InjectHandler;
+        use crate::testkit::log_capture::{find, start};
+        use crate::{HeaderMap, OutgoingMessage, Publisher, Subscriber};
+
+        /// Publishes `payload` to `name` and pulls the delivery back off the bus.
+        async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
+            let mut subscriber = broker.subscribe(name);
+            broker
+                .publisher()
+                .publish(OutgoingMessage::new(name, payload))
+                .await
+                .expect("publish failed");
+            let mut stream = std::pin::pin!(subscriber.stream());
+            stream
+                .next()
+                .await
+                .expect("delivery missing")
+                .expect("memory subscriber never errors")
+        }
+
+        /// The diagnostic names the subscription and the type that was expected, so the
+        /// offending producer is findable from the logs; `fail_fast` still settles the message
+        /// out of the way (the teardown is what makes the failure loud).
+        #[tokio::test]
+        async fn a_decode_failure_names_the_subscription_and_the_expected_type() {
+            let broker = MemoryBroker::new();
+            let msg = one_delivery(&broker, "in", b"not json").await;
+            let handler = InjectHandler {
+                def: ManualInject,
+                codec: JsonCodec,
+                injections: (),
+                decode: FailurePolicy::FailFast,
+            };
+
+            let state = ();
+            let delivery = Delivery::empty();
+            let headers = HeaderMap::new();
+            let mut ctx = Context::new("in", &headers, &state, (), &delivery);
+
+            let (events, guard) = start();
+            let settle = handler.handle(&msg, &mut ctx).await;
+            drop(guard);
+
+            let failure = find(&events, "codec decode failed");
+            assert_eq!(failure.get("subscription").map(String::as_str), Some("in"));
+            assert_eq!(failure.get("message_type").map(String::as_str), Some("u32"));
+            assert!(
+                failure
+                    .get("error")
+                    .is_some_and(|err| err.contains("decode")),
+                "the diagnostic must carry the codec error: {failure:?}",
+            );
+            assert!(settle.is_drop());
+        }
+    }
+}
