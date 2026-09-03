@@ -531,11 +531,17 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
     subscription: &str,
     tasks: &TaskTracker,
 ) {
+    // Every batch form funnels its page through here, which is the one place that knows both the
+    // deliveries and the settlements they got; the harness reads the page off it.
+    #[cfg(feature = "testing")]
+    let mut page = PageLog::of(&accepted);
     match result {
         BatchResult::Uniform(mut outcome) => {
             let after = outcome.take_after();
             let status = outcome.outcome();
             for msg in accepted {
+                #[cfg(feature = "testing")]
+                page.settled(status);
                 settle(msg, status, subscription).await;
             }
             // The one uniform continuation runs after the whole batch is settled, on the
@@ -561,6 +567,8 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
                 // An unmatched message gets retried: an extra redelivery beats losing it.
                 let mut result = results.next().unwrap_or_else(HandlerOutcome::retry);
                 let after = result.take_after();
+                #[cfg(feature = "testing")]
+                page.settled(result.outcome());
                 settle(msg, result.outcome(), subscription).await;
                 // The continuation runs after this element is settled, on the tracked set so a
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
@@ -570,6 +578,43 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
                 }
             }
         }
+    }
+    #[cfg(feature = "testing")]
+    page.record(subscription);
+}
+
+/// The page a batch settle is applying, captured for the harness: the payloads before the
+/// deliveries are consumed, then one settlement per element as it is applied.
+#[cfg(feature = "testing")]
+struct PageLog {
+    deliveries: Vec<crate::testing::coordinator::Delivered>,
+    settled: usize,
+}
+
+#[cfg(feature = "testing")]
+impl PageLog {
+    fn of<M: IncomingMessage>(accepted: &[M]) -> Self {
+        Self {
+            deliveries: accepted
+                .iter()
+                .map(|msg| crate::testing::coordinator::Delivered {
+                    raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                    settle: None,
+                })
+                .collect(),
+            settled: 0,
+        }
+    }
+
+    fn settled(&mut self, status: HandlerResult) {
+        if let Some(one) = self.deliveries.get_mut(self.settled) {
+            one.settle = Some(status);
+        }
+        self.settled += 1;
+    }
+
+    fn record(self, subscription: &str) {
+        crate::testing::coordinator::record_page(subscription, self.deliveries);
     }
 }
 

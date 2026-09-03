@@ -21,9 +21,16 @@ use serde::de::DeserializeOwned;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use std::fmt::Debug;
 
-use super::coordinator::{Coordinator, Outcome, Record};
+use super::coordinator::{Coordinator, Delivered, Outcome, Record};
 
 /// Assertions over the deliveries one subscriber received, recorded by the harness.
+///
+/// The unit these count is the handler CALL, not the message: a single-message handler is called
+/// once per delivery, and a batch handler once per page. So `assert_called_once` on a batch
+/// subscription means one page arrived, whatever its size, while
+/// [`received_raw`](Self::received_raw) still lists every element of it. An element the decode
+/// policy rejected before the body ran is settled by that policy and is not part of the page the
+/// handler was called with, so it does not appear here.
 #[derive(Debug)]
 pub struct SubscriberAssertions<'a> {
     coordinator: &'a Coordinator,
@@ -45,7 +52,7 @@ impl<'a> SubscriberAssertions<'a> {
         self.coordinator.with_records(self.scope_id, &self.name, f)
     }
 
-    /// Runs `f` over the most recent recorded delivery, panicking if there were none.
+    /// Runs `f` over the most recent recorded call, panicking if there were none.
     fn with_last<R>(&self, what: &str, f: impl FnOnce(&Record) -> R) -> R {
         self.with_records(|records| {
             let last = records.last().unwrap_or_else(|| {
@@ -58,7 +65,22 @@ impl<'a> SubscriberAssertions<'a> {
         })
     }
 
-    /// Asserts this subscriber received exactly one delivery.
+    /// Runs `f` over the sole delivery of the most recent call. The assertions that name one
+    /// expected payload go through here, so a page of several reports what it was instead of
+    /// silently checking one element of it.
+    fn with_sole_delivery<R>(&self, what: &str, f: impl FnOnce(&Delivered) -> R) -> R {
+        self.with_last(what, |record| match record.deliveries.as_slice() {
+            [only] => f(only),
+            page => panic!(
+                "subscriber {:?} last received a page of {} deliveries, so it has no single \
+                 {what}; read the page with received_raw()",
+                self.name,
+                page.len(),
+            ),
+        })
+    }
+
+    /// Asserts this subscriber was called exactly once (one delivery, or one page).
     ///
     /// # Panics
     ///
@@ -89,10 +111,16 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Every raw payload this subscriber received, in delivery order, for custom inspection beyond
-    /// the built-in assertions.
+    /// the built-in assertions. A page contributes its elements, so the list is flat whether the
+    /// handler takes one message or a slice.
     #[must_use]
     pub fn received_raw(&self) -> Vec<Bytes> {
-        self.with_records(|records| records.iter().map(|record| record.raw.clone()).collect())
+        self.with_records(|records| {
+            records
+                .iter()
+                .flat_map(|record| record.deliveries.iter().map(|one| one.raw.clone()))
+                .collect()
+        })
     }
 
     /// Decodes every payload this subscriber received (with
@@ -125,8 +153,9 @@ impl<'a> SubscriberAssertions<'a> {
         self.with_records(|records| {
             records
                 .iter()
-                .map(|record| {
-                    codec.decode(&record.raw).unwrap_or_else(|err| {
+                .flat_map(|record| record.deliveries.iter())
+                .map(|one| {
+                    codec.decode(&one.raw).unwrap_or_else(|err| {
                         panic!(
                             "subscriber {:?} received a payload that did not decode as {}: {err}",
                             self.name,
@@ -181,8 +210,8 @@ impl<'a> SubscriberAssertions<'a> {
         T: DeserializeOwned + PartialEq + Debug,
         C: Codec,
     {
-        self.with_last("the received value", |record| {
-            let actual: T = codec.decode(&record.raw).unwrap_or_else(|err| {
+        self.with_sole_delivery("received value", |one| {
+            let actual: T = codec.decode(&one.raw).unwrap_or_else(|err| {
                 panic!(
                     "subscriber {:?} received a payload that did not decode as {}: {err}",
                     self.name,
@@ -198,15 +227,17 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
-    /// Asserts the most recent delivery's raw payload equals `bytes`.
+    /// Asserts the most recent call carried one delivery whose raw payload equals `bytes`.
     ///
     /// # Panics
     ///
-    /// Panics if the subscriber was not called, or the raw payload differs.
+    /// Panics if the subscriber was not called, the raw payload differs, or the most recent call
+    /// was a page of several deliveries (which has no single payload - read it with
+    /// [`received_raw`](Self::received_raw)).
     pub fn with_raw(self, bytes: &[u8]) -> Self {
-        self.with_last("the raw payload", |record| {
+        self.with_sole_delivery("raw payload", |one| {
             assert_eq!(
-                record.raw.as_ref(),
+                one.raw.as_ref(),
                 bytes,
                 "subscriber {:?} received unexpected raw bytes",
                 self.name,
@@ -215,23 +246,35 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
-    /// Asserts the most recent delivery settled with `outcome`'s status (any continuation on the
+    /// Asserts the most recent call settled with `outcome`'s status (any continuation on the
     /// expected value is ignored: the harness compares how the broker settled).
+    ///
+    /// A page settles per element, so this asserts EVERY element of the most recent page settled
+    /// that way - which is what a uniform answer (`HandlerOutcome::ack()` for the whole slice)
+    /// produces. A page that answered element by element with differing outcomes matches none.
     ///
     /// # Panics
     ///
-    /// Panics if the subscriber was not called, or settled differently (a fail-fast panic leaves the
-    /// message unsettled, which never matches).
+    /// Panics if the subscriber was not called, or anything it last received settled differently
+    /// (a fail-fast panic leaves the message unsettled, which never matches).
     // The expectation is a just-built outcome token (`settled(HandlerOutcome::ack())`); a
     // reference parameter would force `&` noise at every call site.
     #[allow(clippy::needless_pass_by_value)]
     pub fn settled(self, outcome: HandlerOutcome) -> Self {
+        let expected = Some(outcome.outcome());
         self.with_last("the settlement", |record| {
+            let mismatched = record
+                .deliveries
+                .iter()
+                .filter(|one| one.settle != expected)
+                .count();
             assert_eq!(
-                record.settle,
-                Some(outcome.outcome()),
-                "subscriber {:?} settled differently than expected",
+                mismatched,
+                0,
+                "subscriber {:?} settled {mismatched} of its last {} deliveries differently \
+                 than expected",
                 self.name,
+                record.deliveries.len(),
             );
         });
         self
