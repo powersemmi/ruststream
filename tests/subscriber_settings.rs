@@ -408,6 +408,51 @@ async fn the_page_cap_reaches_a_slot_carrying_page() {
     tb.shutdown().await.expect("shutdown failed");
 }
 
+/// The client-side buffer composes with a start position: a page subscription assembled out of
+/// single deliveries still opens where the mount site says.
+#[subscriber]
+async fn replay_pages(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders.len();
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_buffer_composes_with_a_start_position() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("buffered-replay")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            replay_pages
+                .name("buffered-replay")
+                .buffered(nonzero!(8), Duration::from_millis(5))
+                .start_at(MemoryPosition::start()),
+        );
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed pages settle");
+
+    let handle = tb.broker::<MemoryBroker>();
+    let subscriber = handle.subscriber("buffered-replay");
+    // Everything published before the subscription opened is replayed, through the buffer.
+    assert_eq!(
+        subscriber.received::<Order>(),
+        [Order { id: 0 }, Order { id: 1 }, Order { id: 2 }],
+    );
+    subscriber
+        .assert_page_sizes(&[3])
+        .settled(HandlerOutcome::ack());
+    tb.shutdown().await.expect("shutdown failed");
+}
+
 static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 
 /// A batch of payloads: the typed batch without the decode step, borrowed from the batch's own

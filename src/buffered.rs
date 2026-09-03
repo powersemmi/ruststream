@@ -11,7 +11,7 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use tokio::time::sleep;
 
-use crate::{BatchSubscriber, ConnectedBroker, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, ConnectedBroker, Seekable, Subscriber, SubscriptionSource};
 
 const DEFAULT_MAX_SIZE: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -106,6 +106,22 @@ impl<S: Subscriber> Subscriber for BufferedSubscriber<S> {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         self.inner.stream()
+    }
+}
+
+/// Buffering does not move the subscription: the seeker is the wrapped subscriber's own, so a
+/// page subscription over a broker that batches only through this wrapper still opens at a
+/// chosen position (`.buffered(..).start_at(..)`) and still repositions from a handler.
+///
+/// The handle is minted before the stream is opened, as [`Seekable`] requires, and the wrapped
+/// subscriber applies the reposition where it always did - underneath the buffer. A batch being
+/// assembled when a seek lands keeps the deliveries it already collected: they were pulled
+/// before the seek, and the buffer holds them for the batch they belong to.
+impl<S: Seekable> Seekable for BufferedSubscriber<S> {
+    type Seeker = S::Seeker;
+
+    fn seeker(&self) -> S::Seeker {
+        self.inner.seeker()
     }
 }
 
@@ -337,6 +353,37 @@ mod tests {
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0].payload(), b"only");
         for msg in batch {
+            msg.ack().await.unwrap();
+        }
+    }
+
+    /// The seeker is the wrapped subscriber's own, so a buffered subscription replays: the
+    /// batches that come out after the seek are assembled from the replayed deliveries.
+    #[tokio::test]
+    async fn the_seeker_reaches_through_the_buffer() {
+        use crate::memory::MemoryPosition;
+        use crate::{Seekable, Seeker};
+
+        let broker = MemoryBroker::new();
+        let publisher = broker.publisher();
+        for i in 0..2u8 {
+            publisher
+                .publish(OutgoingMessage::new("buffered", &[i]))
+                .await
+                .unwrap();
+        }
+        // Opened after the publishes, so only a reposition can reach them.
+        let mut sub = buffered(&broker, 8, Duration::from_millis(10)).await;
+        sub.seeker()
+            .seek(MemoryPosition::start())
+            .await
+            .expect("the in-memory log replays from the start");
+
+        let mut stream = std::pin::pin!(sub.batches());
+        let replayed = stream.next().await.unwrap().unwrap();
+        let payloads: Vec<&[u8]> = replayed.iter().map(IncomingMessage::payload).collect();
+        assert_eq!(payloads, [[0].as_slice(), [1].as_slice()]);
+        for msg in replayed {
             msg.ack().await.unwrap();
         }
     }

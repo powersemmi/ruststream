@@ -166,8 +166,14 @@ b.include(
         .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
 );
 
-// client-side batching for subscriptions without native batches
-b.include(drain.name("orders").buffered(nonzero!(128), Duration::from_millis(20)));
+// client-side batching for subscriptions without native batches; it composes with a start
+// position like any other source step
+b.include(
+    drain
+        .name("orders")
+        .buffered(nonzero!(128), Duration::from_millis(20))
+        .start_at(MemoryPosition::start()),
+);
 
 // a page body on a broker that batches natively: cap how much of one page reaches the body at a
 // time (`buffered(..)` and `batch(n)` size the same thing, so a mount names one of them). It

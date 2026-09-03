@@ -389,9 +389,11 @@ size or by a deadline after its first delivery:
 
 Batches come either from the broker (configured by the broker's own settings) or from this wrap;
 the setting is named after the adapter to keep the two apart. The wrap changes the subscription
-type, so it goes last - broker settings bound to the unwrapped type stop applying past it. It is
-also where the page size comes from once it is there, so a mount names `buffered(..)` or
-`batch(n)`, never both.
+type, so it goes last among the broker's own settings - theirs are bound to the unwrapped type
+and stop applying past it - while the core's own steps still compose on top: `start_at(..)` opens
+a buffered page subscription at a chosen position like any other, so a page assembled out of
+single deliveries can still replay. The wrap is also where the page size comes from once it is
+there, so a mount names `buffered(..)` or `batch(n)`, never both.
 
 The semantics differ from single-message handlers in a few ways:
 

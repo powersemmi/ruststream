@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::Seeker;
 use crate::codec::JsonCodec;
 use crate::memory::{
-    MemoryBroker, MemoryContext, MemoryPublish, MemoryPublisher, MemorySource, Position, SeekHandle,
+    MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish, MemoryPublisher, MemorySource,
+    Position, SeekHandle,
 };
 use crate::nonzero;
 use crate::runtime::{
@@ -409,6 +410,14 @@ fn eager_axes() -> impl RouterDef<MemoryBroker> {
         .include(
             subscriber("orders", HeaderedPage)
                 .batch(nonzero!(8))
+                .build(),
+        )
+        // The client-side buffer is the other end of the same setting, and it composes with a
+        // start position: a buffered page subscription opens where it is told to.
+        .include(
+            subscriber("orders", SettlePage)
+                .buffered(nonzero!(4), std::time::Duration::from_millis(5))
+                .start_at(MemoryPosition::start())
                 .build(),
         )
         .include(
