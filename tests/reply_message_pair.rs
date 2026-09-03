@@ -12,12 +12,10 @@
     feature = "testing"
 ))]
 
-use std::sync::Mutex;
-
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, Message, RustStream, TypedPublisher};
 use ruststream::subscriber;
-use ruststream::testing::TestApp;
+use ruststream::testing::{Outcome, TestApp};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, schemars::JsonSchema)]
@@ -38,9 +36,6 @@ struct Receipt {
     total: u32,
 }
 
-/// What the consumer read back off the reply: the two header fields next to the body field.
-static CONFIRMED: Mutex<Vec<(String, u32, u32)>> = Mutex::new(Vec::new());
-
 #[subscriber("pair.orders", publish("pair.receipts"))]
 async fn confirm(order: &Order) -> Message<ReceiptMeta, Receipt> {
     Message::new(
@@ -54,16 +49,10 @@ async fn confirm(order: &Order) -> Message<ReceiptMeta, Receipt> {
     )
 }
 
+/// Reads the reply back through the pair input: the body only runs if both halves parsed, so the
+/// call this records is itself the evidence the contract survived the trip.
 #[subscriber("pair.receipts")]
-async fn audit(receipt: &Message<ReceiptMeta, Receipt>) -> HandlerOutcome {
-    CONFIRMED
-        .lock()
-        .expect("the test holds no poisoned lock")
-        .push((
-            receipt.headers.tenant.clone(),
-            receipt.headers.order_id,
-            receipt.body.total,
-        ));
+async fn audit(_receipt: &Message<ReceiptMeta, Receipt>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
@@ -85,17 +74,20 @@ async fn a_pair_reply_carries_its_contract_into_the_outgoing_headers() {
         .await
         .expect("publish");
 
+    // The contract went out as headers next to a body encoded by the reply codec.
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("pair.receipts")
+        .assert_called_once()
+        .with(&Receipt { total: 40 })
+        .with_header("tenant", b"acme")
+        .with_header("order_id", b"4");
+    // And came back in through the pair input: a half that did not survive would settle as a
+    // decode failure instead of an ack.
     tb.broker::<MemoryBroker>()
         .subscriber("pair.receipts")
         .assert_called_once()
+        .assert_outcome(Outcome::Ack)
         .settled(HandlerOutcome::ack());
-    assert_eq!(
-        CONFIRMED
-            .lock()
-            .expect("the test holds no poisoned lock")
-            .as_slice(),
-        [("acme".to_owned(), 4, 40)],
-    );
 
     tb.shutdown().await.expect("shutdown");
 }

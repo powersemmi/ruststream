@@ -6,7 +6,8 @@
     feature = "macros",
     feature = "memory",
     feature = "json",
-    feature = "logging"
+    feature = "logging",
+    feature = "testing"
 ))]
 
 mod common;
@@ -15,14 +16,11 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Once};
-use std::time::Duration;
 
-use futures::StreamExt;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, PublishExt, RustStream, RustStreamError, TypedPublisher};
-use ruststream::{
-    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, Subscriber, subscriber,
-};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, RustStreamError, TypedPublisher};
+use ruststream::testing::{Outcome, TestApp};
+use ruststream::{OutgoingMessage, PairError, PublishPolicy, Publisher, subscriber};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber as TracingSubscriber};
 use tracing_subscriber::Layer;
@@ -139,24 +137,24 @@ async fn flaky(order: &Order) -> u32 {
 async fn a_fail_fast_decode_failure_tears_the_service_down_and_says_why() {
     capture_logs();
 
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("pubff", "0.1.0")).with_broker(broker, |b| {
-        b.include(pubff);
-    });
+    let app =
+        RustStream::new(AppInfo::new("pubff", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(pubff);
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-    publisher
-        .message(&Wire::of(b"not json"))
+    tb.message(&Wire::of(b"not json"))
         .to("pubff")
         .publish()
         .await
         .expect("publish failed");
 
-    tokio::time::timeout(Duration::from_secs(5), running.stopping())
-        .await
-        .expect("a fail-fast decode failure must tear the service down");
-    let result = running.shutdown().await;
+    tb.broker::<MemoryBroker>()
+        .subscriber("pubff")
+        .assert_called_once()
+        .assert_last_failed_to_decode();
+    tb.assert_shut_down();
+    let result = tb.shutdown().await;
 
     assert!(
         matches!(result, Err(RustStreamError::Dispatch(_))),
@@ -180,34 +178,33 @@ async fn a_fail_fast_decode_failure_tears_the_service_down_and_says_why() {
 async fn a_rejected_reply_publish_retries_the_delivery() {
     capture_logs();
 
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    let mut replies = broker.subscribe("flaky.out");
-    let app = RustStream::new(AppInfo::new("flaky", "0.1.0")).with_broker(broker, |b| {
-        b.include(flaky)
-            .publisher(TypedPublisher::new(FailsOncePolicy));
-    });
+    let app =
+        RustStream::new(AppInfo::new("flaky", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(flaky)
+                .publisher(TypedPublisher::new(FailsOncePolicy));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-    publisher
-        .message(&Order { id: 7 })
+    tb.message(&Order { id: 7 })
         .to("flaky")
         .publish()
         .await
         .expect("publish failed");
 
-    let mut stream = std::pin::pin!(replies.stream());
-    let reply = tokio::time::timeout(Duration::from_secs(5), stream.next())
-        .await
-        .expect("the retried delivery must publish the reply")
-        .expect("delivery missing")
-        .expect("memory subscriber never errors");
+    // The first attempt nacks with requeue rather than losing the reply; the redelivery publishes
+    // it exactly once.
     assert_eq!(
-        reply.payload(),
-        b"7",
-        "the reply survives the failed attempt"
+        tb.broker::<MemoryBroker>().subscriber("flaky").outcomes(),
+        [Outcome::Nack, Outcome::Ack],
     );
-    reply.ack().await.expect("ack failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("flaky")
+        .assert_called(2)
+        .settled(HandlerOutcome::ack());
+    tb.broker::<MemoryBroker>()
+        .published::<u32>("flaky.out")
+        .assert_called_once()
+        .with_raw(b"7");
 
     assert!(
         logged("reply publish failed"),
@@ -220,5 +217,5 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
         EVENTS.lock().unwrap(),
     );
 
-    running.shutdown().await.expect("shutdown failed");
+    tb.shutdown().await.expect("shutdown failed");
 }

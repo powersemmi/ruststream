@@ -1,23 +1,27 @@
 //! The typed per-delivery context reaches the publish path: a static `PublishTransform` reads the
 //! originating delivery and stamps the reply, propagating a correlation id.
-#![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 use common::{Req, Resp};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack,
-    PublishExt, PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream,
+    AppInfo, HandlerOutcome, Outgoing, PublishContext, PublishDynLayer, PublishDynNext,
+    PublishDynStack, PublishLayer, PublishNext, PublishPipeline, PublishTransform, RustStream,
     TypedPublisher, for_batch,
 };
+use ruststream::testing::TestApp;
 use ruststream::{Broker, BuildContext, Field, HeaderMap, IncomingMessage, Publisher, subscriber};
-use tokio::sync::Notify;
 
 /// A broker context built from the incoming message: it lifts the correlation id off the headers so
 /// the handler (and the publish layer) can read it by key instead of re-parsing the headers.
@@ -63,54 +67,45 @@ async fn echo(req: &Req, _ctx: &mut Context<'_, TraceCtx>) -> Resp {
     Resp { n: req.n }
 }
 
-static CAPTURED: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
-static GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
-
 #[subscriber("out")]
-async fn capture(_resp: &Resp, ctx: &mut Context<'_>) {
-    *CAPTURED.lock().expect("poisoned") = ctx.headers().correlation_id().map(str::to_owned);
-    GOT.notify_one();
+async fn capture(_resp: &Resp) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delivery_context_propagates_to_the_reply() {
-    let ingress = MemoryBroker::new();
-    let egress = MemoryBroker::new();
-    let ingress_pub = ingress.publisher();
-
-    let egress = egress.bindable();
+    let egress = MemoryBroker::new().bindable();
     let egress_pub =
         egress.bind(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation));
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(egress, |b| {
+        .with_broker_labeled("egress", egress, |b| {
             b.include(capture);
         })
-        .with_broker(ingress, |b| {
+        .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(echo).publisher(egress_pub);
         });
-
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     let mut headers = HeaderMap::new();
     headers.insert("correlation-id", "trace-abc");
-    ingress_pub
+    tb.broker_named("ingress")
         .message(&Req { n: 7 })
         .with_headers(headers)
         .to("in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), GOT.notified())
-        .await
-        .expect("reply never captured");
 
-    assert_eq!(
-        CAPTURED.lock().expect("poisoned").as_deref(),
-        Some("trace-abc"),
-        "the reply should carry the delivery's correlation id, stamped by the publish layer"
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // The reply carries the delivery's correlation id, stamped by the publish layer.
+    tb.broker_named("egress")
+        .published::<Resp>("out")
+        .assert_called_once()
+        .with(&Resp { n: 7 })
+        .with_header("correlation-id", b"trace-abc");
+    tb.broker_named("egress")
+        .subscriber("out")
+        .assert_called_once()
+        .with(&Resp { n: 7 });
 }
 
 /// A batch-only transform: marks every batched reply, never a single-message one.
@@ -127,47 +122,39 @@ async fn batch_echo(reqs: &[Req]) -> Vec<Resp> {
     reqs.iter().map(|r| Resp { n: r.n }).collect()
 }
 
-static BATCHED: LazyLock<Mutex<Option<bool>>> = LazyLock::new(|| Mutex::new(None));
-static BATCH_GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
-
 #[subscriber("batch-out")]
-async fn batch_capture(_resp: &Resp, ctx: &mut Context<'_>) {
-    *BATCHED.lock().expect("poisoned") = Some(ctx.headers().get("x-batched").is_some());
-    BATCH_GOT.notify_one();
+async fn batch_capture(_resp: &Resp) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_layer_runs_only_on_batched_replies() {
-    let broker = MemoryBroker::new();
-    let ingress_pub = broker.publisher();
     // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
     // single-message mounts would reject a publisher carrying it.
     let reply_pub = TypedPublisher::new(MemoryPublish).batch_transform(for_batch(MarkBatched));
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(batch_echo).publisher(reply_pub);
         b.include(batch_capture);
     });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    ingress_pub
-        .message(&Req { n: 1 })
+    tb.message(&Req { n: 1 })
         .to("batch-in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), BATCH_GOT.notified())
-        .await
-        .expect("batched reply never captured");
 
-    assert_eq!(
-        *BATCHED.lock().expect("poisoned"),
-        Some(true),
-        "the batch layer should stamp every batched reply"
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // The batch layer stamps every batched reply.
+    tb.broker::<MemoryBroker>()
+        .published::<Resp>("batch-out")
+        .assert_called_once()
+        .with(&Resp { n: 1 })
+        .with_header("x-batched", b"1");
+    tb.broker::<MemoryBroker>()
+        .subscriber("batch-out")
+        .assert_called_once()
+        .with(&Resp { n: 1 });
 }
 
 /// A dynamic, runtime-built publish middleware: stamps a header, then continues.
@@ -193,48 +180,40 @@ async fn dyn_echo(req: &Req) -> Resp {
     Resp { n: req.n }
 }
 
-static DYN_SEEN: LazyLock<Mutex<Option<bool>>> = LazyLock::new(|| Mutex::new(None));
-static DYN_GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
-
 #[subscriber("dyn-out")]
-async fn dyn_capture(_resp: &Resp, ctx: &mut Context<'_>) {
-    *DYN_SEEN.lock().expect("poisoned") = Some(ctx.headers().get("x-dyn").is_some());
-    DYN_GOT.notify_one();
+async fn dyn_capture(_resp: &Resp) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dyn_stack_runs_a_runtime_built_middleware() {
-    let broker = MemoryBroker::new();
-    let ingress_pub = broker.publisher();
     // The middleware set is decided at runtime and inserted as one static layer.
     let stack = PublishDynStack::new([Arc::new(StampDyn) as Arc<dyn PublishDynLayer>]);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(stack)
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(dyn_echo);
             b.include(dyn_capture);
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    ingress_pub
-        .message(&Req { n: 3 })
+    tb.message(&Req { n: 3 })
         .to("dyn-in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), DYN_GOT.notified())
-        .await
-        .expect("reply never captured");
 
-    assert_eq!(
-        *DYN_SEEN.lock().expect("poisoned"),
-        Some(true),
-        "the dynamic stack middleware should run and stamp the reply"
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // The dynamic stack middleware runs and stamps the reply.
+    tb.broker::<MemoryBroker>()
+        .published::<Resp>("dyn-out")
+        .assert_called_once()
+        .with(&Resp { n: 3 })
+        .with_header("x-dyn", b"1");
+    tb.broker::<MemoryBroker>()
+        .subscriber("dyn-out")
+        .assert_called_once()
+        .with(&Resp { n: 3 });
 }
 
 // Two app-wide publish middleware, each appending its letter to an "order" header, pin the
@@ -284,46 +263,35 @@ async fn ord_echo(req: &Req) -> Resp {
     Resp { n: req.n }
 }
 
-static ORDER: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
-static ORDER_GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
-
 #[subscriber("ord-out")]
-async fn ord_capture(_resp: &Resp, ctx: &mut Context<'_>) {
-    *ORDER.lock().expect("poisoned") = ctx.headers().get_str("order").map(str::to_owned);
-    ORDER_GOT.notify_one();
+async fn ord_capture(_resp: &Resp) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publish_layer_last_added_runs_outermost() {
-    let broker = MemoryBroker::new();
-    let ingress_pub = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(AppendA)
         .publish_layer(AppendB)
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(ord_echo);
             b.include(ord_capture);
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    ingress_pub
-        .message(&Req { n: 1 })
+    tb.message(&Req { n: 1 })
         .to("ord-in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), ORDER_GOT.notified())
-        .await
-        .expect("reply never captured");
 
     // B was added last, so it wraps A and appends first: "BA".
-    assert_eq!(
-        ORDER.lock().expect("poisoned").as_deref(),
-        Some("BA"),
-        "the last publish_layer added must run outermost"
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Resp>("ord-out")
+        .assert_called_once()
+        .with_header("order", b"BA");
+    tb.broker::<MemoryBroker>()
+        .subscriber("ord-out")
+        .assert_called_once()
+        .with(&Resp { n: 1 });
 }
