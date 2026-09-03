@@ -1,6 +1,6 @@
 //! Compile-fail snapshots for the `ruststream-macros` diagnostics.
 //!
-//! Each `tests/ui/*.rs` case feeds the `#[subscriber]` / `#[ruststream::app]` / `derive(Message)`
+//! Each `tests/ui/*.rs` case feeds the `#[subscriber]` / `#[ruststream::app]` / `derive(MessageInfo)`
 //! macros a misuse and pins the compile error against a `.stderr` snapshot, so a regression in a
 //! macro's diagnostics (a reworded or dropped message, a shifted span) fails the build.
 //!

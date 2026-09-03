@@ -7,7 +7,9 @@ unconnected publisher: registrations carry publish *policies* (pure declarations
 pairs them with the connected broker at startup.
 
 An explicit publish is always the same builder, entered with `message(..)` for a value and
-`raw(..)` for bytes and finished with `publish()`. Which positions the call site has to fill -
+`raw(..)` for bytes and finished with `publish()`. The wire follows the value's type: a
+`serde::Serialize` value encodes with the resolved codec, a `#[derive(Serialized)]` one leaves
+byte-for-byte with no codec on the path. Which positions the call site has to fill -
 the destination, the typed headers, the codec - is decided by what the message type declares, so
 an under-specified publish is a compile error rather than a run-time surprise. `Publisher::publish`
 still exists underneath, but as the interface a broker crate implements (see
@@ -18,11 +20,19 @@ still exists underneath, but as the interface a broker crate implements (see
 Name a reply destination with `publish(..)` and return the reply value. The runtime encodes it and
 sends it:
 
-```rust
-use ruststream::subscriber;
+=== "Macros"
 
---8<-- "examples/publishing.rs:reply"
-```
+    ```rust
+    use ruststream::subscriber;
+
+    --8<-- "examples/publishing.rs:reply"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply"
+    ```
 
 Mount it with plain `include`. With nothing else said, the reply goes out through the broker's
 default publish policy under the default codec; to name the reply codec or add transforms, chain
@@ -30,24 +40,46 @@ default publish policy under the default codec; to name the reply codec or add t
 (`TypedPublisher::new` uses the default codec; name one with `TypedPublisher::with_codec`). The
 stack is a declaration: the runtime pairs it with the connected broker at startup.
 
-```rust
---8<-- "examples/publishing.rs:reply_mount"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/publishing.rs:reply_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_mount"
+    ```
 
 Decoding of the incoming request follows the scope (the scope codec set with
 `with_broker_codec`, else the default codec); the reply codec travels on the attached stack. See
 [Codecs](codecs.md#the-publish-side).
 
+One clause serves both wires, because the choice belongs to the reply type rather than to the
+clause. A `serde::Serialize` reply encodes, as above. A `#[derive(Serialized)]` reply carries
+its own bytes and leaves byte-for-byte, so it attaches a plain publish policy: there is no codec
+to name on that wire, and therefore no `TypedPublisher` to wrap it in. See
+[raw subscribers](subscribers.md#raw-subscribers).
+
 ## Controlling the acknowledgement
 
-A plain reply form always publishes and acks. Return `Result<Reply, HandlerResult>` instead to
-take control: `Ok(reply)` publishes and acks, `Err(result)` publishes nothing and the dispatcher
-acts on the returned `HandlerResult` (`HandlerResult::drop()` to dead-letter,
-`HandlerResult::retry()` to ask for redelivery):
+A plain reply form always publishes and acks. Return `Result<Reply, HandlerOutcome>` instead to
+take control: `Ok(reply)` publishes and acks, `Err(outcome)` publishes nothing and the dispatcher
+acts on the returned `HandlerOutcome` (`HandlerOutcome::drop()` to dead-letter,
+`HandlerOutcome::retry()` to ask for redelivery):
 
-```rust
---8<-- "examples/publishing.rs:reply_result"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/publishing.rs:reply_result"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_result"
+    ```
 
 The `Result` form is detected from the written signature, so spell it out (a type alias hiding the
 `Result` is treated as a plain reply type). Like any handler, a publishing handler may declare an
@@ -67,23 +99,42 @@ is inferred from the policy attached where the handler is included, and the runt
 after the broker connects. The same handler mounts unchanged on a production broker and on its
 in-process test transport.
 
-```rust
-use ruststream::runtime::Out;
+=== "Macros"
 
---8<-- "examples/publishing.rs:forward"
-```
+    ```rust
+    use ruststream::runtime::Out;
 
-`message(&value)` encodes with the scope's codec (name another one for a single call with
-`.with_codec(..)`), `raw(&bytes)` sends a payload the service already holds encoded and has no
-codec position at all. Both fill the headers position with `.with_headers(..)` - the message's
-declared contract by reference (`&meta`), or an already-built `HeaderMap` by value - and both
-end in `publish()`.
+    --8<-- "examples/publishing.rs:forward"
+    ```
+
+=== "Manual"
+
+    ```rust
+    use ruststream::runtime::Out;
+
+    --8<-- "examples/manual/publishing.rs:forward"
+    ```
+
+`message(&value)` publishes on the value's own wire: a `Serialize` value encodes with the
+scope's codec (name another one for a single call with `.with_codec(..)`), a `Serialized` one
+leaves byte-for-byte. `raw(&bytes)` sends a payload the service already holds encoded and has no
+codec position at all. All of them fill the headers position with `.with_headers(..)` - the
+message's declared contract by reference (`&meta`), or an already-built `HeaderMap` by value -
+and all end in `publish()`.
 
 The include site names the source; for the scope's own broker it is the publish policy:
 
-```rust
---8<-- "examples/publishing.rs:forward_mount"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/publishing.rs:forward_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:forward_mount"
+    ```
 
 An `Out` slot left unbound is a compile error, not a runtime one: the registration does not build
 until every slot has a policy.
@@ -93,22 +144,36 @@ until every slot has a policy.
 A handler that takes several publishers names a **slot marker** per parameter: a unit struct
 deriving `OutSlot`, written as the second type argument (`Out<impl Publisher, Primary>`). The
 include site binds each marker with `.out(marker, policy)` and commits the registration with a
-terminal `.mount()`. The calls bind by marker, so their order does not matter; binding the same
-slot twice (or a marker the handler does not declare) fails to compile, and `.mount()` exists
+terminal `.build()`. The calls bind by marker, so their order does not matter; binding the same
+slot twice (or a marker the handler does not declare) fails to compile, and `.build()` exists
 only once every slot is bound - a forgotten binding is a compile error whose attachment type
 names the slot (`MissingSlot<Audit>`). A single unnamed `Out<impl Publisher>` parameter binds
 the implicit `DefaultSlot` through the plain `.publisher(policy)` call, which binds and commits
 in one step.
 
-```rust
-use ruststream::OutSlot;
+=== "Macros"
 
---8<-- "examples/publishing.rs:slots"
-```
+    ```rust
+    use ruststream::OutSlot;
 
-```rust
---8<-- "examples/publishing.rs:slots_mount"
-```
+    --8<-- "examples/publishing.rs:slots"
+    ```
+
+    ```rust
+    --8<-- "examples/publishing.rs:slots_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    use ruststream::OutSlot;
+
+    --8<-- "examples/manual/publishing.rs:slots"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:slots_mount"
+    ```
 
 The capability in the bound can be refined: `Out<impl OwnedTransactions, Ledger>` compiles only
 against a policy whose live publisher supports owned transactions, checked at the include site
@@ -121,9 +186,30 @@ a marker's own `#[publishes(A, B)]` list says what the slot may publish, which i
 generated document reports for a handler that leaves the position unrestricted. A typed publish
 of a type the marker does not name is a compile error naming the missing membership. A marker
 listing nothing publishes nothing typed, and byte publishes through
-`raw(..)` are unaffected - they carry no message type to list. The implicit `DefaultSlot` of a
+`raw(..)` are unaffected - bytes carry no message type to list. The implicit `DefaultSlot` of a
 single unnamed `Out<impl Publisher>` has no declaration site to list types on, so it admits
 every declared message. See [typed headers](headers.md).
+
+The wire of a typed publish is selected by the type. `message(&value)` encodes a
+`serde::Serialize` value with the resolved codec, as above; a `#[derive(Serialized)]` type
+carries its own bytes, and the same call publishes them exactly as they are - no codec anywhere
+on the path. Everything else is the ordinary rules: give the type `#[derive(Outgoing)]` and list
+it in `#[publishes(..)]` like any model, and it is documented under its own name (with no
+payload schema, by design), its declared destination resolves the publish, and the dictionary,
+a declared message set and the headers positions gate it exactly as they gate an encoded model.
+`raw(..)` remains for bytes that carry no message type at all.
+
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/lanes.rs:serialized_out"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:serialized_out"
+    ```
 
 ### Declaring where a message goes
 
@@ -131,11 +217,19 @@ A message type declares everything about being sent through one derive, with eve
 the same `key = value` form. `name` is the destination and `headers` names the contract type
 (which stays an ordinary serde struct the derive does not touch):
 
-```rust
-use ruststream::Outgoing;
+=== "Macros"
 
---8<-- "examples/publishing.rs:declared"
-```
+    ```rust
+    use ruststream::Outgoing;
+
+    --8<-- "examples/publishing.rs:declared"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:declared"
+    ```
 
 The declaration decides which destination position the call site has:
 
@@ -159,25 +253,45 @@ type owned by another crate cannot derive `Outgoing`, so it stays outside the bu
 a newtype that derives `Outgoing`, or, inside a transaction, keep the scope's
 `publish(name, &value)`.
 
-```rust
---8<-- "examples/publishing.rs:declared_mount"
-```
+=== "Macros"
 
-The parameter composes with every subscriber form: next to a `Seek` parameter, on a byte-input
-handler, and on batch handlers (`b.include(f).publisher(..)` - the whole page in,
-per-element destinations out). On the reply forms - `publish(..)` / `publish_raw(..)` and
-their batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
-publisher attaches with `.out(marker, ..)` plus the terminal `.mount()` (`DefaultSlot` for a
+    ```rust
+    --8<-- "examples/publishing.rs:declared_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:declared_mount"
+    ```
+
+The parameter composes with every subscriber form: next to a `Ctx` extractor, on a
+self-deserializing input, and on batch handlers (`b.include(f).publisher(..)` - the whole page
+in, per-element destinations out). On the reply forms - `publish(..)` and
+its batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
+publisher attaches with `.out(marker, ..)` plus the terminal `.build()` (`DefaultSlot` for a
 single unnamed slot), so a gateway can answer on a fixed destination while fanning side copies
 out through the injection:
 
-```rust
---8<-- "examples/publishing.rs:publish_out"
-```
+=== "Macros"
 
-```rust
---8<-- "examples/publishing.rs:publish_out_mount"
-```
+    ```rust
+    --8<-- "examples/publishing.rs:publish_out"
+    ```
+
+    ```rust
+    --8<-- "examples/publishing.rs:publish_out_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:publish_out"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:publish_out_mount"
+    ```
 
 ### Publishing to a different broker
 
@@ -186,9 +300,17 @@ wrap the target broker with `.bindable()` and mint a **bound token** before regi
 is then the source at the include site, shown here with two in-memory brokers; the shape is the
 same for any pair:
 
-```rust
---8<-- "tests/out_injection.rs:cross_broker"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/out_injection.rs:cross_broker"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_out_injection.rs:cross_broker"
+    ```
 
 Tokens exist before any `with_broker` runs, so registration order does not matter: a
 bidirectional bridge binds both directions up front.
@@ -263,9 +385,17 @@ observe (reserve "dynamic" for `PublishDynLayer` inside a `PublishDynStack`):
 
 Both levels compose on the application:
 
-```rust
---8<-- "examples/publishing.rs:pipeline"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/publishing.rs:pipeline"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:pipeline"
+    ```
 
 The pipeline runs on the reply path (the `publish(..)` form). An injected `Out` publisher is the
 attached policy's live form, used directly, so compose any per-publisher transforms into the
@@ -276,19 +406,35 @@ policy at the include site with `TypedPublisher::transform`. The full program is
 
 A `#[subscriber("in", publish("out"))]` handler taking `&[T]` consumes a whole decoded batch and
 returns the replies for it - the consume-transform-produce pattern. `Ok(replies)` publishes every reply to
-the reply name and acks the batch; `Err(result)` publishes nothing and settles the whole batch
-with `result` (all-or-nothing: selective per-element outcomes do not compose with a
+the reply name and acks the batch; `Err(outcome)` publishes nothing and settles the whole batch
+with `outcome` (all-or-nothing: selective per-element outcomes do not compose with a
 transaction):
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/publishing.rs:batch_publishing"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:batch_publishing"
+    ```
 
 Mount it with `include`, chaining the reply wiring with `.publisher(..)`:
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing_mount"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/publishing.rs:batch_publishing_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:batch_publishing_mount"
+    ```
 
 With a plain `TypedPublisher`, each reply publishes independently; a mid-batch failure retries
 the whole batch, so the earlier replies may be published again on redelivery (at-least-once).

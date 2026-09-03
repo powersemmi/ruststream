@@ -31,12 +31,23 @@ ruststream asyncapi gen --yaml         # YAML вместо JSON
 `#[ruststream::app]` превращает функцию-билдер в `main`, понимающий `run` и `asyncapi gen`, так что
 шаблонного кода рантайма писать не приходится:
 
-```rust
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream};
+=== "Макросы"
 
---8<-- "examples/quickstart.rs:app"
-```
+    ```rust
+    use ruststream::memory::MemoryBroker;
+    use ruststream::runtime::{AppInfo, RustStream};
+
+    --8<-- "examples/quickstart.rs:app"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    use ruststream::memory::MemoryBroker;
+    use ruststream::prelude::*;
+
+    --8<-- "examples/manual/quickstart.rs:app"
+    ```
 
 Раз диспетчеризация находится в сгенерированном бинарнике, `ruststream run` и обычный
 `cargo run -- run` запускают сервис одинаково. `ruststream run` - это удобная обёртка: она находит

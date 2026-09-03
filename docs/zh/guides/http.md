@@ -23,9 +23,17 @@ cargo run --example http_outbox --features macros,memory,json
 在应用消费掉它之前铸出该 token。随后 `running.publisher(token)` 会在 `start()` 连上 Broker 之后把
 该 token 配对好。配对出来的发布者是一个普通的值，可以放心地克隆进 HTTP 框架所携带的任何状态里：
 
-```rust
---8<-- "examples/http_outbox.rs:wiring"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:wiring"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:wiring"
+    ```
 
 ## healthz 端点 { #a-healthz-endpoint }
 
@@ -45,9 +53,17 @@ cargo run --example http_outbox --features macros,memory,json
 订阅者这一侧就是一个普通的处理器；同一个服务会消费自己的 HTTP 端点所产生的东西，而任何其他订阅了
 该 Broker 的服务也同样看得到这些事件：
 
-```rust
---8<-- "examples/http_outbox.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:handler"
+    ```
 
 ## 直接在请求里发布
 

@@ -4,24 +4,41 @@ globs:
 alwaysApply: false
 ---
 
-- A broker is its own crate that depends on `ruststream` (broker clients never go into core).
-  Implement `Broker`: associated `Error`, async `connect`, async `shutdown`. Pre-1.0 the broker
-  crate's version tracks the core minor line (core 0.5.x -> broker 0.5.x); breaking broker changes
-  ship as a patch within the line.
-- Lazy-startup contract (so the broker works with `#[ruststream::app]`): a synchronous, I/O-free
-  `new(addrs)` that only records config; all network work happens in `connect`, which is idempotent
-  and runs once at startup. Keep the connection behind interior mutability so publishers handed out
-  before `connect` resolve on first use.
-- Implement `Subscribe` for the by-name `#[subscriber("topic")]` form, and ship a
-  `SubscriptionSource<YourBroker>` descriptor for broker-specific options (even a parameter-less
-  broker ships one). Implement capability traits (`RequestReply`, `BatchSubscriber`,
-  `TransactionalPublisher`, `Partitioned`, `DescribeServer`) only for what the broker natively
-  supports - never emulate.
+- A broker is its own crate that depends on `ruststream` with `default-features = false` (broker
+  clients never go into core). Pre-1.0 the broker crate's version tracks the core minor line
+  (core 0.7.x -> broker 0.7.x); breaking broker changes ship as a patch within the line.
+- The lifecycle is a ladder of consuming transitions, not a flag: `Broker::connect(self) ->
+  Connected` and `ConnectedBroker::shutdown(self) -> Closed`. Each state is a distinct type, so
+  subscribing before connect, publishing after shutdown, or a double shutdown do not compile for
+  the owner of the handle. The broker itself carries no subscriber or publisher type, so one
+  application can mix broker kinds.
+- Construction stays synchronous and I/O-free: `new(addrs)` only records config, all network work
+  happens in `connect`, and the connected form holds the live client directly - it never checks a
+  "maybe connected" state. A shared cell that `connect` fills is a legal internal pattern for
+  handles given out before connect, but it is not the contract.
+- What stays a runtime rule is aliasing: publishers handed out earlier and clones of a shareable
+  broker must surface an error when used after shutdown, never a silent success against a dead
+  connection. `shutdown` never blocks or panics; do all fallible teardown there.
+- Implement `Subscribe` on the **connected** form for the by-name `#[subscriber("topic")]` form,
+  and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
+  parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add
+  `FromName` when a name alone is enough to build it.
+- Publishers split into policy plus live form: ship a freely constructible policy type carrying the
+  options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
+  `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
+  compiles with no `.publisher(..)`). Make mode selection a policy type transition, not a runtime
+  flag: only the transactional policy's live form implements `TransactionalPublisher`.
+- Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
+  `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
+  the broker natively supports - never emulate.
 - Expose the per-delivery context as a `#[non_exhaustive]` typed struct plus `ContextField` key
   types (unit structs with an associated `Context` and owned `Value`), so handlers can take
   `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path.
-- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`. Errors and
-  logs are self-explanatory: name the subscription and the type involved, not just the raw error.
+- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`. A handle that
+  carries an argument for a run of messages (a tenant, a partition hint, a delivery option your
+  broker expresses as a header) returns it from `base_headers` rather than writing it inside
+  `publish`; the builder writes the call site's headers over that base key by key. Errors and logs
+  are self-explanatory: name the subscription and the type involved, not just the raw error.
 - Integrations that need async I/O around encode/decode (schema registries, wire-format envelopes)
   are middleware on the async edges: transcode on the subscription's delivery path for consuming,
   and a core `PublishLayer` (`RustStream::publish_layer`) for publishing. Never a custom sync
@@ -36,98 +53,136 @@ alwaysApply: false
   simulation of broker-specific semantics (durable cursors, offsets, DLX) - those are tested only
   against a server.
 
-## Lazy broker
+## The lifecycle ladder
 
-`new` is synchronous; the connection is opened lazily in `Broker::connect`.
+`new` is synchronous; `connect` consumes the broker and yields a distinct connected type.
 
 ```rust
-use std::sync::Arc;
-use ruststream::Broker;
-use tokio::sync::OnceCell;
+use ruststream::{Broker, ConnectedBroker};
 
-#[derive(Clone)]
 pub struct MyBroker {
-    client: Arc<OnceCell<Client>>,
-    addrs: Option<String>,
+    addrs: String,
 }
 
 impl MyBroker {
     /// Records the address; opens the connection later in `Broker::connect`.
     #[must_use]
     pub fn new(addrs: impl Into<String>) -> Self {
-        Self { client: Arc::new(OnceCell::new()), addrs: Some(addrs.into()) }
+        Self { addrs: addrs.into() }
     }
+}
 
-    fn connected(&self) -> Result<Client, MyError> {
-        self.client.get().cloned().ok_or(MyError::NotConnected)
-    }
+/// The connected form owns the live client - no "maybe connected" check anywhere.
+pub struct ConnectedMyBroker {
+    client: Client,
 }
 
 impl Broker for MyBroker {
     type Error = MyError;
+    type Connected = ConnectedMyBroker;
 
-    async fn connect(&self) -> Result<(), MyError> {
-        self.client
-            .get_or_try_init(|| async {
-                let addrs = self.addrs.as_deref().ok_or(MyError::NotConnected)?;
-                Client::connect(addrs).await.map_err(MyError::connect)
-            })
-            .await?;
-        Ok(())
+    async fn connect(self) -> Result<ConnectedMyBroker, MyError> {
+        let client = Client::connect(&self.addrs).await.map_err(MyError::connect)?;
+        Ok(ConnectedMyBroker { client })
     }
+}
 
-    async fn shutdown(&self) -> Result<(), MyError> {
-        if let Some(client) = self.client.get() {
-            client.drain().await;
-        }
-        Ok(())
+impl ConnectedBroker for ConnectedMyBroker {
+    type Error = MyError;
+    type Closed = ();
+
+    async fn shutdown(self) -> Result<(), MyError> {
+        self.client.drain().await.map_err(MyError::shutdown)
     }
 }
 ```
 
-## Deferred publisher
+## Publisher: policy plus live form
 
-The publisher shares the broker's connection cell, so it works even when created before `connect`.
+The policy is pure declaration and constructible anywhere; `pair` turns it into the live handle
+once, at startup.
 
 ```rust
-use ruststream::{OutgoingMessage, Publisher};
+use ruststream::{DefaultPublish, OutgoingMessage, PairError, PublishPolicy, Publisher};
 
-#[derive(Clone)]
-pub struct MyPublisher {
-    client: Arc<OnceCell<Client>>,
+/// The publish policy: builder options only, no connection, no publish surface.
+#[derive(Debug, Clone, Default)]
+pub struct MyPublish {
+    exchange: Option<String>,
+}
+
+impl PublishPolicy<ConnectedMyBroker> for MyPublish {
+    type Live = MyPublisher;
+
+    async fn pair(self, connected: &ConnectedMyBroker) -> Result<MyPublisher, PairError> {
+        Ok(MyPublisher { client: connected.client.clone(), exchange: self.exchange })
+    }
+}
+
+/// The plain policy works with its defaults, so the runtime can build a default reply publisher.
+impl DefaultPublish for ConnectedMyBroker {
+    type Policy = MyPublish;
 }
 
 impl Publisher for MyPublisher {
     type Error = MyError;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), MyError> {
-        let client = self.client.get().ok_or(MyError::NotConnected)?;
-        client.send(msg.name(), msg.payload()).await.map_err(MyError::publish)
+        self.client.send(msg.name(), msg.payload()).await.map_err(MyError::publish)
     }
 }
 ```
 
 ## Subscription source
 
-The by-name `Subscribe` impl covers `#[subscriber("topic")]`; a descriptor carries richer options.
+`Subscribe` on the connected form covers `#[subscriber("topic")]`; a descriptor carries richer
+options and resolves against the connected form at startup.
 
 ```rust
-use ruststream::{Subscribe, SubscriptionSource};
+use ruststream::{FromName, Subscribe, SubscriptionSource};
 
-impl Subscribe for MyBroker {
+impl Subscribe for ConnectedMyBroker {
     type Subscriber = MySubscriber;
     async fn subscribe(&self, name: &str) -> Result<MySubscriber, MyError> {
         self.open(MySubscribeOptions::new(name)).await
     }
 }
 
-impl SubscriptionSource<MyBroker> for MySubscribeOptions {
+impl SubscriptionSource<ConnectedMyBroker> for MySubscribeOptions {
     type Subscriber = MySubscriber;
     fn name(&self) -> &str {
         &self.subject
     }
-    async fn subscribe(self, broker: &MyBroker) -> Result<MySubscriber, MyError> {
-        broker.open(self).await
+    async fn subscribe(self, connected: &ConnectedMyBroker) -> Result<MySubscriber, MyError> {
+        connected.open(self).await
+    }
+}
+
+/// A kind identified by a name and nothing else; makes `#[subscriber(MySubscribeOptions)]` legal.
+impl FromName for MySubscribeOptions {
+    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(name)
+    }
+}
+```
+
+Users then write the descriptor straight into the attribute, builder chain and all:
+`#[subscriber(MySubscribeOptions::new("orders.*").durable("worker"))]`.
+
+## Settings in your own vocabulary
+
+Core exposes one hook - `map_source`, a transform over the source the mount site is building - and
+your crate layers its own extension trait on top, bound to your source type, so the methods do not
+exist on a builder for another broker.
+
+```rust
+pub trait MySubscriber {
+    fn durable(self, name: impl Into<String>) -> Self;
+}
+
+impl<Def, W, F, P> MySubscriber for SubscriberBuilder<Def, MySubscribeOptions, (W, F, P)> {
+    fn durable(self, name: impl Into<String>) -> Self {
+        self.map_source(|source| source.durable(name))
     }
 }
 ```
@@ -160,29 +215,40 @@ impl ContextField for Partition {
 }
 ```
 
+Batch subscriptions take a second, separate struct: what the whole *subscription* shares (a seek
+handle, a stream name), with `BuildBatchContext` on it - the runtime builds one per page from the
+page's first delivery - plus `Field` keys a page body reads with `ctx.context(..)`. Per-delivery
+fields stay off it (a page spans many deliveries, so a position rides the elements instead), and
+keeping the two structs apart is what enforces that: a per-delivery context does not implement
+`BuildBatchContext`, so a page body cannot name it. Nothing subscription-scoped to offer means no
+impl at all - `()` is the default.
+
 ## Conformance
 
-Routing runs against the broker's in-process transport (a `TestableBroker` with a synchronous
-factory); the full lazy lifecycle runs against a real server behind an env gate.
+Routing runs against the broker's in-process transport (its **connected** form is the
+`TestableBroker`); the full lifecycle ladder runs against a real server behind an env gate.
 
 ```rust
 use ruststream::conformance::harness;
 
 // routing contract: ordering, ack/nack, headers, ... (testing feature)
+// sync Fn() -> B, where B: Broker and B::Connected: TestableBroker + Subscribe
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn routing_conformance() {
-    harness::run_suite(MyTestBroker::new).await; // sync Fn() -> B, B: TestableBroker + Subscribe
+    harness::run_suite(MyTestBroker::new).await;
 }
 
-// full lazy lifecycle: sync new -> connect -> subscribe via SubscriptionSource -> publish ->
-// receive -> ack -> shutdown, against a real broker
+// the ladder: sync new -> connect(self) -> subscribe via SubscriptionSource -> publish ->
+// receive -> ack -> shutdown(self), then a publisher made before shutdown must error after it
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn lazy_lifecycle_conformance() {
+async fn lifecycle_conformance() {
     let Ok(url) = std::env::var("MY_BROKER_TEST_URL") else { return };
+    // the closures stay closures: their bounds are higher-ranked, so a bare method path
+    // would bind one concrete lifetime and fail to type-check
     harness::lifecycle(
         || MyBroker::new(url.clone()),
         |name| MySubscribeOptions::new(name),
-        |broker| broker.publisher(),
+        |connected| connected.publisher(),
     )
     .await;
 }

@@ -8,10 +8,10 @@
 //!
 //! ```
 //! use ruststream::IncomingMessage;
-//! use ruststream::runtime::{Context, Handler, HandlerExt, HandlerResult, layers::TracingLayer};
+//! use ruststream::runtime::{Context, Handler, HandlerExt, HandlerOutcome, layers::TracingLayer};
 //!
 //! fn build<M: IncomingMessage + 'static>() -> impl Handler<M> {
-//!     let base = |_msg: &M, _ctx: &mut Context| async { HandlerResult::Ack };
+//!     let base = |_msg: &M, _ctx: &mut Context| async { HandlerOutcome::ack() };
 //!     base.with(TracingLayer::default())
 //! }
 //! ```
@@ -19,7 +19,7 @@
 use std::future::Future;
 
 use super::context::Context;
-use super::handler::{Handler, Settle};
+use super::handler::{Handler, HandlerOutcome};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`].
 pub trait Layer<H> {
@@ -142,7 +142,7 @@ pub mod layers {
     use tracing::{debug, info, instrument, warn};
 
     use super::super::handler::HandlerResult;
-    use super::{BlanketLayer, Context, Future, Handler, Layer, Settle};
+    use super::{BlanketLayer, Context, Future, Handler, HandlerOutcome, Layer};
 
     /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
     /// outcome and `DEBUG` for arrival.
@@ -203,7 +203,7 @@ pub mod layers {
             &self,
             msg: &M,
             ctx: &mut Context<'_, C, S>,
-        ) -> impl Future<Output = Settle> + Send {
+        ) -> impl Future<Output = HandlerOutcome> + Send {
             async move {
                 debug!(target: "ruststream::dispatch", "delivery received");
                 // Log the outcome inside the settlement; the continuation (if any) flows through.
@@ -239,9 +239,9 @@ pub mod layers {
                 &self,
                 _msg: &(),
                 _ctx: &mut Context<'_, (), ()>,
-            ) -> impl Future<Output = Settle> + Send {
+            ) -> impl Future<Output = HandlerOutcome> + Send {
                 let outcome = self.0;
-                async move { Settle::from(outcome) }
+                async move { HandlerOutcome::from(outcome) }
             }
         }
 

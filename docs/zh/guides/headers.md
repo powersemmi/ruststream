@@ -10,7 +10,9 @@
 只含单元变体的枚举）或它们的 `Option`。在传输线路上每个值都以字符串编码，框架会把 `"3"` 解析进一个
 `u32` 字段，写回时同样如此。schema 则依旧描述逻辑类型。
 
+```rust
 --8<-- "examples/typed_headers.rs:contracts"
+```
 
 字段名就是线路上的名字；对于不是 Rust 标识符的名字，用 `#[serde(rename = "x-task-id")]`。消息头缺失
 时，`Option` 字段取 `None`；而缺失一个非 `Option` 的消息头就是违反契约。
@@ -22,27 +24,49 @@
 函数体，框架会先打出一条点名该订阅与契约类型的 `WARN`，然后按订阅者的 `on_failure(decode = ..)`
 策略结算这次投递，也就是载荷解码失败时所用的同一套策略（默认丢弃）。
 
---8<-- "examples/typed_headers.rs:handler"
+=== "宏"
 
-`Headers` 既能与字节形式的函数体（`&[u8]` 配类型化消息头）组合，也能与其他任何提取器组合。
+    ```rust
+    --8<-- "examples/typed_headers.rs:handler"
+    ```
 
-在批量处理器上，消息头仍然是按投递存在的，所以该参数是每个元素一份契约：`Headers<Vec<T>>`。
-`meta[i]` 属于 `chunks[i]`，两者在构造上就是对齐的；载荷或消息头无法成形的元素，会由同一套
-`on_failure(decode = ..)` 策略结算，绝不会到达处理器，与单条消息的路径完全一致。编译器会拒绝在
-这里直接写裸的 `Headers<T>`，并提示改用向量形式。
+=== "手写"
 
---8<-- "examples/typed_headers.rs:batch"
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:handler"
+    ```
+
+`Headers` 既能与自己完成反序列化的函数体（`&Frame<'_>` 挨着它的类型化消息头）组合，也能与其他
+任何提取器组合。
+
+在批量处理器上，消息头仍然是按投递存在的，所以页面把每个元素与它自己的契约配成一对：输入是
+`&[Message<H, T>]`，`element.headers` 就挨着 `element.body`。这种配对在构造上就成立；载荷或消息头
+无法成形的元素，会由同一套 `on_failure(decode = ..)` 策略结算，绝不会到达处理器，与单条消息的
+路径完全一致。编译器会拒绝在这里写 `Headers<..>` 参数，并提示改用成对输入。
+
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:batch"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:batch"
+    ```
 
 挂载的写法与其他任何形式一样，在两个面上也一样：在 Broker 作用域上写 `b.include(bulk)`，在路由器
-路径上写 `Router::include`。契约类型随路由一起传递，而挑中这条路由的，是定义自带的形式 token。
+路径上写 `Router::include`。契约类型随输入轴一起传递，所以普通的批量路由会在每个载荷旁边把它解码
+出来。
 
 如果同一个通道承载的消息，其消息头按事件种类各不相同，那就别让标准提取器插手，自己写一个
-[`FromContext`] 提取器：先读出用于判别的消息头，再用 [`HeaderMap::to_typed`] 解析出与之匹配的
-契约，这正是 `Headers` 内部使用的同一套机制。把各种形状的并集声明在输入类型上（见下一节），
-文档就仍然能展示出完整的契约。
+[`FromContext`] 提取器：先从无类型的消息头映射里读出用于判别的消息头（[`HeaderMap::get_str`]），
+再按这个种类构造对应的契约。把各种形状的并集声明在输入类型上（见下一节），文档就仍然能展示出
+完整的契约。
 
 [`FromContext`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.FromContext.html
-[`HeaderMap::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.to_typed
+[`HeaderMap::get_str`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.get_str
 
 ## 在消息类型上声明契约
 
@@ -50,13 +74,33 @@
 构建器会精确地要求这些消息头，而 AsyncAPI 文档在该类型出现的每一处，都会把 schema 渲染在载荷旁边。
 目的地那一半参见[发布](publishing.md#declaring-where-a-message-goes)。
 
---8<-- "examples/typed_headers.rs:messages"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:messages"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:messages"
+    ```
 
 ## 发布侧：调用点上的契约
 
 `Out` 槽位的标记列出了该槽位可以发布的消息类型：
 
---8<-- "examples/typed_headers.rs:dictionary"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:dictionary"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:dictionary"
+    ```
 
 `Out` 参数可选的第三个位置声明了该处理器所发布的消息集合：
 
@@ -80,7 +124,10 @@
 
 服务手上已经是编码后形态的载荷，或者无法承载声明的外部类型（比如裸的 `Vec<Frame>`），走的是字节
 入口：`out.raw(&bytes).to(dest).publish()`。它接受同样的消息头位置，且不需要编解码器；如果某个载荷
-值得拥有自己的声明，就用一个 `#[derive(Outgoing)]` 的 newtype 把它包起来。
+值得拥有自己的声明，就用一个 `#[derive(Outgoing)]` 的 newtype 把它包起来。既 derive 了 `Outgoing`
+又 derive 了 [`Serialized`](subscribers.md#raw-subscribers) 的 newtype 是词典里的一等成员：它像任何
+模型一样声明自己的目的地和消息头，并经由同一个类型化入口发布，写成 `out.message(&export)` -
+类型把这次发布引到序列化的那条线上，字节按原样发出，而每个消息头位置照常工作。
 
 契约把这个位置填掉一次。发布者自己补上的那部分走在下面：一个为每条发出的消息都携带同一个参数的
 发布者，把该参数作为底交出来，契约的字段再逐个序列化到这层底之上 - 参见
@@ -91,7 +138,17 @@
 `publish("dest")` 形式的处理器不需要额外声明：回复类型自带的契约会喂给文档，而目的地已经写在属性
 里了。
 
---8<-- "examples/typed_headers.rs:reply"
+=== "宏"
+
+    ```rust
+    --8<-- "examples/typed_headers.rs:reply"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/typed_headers.rs:reply"
+    ```
 
 在运行时，回复的消息头依旧沿用原来的做法：由回复发布者上的一个 `PublishTransform` 来设置，而
 [`HeaderMap::insert_typed`] 负责在变换内部把一个契约值序列化进该映射。
@@ -114,4 +171,6 @@ schema 描述的是逻辑字段类型（`task_id: integer`），而线路上的�
 进程内的测试工具能驱动整条路径：注入构建器上的 `with_headers(&meta)` 发出一次带类型化契约的投递，
 而发布日志会展示一次类型化发布所产生的消息头。
 
+```rust
 --8<-- "examples/typed_headers.rs:drive"
+```

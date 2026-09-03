@@ -17,8 +17,8 @@ use super::scope::BrokerScope;
 // The form vocabulary lives in the router: routing is its responsibility, and the scope mounts
 // through the same tokens.
 pub(crate) use crate::runtime::router::{
-    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultBareReply, DefaultReply,
-    InjectMount, InputCodec, MountCodec, PublishInjectMount, PublishMount, forms,
+    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultReply, InjectMount,
+    MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, forms,
 };
 
 /// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in
@@ -61,18 +61,20 @@ mod builder;
 mod commit;
 mod forms_batch;
 mod forms_eager;
+mod forms_handle;
 mod forms_out;
 mod forms_publish;
 mod slot_builder;
 mod slot_reply_builder;
 
 pub use builder::{
-    IncludeBatchOut, IncludeBatchPublishing, IncludeOut, IncludePublishing, IncludeWith,
+    IncludeBatchOut, IncludeBatchPublishing, IncludeOut, IncludePublishing, IncludeRawReply,
+    IncludeWith,
 };
 // The mount tokens and the commit trait are machinery: reachable across the include
 // modules, never re-exported from the crate root.
 pub(crate) use commit::CommitVia;
 pub use slot_builder::{IncludeSlots, SlotCommit};
 pub use slot_reply_builder::{
-    IncludeBatchPublishingOut, IncludePublishingOut, IncludeSlotsWithReply,
+    IncludeBatchPublishingOut, IncludePublishingOut, IncludeRawReplyOut, IncludeSlotsWithReply,
 };

@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, HeadersUnset,
-    MessageBody, Outgoing, Publish, PublishContext, PublishPipeline, PublishTransform,
+    MessageBody, Outgoing, PublishBuilder, PublishContext, PublishPipeline, PublishTransform,
     PublishTransformIdentity, PublishTransformStack, RawBody, message_of, raw_of,
 };
 use crate::codec::Codec;
@@ -100,8 +100,8 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
         }
     }
 
-    /// Adds a static [`BatchPublishTransform`], applied to every reply of a
-    /// `#[subscriber(batch(..), publish(..))]` handler only (after the per-message
+    /// Adds a static [`BatchPublishTransform`], applied to every reply of a batch publishing
+    /// (`&[T]` + `publish(..)`) handler only (after the per-message
     /// [`PublishTransform`] stack), never to a single-message reply. Wrap a per-message
     /// [`PublishTransform`] with [`for_batch`](crate::runtime::for_batch) to reuse it here. The single-message mounts reject a
     /// publisher carrying a non-trivial batch stack, so a batch-only transform cannot leak onto the
@@ -123,7 +123,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     }
 
     /// Switches batch reply publishing to one broker transaction per batch: the replies of a
-    /// `#[subscriber(batch(..), publish(..))]` handler all become visible atomically on commit,
+    /// batch publishing (`&[T]` + `publish(..)`) handler all become visible atomically on commit,
     /// or none of them do.
     ///
     /// The leaf may be a live publisher or a publish policy; either way the transactional
@@ -140,11 +140,13 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
 }
 
 impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
-    /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with this publisher's
-    /// codec: `publisher.message(&done).publish().await?`.
+    /// Starts a typed publish of a `#[derive(Outgoing)]` value:
+    /// `publisher.message(&done).publish().await?`. The value's type picks its wire
+    /// ([`MessageWire`](super::MessageWire)): a `serde::Serialize` value encodes with this
+    /// publisher's codec, a [`Serialized`](super::Serialized) one leaves byte-for-byte.
     ///
     /// Which positions the call site still has to fill comes from the message type's
-    /// declaration; see [`Publish`]. The static [`PublishTransform`](super::PublishTransform)
+    /// declaration; see [`PublishBuilder`]. The static [`PublishTransform`](super::PublishTransform)
     /// stack and the application's publish middleware do not run here - both belong to the
     /// dispatch path, where a delivery context exists.
     ///
@@ -172,7 +174,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> Publish<&'a P, MessageBody<'a, T>, &'a C, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a P, MessageBody<'a, T>, &'a C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -184,7 +186,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -213,6 +215,35 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = Outgoing::new(name, payload);
+        self.layers.apply(&mut out, cx);
+        pipeline.run(&mut out, &self.publisher).await
+    }
+
+    /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
+    /// serializes into the outgoing headers before the transforms run, and the body encodes
+    /// through the reply codec.
+    pub(crate) async fn publish_pair<Hd: Serialize + Sync, T: Serialize + Sync, Cx, PP>(
+        &self,
+        name: &str,
+        headers: &Hd,
+        value: &T,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), BoxError>
+    where
+        PL: PublishTransform<Cx>,
+        BL: Sync,
+        Cx: Sync,
+        PP: PublishPipeline,
+    {
+        let payload = self
+            .codec
+            .encode(value)
+            .map_err(|e| Box::new(e) as BoxError)?;
+        let mut out = Outgoing::new(name, payload);
+        out.headers_mut()
+            .insert_typed(headers)
+            .map_err(|e| Box::new(e) as BoxError)?;
         self.layers.apply(&mut out, cx);
         pipeline.run(&mut out, &self.publisher).await
     }

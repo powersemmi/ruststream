@@ -14,13 +14,17 @@ use common::Event;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    AppInfo, DefaultSlot, HandlerResult, Out, PublishExt, RustStream, SlotPublisher,
+    AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream, SlotPublisher,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, HeaderMap, OutSlot, OutgoingMessage, OwnedTransactions, PairError, PublishPolicy,
-    Publisher, Transaction, subscriber,
+    Broker, Deserialized, HeaderMap, OutSlot, OutgoingMessage, OwnedTransactions, PairError,
+    PublishPolicy, Publisher, Transaction, subscriber,
 };
+
+/// The payload view the slot-publishing body takes: the delivery's bytes, borrowed.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
 
 #[derive(OutSlot)]
 struct Encoded;
@@ -29,25 +33,25 @@ struct Encoded;
 struct Audit;
 
 /// Two slots in one handler; no broker publisher type appears anywhere in the signature.
-#[subscriber("slots.in", raw)]
+#[subscriber("slots.in")]
 async fn transcode(
-    chunk: &[u8],
+    chunk: &Frame<'_>,
     Out(encoded): Out<impl Publisher, Encoded>,
     Out(audit): Out<impl Publisher, Audit>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let mut headers = HeaderMap::new();
     headers.insert("source", "slots.in");
     if encoded
-        .raw(chunk)
+        .raw(chunk.0)
         .with_headers(headers)
         .to("slots.encoded")
         .publish()
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    let receipt = chunk.len().to_be_bytes();
+    let receipt = chunk.0.len().to_be_bytes();
     if audit
         .raw(&receipt)
         .to("slots.audit")
@@ -55,9 +59,9 @@ async fn transcode(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// The slots bind by marker, in either order, and the harness captures per slot (with headers).
@@ -69,7 +73,7 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
             b.include(transcode)
                 .out(Audit, MemoryPublish)
                 .out(Encoded, MemoryPublish)
-                .mount();
+                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -113,7 +117,7 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
             b.include(transcode)
                 .out(Encoded, MemoryPublish)
                 .out(Audit, to_other)
-                .mount();
+                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -134,9 +138,9 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
 /// A capability-refined slot: the handler settles a ledger through owned transactions without
 /// naming a broker type; the memory publisher provides the capability.
 #[subscriber("slots.ledger")]
-async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) -> HandlerResult {
+async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) -> HandlerOutcome {
     let Ok(mut txn) = tx.transaction().await else {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     };
     let payload = serde_json::to_vec(event).expect("serializable");
     if txn
@@ -145,16 +149,16 @@ async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) ->
         .is_err()
         || txn.commit().await.is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
     let app =
         RustStream::new(AppInfo::new("slots-txn", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle).out(Encoded, MemoryPublish).mount();
+            b.include(settle).out(Encoded, MemoryPublish).build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -172,7 +176,7 @@ async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
         .with(&Event { id: 4 });
 }
 
-// A slot left unbound is a compile error, not a runtime one: `.mount()` does not exist until
+// A slot left unbound is a compile error, not a runtime one: `.build()` does not exist until
 // every slot is bound, and the error names the missing slot (`MissingSlot<Audit>`). Covered by
 // the trybuild case `tests/ui/subscriber_out_unbound_slot.rs`.
 
@@ -225,13 +229,13 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 
 /// The handler bounds its slot with the broker-defined capability, not a core one.
 #[subscriber("slots.sharded")]
-async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerResult {
+async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerOutcome {
     let (publisher, dest) = lanes.lane(event.id);
     let payload = serde_json::to_vec(event).expect("serializable");
     if publisher.raw(&payload).to(dest).publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:extension]
 

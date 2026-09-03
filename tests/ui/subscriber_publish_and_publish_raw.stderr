@@ -1,5 +1,0 @@
-error: publish(..) and publish_raw(..) are mutually exclusive: one reply, one destination
-  --> tests/ui/subscriber_publish_and_publish_raw.rs:10:50
-   |
-10 | #[subscriber("orders", publish("a"), publish_raw("b"))]
-   |                                                  ^^^

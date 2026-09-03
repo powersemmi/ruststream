@@ -60,8 +60,11 @@ a simulation of another broker's:
   constructed (`MemoryPosition::start()` / `sequence(n)`). Seeking forward skips the queued
   deliveries before the target; seeking at or past the end of the log skips everything published
   so far. The scope is one subscriber instance, and a seek through a handle aliasing a shut-down
-  bus errors with `MemoryError::ShutDown`. Inside an application, a handler reaches the seeker
-  through a `Seek` parameter (see [Seeking](../guides/subscribers.md#seeking)).
+  bus errors with `MemoryError::ShutDown`. Inside an application, the delivery context
+  (`MemoryContext`) carries the position and the seeker, read by the `Position` / `SeekHandle`
+  keys (see [Seeking](../guides/subscribers.md#seeking)). A page body names `MemoryBatchContext`
+  instead: it carries the subscription's seeker under that same `SeekHandle` key and no position,
+  because a page spans many deliveries.
 - **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
   `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
   reporting how many subscriber registrations the teardown dropped. Aliased handles used after the
@@ -78,11 +81,21 @@ descriptor form uniform across brokers. From the
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:
 
-```rust
-use ruststream::memory::MemorySource;
+=== "Macros"
 
---8<-- "examples/routed_service/orders.rs:descriptor"
-```
+    ```rust
+    use ruststream::memory::MemorySource;
+
+    --8<-- "examples/routed_service/orders.rs:descriptor"
+    ```
+
+=== "Manual"
+
+    ```rust
+    use ruststream::memory::{MemoryPublish, MemorySource};
+
+    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
+    ```
 
 ## For testing
 

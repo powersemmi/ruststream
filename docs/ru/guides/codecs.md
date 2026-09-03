@@ -43,19 +43,37 @@
 
 === "with_broker"
 
-    ```rust
-    --8<-- "examples/codecs.rs:per_handler"
-    ```
+    === "Макросы"
+
+        ```rust
+        --8<-- "examples/codecs.rs:per_handler"
+        ```
+
+    === "Вручную"
+
+        ```rust
+        --8<-- "examples/manual/codecs.rs:per_handler"
+        ```
 
 ### На область
 
 Задать один кодек для всех обработчиков в области `with_broker`:
 
-```rust
-use ruststream::codec::CborCodec;
+=== "Макросы"
 
---8<-- "examples/codecs.rs:scope"
-```
+    ```rust
+    use ruststream::codec::CborCodec;
+
+    --8<-- "examples/codecs.rs:scope"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    use ruststream::codec::CborCodec;
+
+    --8<-- "examples/manual/codecs.rs:scope"
+    ```
 
 ### По умолчанию
 
@@ -79,14 +97,22 @@ use ruststream::codec::CborCodec;
 отбрасывается (nack без возврата в очередь). Политика задаётся для каждого подписчика клаузой
 `on_failure(decode = ..)`:
 
-```rust
-use ruststream::subscriber;
+=== "Макросы"
 
---8<-- "examples/codecs.rs:decode_failure"
-```
+    ```rust
+    use ruststream::subscriber;
 
-Если вы собираете обработчики вручную, обёртка `Typed`, которую возвращает `typed(codec, handler)`,
-принимает ту же политику через `on_decode_failure`.
+    --8<-- "examples/codecs.rs:decode_failure"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/codecs.rs:decode_failure"
+    ```
+
+Если вы регистрируете обработчик через низкоуровневый SPI `handle`, обёртка `Typed`, которую
+возвращает `typed(codec, handler)`, принимает ту же политику через `on_decode_failure`.
 
 Значения политики (`Drop`, `Retry`, `RetryAfter(..)`, `Skip`, `FailFast`), умолчания и оговорки про
 повторы описаны в разделе [Политика отказов](failure-policy.md). Примеры с кодеками выше взяты из
@@ -113,9 +139,17 @@ use ruststream::subscriber;
 Свой кодек монтируется на тех же трёх уровнях, что и встроенный, - здесь все три сразу, чтобы
 область, цепочка и ответ читались каждый своей строкой:
 
-```rust
---8<-- "examples/custom_codec.rs:mount"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/custom_codec.rs:mount"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/custom_codec.rs:mount"
+    ```
 
 ## Синхронная граница {#the-synchronous-boundary}
 

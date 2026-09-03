@@ -12,14 +12,17 @@ use crate::runtime::middleware::Layer;
 use crate::runtime::publish::PublishPipeline;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
-use crate::runtime::publishing::{PublishingCall, PublishingHandler, ReplySink};
+use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
+use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
+use super::builder::IncludeRawReply;
+use super::slot_reply_builder::IncludeRawReplyOut;
 use super::{
-    CommitVia, DefaultBareReply, DefaultReply, IncludeMount, IncludePublishing,
-    IncludePublishingOut, IncludeSlotsWithReply, IncludeWith, InputCodec, MountCodec,
-    PublishInjectMount, PublishMount, SlotCommit, forms,
+    CommitVia, DefaultReply, IncludeMount, IncludePublishing, IncludePublishingOut,
+    IncludeSlotsWithReply, IncludeWith, MountCodec, PublishInjectMount, PublishMount,
+    RawReplyInjectMount, RawReplyMount, SlotCommit, forms,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -48,12 +51,12 @@ where
     C: 's,
     State: 's,
     Pipeline: 's,
-    DefaultBareReply: CommitVia<PublishMount, B, Layers, C, State, Pipeline, Def>,
+    DefaultReply: CommitVia<RawReplyMount, B, Layers, C, State, Pipeline, Def>,
 {
-    type Out = IncludePublishing<'s, B, Layers, C, State, Pipeline, Def, DefaultBareReply>;
+    type Out = IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, DefaultReply>;
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
-        IncludeWith::new(def, DefaultBareReply, scope)
+        IncludeWith::new(def, DefaultReply, scope)
     }
 }
 
@@ -61,7 +64,7 @@ where
 // Reply publishing with Out slots: two attachment axes on one builder. The reply side keeps its
 // default commits (typed or bare policy); the slot side starts all-unbound, each
 // `.out(marker, ..)` binds one position, and the SlotCommit impls exist only for fully-bound
-// tuples - so `.mount()` on an incomplete chain is a compile error naming the slot.
+// tuples - so `.build()` on an incomplete chain is a compile error naming the slot.
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 impl<B, Layers, C, State, Pipeline, Def, Slots>
@@ -89,8 +92,10 @@ where
     }
 }
 
+// The serialized wire's default next to the slot tuple: the broker's plain policy taken bare,
+// keyed by the raw mount token so it exists with no codec feature at all.
 impl<B, Layers, C, State, Pipeline, Def, Slots>
-    SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def> for (DefaultBareReply, Slots)
+    SlotCommit<RawReplyInjectMount, B, Layers, C, State, Pipeline, Def> for (DefaultReply, Slots)
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
@@ -109,6 +114,22 @@ where
     }
 }
 
+// A user policy on the serialized wire commits through the same wire-agnostic machinery the
+// encoded attach does; see the scope's `RawReplyMount` commit.
+impl<B, Layers, C, State, Pipeline, Def, Source, Slots>
+    SlotCommit<RawReplyInjectMount, B, Layers, C, State, Pipeline, Def>
+    for (WithSource<Source>, Slots)
+where
+    B: Broker + 'static,
+    Self: SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def>,
+{
+    fn commit(self, def: Def, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        <Self as SlotCommit<PublishInjectMount, B, Layers, C, State, Pipeline, Def>>::commit(
+            self, def, scope,
+        );
+    }
+}
+
 /// Implements the slot-tuple commit of the publishing-with-Out forms for each slot arity, for
 /// fully-bound tuples only: the bound sources instantiate the definition ([`BindSlots`],
 /// named `Bound` / `Extra` here), the reply source pairs at startup, and the injections
@@ -122,19 +143,20 @@ macro_rules! impl_publishing_out_commit {
             B: Broker + 'static,
             // Two codec questions, and they are not the same one: the slots encode what leaves
             // through them (`MountCodec`), while the input decodes with whatever its kind asks
-            // for - nothing, on the byte path.
-            C: MountCodec + InputCodec<Bound::Input>,
+            // for - nothing, on the byte path - under the definition's own override.
+            C: MountCodec,
             Def: BindSlots<
                 Connected<B>,
                 ($(($attach, <C as MountCodec>::Codec),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
+            Def: MountsWith<<Bound as PublishingDef>::Input, C>,
             Bound: PublishingCall<State> + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Sync + Send + 'static,
             SourceMessage<B, Bound::Source>: Send + Sync + 'static,
-            Bound::Input: DecodeWith<<C as InputCodec<Bound::Input>>::Codec>,
+            Bound::Input: DecodeWith<DefMountCodec<Def, <Bound as PublishingDef>::Input, C>>,
             Bound::Injections: FromStartup<B, SourceSubscriber<B, Bound::Source>, Extra>
                 + Send
                 + Sync
@@ -149,7 +171,7 @@ macro_rules! impl_publishing_out_commit {
             Layers: Layer<
                 PublishingHandler<
                     Bound,
-                    <C as InputCodec<Bound::Input>>::Codec,
+                    DefMountCodec<Def, <Bound as PublishingDef>::Input, C>,
                     Source::Live,
                     Pipeline,
                 >,
@@ -164,10 +186,12 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
+                // Surface codec for the slots, override-aware codec for the decode.
                 let codec = scope.codec.mount_codec();
+                let decode = def.mounted_codec(&scope.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
-                scope.mount_publishing_source(source, def, reply.into_source(), extra);
+                scope.mount_publishing_source(source, def, decode, reply.into_source(), extra);
             }
         }
     )+};
@@ -223,7 +247,7 @@ where
     Def: HasSlots,
     Def::Markers: InitSlots,
 {
-    type Out = IncludePublishingOut<
+    type Out = IncludeRawReplyOut<
         's,
         B,
         Layers,
@@ -231,14 +255,14 @@ where
         State,
         Pipeline,
         Def,
-        DefaultBareReply,
+        DefaultReply,
         <Def::Markers as InitSlots>::Init,
     >;
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out {
         IncludeSlotsWithReply::new(
             def,
-            DefaultBareReply,
+            DefaultReply,
             <Def::Markers as InitSlots>::init(),
             scope,
         )

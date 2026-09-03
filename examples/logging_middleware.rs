@@ -16,7 +16,9 @@
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::layers::TracingLayer;
-use ruststream::runtime::{AppInfo, HandlerResult, Identity, Router, RouterDef, RustStream, Stack};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, Identity, Router, RouterDef, RustStream, Stack,
+};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -28,18 +30,18 @@ struct Order {
 
 /// Accepts an order. The middleware logs the arrival and the resulting ack; no logging here.
 #[subscriber("orders")]
-async fn confirm(order: &Order) -> HandlerResult {
+async fn confirm(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Rejects empty orders by requeueing. The middleware logs the nack at WARN with `requeue=true`.
 #[subscriber("returns")]
-async fn reject(order: &Order) -> HandlerResult {
+async fn reject(order: &Order) -> HandlerOutcome {
     if order.quantity == 0 {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Builds the orders router. Broker-agnostic and middleware-agnostic: the app's global layer wraps

@@ -1,28 +1,28 @@
 //! Startup injections: handler parameters resolved once per subscription at startup.
 //!
-//! `#[subscriber("in")] async fn f(msg: &T, Out(out): Out<impl Publisher>, Seek(seeker):
-//! Seek<K>)` declares parameters the runtime prepares before the first delivery: an injected
-//! publisher pairs against the connected broker from the source attached at the include site
-//! (`b.include(f).publisher(..)`, or `.out(marker, ..)` per named slot), an injected seeker is
-//! minted off the subscription's own subscriber. Every such parameter implements
-//! [`FromStartup`], the definition carries them as one tuple ([`InjectDef::Injections`])
-//! resolved element-by-element against a matching extra tuple, and a single handler adapter
-//! serves every combination - fully monomorphized, nothing to check on the hot path.
+//! `#[subscriber("in")] async fn f(msg: &T, Out(out): Out<impl Publisher>)` declares parameters
+//! the runtime prepares before the first delivery: an injected publisher pairs against the
+//! connected broker from the source attached at the include site (`b.include(f).publisher(..)`,
+//! or `.out(marker, ..)` per named slot). Every such parameter implements [`FromStartup`], the
+//! definition carries them as one tuple ([`InjectDef::Injections`]) resolved
+//! element-by-element against a matching extra tuple, and a single handler adapter serves
+//! every combination - fully monomorphized, nothing to check on the hot path.
 
 use std::fmt;
 use std::future::{Future, ready};
+use std::marker::PhantomData;
 
 use tracing::warn;
 
-use crate::{Broker, Connected, IncomingMessage, PairError, PublishPolicy, Seekable};
+use crate::{Broker, Connected, IncomingMessage, PairError};
 
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::{Handler, HandlerResult, Settle};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
-use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
+use super::slot::DefaultSlot;
 
 /// The marker a handler signature uses to receive an injected publisher:
 /// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
@@ -36,7 +36,7 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// each with `.out(marker, policy)`, in any order.
 ///
 /// An optional third position declares the message set the handler publishes, which the publish
-/// builder ([`message`](super::TypedSlot::message), destinations from each type's
+/// builder ([`message`](super::Slot::message), destinations from each type's
 /// `#[derive(Outgoing)]` declaration) is checked against:
 ///
 /// - `Out<impl Publisher>` / `Out<impl Publisher, Events>` / `Out<impl Publisher, Events, ()>`
@@ -47,74 +47,43 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// - `Out<impl Publisher, Events, SendSet>` - a `#[derive(OutMessages)]` enum whose variants'
 ///   models are the declared set.
 ///
-/// The value is paired by the runtime at startup, so it is live by construction; handlers never
-/// see a "not connected" state. See the module docs.
+/// The value the body receives is the arena entry for the parameter's marker
+/// ([`Slot`](super::Slot)), paired by the runtime at startup, so it is live by construction;
+/// handlers never see a "not connected" state. The type itself is pure signature vocabulary:
+/// the `#[subscriber]` expansion reads the declaration and binds the entry, and no value of
+/// this type is ever constructed.
 ///
 /// # Examples
 ///
 /// ```
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
-/// use ruststream::runtime::{HandlerResult, Out};
+/// use ruststream::runtime::{HandlerOutcome, Out};
 /// use ruststream::{Publisher, subscriber};
 /// # #[derive(serde::Deserialize)]
 /// # struct Event { id: u64 }
 ///
 /// #[subscriber("ingress")]
-/// async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
+/// async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
 ///     let payload = event.id.to_be_bytes();
 ///     if out.raw(&payload).to("out").publish().await.is_err() {
-///         return HandlerResult::retry();
+///         return HandlerOutcome::retry();
 ///     }
-///     HandlerResult::Ack
+///     HandlerOutcome::ack()
 /// }
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct Out<P, M = DefaultSlot, Body = (), EncodeCodec = ()>(
-    /// The live slot: the paired publisher plus the scope codec, pinned to the declared
-    /// message set.
-    pub TypedSlot<P, Body, M, EncodeCodec>,
-);
+pub struct Out<P, M = DefaultSlot, Body = ()>(OutVocabulary<P, M, Body>);
 
-/// The marker a handler signature uses to receive its subscription's seeker:
-/// `Seek(seeker): Seek<K>` binds `seeker` to `&K` inside the body.
-///
-/// The value is minted by the runtime off the subscription's own subscriber right after it
-/// opens, so it is live by construction; handlers never see a "not opened" state. On a broker
-/// without the [`Seekable`] capability the mount fails to compile.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-/// # mod demo {
-/// use ruststream::memory::{MemoryPosition, MemorySeeker, MemorySource};
-/// use ruststream::runtime::{HandlerResult, Seek};
-/// use ruststream::{Seeker, subscriber};
-/// # #[derive(serde::Deserialize)]
-/// # struct Job { id: u64, poisoned_until: Option<usize> }
-///
-/// /// Skips forward past a region the producer marked poisoned.
-/// #[subscriber(MemorySource::new("jobs"))]
-/// async fn work(job: &Job, Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
-///     if let Some(resume_at) = job.poisoned_until {
-///         if seeker.seek(MemoryPosition::sequence(resume_at)).await.is_err() {
-///             return HandlerResult::retry();
-///         }
-///     }
-///     HandlerResult::Ack
-/// }
-/// # }
-/// ```
-#[derive(Debug)]
-pub struct Seek<K>(pub K);
+/// The phantom carrying the [`Out`] marker's declared positions.
+type OutVocabulary<P, M, Body> = PhantomData<fn() -> (P, M, Body)>;
 
 /// A handler parameter resolved once per subscription at startup.
 ///
 /// `Extra` is the include-site attachment for this element: a publish policy for [`Out`], any
-/// placeholder for parameters that need nothing (a [`Seek`] resolves off the subscription
-/// itself). The injection tuple resolves element-by-element against a matching extra tuple, so
+/// placeholder for a parameter that needs nothing from the include site. The injection tuple
+/// resolves element-by-element against a matching extra tuple, so
 /// each slot pairs with its own attachment. The runtime resolves the whole
 /// [`InjectDef::Injections`] tuple after the subscription opens and before the first delivery,
 /// so injected values are live by construction.
@@ -133,51 +102,6 @@ pub trait FromStartup<B: Broker, Sub, Extra>: Sized {
         connected: &Connected<B>,
         subscriber: &Sub,
     ) -> impl Future<Output = Result<Self, PairError>> + Send;
-}
-
-/// The injected publisher: pairs the slot's attached policy against the connected broker and
-/// wraps it with the slot identity, the include site's scope codec (what
-/// [`message`](super::TypedSlot::message) encodes with), and the declared message
-/// set. A failing pair surfaces at startup with the slot's name (an unbound slot never gets
-/// this far: the include site does not compile without a policy per slot).
-impl<B, Sub, Policy, EncodeCodec, Body, M> FromStartup<B, Sub, (Policy, EncodeCodec)>
-    for Out<SlotPublisher<Policy::Live, M>, M, Body, EncodeCodec>
-where
-    B: Broker,
-    Sub: Sync,
-    Policy: PublishPolicy<Connected<B>> + Send,
-    EncodeCodec: Send,
-    M: OutSlot,
-{
-    async fn resolve(
-        (policy, codec): (Policy, EncodeCodec),
-        connected: &Connected<B>,
-        _subscriber: &Sub,
-    ) -> Result<Self, PairError> {
-        let live = policy.pair(connected).await.map_err(|err| {
-            PairError::from_boxed(Box::from(format!(
-                "pairing the publisher for Out slot `{}` failed: {err}",
-                M::NAME,
-            )))
-        })?;
-        Ok(Self(TypedSlot::new(SlotPublisher::new(live), codec)))
-    }
-}
-
-/// The injected seeker: minted off the subscription's own subscriber.
-impl<B, Sub, Extra> FromStartup<B, Sub, Extra> for Seek<Sub::Seeker>
-where
-    B: Broker,
-    Sub: Seekable + Sync,
-    Extra: Send,
-{
-    fn resolve(
-        _extra: Extra,
-        _connected: &Connected<B>,
-        subscriber: &Sub,
-    ) -> impl Future<Output = Result<Self, PairError>> {
-        ready(Ok(Self(subscriber.seeker())))
-    }
 }
 
 /// A definition with no injected parameters still resolves: to nothing.
@@ -226,7 +150,7 @@ impl_from_startup_for_tuples! {
 
 /// A subscriber definition whose handler takes startup-injected parameters.
 ///
-/// Generated by `#[subscriber(..)]` when the signature carries [`Out`] / [`Seek`] parameters;
+/// Generated by `#[subscriber(..)]` when the signature carries [`Out`] parameters;
 /// [`Self::Injections`] is their tuple, in declaration order.
 pub trait InjectDef: Send + Sync {
     /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`
@@ -240,7 +164,7 @@ pub trait InjectDef: Send + Sync {
     /// The subscription source this handler binds to.
     type Source;
 
-    /// The tuple of startup-injected parameters ([`Out`], [`Seek`], ...).
+    /// The tuple of startup-injected parameters ([`Out`], ...).
     type Injections;
 
     /// Builds the subscription source (fresh each call).
@@ -279,12 +203,12 @@ pub trait InjectDef: Send + Sync {
         Vec::new()
     }
 
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     fn message_description(&self) -> Option<&'static str> {
         None
     }
@@ -300,7 +224,7 @@ pub trait InjectCall<S>: InjectDef {
         input: &<Self::Input as InputKind>::Target,
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = Settle> + Send;
+    ) -> impl Future<Output = HandlerOutcome> + Send;
 }
 
 /// Builds the registration metadata for an injected definition mounted under `name`.
@@ -313,6 +237,7 @@ pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMet
         def.message_description(),
     );
     meta.input_type = <D::Input as InputKind>::input_label();
+    meta.deserialized = <D::Input as InputKind>::DESERIALIZED;
     meta.outgoing = def.outgoing();
     meta
 }
@@ -345,36 +270,178 @@ where
     DecodeCodec: Send + Sync,
     State: Send + Sync,
 {
-    async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {
+    async fn handle(
+        &self,
+        msg: &Msg,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) -> HandlerOutcome {
         // The decode product lives on this stack frame and the handler borrows its view, so
         // the input path allocates nothing of its own (a raw input borrows the payload
         // straight out of the broker's buffer).
-        let owned =
-            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload()) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        subscription = %ctx.name(),
-                        message_type = <Def::Input as InputKind>::input_label(),
-                        error = %err,
-                        "codec decode failed",
-                    );
-                    #[cfg(any(feature = "testing", feature = "otel"))]
-                    ctx.mark_decode_failed();
-                    return match self.decode {
-                        FailurePolicy::FailFast => {
-                            ctx.fail_fast(&format!("decode failed: {err}"));
-                            HandlerResult::drop().into()
-                        }
-                        other => other
-                            .settlement()
-                            .unwrap_or_else(HandlerResult::drop)
-                            .into(),
-                    };
-                }
-            };
+        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
+            &self.codec,
+            msg.payload(),
+            msg.headers(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    message_type = <Def::Input as InputKind>::input_label(),
+                    error = %err,
+                    "codec decode failed",
+                );
+                #[cfg(any(feature = "testing", feature = "otel"))]
+                ctx.mark_decode_failed();
+                return match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerOutcome::drop()
+                    }
+                    other => other
+                        .settlement()
+                        .map_or_else(HandlerOutcome::drop, Into::into),
+                };
+            }
+        };
         let view = <Def::Input as InputKind>::view(&owned, msg.payload());
         self.def.call(view, &self.injections, ctx).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::ready;
+
+    use super::{InjectCall, InjectDef, InjectHandler};
+    use crate::Name;
+    use crate::runtime::context::Context;
+    use crate::runtime::dispatch::Workers;
+    use crate::runtime::failure::{FailurePolicies, FailurePolicy};
+    use crate::runtime::handler::HandlerOutcome;
+    use crate::runtime::input::Decoded;
+
+    /// A hand-written injected def overriding nothing optional, pinning the trait defaults that
+    /// the macro always fills in.
+    struct ManualInject;
+
+    impl InjectDef for ManualInject {
+        type Input = Decoded<u32>;
+        type Context = ();
+        type Source = Name;
+        type Injections = ();
+
+        fn source(&self) -> Name {
+            Name::new("in")
+        }
+    }
+
+    // Ignores the app state, so it is generic over it (mounts on any app).
+    impl<S: Send + Sync> InjectCall<S> for ManualInject {
+        fn call(
+            &self,
+            input: &u32,
+            (): &(),
+            _ctx: &mut Context<'_, (), S>,
+        ) -> impl Future<Output = HandlerOutcome> {
+            let _ = *input;
+            ready(HandlerOutcome::ack())
+        }
+    }
+
+    #[test]
+    fn the_defaults_declare_nothing_the_macro_would_have_filled_in() {
+        let def = ManualInject;
+        assert_eq!(def.workers(), Workers::sequential());
+        assert_eq!(def.failure_policies(), FailurePolicies::default());
+        assert!(def.description().is_none());
+        assert!(def.input_schema().is_none());
+        assert!(def.headers_schema().is_none());
+        assert!(def.outgoing().is_empty());
+        assert!(def.message_name().is_none());
+        assert!(def.message_description().is_none());
+        assert!(format!("{:?}", def.source()).contains("in"));
+    }
+
+    #[test]
+    fn the_handler_names_itself() {
+        let handler = InjectHandler {
+            def: ManualInject,
+            codec: (),
+            injections: (),
+            decode: FailurePolicy::Drop,
+        };
+        assert!(format!("{handler:?}").contains("InjectHandler"));
+    }
+
+    /// The decode diagnostic of the injected path. It is asserted on the handler itself because
+    /// the subject is the warning's content, and a field value is only evaluated while a
+    /// subscriber listens.
+    #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
+    mod diagnostics {
+        use futures::StreamExt;
+
+        use super::ManualInject;
+        use crate::codec::JsonCodec;
+        use crate::memory::{MemoryBroker, MemoryMessage};
+        use crate::runtime::context::Context;
+        use crate::runtime::dispatch::Delivery;
+        use crate::runtime::failure::FailurePolicy;
+        use crate::runtime::handler::Handler;
+        use crate::runtime::inject::InjectHandler;
+        use crate::testkit::log_capture::{find, start};
+        use crate::{HeaderMap, OutgoingMessage, Publisher, Subscriber};
+
+        /// Publishes `payload` to `name` and pulls the delivery back off the bus.
+        async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
+            let mut subscriber = broker.subscribe(name);
+            broker
+                .publisher()
+                .publish(OutgoingMessage::new(name, payload))
+                .await
+                .expect("publish failed");
+            let mut stream = std::pin::pin!(subscriber.stream());
+            stream
+                .next()
+                .await
+                .expect("delivery missing")
+                .expect("memory subscriber never errors")
+        }
+
+        /// The diagnostic names the subscription and the type that was expected, so the
+        /// offending producer is findable from the logs; `fail_fast` still settles the message
+        /// out of the way (the teardown is what makes the failure loud).
+        #[tokio::test]
+        async fn a_decode_failure_names_the_subscription_and_the_expected_type() {
+            let broker = MemoryBroker::new();
+            let msg = one_delivery(&broker, "in", b"not json").await;
+            let handler = InjectHandler {
+                def: ManualInject,
+                codec: JsonCodec,
+                injections: (),
+                decode: FailurePolicy::FailFast,
+            };
+
+            let state = ();
+            let delivery = Delivery::empty();
+            let headers = HeaderMap::new();
+            let mut ctx = Context::new("in", &headers, &state, (), &delivery);
+
+            let (events, guard) = start();
+            let settle = handler.handle(&msg, &mut ctx).await;
+            drop(guard);
+
+            let failure = find(&events, "codec decode failed");
+            assert_eq!(failure.get("subscription").map(String::as_str), Some("in"));
+            assert_eq!(failure.get("message_type").map(String::as_str), Some("u32"));
+            assert!(
+                failure
+                    .get("error")
+                    .is_some_and(|err| err.contains("decode")),
+                "the diagnostic must carry the codec error: {failure:?}",
+            );
+            assert!(settle.is_drop());
+        }
     }
 }

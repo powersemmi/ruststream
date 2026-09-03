@@ -16,9 +16,17 @@
 共享的应用状态是一个类型化的值 `S`（你自己定义的 struct；服务不需要状态时就是 `()`）。它由
 `on_startup` 钩子产出：钩子返回的值就是状态，应用的状态类型也就此确定：
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 编译期就会检查状态类型：读取状态的 `#[subscriber]` 处理器把它写成 `Context` 的第三个泛型参数
 （`Context<'_, C, S>`），运行时只允许这样的处理器挂载到状态类型与之匹配的应用上。没有写出状态类型
@@ -41,22 +49,38 @@
 
 通过 `ctx.state().field` 去够依赖当然一直可用，但处理器也可以直接把依赖作为参数收下。在消息参数
 （以及可选的 `&mut Context`）之后，凡是类型实现了 `FromContext` 的处理器参数，都是一个**提取器**：
-运行时会在函数体运行之前从这次投递中解析出它；一旦解析失败，消息就按拒绝值携带的 `HandlerResult`
+运行时会在函数体运行之前从这次投递中解析出它；一旦解析失败，消息就按拒绝值携带的 `HandlerOutcome`
 结算，函数体根本不会运行。
 
 要注入状态中的某一部分，在状态类型上 derive `FromRef`，然后在处理器里接收 `State<T>` 即可，不必手写
 提取器实现。`State<T>` 对任意字段类型都能解析（`T: FromRef<S>`），包括来自其他 crate 的类型 - 某个
 Broker 的发布者、一个客户端连接池：
 
-```rust
---8<-- "examples/from_context.rs:state"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/from_context.rs:state"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:state"
+    ```
 
 处理器直接接收 `State<FieldType>`，不必再通过 `ctx.state()` 绕一道：
 
-```rust
---8<-- "examples/from_context.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/from_context.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:handler"
+    ```
 
 如果某个字段不该参与注入，或者它的类型已由另一个字段占用，就用 `#[from_ref(skip)]` 退出注入；
 两个字段不得共用同一个类型，因为按类型注入会产生歧义。若要写一个不只是读状态的自定义提取器，比如
@@ -69,9 +93,17 @@ Broker 的发布者、一个客户端连接池：
 `#[subscriber]` 处理器通过在载荷之后声明第二个参数来显式启用它；处理器只需要消息本身时就省略该
 参数。类型由宏自己解析，因此只要 `Context` 仅出现在处理器签名里，就不需要 import：
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 上下文对外暴露的内容：
 
@@ -86,7 +118,7 @@ Broker 的发布者、一个客户端连接池：
 | `after(outcome).then(fut)` | `()` | 按结算结果过滤的[结算后钩子](#post-settle-hooks) |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | 结算后钩子的语法糖（ack 之后 / 任何结算之后） |
 
-闭包形式的处理器（手写的 `typed(codec, |msg, ctx| ...)`）总是把上下文作为第二个参数接收。
+闭包形式的处理器（底层的 `typed(codec, |msg, ctx| ...)`）总是把上下文作为第二个参数接收。
 
 ## 按投递的上下文 { #per-delivery-context }
 
@@ -106,6 +138,13 @@ Broker 的发布者、一个客户端连接池：
 处理器再用 `ctx.context(KEY)` 把它取回来。这样的值可以是一个关联 id，也可以是某一层解析出来的
 已认证用户，全程不必序列化进消息头。上下文每次投递都重新构造，所以一次投递的值绝不会泄漏到下一次。
 
+[批量处理器](subscribers.md#batch-subscribers)每批拿到一个上下文，由 `BuildBatchContext` 从该批的
+第一次投递构造，里面只带 Broker 的*订阅级*字段 - seek 句柄、流的名字 - 批量函数体把这个类型写成
+自己的上下文类型（内存 Broker 上是 `ctx: &mut Context<'_, MemoryBatchContext>`），再用
+`ctx.context(..)` 读它。逐次投递的数据不进来：一批横跨多次投递，所以位置或消息头改为随元素走。
+逐次投递的上下文类型和批量的上下文类型互不相同，所以批量函数体去要前者是编译不过的；而订阅级上
+没有东西可交的 Broker，会让批量停在 `()` 这个默认值上。
+
 ## 把上下文字段当作参数 { #context-fields-as-parameters }
 
 字段也可以像 `State<T>` 注入状态组件那样，直接作为处理器的参数到达：`Ctx<K>` 提取器绑定的就是 key
@@ -116,9 +155,17 @@ Broker 的发布者、一个客户端连接池：
 --8<-- "examples/ctx_extractor.rs:key"
 ```
 
-```rust
---8<-- "examples/ctx_extractor.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/ctx_extractor.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/ctx_extractor.rs:handler"
+    ```
 
 有三点需要知道：
 
@@ -141,9 +188,17 @@ Broker 的发布者、一个客户端连接池：
 
 全局挂载之后，这一层会在每个处理器之前运行，因此上面的 `handle` 总能找到 `x-request-id`：
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 有两条边界要记住：
 
@@ -164,9 +219,17 @@ Broker 的发布者、一个客户端连接池：
 有时处理器需要某个副作用在消息**结算之后**才触发，比如一条不关键的通知、一段耗时的后续工作、一次
 缓存预热，同时又不希望它左右 ack 的决定，也不希望它影响重新投递。这类副作用注册在上下文上：
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 上面的处理器以 `ctx.after_ack(..)` 结尾：这段后续任务只有在 Broker 对消息完成 ack 之后才会运行，并且
 运行在投递路径之外，因此它绝不会拖慢 ack，也绝不会拖慢下一次投递。
@@ -174,13 +237,13 @@ Broker 的发布者、一个客户端连接池：
 三种写法，彼此叠加：
 
 - `ctx.after(outcome).then(fut)`，只有消息按 `outcome` 结算时才运行，匹配是**按种类**进行的。四种
-  种类彼此不同：`Ack`、`drop()`（nack，不重新入队）、`retry()`（nack，重新入队）以及 `retry_after()`
+  种类彼此不同：`ack()`、`drop()`（nack，不重新入队）、`retry()`（nack，重新入队）以及 `retry_after()`
   （无论延迟多久都算匹配）。drop 和 retry 是两套不同的机制，因此挂在 `drop()` 上的钩子不会在
   `retry()` 结算时触发，反之亦然。
-- `ctx.after_ack(fut)`，是 `ctx.after(HandlerResult::Ack).then(fut)` 的语法糖。
+- `ctx.after_ack(fut)`，是 `ctx.after(HandlerOutcome::ack()).then(fut)` 的语法糖。
 - `ctx.after_settle(fut)`，只要消息结算就运行，无论结果如何。
 
-处理器也可以通过返回值挂上后续任务：任何结算结果都能用 `.and_after(fut)` 转成一个 `Settle`，批量
+处理器也可以通过返回值挂上后续任务：任何结算结果都能用 `.and_after(fut)` 带上一个后续任务，批量
 处理器正是这样为每个元素分别挂上后续任务的。这种写法见[结算后的后续任务](subscribers.md#post-settle-continuations)；
 下面讲的语义对两种写法都适用。
 

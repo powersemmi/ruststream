@@ -1,0 +1,13 @@
+error[E0277]: the trait bound `Archived: serde::Serialize` is not satisfied
+  --> tests/ui/publish_neither_wire.rs:27:13
+   |
+27 |     let _ = out.message(&Archived { id: order.id }).publish().await;
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `MessageWire` is not implemented for `Archived`
+  --> tests/ui/publish_neither_wire.rs:15:1
+   |
+15 | struct Archived {
+   | ^^^^^^^^^^^^^^^
+   = note: for local types consider adding `#[derive(serde::Serialize)]` to your `Archived` type
+   = note: for types from other crates check whether the crate offers a `serde` feature flag

@@ -292,6 +292,24 @@ mod tests {
     use super::*;
     use crate::memory::{ConnectedMemoryBroker, MemoryPosition, MemorySource};
 
+    /// The generic clone keeps the assertion honest: a `Copy` placeholder would otherwise make
+    /// the call read as redundant at the call site.
+    fn clone_of<T: Clone>(value: &T) -> T {
+        value.clone()
+    }
+
+    #[test]
+    fn an_unnamed_placeholder_builds_its_kind_once_the_name_arrives() {
+        let placeholder = Unnamed::<Name>::default();
+        assert!(format!("{placeholder:?}").contains("Unnamed"));
+
+        let named: Name = clone_of(&placeholder).into_named("orders");
+        assert_eq!(
+            SubscriptionSource::<ConnectedMemoryBroker>::name(&named),
+            "orders"
+        );
+    }
+
     #[test]
     fn a_start_position_decorates_the_source_it_wraps() {
         let source = StartAt::new(MemorySource::new("orders"), MemoryPosition::start());

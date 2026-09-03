@@ -31,12 +31,23 @@ a crate other than the working directory.
 `#[ruststream::app]` turns a builder function into a `main` that understands `run` and
 `asyncapi gen`, so there is no runtime boilerplate:
 
-```rust
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream};
+=== "Macros"
 
---8<-- "examples/quickstart.rs:app"
-```
+    ```rust
+    use ruststream::memory::MemoryBroker;
+    use ruststream::runtime::{AppInfo, RustStream};
+
+    --8<-- "examples/quickstart.rs:app"
+    ```
+
+=== "Manual"
+
+    ```rust
+    use ruststream::memory::MemoryBroker;
+    use ruststream::prelude::*;
+
+    --8<-- "examples/manual/quickstart.rs:app"
+    ```
 
 Because the dispatch lives in the generated binary, both `ruststream run` and a plain
 `cargo run -- run` start the service the same way. `ruststream run` is a convenience that finds the

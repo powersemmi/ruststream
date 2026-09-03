@@ -14,8 +14,8 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerResult, Layer, PublishExt,
-    RustStream, Settle,
+    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerOutcome, Layer, PublishExt,
+    RustStream,
 };
 use ruststream::{AckError, BuildContext, Field, FieldMut, HeaderMap, IncomingMessage};
 
@@ -110,7 +110,7 @@ async fn broker_contributed_field_reaches_handler_by_key() {
                 let seen = Arc::clone(&seen_clone);
                 async move {
                     seen.lock().expect("poisoned").push(tag);
-                    HandlerResult::Ack
+                    HandlerOutcome::ack()
                 }
             },
             HandlerMetadata::raw("orders"),
@@ -194,7 +194,7 @@ where
     M: Sync,
     H: Handler<M, Scratch>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Scratch>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Scratch>) -> HandlerOutcome {
         // No value should survive from a previous delivery: the dispatch loop builds a fresh
         // context each time.
         assert!(
@@ -233,7 +233,7 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
                     if let Some(n) = stamp {
                         seen.lock().expect("poisoned").push(n);
                     }
-                    HandlerResult::Ack
+                    HandlerOutcome::ack()
                 }
             })
             .with(layer)
@@ -278,7 +278,7 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
                     let seen = Arc::clone(&seen_clone);
                     async move {
                         *seen.lock().expect("poisoned") = prefix;
-                        HandlerResult::Ack
+                        HandlerOutcome::ack()
                     }
                 },
                 HandlerMetadata::raw("orders"),

@@ -13,9 +13,17 @@ Two architectural commitments shape the framework:
    defaults. Each broker crate owns its own `Config`, so an upstream change hits one broker crate,
    not the framework.
 
-```rust
---8<-- "examples/quickstart.rs"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/quickstart.rs"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/quickstart.rs"
+    ```
 
 `#[ruststream::app]` generates `main`, so `cargo run -- run` starts the service and
 `cargo run -- asyncapi gen` prints its AsyncAPI document - no runtime boilerplate.

@@ -6,7 +6,7 @@ use crate::OutgoingDestination;
 use crate::codec::DefaultCodec;
 use crate::{CallerName, Publisher};
 
-use super::builder::{HeadersUnset, Publish, RawBody, raw_of};
+use super::builder::{HeadersUnset, PublishBuilder, RawBody, raw_of};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use super::builder::{MessageBody, message_of};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
@@ -50,7 +50,7 @@ pub trait PublishExt: Publisher {
     fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<&'a Self, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a Self, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -58,14 +58,16 @@ pub trait PublishExt: Publisher {
     }
 
     /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with the crate's
-    /// default codec (name another one with `with_codec(..)`).
+    /// default codec (name another one with `with_codec(..)`). A
+    /// [`Serialized`](super::Serialized) value's bytes leave as they are instead - the wire is
+    /// the type's own ([`MessageWire`](super::MessageWire)), and no codec runs on it.
     ///
     /// Available when a codec feature is enabled; with none, every publish names its codec.
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> Publish<&'a Self, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {

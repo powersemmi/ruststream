@@ -17,20 +17,39 @@ With no clause, a subscriber uses the built-in defaults:
   (a nack without requeue) keeps a single malformed payload from taking the consumer down, which on
   an untrusted topic would be a poison-message or denial-of-service footgun. The same policy covers
   a [typed header contract](headers.md) that fails to parse - headers are the same class of
-  external input as the payload, so one `decode` key settles both.
+  external input as the payload, so one `decode` key settles both - and a payload type that
+  deserializes itself ([`#[derive(Deserialized)]`](subscribers.md#raw-subscribers)) whose own
+  constructor rejects the bytes: a failed flatbuffers root is the same class of bad input as a
+  failed JSON parse, so it settles by the same key.
 
-```rust
---8<-- "examples/failure_policy.rs:defaults"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:defaults"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:defaults"
+    ```
 
 ## Setting a policy
 
 `on_failure(panic = .., decode = ..)` overrides either key (both are optional; an omitted key keeps
 its default):
 
-```rust
---8<-- "examples/failure_policy.rs:tuned"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:tuned"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:tuned"
+    ```
 
 The policy values are:
 
@@ -47,9 +66,17 @@ processed rather than dropping or retrying it. Pick `retry` for decode failures 
 payload that can never decode will redeliver forever unless the broker has a dead-letter or
 max-deliveries policy.
 
-```rust
---8<-- "examples/failure_policy.rs:skip"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/failure_policy.rs:skip"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/failure_policy.rs:skip"
+    ```
 
 ## How it behaves
 
@@ -58,7 +85,7 @@ max-deliveries policy.
   restart; under the other policies it is settled and the subscriber keeps consuming. Catching only
   applies under an unwinding panic profile; with `panic = "abort"` the process is already gone.
 - A decode failure surfaces as a `Result`, so no unwinding is involved; the `decode` policy settles
-  the message directly. The same policy can also be set when building a handler by hand: the typed
+  the message directly. The same policy can also be set on the low-level `handle` SPI: the typed
   adapter `typed(codec, handler)` returns a `Typed` wrapper whose `on_decode_failure` accepts a
   `FailurePolicy` (see [Codecs](codecs.md#decode-failures)).
 - On the batch path the policy applies per batch decode (each element decodes independently) and to

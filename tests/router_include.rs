@@ -12,7 +12,7 @@ use common::{Order, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, PublishExt, Router, RustStream, layers::TracingLayer,
+    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, layers::TracingLayer,
 };
 use ruststream::{Publisher, subscriber};
 
@@ -45,29 +45,29 @@ static RI_BATCH: AtomicUsize = AtomicUsize::new(0);
 static RI_BATCH_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("ri-plain")]
-async fn ri_plain(_o: &Order) -> HandlerResult {
+async fn ri_plain(_o: &Order) -> HandlerOutcome {
     RI_PLAIN.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 // A broker source expression rather than a bare name: the definition is where a subscription
 // source belongs, and the attribute takes the broker's own source builder.
 #[subscriber(MemorySource::new("ri-on"))]
-async fn ri_on(_o: &Order) -> HandlerResult {
+async fn ri_on(_o: &Order) -> HandlerOutcome {
     RI_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
-#[subscriber(batch("ri-batch"))]
-async fn ri_batch(orders: &[Order]) -> HandlerResult {
+#[subscriber("ri-batch")]
+async fn ri_batch(orders: &[Order]) -> HandlerOutcome {
     RI_BATCH.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
-#[subscriber(batch(MemorySource::new("ri-batch-on")))]
-async fn ri_batch_on(orders: &[Order]) -> HandlerResult {
+#[subscriber(MemorySource::new("ri-batch-on"))]
+async fn ri_batch_on(orders: &[Order]) -> HandlerOutcome {
     RI_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// The default-codec router forms dispatch, whether the definition names its source as a topic
@@ -104,27 +104,27 @@ static RC_BATCH: AtomicUsize = AtomicUsize::new(0);
 static RC_BATCH_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("rc-plain")]
-async fn rc_plain(_o: &Order) -> HandlerResult {
+async fn rc_plain(_o: &Order) -> HandlerOutcome {
     RC_PLAIN.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber(MemorySource::new("rc-on"))]
-async fn rc_on(_o: &Order) -> HandlerResult {
+async fn rc_on(_o: &Order) -> HandlerOutcome {
     RC_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
-#[subscriber(batch("rc-batch"))]
-async fn rc_batch(orders: &[Order]) -> HandlerResult {
+#[subscriber("rc-batch")]
+async fn rc_batch(orders: &[Order]) -> HandlerOutcome {
     RC_BATCH.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
-#[subscriber(batch(MemorySource::new("rc-batch-on")))]
-async fn rc_batch_on(orders: &[Order]) -> HandlerResult {
+#[subscriber(MemorySource::new("rc-batch-on"))]
+async fn rc_batch_on(orders: &[Order]) -> HandlerOutcome {
     RC_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// The same four registrations decode through a chain codec named once with `with_codec`.
@@ -159,15 +159,15 @@ static RM_A: AtomicUsize = AtomicUsize::new(0);
 static RM_B: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("rm-a")]
-async fn rm_a(_o: &Order) -> HandlerResult {
+async fn rm_a(_o: &Order) -> HandlerOutcome {
     RM_A.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("rm-b")]
-async fn rm_b(_o: &Order) -> HandlerResult {
+async fn rm_b(_o: &Order) -> HandlerOutcome {
     RM_B.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// `merge` keeps both routers' registrations (and their metadata order: own first, merged

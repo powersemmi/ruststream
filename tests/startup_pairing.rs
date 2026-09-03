@@ -12,15 +12,15 @@ mod common;
 use std::time::Duration;
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::testing::expect_published;
 use ruststream::{Broker, subscriber};
 
 use common::{Event, connected};
 
 #[subscriber("pairing.seeded")]
-async fn consume(_event: &Event) -> HandlerResult {
-    HandlerResult::Ack
+async fn consume(_event: &Event) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 async fn expect_payload(observer: &ConnectedMemoryBroker, name: &str, expected: &[u8]) {

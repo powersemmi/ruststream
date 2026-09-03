@@ -7,7 +7,7 @@
 
 use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Router, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -17,23 +17,23 @@ struct Order {
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("audit")]
-async fn audit(order: &Order) -> HandlerResult {
+async fn audit(order: &Order) -> HandlerOutcome {
     println!("audited order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 // --8<-- [start:decode_failure]
 /// A payload that fails to decode is redelivered instead of dropped.
 #[subscriber("orders", on_failure(decode = retry))]
-async fn strict(order: &Order) -> HandlerResult {
+async fn strict(order: &Order) -> HandlerOutcome {
     println!("strictly decoded order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:decode_failure]
 

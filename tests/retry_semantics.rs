@@ -18,7 +18,7 @@ use std::{
 
 use common::{Order, order_bytes};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::subscriber;
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
@@ -30,16 +30,16 @@ static DELAY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Records the paused-clock instant of every attempt; defers the first one by `RETRY_DELAY`.
 #[subscriber("delayed")]
-async fn deferred(_o: &Order) -> HandlerResult {
+async fn deferred(_o: &Order) -> HandlerOutcome {
     let mut attempts = DELAY_ATTEMPTS.lock().unwrap();
     attempts.push(Instant::now());
     let first = attempts.len() == 1;
     drop(attempts);
     DELAY_NOTIFY.notify_one();
     if first {
-        HandlerResult::retry_after(RETRY_DELAY)
+        HandlerOutcome::retry_after(RETRY_DELAY)
     } else {
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 }
 
@@ -93,7 +93,7 @@ static POOL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// First sight of each id asks for an immediate retry; the redelivery is acked.
 #[subscriber("pool-retry", workers(3))]
-async fn pool_retry(order: &Order) -> HandlerResult {
+async fn pool_retry(order: &Order) -> HandlerOutcome {
     static FIRST_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
     let first = {
         let mut seen = FIRST_SEEN.lock().unwrap();
@@ -107,11 +107,11 @@ async fn pool_retry(order: &Order) -> HandlerResult {
     if first {
         POOL_RETRIED.fetch_add(1, Ordering::SeqCst);
         POOL_NOTIFY.notify_one();
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     POOL_ACKED.fetch_add(1, Ordering::SeqCst);
     POOL_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Retried deliveries re-enter a worker pool and complete: every message is nacked once
@@ -157,7 +157,7 @@ static LANE_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// First sight of each id asks for an immediate retry; the redelivery is acked.
 #[subscriber("lane-retry", workers(2, by_key))]
-async fn lane_retry(order: &Order) -> HandlerResult {
+async fn lane_retry(order: &Order) -> HandlerOutcome {
     static FIRST_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
     let first = {
         let mut seen = FIRST_SEEN.lock().unwrap();
@@ -170,11 +170,11 @@ async fn lane_retry(order: &Order) -> HandlerResult {
     };
     LANE_NOTIFY.notify_one();
     if first {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     LANE_ACKED.fetch_add(1, Ordering::SeqCst);
     LANE_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Retried deliveries re-enter keyed lanes and complete (per-key ordering across a retry is
@@ -229,14 +229,14 @@ static OVERLAP_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 static RELEASE: LazyLock<watch::Sender<bool>> = LazyLock::new(|| watch::Sender::new(false));
 
 /// Holds every batch until the test observes two of them in flight at once.
-#[subscriber(batch("overlap"), workers(2))]
-async fn overlap(_orders: &[Order]) -> HandlerResult {
+#[subscriber("overlap", workers(2))]
+async fn overlap(_orders: &[Order]) -> HandlerOutcome {
     BATCHES_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
     OVERLAP_NOTIFY.notify_one();
     let mut release = RELEASE.subscribe();
     let _ = release.wait_for(|released| *released).await;
     BATCHES_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A batch pool genuinely overlaps batches: with `workers(2)`, a second batch is pulled and

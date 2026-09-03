@@ -26,11 +26,19 @@ serde = { version = "1", features = ["derive"] }
 处理器是一个 `async fn`，它的第一个参数就是解码后的载荷。`#[subscriber]` 宏把它变成一个可挂载的
 定义，名字与函数同名。
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:order"
-```
+=== "宏"
 
-处理器返回一个 [`HandlerResult`](../guides/subscribers.md#acking)：要么是 `Ack`，要么是一个丢弃或
+    ```rust title="src/orders.rs"
+    --8<-- "examples/tutorial/orders.rs:order"
+    ```
+
+=== "手写"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/manual/tutorial/orders.rs:order"
+    ```
+
+处理器返回一个 [`HandlerOutcome`](../guides/subscribers.md#acking)：要么是 ack，要么是一个丢弃或
 重新入队该消息的 `nack`。返回 `()` 或 `Result<(), E>` 同样可行，它们会转换成一个结果（`Ok` 表示
 ack，`Err` 表示丢弃）。
 
@@ -39,9 +47,17 @@ ack，`Err` 表示丢弃）。
 
 ## 3. 接入应用
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/first_app.rs:app"
-```
+=== "宏"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/first_app.rs:app"
+    ```
+
+=== "手写"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/first_app.rs:app"
+    ```
 
 宏把 `handle` 变成一个与函数同名的值，所以你直接导入它并原样传入即可。
 
@@ -61,16 +77,32 @@ cargo run -- run
 
 要发布一条回复，就返回回复值，并用 `publish(..)` 指明目的地：
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:confirm"
-```
+=== "宏"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/tutorial/orders.rs:confirm"
+    ```
+
+=== "手写"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/manual/tutorial/orders.rs:confirm"
+    ```
 
 把它挂在 `handle` 旁边，用同一个普通的 `include` 即可：回复会经由 Broker 的默认发布策略发出，编码
 用的是默认编解码器。
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/reply_app.rs:reply"
-```
+=== "宏"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/reply_app.rs:reply"
+    ```
+
+=== "手写"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/reply_app.rs:reply"
+    ```
 
 完整的图景（包括在处理器内部发布）参见[发布与回复](../guides/publishing.md)。
 
@@ -78,17 +110,33 @@ cargo run -- run
 
 随着处理器变多，把它们放进各自的模块，再汇总进一个 [`Router`](../guides/routing.md)：
 
-```rust title="src/routes.rs"
---8<-- "examples/tutorial/routes.rs:routes"
-```
+=== "宏"
+
+    ```rust title="src/routes.rs"
+    --8<-- "examples/tutorial/routes.rs:routes"
+    ```
+
+=== "手写"
+
+    ```rust title="src/routes.rs"
+    --8<-- "examples/manual/tutorial/routes.rs:routes"
+    ```
 
 路由器上的注册要以一个显式的终结调用收尾。`.publisher(..)` 指定回复的接线方式 - 发布策略是纯粹的
-声明，所以路由器依旧不需要 Broker - 而 `.mount()` 则采用 Broker 自带的默认发布策略，也就是把第 4 步
+声明，所以路由器依旧不需要 Broker - 而 `.build()` 则采用 Broker 自带的默认发布策略，也就是把第 4 步
 自动拿到的那一份显式写出来。路由器的其余接口参见[路由](../guides/routing.md)。
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
-```
+=== "宏"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/main.rs:main"
+    ```
+
+=== "手写"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/main.rs:main"
+    ```
 
 ## 6. 查看 AsyncAPI 文档
 

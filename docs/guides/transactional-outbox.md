@@ -19,9 +19,17 @@ cargo run --example http_outbox --features macros,memory,json
 Instead of publishing on the request path, the endpoint records the event next to the business
 write, atomically. A relay then moves recorded events to the broker:
 
-```rust
---8<-- "examples/http_outbox.rs:event"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:event"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:event"
+    ```
 
 ```rust
 --8<-- "examples/http_outbox.rs:store"

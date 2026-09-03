@@ -31,15 +31,31 @@ cross-broker cascade. Then you assert.
 
 The handler under test (in a real service it lives in your handler module and the test imports it):
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:handler"
+    ```
 
 The test:
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:test"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:test"
+    ```
 
 !!! info "This test runs in this repository's CI"
     The code above is embedded from
@@ -62,8 +78,9 @@ single-broker apps and reports `TestError::Ambiguous` when more than one broker 
 
 Input goes in through the same publish builder the service publishes through: `message(&value)`
 encodes a `#[derive(Outgoing)]` value, `raw(bytes)` sends bytes as they are (the undecodable-payload
-case, and the only form a raw subscriber takes), `with_headers(&meta)` attaches a typed header
-contract, and `to(name)` names the subject when the value's type does not.
+case, and the way to feed a handler that
+[deserializes the bytes itself](subscribers.md#raw-subscribers)), `with_headers(&meta)` attaches
+a typed header contract, and `to(name)` names the subject when the value's type does not.
 
 ### Asserting on a handler
 
@@ -74,7 +91,7 @@ contract, and `to(name)` names the subject when the value's type does not.
 | `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | the delivery count |
 | `with(&value)` | the most recent delivery decodes to `value` (with the default codec) |
 | `with_raw(bytes)` | the most recent raw payload |
-| `settled(HandlerResult::Ack)` | how it settled |
+| `settled(HandlerOutcome::ack())` | how it settled |
 | `assert_outcome(Outcome::Drop)` | the classified outcome (ack / nack / drop / decode-failure / panic) |
 | `panicked()` | the handler panicked on the last delivery |
 | `assert_last_failed_to_decode()` | the payload failed to decode |
@@ -133,9 +150,17 @@ A handler that returns `retry_after(delay)` schedules a delayed redelivery. `pub
 immediate `NackAfter` settlement and returns; the redelivery is driven separately by advancing a
 paused clock:
 
-```rust
---8<-- "tests/testing_harness.rs:retry_after"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/testing_harness.rs:retry_after"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_testing_harness.rs:retry_after"
+    ```
 
 ## Integration tests against a real broker
 

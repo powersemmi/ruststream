@@ -1,5 +1,6 @@
-//! Integration tests for the batch subscriber pipeline: the `#[subscriber(batch(..))]` form,
-//! batch mounting through `include`, per-element decode failures, and the `Buffered` adapter.
+//! Integration tests for the batch subscriber pipeline: the form the macro reads off a `&[T]`
+//! payload parameter, batch mounting through `include`, per-element decode failures, and the
+//! `Buffered` adapter.
 //!
 //! Apps come up through `start()`, which resolves only after subscriptions are open, so each
 //! message is published exactly once; the tests wait on the handlers' recorded state.
@@ -17,7 +18,9 @@ use std::{
 
 use common::{Order, connected, order_bytes, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, Router, RustStream, TypedPublisher};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, TypedPublisher,
+};
 use ruststream::testing::expect_published;
 use ruststream::{Buffered, Name, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
@@ -25,13 +28,13 @@ use serde::{Deserialize, Serialize};
 static BATCHES: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
 
 /// Settles a whole page of orders at once.
-#[subscriber(batch("orders"))]
-async fn bill(orders: &[Order]) -> HandlerResult {
+#[subscriber("orders")]
+async fn bill(orders: &[Order]) -> HandlerOutcome {
     BATCHES
         .lock()
         .unwrap()
         .push(orders.iter().map(|o| o.id).collect());
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -78,10 +81,10 @@ async fn batch_macro_def_receives_batches() {
 static GOOD_IDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 /// Records the ids that survived decoding.
-#[subscriber(batch("mixed"))]
-async fn sift(orders: &[Order]) -> HandlerResult {
+#[subscriber("mixed")]
+async fn sift(orders: &[Order]) -> HandlerOutcome {
     GOOD_IDS.lock().unwrap().extend(orders.iter().map(|o| o.id));
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -134,10 +137,10 @@ static BUFFERED_SEEN: AtomicUsize = AtomicUsize::new(0);
 /// A handler mounted on a `Buffered`-wrapped source directly in the macro. The macro recovers
 /// the source type from the constructor path, so a generic source spells its parameter
 /// (turbofish).
-#[subscriber(batch(Buffered::<Name>::new(Name::new("events")).max_size(nonzero!(2))))]
-async fn drain(events: &[Order]) -> HandlerResult {
+#[subscriber(Buffered::<Name>::new(Name::new("events")).max_size(nonzero!(2)))]
+async fn drain(events: &[Order]) -> HandlerOutcome {
     BUFFERED_SEEN.fetch_add(events.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -171,16 +174,16 @@ static SETTLED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 static RETRIED_ONCE: AtomicBool = AtomicBool::new(false);
 
 /// Retries order 11 on first sight; settles everything else, per element.
-#[subscriber(batch("pages"))]
-async fn reconcile(orders: &[Order]) -> Vec<HandlerResult> {
+#[subscriber("pages")]
+async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()
         .map(|o| {
             if o.id == 11 && !RETRIED_ONCE.swap(true, Ordering::SeqCst) {
-                HandlerResult::retry()
+                HandlerOutcome::retry()
             } else {
                 SETTLED.lock().unwrap().push(o.id);
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             }
         })
         .collect()
@@ -236,8 +239,8 @@ struct Confirmation {
 
 /// Confirms a page of orders. The Result form gives explicit ack control; the whole-batch
 /// rejection path is covered by the runtime unit tests.
-#[subscriber(batch("requests"), publish("confirmations"))]
-async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerResult> {
+#[subscriber("requests", publish("confirmations"))]
+async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerOutcome> {
     Ok(orders
         .iter()
         .map(|o| Confirmation {
@@ -248,7 +251,7 @@ async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerResult> {
 }
 
 /// The plain reply form: every page is confirmed (compile coverage for `-> Vec<Reply>`).
-#[subscriber(batch("requests"), publish("audit"))]
+#[subscriber("requests", publish("audit"))]
 async fn audit(orders: &[Order]) -> Vec<Confirmation> {
     orders
         .iter()
@@ -330,14 +333,14 @@ struct Tally {
 
 static SCALED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
-#[subscriber(batch("scale"))]
-async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> HandlerResult {
+#[subscriber("scale")]
+async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> HandlerOutcome {
     let multiplier = ctx.state().multiplier;
     SCALED
         .lock()
         .unwrap()
         .extend(orders.iter().map(|o| o.id * multiplier));
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

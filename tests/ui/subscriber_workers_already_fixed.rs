@@ -1,5 +1,5 @@
 use ruststream::nonzero;
-use ruststream::runtime::{HandlerResult, SubscriberSettings};
+use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -10,9 +10,9 @@ struct Order {
 
 // The attribute fixes the worker policy, so the mount site cannot disagree with it.
 #[subscriber("orders", workers(2))]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {

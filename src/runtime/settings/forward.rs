@@ -17,13 +17,13 @@ use std::marker::PhantomData;
 use crate::ConnectedBroker;
 
 use super::SubscriberBuilder;
-use crate::runtime::batch::{BatchDef, BatchResult, BatchWithHeadersDef};
+use crate::runtime::batch::{BatchDef, BatchResult};
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handler::{HandlerResult, Settle};
+use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::inject::{InjectCall, InjectDef};
 use crate::runtime::input::InputKind;
 use crate::runtime::metadata::OutgoingMessageMetadata;
@@ -78,7 +78,7 @@ macro_rules! forward_outgoing {
     };
 }
 
-impl<Def, Src, State> SubscriberDef for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC> SubscriberDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: SubscriberDef,
     Src: Clone,
@@ -95,12 +95,13 @@ where
     }
 }
 
-impl<Def, Src, State> BatchDef for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC> BatchDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchDef,
     Src: Clone,
 {
     type Input = <Def as BatchDef>::Input;
+    type Context = <Def as BatchDef>::Context;
     type Handler = <Def as BatchDef>::Handler;
     type Source = Src;
 
@@ -111,19 +112,12 @@ where
     }
 }
 
-impl<Def, Src, State> BatchWithHeadersDef for SubscriberBuilder<Def, Src, State>
-where
-    Def: BatchWithHeadersDef,
-    Src: Clone,
-{
-    type Headers = <Def as BatchWithHeadersDef>::Headers;
-}
-
-impl<Def, Src, State> InjectDef for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC> InjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectDef,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     type Input = <Def as InjectDef>::Input;
     type Context = <Def as InjectDef>::Context;
@@ -134,27 +128,29 @@ where
     forward_outgoing!(InjectDef);
 }
 
-impl<Def, Src, State, S> InjectCall<S> for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC, S> InjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectCall<S>,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     fn call(
         &self,
         input: &<<Def as InjectDef>::Input as InputKind>::Target,
         injections: &<Def as InjectDef>::Injections,
         ctx: &mut Context<'_, <Def as InjectDef>::Context, S>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + Send {
         self.def.call(input, injections, ctx)
     }
 }
 
-impl<Def, Src, State> PublishingDef for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC> PublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingDef,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     type Input = <Def as PublishingDef>::Input;
     type Injections = <Def as PublishingDef>::Injections;
@@ -170,27 +166,29 @@ where
     }
 }
 
-impl<Def, Src, State, S> PublishingCall<S> for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC, S> PublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingCall<S>,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     fn call(
         &self,
         input: &<<Def as PublishingDef>::Input as InputKind>::Target,
         injections: &<Def as PublishingDef>::Injections,
         ctx: &mut Context<'_, <Def as PublishingDef>::Context, S>,
-    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> + Send {
         self.def.call(input, injections, ctx)
     }
 }
 
-impl<Def, Src, State> BatchInjectDef for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC> BatchInjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectDef,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     type Input = <Def as BatchInjectDef>::Input;
     type Source = Src;
@@ -200,11 +198,12 @@ where
     forward_outgoing!(BatchInjectDef);
 }
 
-impl<Def, Src, State, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectCall<S>,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     fn call(
         &self,
@@ -216,11 +215,12 @@ where
     }
 }
 
-impl<Def, Src, State> BatchPublishingDef for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC> BatchPublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingDef,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     type Input = <Def as BatchPublishingDef>::Input;
     type Injections = <Def as BatchPublishingDef>::Injections;
@@ -235,39 +235,41 @@ where
     }
 }
 
-impl<Def, Src, State, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingCall<S>,
     Src: Clone + Send + Sync,
     State: Send + Sync,
+    DC: Send + Sync,
 {
     fn call(
         &self,
         batch: &[<<Def as BatchPublishingDef>::Input as InputKind>::Owned],
         injections: &<Def as BatchPublishingDef>::Injections,
         ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, HandlerResult>> + Send
+    ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, BatchResult>> + Send
     {
         self.def.call(batch, injections, ctx)
     }
 }
 
-impl<Def: HasSlots, Src, State> HasSlots for SubscriberBuilder<Def, Src, State> {
+impl<Def: HasSlots, Src, State, DC> HasSlots for SubscriberBuilder<Def, Src, State, DC> {
     type Markers = Def::Markers;
 }
 
 // Binding the slots instantiates the publisher-generic definition; the settings and the source
 // ride along, so the bound value is the same builder over the bound definition.
-impl<Def, Src, State, C, Sources> BindSlots<C, Sources> for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, DC, C, Sources> BindSlots<C, Sources>
+    for SubscriberBuilder<Def, Src, State, DC>
 where
     C: ConnectedBroker,
     Def: BindSlots<C, Sources>,
 {
-    type Bound = SubscriberBuilder<Def::Bound, Src, State>;
+    type Bound = SubscriberBuilder<Def::Bound, Src, State, DC>;
     type Extra = Def::Extra;
 
     fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra) {
-        let (def, source, workers, failures) = self.into_parts();
+        let (def, source, workers, failures, codec) = self.into_parts();
         let (bound, extra) = def.bind(sources);
         (
             SubscriberBuilder {
@@ -275,6 +277,7 @@ where
                 source,
                 workers,
                 failures,
+                codec,
                 _state: PhantomData,
             },
             extra,

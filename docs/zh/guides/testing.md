@@ -26,15 +26,31 @@ RustStream 服务在两个层面上测试：
 
 被测的处理器（在真实服务里它位于你的处理器模块中，由测试导入）：
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:handler"
+    ```
 
 测试本身：
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:test"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:test"
+    ```
 
 !!! info "该测试会在本仓库的 CI 中运行"
     上面的代码嵌入自
@@ -56,7 +72,8 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 Broker，它就报告 `TestError::Ambiguous`。
 
 输入走的是服务自己发布时用的同一个发布构建器：`message(&value)` 编码带 `#[derive(Outgoing)]` 的值，
-`raw(bytes)` 原样发送字节（负载无法解码的场景，也是裸订阅者唯一可用的写法），`with_headers(&meta)`
+`raw(bytes)` 原样发送字节（负载无法解码的场景，也是把数据送给[自己反序列化字节](subscribers.md#raw-subscribers)
+的处理器的方式），`with_headers(&meta)`
 附上类型化的消息头契约，而当值的类型没有声明目的地时，由 `to(name)` 指定 subject。
 
 ### 对处理器做断言
@@ -68,7 +85,7 @@ Broker，它就报告 `TestError::Ambiguous`。
 | `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | 投递次数 |
 | `with(&value)` | 最近一次投递解码（用默认编解码器）之后等于 `value` |
 | `with_raw(bytes)` | 最近一次的原始载荷 |
-| `settled(HandlerResult::Ack)` | 结算的方式 |
+| `settled(HandlerOutcome::ack())` | 结算的方式 |
 | `assert_outcome(Outcome::Drop)` | 归类之后的结算结果（ack / nack / drop / 解码失败 / panic） |
 | `panicked()` | 处理器在最后一次投递上发生了 panic |
 | `assert_last_failed_to_decode()` | 载荷解码失败 |
@@ -123,9 +140,17 @@ Broker，它就报告 `TestError::Ambiguous`。
 返回 `retry_after(delay)` 的处理器会安排一次延迟重新投递。`publish` 记录下当场的 `NackAfter` 结算并
 返回；重新投递则由推进一个暂停的时钟单独驱动：
 
-```rust
---8<-- "tests/testing_harness.rs:retry_after"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/testing_harness.rs:retry_after"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_testing_harness.rs:retry_after"
+    ```
 
 ## 针对真实 Broker 的集成测试 { #integration-tests-against-a-real-broker }
 

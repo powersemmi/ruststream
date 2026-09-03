@@ -18,9 +18,17 @@ The shared application state is one typed value `S` (a struct you define, or `()
 needs none). It is produced by an `on_startup` hook - the value the hook returns becomes the state,
 fixing the app's state type:
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
 the third `Context` generic (`Context<'_, C, S>`), and the runtime only lets that handler mount on
@@ -46,22 +54,38 @@ instead. See [Lifespan](lifespan.md) for the startup-hook contract.
 Reaching for a dependency through `ctx.state().field` always works, but a handler can also take it
 as a parameter. Any handler parameter after the message (and the optional `&mut Context`) whose type
 implements `FromContext` is an **extractor**: the runtime resolves it from the delivery before the
-body runs, and a failed extraction settles the message by the rejection's `HandlerResult` without
+body runs, and a failed extraction settles the message by the rejection's `HandlerOutcome` without
 running the body.
 
 To inject a piece of the state, derive `FromRef` on the state and take `State<T>` in the handler -
 no extractor impl by hand. `State<T>` resolves for any field type (`T: FromRef<S>`), including types
 from other crates - a broker publisher, a client pool:
 
-```rust
---8<-- "examples/from_context.rs:state"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/from_context.rs:state"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:state"
+    ```
 
 The handler takes `State<FieldType>`, with no `ctx.state()` reach-through:
 
-```rust
---8<-- "examples/from_context.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/from_context.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/from_context.rs:handler"
+    ```
 
 A field that should not be injectable, or whose type another field already claims, opts out with
 `#[from_ref(skip)]`; two fields may not share a type, since injection by type would be ambiguous. For
@@ -75,9 +99,17 @@ A `#[subscriber]` handler opts in by declaring a second parameter after the payl
 the handler needs nothing but the message. The macro resolves the type itself, so `Context` needs
 no import when it appears only in handler signatures:
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 What the context exposes:
 
@@ -92,8 +124,8 @@ What the context exposes:
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 
-Closure handlers (the manual `typed(codec, |msg, ctx| ...)` form) always take the context as their
-second argument.
+Closure handlers (the low-level `typed(codec, |msg, ctx| ...)` form) always take the context as
+their second argument.
 
 ## Per-delivery context
 
@@ -117,6 +149,15 @@ downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value
 serializing it into the headers. The context is built fresh per delivery, so one delivery's values
 never leak into the next.
 
+A [batch handler](subscribers.md#batch-subscribers) gets one context per page, built off the
+page's first delivery by `BuildBatchContext`, and it carries the broker's *subscription-scoped*
+fields only - a seek handle, a stream name - which a page body names as its context type
+(`ctx: &mut Context<'_, MemoryBatchContext>` on the in-memory broker) and reads with
+`ctx.context(..)`. Per-delivery data stays out: a page spans many deliveries, so a position or a
+header rides the elements instead. The per-delivery and page context types are distinct, so a
+page body asking for the per-delivery one does not compile, and a broker with nothing
+subscription-scoped leaves pages on the `()` default.
+
 ## Context fields as parameters
 
 A field can also arrive as a handler argument, the way `State<T>` injects a state component: the
@@ -128,9 +169,17 @@ first `Ctx` key in the signature.
 --8<-- "examples/ctx_extractor.rs:key"
 ```
 
-```rust
---8<-- "examples/ctx_extractor.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/ctx_extractor.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/ctx_extractor.rs:handler"
+    ```
 
 Three things to know:
 
@@ -155,9 +204,17 @@ reads the enriched result:
 Mounted globally, the layer runs before every handler, so `handle` above always finds
 `x-request-id`:
 
-```rust
---8<-- "examples/context.rs:app"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:app"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:app"
+    ```
 
 Two boundaries to keep in mind:
 
@@ -182,9 +239,17 @@ Sometimes a handler needs a side effect to fire *after* the message has been set
 non-critical notification, slow follow-up work, a cache warm-up - without it gating the ack
 decision or affecting redelivery. Register one on the context:
 
-```rust
---8<-- "examples/context.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/context.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/context.rs:handler"
+    ```
 
 The handler above ends with `ctx.after_ack(..)`: the continuation runs only once the broker has
 acked the message, off the delivery path, so it never delays the ack or the next delivery.
@@ -192,14 +257,14 @@ acked the message, off the delivery path, so it never delays the ack or the next
 Three forms, all additive:
 
 - `ctx.after(outcome).then(fut)` - runs only if the message settles by `outcome`, matched **by
-  kind**. The four kinds are distinct: `Ack`, `drop()` (nack, no requeue), `retry()` (nack,
+  kind**. The four kinds are distinct: `ack()`, `drop()` (nack, no requeue), `retry()` (nack,
   requeue), and `retry_after()` (matched regardless of the delay). Drop and retry are separate
   mechanics, so a hook gated on `drop()` does not fire on a `retry()` settlement, and vice versa.
-- `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerResult::Ack).then(fut)`.
+- `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerOutcome::ack()).then(fut)`.
 - `ctx.after_settle(fut)` - runs after the message settles, whatever the outcome.
 
-A handler can also attach a continuation through its return value: any outcome converts into a
-`Settle` with `.and_after(fut)`, which is how a batch handler gets per-element continuations. See
+A handler can also attach a continuation through its return value: any outcome carries one through
+`.and_after(fut)`, which is how a batch handler gets per-element continuations. See
 [Post-settle continuations](subscribers.md#post-settle-continuations) for that form; the semantics
 below apply to both.
 

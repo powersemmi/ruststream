@@ -17,9 +17,17 @@ cargo run --example http_outbox --features macros,memory,json
 Both sides come up in `main`. `start()` brings the messaging side up in the background and returns
 a `RunningApp` handle that coordinates the two lifetimes:
 
-```rust
---8<-- "examples/http_outbox.rs:wiring"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:wiring"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:wiring"
+    ```
 
 `start()` runs the state producer, connects the brokers and opens the subscriptions. It resolves
 once the service is running, so a startup failure surfaces before the HTTP side accepts traffic.
@@ -57,9 +65,17 @@ with whatever state the rest of the router holds - the full wiring above registe
 The subscriber side is an ordinary handler; the same service consumes what its HTTP endpoints
 produce, and any other service subscribed to the broker sees the events too:
 
-```rust
---8<-- "examples/http_outbox.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:handler"
+    ```
 
 ## Publishing straight from a request
 

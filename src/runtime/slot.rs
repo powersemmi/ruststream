@@ -18,16 +18,14 @@
 //!   compile error naming the slot.
 
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::time::Duration;
 
 use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publish::{HeadersUnset, MessageBody, Publish, RawBody, message_of, raw_of};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
-    CallerName, ConnectedBroker, HeaderMap, OutgoingDestination, OutgoingMessage,
-    OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
+    ConnectedBroker, HeaderMap, OutgoingMessage, OwnedTransactions, Publisher, RequestReply,
+    TransactionalPublisher,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -89,7 +87,7 @@ impl OutSlot for DefaultSlot {
 /// leave through a slot identified by `Slot`.
 ///
 /// `#[derive(OutSlot)]` emits one impl per listed type, and the publish builder's typed entry
-/// point ([`TypedSlot::message`]) requires it. That is what keeps
+/// point ([`Slot::message`](crate::runtime::Slot::message)) requires it. That is what keeps
 /// the generated document honest: an unrestricted `Out<impl Publisher, Marker>` reports the
 /// marker's dictionary as what the handler sends, so a message outside it would be a publish the
 /// document never declared.
@@ -246,7 +244,7 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
 
 /// Membership of a message type in an `Out` parameter's declared message list.
 ///
-/// The declaration is a tuple listing types, a set-defining type (a `#[derive(Message)]` type
+/// The declaration is a tuple listing types, a set-defining type (a `#[derive(MessageInfo)]` type
 /// declares itself, a `#[derive(OutMessages)]` enum declares its variants' models), or the
 /// unrestricted `()` (any dictionary type). The `Index` parameter is inferred per call, like
 /// the slot-binding machinery's positions; a duplicate type in a declaration is rejected where
@@ -347,236 +345,10 @@ impl<M: OutSlot> OutMessages<M> for () {
     }
 }
 
-/// The live value behind an [`Out`](super::Out) parameter: the slot's publisher plus the scope
-/// codec, pinned to the parameter's declared message set.
-///
-/// The handler receives it destructured (`Out(out)`) and publishes declared messages with the
-/// builder ([`message`](Self::message) for a value, [`raw`](Self::raw) for bytes); the declared
-/// publisher capability stays reachable through `Deref` (transactions, broker-defined capability
-/// traits). You never name this type: the `#[subscriber]` macro wires it from the parameter
-/// declaration.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-/// # mod demo {
-/// use ruststream::runtime::{HandlerResult, Out};
-/// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
-/// use serde::{Deserialize, Serialize};
-/// # #[derive(serde::Deserialize)]
-/// # struct Event { id: u64 }
-///
-/// #[derive(Serialize, Deserialize)]
-/// struct DoneMeta {
-///     task_id: u64,
-/// }
-///
-/// #[derive(Outgoing, Serialize)]
-/// #[outgoing(name = "chunks.progress")]
-/// struct Progress {
-///     percent: u8,
-/// }
-///
-/// #[derive(Outgoing, Serialize)]
-/// #[outgoing(name = "chunks.done", headers = DoneMeta)]
-/// struct ChunkDone {
-///     output_key: String,
-/// }
-///
-/// #[derive(OutSlot)]
-/// #[publishes(ChunkDone, Progress)]
-/// struct Events;
-///
-/// #[subscriber("chunks.raw")]
-/// async fn convert(
-///     event: &Event,
-///     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-/// ) -> HandlerResult {
-///     // No headers contract on Progress: publish straight away.
-///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-///         return HandlerResult::retry();
-///     }
-///     // ChunkDone declares DoneMeta: with_headers is demanded by the contract.
-///     let done = ChunkDone { output_key: format!("out/{}", event.id) };
-///     let meta = DoneMeta { task_id: event.id };
-///     if out.message(&done).with_headers(&meta).publish().await.is_err() {
-///         return HandlerResult::retry();
-///     }
-///     HandlerResult::Ack
-/// }
-/// # }
-/// ```
-#[derive(Debug)]
-pub struct TypedSlot<P, Body, M, EncodeCodec> {
-    slot: P,
-    codec: EncodeCodec,
-    _pinned: PhantomData<fn() -> (Body, M)>,
-}
-
-impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
-    pub(crate) fn new(slot: P, codec: EncodeCodec) -> Self {
-        Self {
-            slot,
-            codec,
-            _pinned: PhantomData,
-        }
-    }
-}
-
-// The declared capability rides the publisher inside; Deref keeps its whole surface (the
-// byte-level publish, transactions, broker-defined capability traits) reachable without
-// re-delegating every trait on this wrapper.
-impl<P, Body, M, EncodeCodec> Deref for TypedSlot<P, Body, M, EncodeCodec> {
-    type Target = P;
-
-    fn deref(&self) -> &P {
-        &self.slot
-    }
-}
-
-// The core capability vocabulary is also delegated directly (not only through Deref), so an
-// injected slot passes into generic positions demanding the capability (`fn f(p: &impl
-// Publisher)`), exactly like the wrapped slot publisher itself.
-impl<P, Body, M, EncodeCodec> Publisher for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: Publisher,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    type Error = P::Error;
-
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        self.slot.publish(msg).await
-    }
-
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        self.slot.base_headers()
-    }
-}
-
-impl<P, Body, M, EncodeCodec> TransactionalPublisher for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: TransactionalPublisher,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    async fn begin_transaction(&self) -> Result<(), Self::Error> {
-        self.slot.begin_transaction().await
-    }
-
-    async fn commit(&self) -> Result<(), Self::Error> {
-        self.slot.commit().await
-    }
-
-    async fn abort(&self) -> Result<(), Self::Error> {
-        self.slot.abort().await
-    }
-}
-
-impl<P, Body, M, EncodeCodec> OwnedTransactions for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: OwnedTransactions,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    type Transaction = P::Transaction;
-
-    async fn transaction(&self) -> Result<Self::Transaction, Self::Error> {
-        self.slot.transaction().await
-    }
-}
-
-impl<P, Body, M, EncodeCodec> RequestReply for TypedSlot<P, Body, M, EncodeCodec>
-where
-    P: RequestReply,
-    M: OutSlot,
-    EncodeCodec: Send + Sync,
-{
-    type Reply = P::Reply;
-
-    async fn request(
-        &self,
-        msg: OutgoingMessage<'_>,
-        timeout: Duration,
-    ) -> Result<Self::Reply, Self::Error> {
-        self.slot.request(msg, timeout).await
-    }
-}
-
-impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
-    /// Starts a typed publish through the slot, encoded with the include site's scope codec.
-    ///
-    /// The message type has to be in the marker's `#[publishes(..)]` dictionary (see
-    /// [`PublishedThrough`]) and in the parameter's declared message set; everything else - the
-    /// destination and the header contract - comes from the type's `#[derive(Outgoing)]`
-    /// declaration, so the builder demands exactly the positions that declaration leaves open
-    /// (see [`Publish`]).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-    /// # mod demo {
-    /// use ruststream::runtime::{HandlerResult, Out};
-    /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
-    /// use serde::Serialize;
-    /// # #[derive(serde::Deserialize)]
-    /// # struct Event { id: u64 }
-    ///
-    /// #[derive(Outgoing, Serialize)]
-    /// #[outgoing(name = "chunks.progress")]
-    /// struct Progress {
-    ///     percent: u8,
-    /// }
-    ///
-    /// #[derive(OutSlot)]
-    /// #[publishes(Progress)]
-    /// struct Events;
-    ///
-    /// #[subscriber("chunks.raw")]
-    /// async fn convert(
-    ///     event: &Event,
-    ///     Out(out): Out<impl Publisher, Events, Progress>,
-    /// ) -> HandlerResult {
-    ///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-    ///         return HandlerResult::retry();
-    ///     }
-    ///     HandlerResult::Ack
-    /// }
-    /// # }
-    /// ```
-    pub fn message<'a, T, Index>(
-        &'a self,
-        value: &'a T,
-    ) -> Publish<&'a P, MessageBody<'a, T>, &'a EncodeCodec, HeadersUnset, T::Form>
-    where
-        Body: ContainsMessage<T, Index>,
-        T: OutgoingDestination + PublishedThrough<M>,
-    {
-        message_of(&self.slot, value, &self.codec)
-    }
-
-    /// Starts a byte publish through the slot: the payload travels as it is, to the destination
-    /// named with `to(..)`.
-    ///
-    /// The declared message set does not restrict this path - bytes carry no message type - so
-    /// it stays the escape hatch for a payload the service already holds encoded.
-    pub fn raw<'a, B>(
-        &'a self,
-        payload: &'a B,
-    ) -> Publish<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
-    where
-        B: AsRef<[u8]> + ?Sized,
-    {
-        raw_of(&self.slot, payload)
-    }
-}
-
 /// The "not bound yet" placeholder of the `Out` slot marked `M` at the include site.
 ///
 /// The marker rides in the type so the compile error of an incomplete registration (a
-/// `.mount()` whose attachment tuple still contains a `MissingSlot<..>`) names the slot that
+/// `.build()` whose attachment tuple still contains a `MissingSlot<..>`) names the slot that
 /// was forgotten. A value of this type never reaches the runtime: committing requires every
 /// position bound.
 #[doc(hidden)]
@@ -667,13 +439,13 @@ pub struct SlotPos<const N: usize>;
 /// Implemented by `#[subscriber]` next to [`HasSlots`]: given the source tuple (in marker
 /// order), it names the fully-applied definition type - each slot's publisher is
 /// [`SlotPublisher`] over the source's [`PublishPolicy::Live`](crate::PublishPolicy::Live) - and pads the sources into the
-/// definition's injection-extra tuple (a unit for a trailing `Seek` parameter). The connected
+/// definition's injection-extra tuple. The connected
 /// broker type `C` is the pairing target the publisher types are computed against.
 pub trait BindSlots<C: ConnectedBroker, Sources>: Sized {
     /// The publisher-applied definition type.
     type Bound;
 
-    /// The extra tuple [`FromStartup`](super::FromStartup) resolves the injections against:
+    /// The extra tuple the startup resolution (`FromStartup`) resolves the injections against:
     /// the sources, padded to the injection tuple's arity.
     type Extra;
 

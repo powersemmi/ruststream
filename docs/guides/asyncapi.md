@@ -34,15 +34,30 @@ hand-written call produce the same document.
 A handler's payload type appears as a schema when it derives `JsonSchema`. RustStream re-exports
 `schemars`, so you do not need a direct dependency:
 
-```rust
---8<-- "examples/asyncapi_http.rs:payload"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:payload"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:payload"
+    ```
 
 A type without `JsonSchema` still works as a handler payload; it contributes no schema to the
 document. Generating the document logs a `WARN` per such gap (once per handler or outgoing
-declaration, naming the subscription or channel and the type; deliberately schema-free
-raw-bytes messages are not reported), and `Spec::messages_without_schema()` lists the affected
-message components - assert it empty in a test to gate schema coverage in CI.
+declaration, naming the subscription or channel and the type), and
+`Spec::messages_without_schema()` lists the affected message components - assert it empty in a
+test to gate schema coverage in CI.
+
+A message that carries its own wire format is the deliberate exception. A
+[`Deserialized`](subscribers.md#raw-subscribers) input, an outgoing type on the serialized wire -
+a [`#[derive(Serialized)]`](subscribers.md#raw-subscribers) reply, or a `Serialized` member of a
+slot's `#[publishes(..)]` dictionary - is documented under its own name with no payload schema;
+generating the document does not warn about it and `messages_without_schema()` does not list it:
+the bytes are the format, so a schema would have nothing to say.
 
 Beyond payloads, the document also carries **headers schemas** (from a handler's
 `Headers<T>` parameter or a type's declared `headers = ..` contract) and **`send`
@@ -63,22 +78,22 @@ the description falls back to the handler's doc comment (which also documents th
 operation).
 
 To control the metadata explicitly - including for types without `JsonSchema` - implement the
-`Message` trait, which takes precedence over the schema; or derive it, which uses the type's name
-and doc comment:
+`MessageInfo` trait, which takes precedence over the schema; or derive it, which uses the type's
+name and doc comment:
 
-<!-- inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema -->
+<!-- inline-rust: minimal MessageInfo-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that MessageInfo takes precedence over the schema -->
 ```rust
-use ruststream::Message;
+use ruststream::MessageInfo;
 
 /// An order placed by a customer.
-#[derive(Message, serde::Deserialize)]
+#[derive(MessageInfo, serde::Deserialize)]
 struct Order {
     id: u64,
 }
 // In the document: components.messages.Order with that description.
 ```
 
-A manual `impl Message` can name the component differently from the Rust type
+A manual `impl MessageInfo` can name the component differently from the Rust type
 (`const NAME: &'static str = "CustomOrder";`), which keeps the wire contract stable across renames.
 
 ## Servers
@@ -86,9 +101,17 @@ A manual `impl Message` can name the component differently from the Rust type
 Record the servers your service connects to so they appear in the document's `servers` section.
 Build a `ServerSpec` directly:
 
-```rust
---8<-- "examples/asyncapi_http.rs:server"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:server"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:server"
+    ```
 
 A broker crate may also implement the `DescribeServer` capability, in which case
 `broker.describe_server()` produces the spec for you (the shipped brokers all do), and
@@ -140,6 +163,14 @@ example serves the document and the viewer with [axum](https://github.com/tokio-
 `cargo run --example asyncapi_http --features macros,memory,asyncapi`, then open
 <http://127.0.0.1:8080/>.
 
-```rust
---8<-- "examples/asyncapi_http.rs"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs"
+    ```

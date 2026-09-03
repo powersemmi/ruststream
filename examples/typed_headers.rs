@@ -9,10 +9,10 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Headers, Out, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
-use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 // The header contracts: flat structs whose fields name headers. On the wire every value is a
@@ -62,12 +62,17 @@ struct Events;
 // destinations come from each type's declaration, headers from its contract - `Progress`
 // publishes bare, `ChunkDone` does not compile without `.with_headers(&meta)`.
 // --8<-- [start:handler]
-#[subscriber("chunks.raw", raw)]
+/// The body keeps the chunk as bytes, so the input is a type of its own rather than a decoded
+/// model: the derive gives the newtype the delivery's payload as it arrives.
+#[derive(Deserialized)]
+struct Chunk<'a>(&'a [u8]);
+
+#[subscriber("chunks.raw")]
 async fn convert(
-    chunk: &[u8],
+    chunk: &Chunk<'_>,
     Headers(meta): Headers<ChunkMeta>,
     Out(events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let percent = u8::try_from(meta.chunk_no * 100 / meta.chunks_total.max(1)).unwrap_or(100);
     if events
         .message(&Progress { percent })
@@ -75,7 +80,7 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
 
     let done = ChunkDone {
@@ -83,7 +88,7 @@ async fn convert(
     };
     let done_meta = DoneMeta {
         task_id: meta.task_id,
-        duration_ms: chunk.len() as u64,
+        duration_ms: chunk.0.len() as u64,
     };
     if events
         .message(&done)
@@ -92,9 +97,9 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 
@@ -124,19 +129,21 @@ async fn status(req: &StatusRequest) -> StatusReply {
 }
 // --8<-- [end:reply]
 
-// Headers stay per-delivery on a batch too, so the contracts arrive as one per element: the two
-// slices line up index for index, and an element failing either the payload decode or the
-// contract is settled by the decode policy instead of reaching the handler.
+// Headers stay per-delivery on a batch too, so the page pairs each element with its own
+// contract: a `Message<ChunkMeta, Progress>` element carries its decoded headers next to its
+// payload, and an element failing either the payload decode or the contract is settled by the
+// decode policy instead of reaching the handler.
 // --8<-- [start:batch]
-#[subscriber(batch("chunks.bulk"))]
-async fn bulk(reports: &[Progress], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerResult {
-    for (report, meta) in reports.iter().zip(&meta) {
+#[subscriber("chunks.bulk")]
+async fn bulk(reports: &[Message<ChunkMeta, Progress>]) -> HandlerOutcome {
+    for report in reports {
+        let meta = &report.headers;
         println!(
             "task {}: chunk {} of {} at {}%",
-            meta.task_id, meta.chunk_no, meta.chunks_total, report.percent,
+            meta.task_id, meta.chunk_no, meta.chunks_total, report.body.percent,
         );
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:batch]
 
@@ -146,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(convert).out(Events, MemoryPublish).mount();
+            b.include(convert).out(Events, MemoryPublish).build();
             b.include(status);
             b.include(bulk);
         },

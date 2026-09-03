@@ -1,26 +1,21 @@
-//! The `include` family on [`Router`]: mounting macro-generated definitions.
+//! `include` on [`Router`]: the one mounting entry point.
 //!
-//! `include` is the one entry point for every definition form, single-message and batch alike;
-//! which machinery runs is picked by the definition's form token ([`IncludeDef::Form`]), exactly
-//! as on a [`BrokerScope`](crate::runtime::BrokerScope). Forms that take an attachment hand back
-//! a registration builder; because a router is a consuming builder, the builder commits through
-//! an explicit terminal (`.publisher(policy)`, `.mount()`, `.out(marker, policy)` per slot) and
+//! `include` mounts every definition form, single-message and batch alike - an attribute
+//! definition and a value one (`subscriber(..)`, `batch(..)`, ...) the same way; which machinery
+//! runs is picked by the definition's form token ([`IncludeDef::Form`]), exactly as on a
+//! [`BrokerScope`](crate::runtime::BrokerScope). Forms that take an attachment hand back a
+//! registration builder; because a router is a consuming builder, the builder commits through
+//! an explicit terminal (`.publisher(policy)`, `.build()`, `.out(marker, policy)` per slot) and
 //! returns the grown router.
 //!
 //! The subscription source always comes from the definition: `#[subscriber(..)]` takes the
-//! broker's own source expression, builder chain included, so there is nothing to override from
-//! the mount site.
+//! broker's own source expression, builder chain included, and a value constructor takes it as
+//! its first argument - so there is nothing to override from the mount site.
 
-use serde::de::DeserializeOwned;
+use crate::Broker;
 
-use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
-
-use crate::runtime::batch::SliceHandler;
-use crate::runtime::metadata::HandlerMetadata;
-
-use super::SubscribedBatchRouter;
 use super::builder::Router;
-use super::mount::{MountCodec, RouterMount};
+use super::mount::RouterMount;
 use crate::runtime::settings::Declared;
 
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
@@ -28,10 +23,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
 {
     /// Mounts a `#[subscriber]` definition of any form, on the source the definition names: a
     /// plain or batch handler grows the router directly, a `publish("dest")` or `Out`-taking one
-    /// hands back a registration builder to finish with `.publisher(policy)`, `.mount()`, or
+    /// hands back a registration builder to finish with `.publisher(policy)`, `.build()`, or
     /// `.out(marker, policy)` per slot.
     ///
-    /// A batch definition's subscriber must implement [`BatchSubscriber`] - natively, or through
+    /// A batch definition's subscriber must implement
+    /// [`BatchSubscriber`](crate::BatchSubscriber) - natively, or through
     /// the [`Buffered`](crate::Buffered) adapter; router and app middleware wrap per-message
     /// handlers and do not apply to batch registrations.
     ///
@@ -46,15 +42,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{HandlerResult, Router, RouterDef};
+    /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
     /// use ruststream::subscriber;
     /// # #[derive(serde::Deserialize)]
     /// # struct Order { id: u64 }
     ///
     /// #[subscriber("orders")]
-    /// async fn handle(order: &Order) -> HandlerResult {
+    /// async fn handle(order: &Order) -> HandlerOutcome {
     ///     let _ = order.id;
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// fn routes() -> impl RouterDef<MemoryBroker> {
@@ -74,31 +70,5 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
             def.declare(),
             self,
         )
-    }
-
-    /// Attaches a slice handler to a batch subscription described by `source`, decoding each
-    /// element with the chain's codec (or the [`DefaultCodec`](crate::codec::DefaultCodec)).
-    ///
-    /// The functional-path counterpart of mounting a `batch(..)` definition with
-    /// [`include`](Self::include): `handler` is
-    /// any [`SliceHandler`](crate::runtime::SliceHandler), typically a closure
-    /// `|batch: &[T], ctx: &mut Context| async { .. }`. The source's subscriber must implement
-    /// [`BatchSubscriber`] - natively, or through the [`Buffered`](crate::Buffered) adapter.
-    /// Set the dispatch concurrency with [`workers`](Router::workers) on the returned router.
-    pub fn subscribe_batch<Source, T, H>(
-        self,
-        source: Source,
-        handler: H,
-        meta: HandlerMetadata,
-    ) -> SubscribedBatchRouter<B, Source, T, RouteCodec::Codec, H, RouteCodec, RouteLayers, Routes>
-    where
-        RouteCodec: MountCodec,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
-        T: DeserializeOwned + Send + Sync + 'static,
-        H: SliceHandler<T> + 'static,
-    {
-        let codec = self.codec.mount_codec();
-        self.push_batch_route(source, handler, codec, meta)
     }
 }

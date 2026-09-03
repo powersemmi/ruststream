@@ -8,7 +8,7 @@
 
 use crate::Broker;
 use crate::codec::Codec;
-use crate::runtime::input::{Decoded, RawBytes};
+use crate::runtime::input::{Decoded, DecodedPair, Provided};
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
@@ -77,21 +77,28 @@ impl<C: MountCodec, T> InputCodec<Decoded<T>> for C {
     }
 }
 
-impl<C> InputCodec<RawBytes> for C {
+// A pair input decodes its payload with the surface codec, exactly like a plain decoded one
+// (the headers side needs no codec at all).
+impl<C: MountCodec, H, P> InputCodec<DecodedPair<H, P>> for C {
+    type Codec = <C as MountCodec>::Codec;
+
+    fn input_codec(&self) -> Self::Codec {
+        self.mount_codec()
+    }
+}
+
+impl<C, F> InputCodec<Provided<F>> for C {
     type Codec = ();
 
     fn input_codec(&self) {}
 }
 
-/// The default reply commit: the broker's default publish policy under the default codec.
+/// The default reply commit: the broker's default publish policy, wrapped per the reply's wire
+/// (under the default codec for an encoded reply, bare for a `Serialized` one - the mount token
+/// carries the wire, so one marker serves both).
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultReply;
-
-/// The default commit of the byte-reply form: the broker's plain publish policy taken bare.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DefaultBareReply;
 
 /// The mount tokens keying the commit traits: which mount a committed attachment drives.
 ///

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
-use ruststream::runtime::{AppInfo, Ctx, HandlerResult, RustStream, State};
+use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, RustStream, State};
 use ruststream::testing::TestApp;
 use ruststream::{
     BuildContext, ContextField, Field, FromRef, IncomingMessage, Outgoing, subscriber,
@@ -59,9 +59,9 @@ impl Field<DeliveryMeta> for PayloadLen {
 static SEEN_LEN: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("orders")]
-async fn measure(_order: &Order, Ctx(len): Ctx<PayloadLen>) -> HandlerResult {
+async fn measure(_order: &Order, Ctx(len): Ctx<PayloadLen>) -> HandlerOutcome {
     SEEN_LEN.store(len, Ordering::Relaxed);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -80,7 +80,7 @@ async fn ctx_extractor_projects_the_context_from_its_key() {
     tb.broker::<MemoryBroker>()
         .subscriber("orders")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     let expected = serde_json::to_vec(&Order { id: 7 }).expect("encode").len();
     assert_eq!(
         SEEN_LEN.load(Ordering::Relaxed),
@@ -96,13 +96,13 @@ async fn both(
     _order: &Order,
     ctx: &mut Context<'_, DeliveryMeta>,
     Ctx(len): Ctx<PayloadLen>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     assert_eq!(
         ctx.context(PayloadLen),
         len,
         "the extractor and the key read must agree",
     );
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -121,7 +121,7 @@ async fn ctx_extractor_composes_with_an_explicit_ctx_parameter() {
     tb.broker::<MemoryBroker>()
         .subscriber("mixed")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
 // --- composition with State: broker field and state component side by side ---
@@ -139,11 +139,11 @@ async fn count(
     _order: &Order,
     Ctx(len): Ctx<PayloadLen>,
     State(hits): State<Hits>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     if len > 0 {
         hits.0.fetch_add(1, Ordering::Relaxed);
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -165,6 +165,6 @@ async fn ctx_extractor_composes_with_state() {
     tb.broker::<MemoryBroker>()
         .subscriber("counted")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(hits.load(Ordering::Relaxed), 1);
 }

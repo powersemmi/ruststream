@@ -6,7 +6,9 @@ use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
-use super::{HeadersUnset, MessageBody, Publish, RawBody, TypedPublisher, message_of, raw_of};
+use super::{
+    HeadersUnset, MessageBody, PublishBuilder, RawBody, TypedPublisher, message_of, raw_of,
+};
 use crate::codec::{Codec, CodecError};
 use crate::{
     CallerName, OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction,
@@ -44,7 +46,7 @@ impl<'s, P, C> TransactionScope<'s, P, C> {
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> Publish<&'s P, MessageBody<'a, T>, &'s C, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'s P, MessageBody<'a, T>, &'s C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -56,7 +58,7 @@ impl<'s, P, C> TransactionScope<'s, P, C> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<&'s P, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'s P, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -243,7 +245,7 @@ impl<'c, Txn, C> TypedTransaction<'c, Txn, C> {
     pub fn message<'a, T>(
         &'a mut self,
         value: &'a T,
-    ) -> Publish<&'a mut Txn, MessageBody<'a, T>, &'c C, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a mut Txn, MessageBody<'a, T>, &'c C, HeadersUnset, T::Form>
     where
         T: OutgoingDestination,
     {
@@ -255,7 +257,7 @@ impl<'c, Txn, C> TypedTransaction<'c, Txn, C> {
     pub fn raw<'a, B>(
         &'a mut self,
         payload: &'a B,
-    ) -> Publish<&'a mut Txn, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a mut Txn, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, PublishExt, Router, RustStream, RustStreamError, TypedPublisher,
+    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, RustStreamError, TypedPublisher,
 };
 use ruststream::{Publisher, subscriber};
 
@@ -25,40 +25,40 @@ static BATCH_REPLY_DONE: AtomicUsize = AtomicUsize::new(0);
 
 /// Default policy: a panic fails fast. Used by `handler_panic_fails_fast_and_run_returns_err`.
 #[subscriber("boom")]
-async fn boom(order: &Order) -> HandlerResult {
+async fn boom(order: &Order) -> HandlerOutcome {
     // The test publishes ids other than u32::MAX, so this assertion always fails (panics); the
-    // trailing expression keeps the body typed as HandlerResult.
+    // trailing expression keeps the body typed as HandlerOutcome.
     assert_eq!(order.id, u32::MAX, "handler exploded");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// `panic = drop` settles the offending message and keeps consuming. The poison id is 0.
 #[subscriber("dropping", on_failure(panic = drop))]
-async fn dropping(order: &Order) -> HandlerResult {
+async fn dropping(order: &Order) -> HandlerOutcome {
     assert!(order.id != 0, "poison order must panic");
     DROP_DONE.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// `decode = fail_fast` tears the service down on a payload that cannot decode.
 #[subscriber("decodeff", on_failure(decode = fail_fast))]
-async fn decode_ff(_order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn decode_ff(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 /// `decode = skip` acks past a payload that cannot decode and keeps consuming.
 #[subscriber("skipping", on_failure(decode = skip))]
-async fn skipping(_order: &Order) -> HandlerResult {
+async fn skipping(_order: &Order) -> HandlerOutcome {
     SKIP_DONE.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A batch handler under an explicit `panic = fail_fast`.
-#[subscriber(batch("batchboom"), on_failure(panic = fail_fast))]
-async fn batch_boom(orders: &[Order]) -> HandlerResult {
+#[subscriber("batchboom", on_failure(panic = fail_fast))]
+async fn batch_boom(orders: &[Order]) -> HandlerOutcome {
     // The test always delivers a non-empty batch, so this assertion always fails (panics).
     assert!(orders.is_empty(), "batch handler exploded");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A publishing handler: exercises the single-message decode-failure path (default `decode = drop`).
@@ -69,14 +69,14 @@ async fn rpcd(order: &Order) -> u32 {
 }
 
 /// A plain batch handler: exercises the per-element batch decode-failure path.
-#[subscriber(batch("bd"))]
-async fn bd(orders: &[Order]) -> HandlerResult {
+#[subscriber("bd")]
+async fn bd(orders: &[Order]) -> HandlerOutcome {
     BATCH_DONE.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A batch publishing handler: exercises the batch-publishing decode-failure path.
-#[subscriber(batch("bpd"), publish("bpd.out"))]
+#[subscriber("bpd", publish("bpd.out"))]
 async fn bpd(orders: &[Order]) -> Vec<u32> {
     BATCH_REPLY_DONE.fetch_add(orders.len(), Ordering::SeqCst);
     orders.iter().map(|o| o.id).collect()

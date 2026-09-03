@@ -3,22 +3,16 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-use serde::de::DeserializeOwned;
-
-use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::{
-    BatchDef, BatchWithHeadersDef, RawBatch, SliceHandler, TypedBatch, TypedBatchWithHeaders,
-    batch_metadata, typed_batch,
-};
+use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch, batch_metadata};
 use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
-use crate::runtime::input::{DecodeWith, RawBytes};
+use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
 use crate::runtime::publish::PublishPipeline;
@@ -33,9 +27,8 @@ use super::routes_inject::{BatchInjectRoute, InjectRoute};
 use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 use super::sink::RouterSink;
 use super::{
-    BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter,
-    IncludedBatchWithHeadersRouter, IncludedRawBatchRouter, IncludedRouter, InjectedRouter,
-    MergedRouter, PublishingRouter, RawReplyRouter, SourceMessage, SubscribedBatchRouter,
+    BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter, IncludedRawBatchRouter,
+    IncludedRouter, InjectedRouter, MergedRouter, PublishingRouter, RawReplyRouter,
 };
 
 /// A statically-typed, lazily-bound group of handler registrations, not attached to any broker.
@@ -59,15 +52,29 @@ use super::{
 /// # #[cfg(all(feature = "memory", feature = "json"))]
 /// # fn build() {
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router, RouterDef};
-/// use ruststream::Name;
+/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, RouterDef, subscriber};
+///
+/// #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// struct Event {
+///     id: u64,
+/// }
+///
+/// struct Audit;
+///
+/// impl Handle<Event> for Audit {
+///     async fn handle(
+///         &self,
+///         event: &Event,
+///         _outs: &(),
+///         _ctx: &mut Context<'_>,
+///     ) -> Result<(), HandlerOutcome> {
+///         let _ = event.id;
+///         Ok(())
+///     }
+/// }
 ///
 /// fn routes() -> impl RouterDef<MemoryBroker> {
-///     Router::<MemoryBroker>::new().subscribe(
-///         Name::new("events"),
-///         |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-///         HandlerMetadata::raw("events"),
-///     )
+///     Router::<MemoryBroker>::new().include(subscriber("events", Audit).build())
 /// }
 /// // later: app.with_broker(broker, |b| b.include_router(routes()));
 /// # }
@@ -159,10 +166,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Attaches `handler` to an already-created `subscriber`.
+    /// Attaches `handler` to an already-created `subscriber`. Machinery, not the user path: a
+    /// service mounts definitions with [`include`](Router::include) and the value constructors
+    /// ([`subscriber`](crate::runtime::subscriber), ...).
     ///
-    /// The subscriber is created up front (before connect). Use this for brokers whose subscription
-    /// does not need a live connection, or when you already hold a subscriber.
+    /// The subscriber is created up front (before connect), the handler arrives fully wired (a
+    /// decode adapter included, see [`typed`](crate::runtime::typed)), and the metadata is the
+    /// caller's to assemble. That is the shape the runtime's own dispatch tests and a broker
+    /// author holding a hand-built subscriber need, and nothing above it.
     pub fn handle<S, H>(
         self,
         subscriber: S,
@@ -189,75 +200,9 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Attaches `handler` to a subscription described by `source`.
-    ///
-    /// The subscription is opened when the application runs, after the broker is connected, so this
-    /// is the path that works for brokers requiring a live connection to subscribe.
-    pub fn subscribe<S, H>(
-        self,
-        source: S,
-        handler: H,
-        meta: HandlerMetadata,
-    ) -> Router<B, (SubscribeRoute<S, H>, Routes), RouteCodec, RouteLayers>
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        H: Handler<SourceMessage<B, S>> + 'static,
-    {
-        Router {
-            routes: (
-                SubscribeRoute {
-                    source,
-                    handler,
-                    meta,
-                    policies: FailurePolicies::default(),
-                    workers: Workers::sequential(),
-                    _context: PhantomData,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            _broker: PhantomData,
-        }
-    }
-
-    /// Wraps `handler` in a [`TypedBatch`](crate::runtime::TypedBatch) decoding with `codec` and
-    /// prepends the batch registration. The shared tail of the `subscribe_batch` forms.
-    pub(super) fn push_batch_route<S, T, C, H>(
-        self,
-        source: S,
-        handler: H,
-        codec: C,
-        meta: HandlerMetadata,
-    ) -> SubscribedBatchRouter<B, S, T, C, H, RouteCodec, RouteLayers, Routes>
-    where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        T: DeserializeOwned + Send + Sync + 'static,
-        C: Codec + 'static,
-        H: SliceHandler<T> + 'static,
-    {
-        Router {
-            routes: (
-                BatchRoute {
-                    source,
-                    handler: typed_batch(codec, handler),
-                    meta,
-                    policies: FailurePolicies::default(),
-                    workers: Workers::sequential(),
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            _broker: PhantomData,
-        }
-    }
-
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the plain and
     /// raw `include` forms.
-    pub(super) fn mount_subscriber<Source, Def, DecodeCodec>(
+    pub(crate) fn mount_subscriber<Source, Def, DecodeCodec>(
         self,
         source: Source,
         def: Def,
@@ -295,7 +240,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
 
     /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
     /// plain batch `include` form.
-    pub(super) fn mount_batch<Source, Def, DecodeCodec>(
+    pub(crate) fn mount_batch<Source, Def, DecodeCodec>(
         self,
         source: Source,
         def: Def,
@@ -324,6 +269,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    _context: PhantomData,
                 },
                 self.routes,
             ),
@@ -333,23 +279,24 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// Mounts a raw batch definition on `source`: the handler borrows the batch's payloads as
-    /// they arrived, so no codec takes part.
-    pub(super) fn mount_raw_batch<Source, Def>(
+    /// Mounts a self-deserializing batch definition on `source`: each element constructs itself
+    /// from its delivery's payload, so no codec takes part.
+    pub(super) fn mount_raw_batch<Source, Def, F>(
         self,
         source: Source,
         def: Def,
-    ) -> IncludedRawBatchRouter<B, Source, Def, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef<Input = RawBytes>,
+        Def: BatchDef<Input = Provided<F>>,
         Def::Handler: 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        let handler = RawBatch::over(def.into_handler());
+        let handler =
+            DeserializedBatch::<_, F, _>::over(def.into_handler()).with_decode(policies.decode);
         Router {
             routes: (
                 BatchRoute {
@@ -358,47 +305,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            _broker: PhantomData,
-        }
-    }
-
-    /// Mounts a batch definition whose handler also reads a typed header contract per element,
-    /// the [`mount_batch`](Self::mount_batch) counterpart for that form.
-    pub(super) fn mount_batch_with_headers<Source, Def, DecodeCodec>(
-        self,
-        source: Source,
-        def: Def,
-        codec: DecodeCodec,
-    ) -> IncludedBatchWithHeadersRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, Routes>
-    where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchWithHeadersDef,
-        Def::Input: DecodeWith<DecodeCodec>,
-        Def::Handler: 'static,
-        DecodeCodec: Send + Sync + 'static,
-    {
-        let meta = batch_metadata(source.name().to_owned(), &def);
-        let policies = def.failure_policies();
-        let workers = def.workers();
-        let handler = TypedBatchWithHeaders::<_, Def::Input, _, Def::Headers, _>::over(
-            codec,
-            def.into_handler(),
-        )
-        .with_decode(policies.decode);
-        Router {
-            routes: (
-                BatchRoute {
-                    source,
-                    handler,
-                    meta,
-                    policies,
-                    workers,
+                    _context: PhantomData,
                 },
                 self.routes,
             ),
@@ -409,9 +316,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     }
 
     /// Mounts an injected definition on `source`: its startup injections (an attached publish
-    /// policy pairing into an `Out` parameter, the subscription's own seeker for a `Seek` one)
-    /// resolve right after the subscription opens, so the handler holds live handles by
-    /// construction. The shared tail of the `Seek` and `Out` forms.
+    /// policy pairing into an `Out` parameter) resolve right after the subscription opens, so
+    /// the handler holds live handles by construction. The tail of the `Out` form.
     pub(super) fn mount_inject<Source, Def, DecodeCodec, Extra>(
         self,
         source: Source,
@@ -448,8 +354,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         }
     }
 
-    /// The batch counterpart of [`mount_inject`](Self::mount_inject): the shared tail of the
-    /// `BatchSeek` and `BatchOut` forms.
+    /// The batch counterpart of [`mount_inject`](Self::mount_inject): the tail of the
+    /// `BatchOut` form.
     pub(super) fn mount_batch_inject<Source, Def, DecodeCodec, Extra>(
         self,
         source: Source,
@@ -656,32 +562,36 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
 impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers>
     Router<B, (SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers>
 {
-    /// Sets the concurrency policy of the registration just added (the preceding `subscribe` /
-    /// `include` call), replacing its default.
+    /// Sets the concurrency policy of the registration just added (the preceding `include`
+    /// call), replacing its default.
     ///
     /// The functional-path counterpart of the macro's `workers(..)` clause: [`Workers::pool`]
     /// processes up to `n` deliveries of this subscriber concurrently, [`Workers::keyed`]
     /// dispatches over per-key sequential lanes. On an `include`d definition this overrides the
-    /// attribute's `workers(..)` clause.
+    /// attribute's `workers(..)` clause and the chained
+    /// [`workers`](crate::runtime::SubscriberSettings::workers) setting alike.
     ///
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "memory")]
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
     /// # fn build() {
     /// use ruststream::nonzero;
     ///
-    /// use ruststream::Name;
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, Router, Workers};
+    /// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, Workers, subscriber};
     ///
+    /// # #[derive(serde::Deserialize, schemars::JsonSchema)]
+    /// # struct Job { id: u64 }
+    /// # struct Work;
+    /// # impl Handle<Job> for Work {
+    /// #     async fn handle(&self, _job: &Job, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
+    /// #         Ok(())
+    /// #     }
+    /// # }
     /// let router = Router::<MemoryBroker>::new()
-    ///     .subscribe(
-    ///         Name::new("jobs"),
-    ///         |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-    ///         HandlerMetadata::raw("jobs"),
-    ///     )
-    ///     .workers(Workers::pool(nonzero!(4)));
+    ///     .include(subscriber("jobs", Work).build())
+    ///     .workers(Workers::keyed(nonzero!(4)));
     /// # }
     /// ```
     #[must_use]
@@ -694,8 +604,8 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers>
 impl<B, S, H, Routes, RouteCodec, RouteLayers>
     Router<B, (BatchRoute<S, H>, Routes), RouteCodec, RouteLayers>
 {
-    /// Sets the concurrency policy of the batch registration just added (the preceding
-    /// `subscribe_batch` / batch `include` call), replacing its default.
+    /// Sets the concurrency policy of the batch registration just added (the preceding batch
+    /// `include` call), replacing its default.
     ///
     /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed lanes order single
     /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves

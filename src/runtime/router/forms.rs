@@ -7,11 +7,13 @@
 /// A plain subscriber (`#[subscriber("in")]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Subscribing;
-/// A raw-bytes subscriber (`#[subscriber("in", raw)]`): no decode, no codec.
+/// A self-deserializing subscriber (a handler taking a
+/// [`Deserialized`](crate::runtime::Deserialized) input): no decode, no codec.
 #[derive(Debug, Clone, Copy)]
 pub struct RawSubscribing;
-/// A byte-reply subscriber (`#[subscriber("in", publish_raw("out"))]`, with or without
-/// `raw` on the input side): the reply bytes go out as-is through a bare publisher.
+/// A byte-reply subscriber (a `publish("out")` handler whose reply type is
+/// [`Serialized`](crate::runtime::Serialized), on any input): the reply bytes go out as-is
+/// through a bare publisher.
 #[derive(Debug, Clone, Copy)]
 pub struct RawReply;
 /// A reply-publishing subscriber (`#[subscriber("in", publish("out"))]`).
@@ -19,16 +21,10 @@ pub struct RawReply;
 pub struct Publishing;
 /// A subscriber whose startup injections need publisher attachments.
 ///
-/// The signature carries `Out(out): Out<impl Publisher[, Marker]>` parameters (optionally
-/// next to a `Seek` one), so the include site chains `.publisher(..)` (single slot) or
-/// `.out(marker, ..)` per named slot.
+/// The signature carries `Out(out): Out<impl Publisher[, Marker]>` parameters, so the include
+/// site chains `.publisher(..)` (single slot) or `.out(marker, ..)` per named slot.
 #[derive(Debug, Clone, Copy)]
 pub struct Out;
-/// A subscriber whose startup injections need nothing from the include site.
-///
-/// The signature carries a `Seek(seeker): Seek<K>` parameter (and no `Out`).
-#[derive(Debug, Clone, Copy)]
-pub struct Seek;
 /// A reply-publishing subscriber whose handler also takes `Out` parameters, so the
 /// include site chains `.out(marker, ..)` per slot next to the (optional)
 /// `.publisher(..)`.
@@ -40,24 +36,17 @@ pub struct RawReplyOut;
 /// A batch subscriber (a handler taking `&[T]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
-/// A raw batch subscriber (a handler taking `&[&[u8]]`): a batch with no decode step.
+/// A self-deserializing batch subscriber (a handler taking a page of
+/// [`Deserialized`](crate::runtime::Deserialized) elements): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
-/// A batch subscriber reading a typed header contract per element
-/// (`#[subscriber(batch("in"))]` with a `Headers<Vec<H>>` parameter).
-#[derive(Debug, Clone, Copy)]
-pub struct BatchWithHeaders;
-/// A batch reply-publishing subscriber (`#[subscriber(batch("in"), publish("out"))]`).
+/// A batch reply-publishing subscriber (a `&[T]` handler with `publish("out")`).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishing;
 /// A batch subscriber whose startup injections need a publisher attachment (an `Out`
-/// parameter, optionally next to a `Seek` one).
+/// parameter).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchOut;
-/// A batch subscriber whose startup injections need nothing from the include site (a
-/// `Seek` parameter and no `Out`).
-#[derive(Debug, Clone, Copy)]
-pub struct BatchSeek;
 /// A batch reply-publishing subscriber whose handler also takes `Out` parameters, so the
 /// include site chains `.out(marker, ..)` per slot next to the (optional)
 /// `.publisher(..)`.

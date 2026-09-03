@@ -1,34 +1,88 @@
-error[E0277]: the trait bound `TypedPublisher<MemoryPublisher, JsonCodec>: ReplySink<Receipt, (), PublishIdentity>` is not satisfied
-  --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
+error[E0277]: the trait bound `Receipt: serde::Serialize` is not satisfied
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:16:1
    |
-23 |         b.include(handle);
-   |           ^^^^^^^ the trait `ReplySink<Receipt, (), PublishIdentity>` is not implemented for `TypedPublisher<MemoryPublisher, JsonCodec>`
+16 | #[subscriber("orders", publish("receipts"))]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `ReplySink<Reply, DeliveryCx, Pipeline>` is conditionally implemented for `TypedPublisher<Leaf, ReplyCodec, Transforms>`
-  --> src/runtime/publishing.rs
+help: the trait `_serde::Serialize` is not implemented for `Receipt`
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:12:1
    |
-   | / impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
-   | |     ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
-   | | where
-   | |     Reply: Serialize + Sync,
-   | |            --------- unsatisfied requirement introduced here: `Receipt: _serde::Serialize`
-...  |
-   | |     ReplyCodec: Codec,
-   | |     Transforms: PublishTransform<DeliveryCx>,
-   | |_____________________________________________^
-   = note: required for `ruststream::runtime::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
-   = note: 1 redundant requirement hidden
-   = note: required for `runtime::router::mount::DefaultReply` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
-   = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
+12 | struct Receipt {
+   | ^^^^^^^^^^^^^^
+   = note: for local types consider adding `#[derive(serde::Serialize)]` to your `Receipt` type
+   = note: for types from other crates check whether the crate offers a `serde` feature flag
+   = help: the following other types implement trait `_serde::Serialize`:
+             &'a T
+             &'a mut T
+             ()
+             (T,)
+             (T0, T1)
+             (T0, T1, T2)
+             (T0, T1, T2, T3)
+             (T0, T1, T2, T3, T4)
+           and $N others
+   = note: required for `Receipt` to implement `ReplyShape`
+   = note: required for `Receipt` to implement `ruststream::runtime::ReplyRoute<OneByOne>`
+   = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `PublishingHandler<SubscriberBuilder<handle, Name, (Open, Open, Open)>, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>: Handler<MemoryMessage>` is not satisfied
+error[E0277]: the trait bound `Receipt: serde::Serialize` is not satisfied
   --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
    |
 23 |         b.include(handle);
    |           ^^^^^^^ unsatisfied trait bound
    |
-   = help: the trait `Handler<MemoryMessage>` is not implemented for `PublishingHandler<SubscriberBuilder<handle, Name, (Open, Open, Open)>, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>`
-help: the trait `Handler<Msg, <Def as PublishingDef>::Context, State>` is conditionally implemented for `PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>`
+help: the trait `_serde::Serialize` is not implemented for `Receipt`
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:12:1
+   |
+12 | struct Receipt {
+   | ^^^^^^^^^^^^^^
+   = note: for local types consider adding `#[derive(serde::Serialize)]` to your `Receipt` type
+   = note: for types from other crates check whether the crate offers a `serde` feature flag
+   = help: the following other types implement trait `_serde::Serialize`:
+             &'a T
+             &'a mut T
+             ()
+             (T,)
+             (T0, T1)
+             (T0, T1, T2)
+             (T0, T1, T2, T3)
+             (T0, T1, T2, T3, T4)
+           and $N others
+   = note: required for `Receipt` to implement `ReplyShape`
+   = note: required for `Receipt` to implement `ruststream::runtime::ReplyRoute<OneByOne>`
+
+error[E0277]: the trait bound `TypedPublisher<MemoryPublisher, JsonCodec>: runtime::publishing::ReplySink<Receipt, (), PublishIdentity>` is not satisfied
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
+   |
+23 |         b.include(handle);
+   |           ^^^^^^^ the trait `runtime::publishing::ReplySink<Receipt, (), PublishIdentity>` is not implemented for `TypedPublisher<MemoryPublisher, JsonCodec>`
+   |
+help: the trait `runtime::publishing::ReplySink<Reply, DeliveryCx, Pipeline>` is conditionally implemented for `TypedPublisher<Leaf, ReplyCodec, Transforms>`
+  --> src/runtime/publishing.rs
+   |
+   | / impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
+   | |     ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
+   | | where
+   | |     Reply: EncodeReply,
+   | |            ----------- unsatisfied requirement introduced here: `Receipt: runtime::publishing::EncodeReply`
+...  |
+   | |     ReplyCodec: Codec,
+   | |     Transforms: PublishTransform<DeliveryCx>,
+   | |_____________________________________________^
+   = note: required for `ruststream::runtime::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>>`
+   = note: 1 redundant requirement hidden
+   = note: required for `ruststream::runtime::DefaultReply` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>>`
+   = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>>`
+
+error[E0277]: `runtime::publishing::PublishingHandler<SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>` cannot handle `MemoryMessage`
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
+   |
+23 |         b.include(handle);
+   |           ^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `Handler<MemoryMessage>` is not implemented for `runtime::publishing::PublishingHandler<SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>, JsonCodec, TypedPublisher<MemoryPublisher, JsonCodec>>`
+   = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
+help: the trait `Handler<Msg, <Def as runtime::publishing::PublishingDef>::Context, State>` is conditionally implemented for `runtime::publishing::PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>`
   --> src/runtime/publishing.rs
    |
    | / impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> Handler<Msg, Def::Context, State>
@@ -37,11 +91,13 @@ help: the trait `Handler<Msg, <Def as PublishingDef>::Context, State>` is condit
    | |     Msg: IncomingMessage,
 ...  |
    | |     Wiring: ReplySink<Def::Reply, Def::Context, Pipeline>,
-   | |             --------------------------------------------- unsatisfied requirement introduced here: `TypedPublisher<MemoryPublisher, JsonCodec>: ReplySink<<SubscriberBuilder<handle, Name, (Open, Open, Open)> as PublishingDef>::Reply, <SubscriberBuilder<handle, Name, (Open, Open, Open)> as PublishingDef>::Context, PublishIdentity>`
+   | |             --------------------------------------------- unsatisfied requirement introduced here: `TypedPublisher<MemoryPublisher, JsonCodec>: runtime::publishing::ReplySink<<SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)> as runtime::publishing::PublishingDef>::Reply, <SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)> as runtime::publishing::PublishingDef>::Context, PublishIdentity>`
    | |     Pipeline: Send + Sync,
    | |     State: Send + Sync,
-   | |_______________________^
-   = note: required for `ruststream::runtime::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
+   | |                       ^ unsatisfied requirement introduced here: `<SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)> as runtime::publishing::PublishingDef>::Context == ()`
+   | |_______________________|
+   |
+   = note: required for `ruststream::runtime::WithSource<TypedPublisher<MemoryPublish, JsonCodec>>` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>>`
    = note: 1 redundant requirement hidden
-   = note: required for `runtime::router::mount::DefaultReply` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
-   = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<handle, Name, (Open, Open, Open)>>`
+   = note: required for `ruststream::runtime::DefaultReply` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::PublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>>`
+   = note: required for `Publishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), handle, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>>`

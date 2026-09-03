@@ -1,5 +1,5 @@
-//! The deferred startup-injection routes: a handler whose `Out` or `Seek` parameters are only
-//! live once the subscription is open.
+//! The deferred startup-injection routes: a handler whose `Out` parameters are only live once
+//! the subscription is open.
 //!
 //! Like the publishing routes these store the pieces rather than a built handler: the injections
 //! resolve right after the subscription opens and before the first delivery, so every injected
@@ -9,7 +9,6 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::codec::Codec;
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, SubscriptionSource};
 
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler};
@@ -27,8 +26,7 @@ use super::routes::{MountRoute, RouteMeta};
 use super::sink::RouterSink;
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
-/// into an [`Out`](crate::runtime::Out) parameter, the subscription's own seeker for a
-/// [`Seek`](crate::runtime::Seek) one. An implementation detail of
+/// into an [`Out`](crate::runtime::Out) parameter. An implementation detail of
 /// [`Router`](crate::runtime::Router)'s registration list.
 ///
 /// `Extra` is the include-site attachment the injections resolve against, one element per
@@ -91,7 +89,9 @@ where
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    DecodeCodec: Codec + Send + 'static,
+    // Not `Codec`: `DecodeWith` already carries what the input asks of it, and a byte input
+    // asks for nothing - its route is built with `()` there.
+    DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
     fn mount_one<G, PP>(self, global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
@@ -179,7 +179,8 @@ where
             policies,
             workers,
         } = self;
-        sink.push_injected_batch(
+        // The injected batch forms keep the unit batch context for now; see `BatchDef::Context`.
+        sink.push_injected_batch::<_, _, _, _, ()>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)

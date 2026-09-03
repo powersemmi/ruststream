@@ -28,13 +28,21 @@ serde = { version = "1", features = ["derive"] }
 `#[subscriber]` превращает функцию в определение, готовое к монтированию, и называет его по имени
 самой функции.
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:order"
-```
+=== "Макросы"
 
-Обработчик возвращает [`HandlerResult`](../guides/subscribers.md#acking): либо `Ack`, либо `nack`,
+    ```rust title="src/orders.rs"
+    --8<-- "examples/tutorial/orders.rs:order"
+    ```
+
+=== "Вручную"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/manual/tutorial/orders.rs:order"
+    ```
+
+Обработчик возвращает [`HandlerOutcome`](../guides/subscribers.md#acking): либо `ack`, либо `nack`,
 который отбрасывает сообщение или возвращает его в очередь. Подойдёт и `()`, и `Result<(), E>` - они
-преобразуются в результат (`Ok` подтверждает, `Err` отбрасывает).
+преобразуются в исход (`Ok` подтверждает, `Err` отбрасывает).
 
 Именно вывод `JsonSchema` кладёт схему полезной нагрузки в AsyncAPI-документ из шага 6, а
 doc-комментарий типа становится описанием сообщения. Отдельная зависимость для этого не нужна: фича
@@ -42,9 +50,17 @@ doc-комментарий типа становится описанием со
 
 ## 3. Свяжите обработчик с приложением
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/first_app.rs:app"
-```
+=== "Макросы"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/first_app.rs:app"
+    ```
+
+=== "Вручную"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/first_app.rs:app"
+    ```
 
 Макрос превращает `handle` в значение с тем же именем, что у функции, поэтому его достаточно
 импортировать и передать напрямую.
@@ -65,16 +81,32 @@ cargo run -- run
 
 Чтобы опубликовать ответ, верните значение ответа и назовите адресата через `publish(..)`:
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:confirm"
-```
+=== "Макросы"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/tutorial/orders.rs:confirm"
+    ```
+
+=== "Вручную"
+
+    ```rust title="src/orders.rs"
+    --8<-- "examples/manual/tutorial/orders.rs:confirm"
+    ```
 
 Смонтируйте его рядом с `handle` тем же обычным `include`: ответ уходит через политику публикации
 брокера по умолчанию и кодируется кодеком по умолчанию.
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/reply_app.rs:reply"
-```
+=== "Макросы"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/reply_app.rs:reply"
+    ```
+
+=== "Вручную"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/reply_app.rs:reply"
+    ```
 
 Полная картина, включая публикацию изнутри обработчика, - в разделе
 [Публикация и ответы](../guides/publishing.md).
@@ -84,18 +116,34 @@ cargo run -- run
 Когда обработчиков становится много, держите их в отдельном модуле и собирайте в
 [`Router`](../guides/routing.md):
 
-```rust title="src/routes.rs"
---8<-- "examples/tutorial/routes.rs:routes"
-```
+=== "Макросы"
+
+    ```rust title="src/routes.rs"
+    --8<-- "examples/tutorial/routes.rs:routes"
+    ```
+
+=== "Вручную"
+
+    ```rust title="src/routes.rs"
+    --8<-- "examples/manual/tutorial/routes.rs:routes"
+    ```
 
 Регистрация на роутере завершается явным терминалом. `.publisher(..)` задаёт связывание ответа -
 политика публикации остаётся чистой декларацией, поэтому роутеру по-прежнему не нужен брокер, - а
-`.mount()` берёт собственную политику публикации брокера по умолчанию, то есть явно записывает то,
+`.build()` берёт собственную политику публикации брокера по умолчанию, то есть явно записывает то,
 что шаг 4 получал сам. Остальная поверхность роутера разобрана в разделе [Роутинг](../guides/routing.md).
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
-```
+=== "Макросы"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/main.rs:main"
+    ```
+
+=== "Вручную"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/main.rs:main"
+    ```
 
 ## 6. Посмотрите AsyncAPI-документ
 

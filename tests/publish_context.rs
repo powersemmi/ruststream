@@ -123,7 +123,7 @@ impl<C> PublishTransform<C> for MarkBatched {
     }
 }
 
-#[subscriber(batch("batch-in"), publish("batch-out"))]
+#[subscriber("batch-in", publish("batch-out"))]
 async fn batch_echo(reqs: &[Req]) -> Vec<Resp> {
     reqs.iter().map(|r| Resp { n: r.n }).collect()
 }

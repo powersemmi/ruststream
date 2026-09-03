@@ -216,7 +216,7 @@ pub trait IncomingMessage: Send + Sync {
     ///
     /// Defaulted to `false`: a transport without native delayed redelivery cannot hold a
     /// message back for `delay` on its own. The runtime reads this BEFORE settling a
-    /// [`NackAfter`](crate::runtime::HandlerResult::NackAfter) outcome: when it returns `true`
+    /// [`retry_after`](crate::runtime::HandlerOutcome::retry_after) outcome: when it returns `true`
     /// the runtime calls [`nack_after`](Self::nack_after) and trusts the broker timer; when it
     /// returns `false` the runtime applies its broker-agnostic deferred-republish fallback
     /// instead, so the delay is never silently dropped. Brokers with native delayed redelivery

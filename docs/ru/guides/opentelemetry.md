@@ -23,9 +23,17 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] 
 Создайте `OpenTelemetry`, добавьте его слой потребления на уровне приложения и вшейте его
 распространение в издателя ответов:
 
-```rust
---8<-- "tests/opentelemetry.rs:wiring"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/opentelemetry.rs:wiring"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_opentelemetry.rs:wiring"
+    ```
 
 - `consume_layer()` - это [слой](middleware.md) на стороне потребления: на каждую доставку он читает
   входящий `traceparent`, открывает спан `tracing` для обработчика и записывает спан *потребителя* в
@@ -70,9 +78,17 @@ let traceparent = ctx.headers().get_str("traceparent");
 OpenTelemetry **глобально** для процесса и перекидывает в них спаны `tracing` - так что спаны,
 которые слой распространения и так открывает, экспортируются без всякого дополнительного связывания:
 
-```rust
---8<-- "examples/otel_export.rs:init"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/otel_export.rs:init"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/otel_export.rs:init"
+    ```
 
 Метрики диспетчеризации несут два middleware; метки проставляются по обработчику
 (`messaging.destination.name`) по семантическим соглашениям для messaging плюс пространство имён
@@ -104,9 +120,17 @@ OpenTelemetry **глобально** для процесса и перекиды
 состояние (внедряется как `State<..>` через `FromRef`) - и всё, что в нём лежит, пройдёт по тому же
 конвейеру OTLP:
 
-```rust
---8<-- "examples/otel_export.rs:business_metric"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/otel_export.rs:business_metric"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/otel_export.rs:business_metric"
+    ```
 
 Готовый дашборд Grafana ровно по этому набору лежит в
 [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana): импортируйте

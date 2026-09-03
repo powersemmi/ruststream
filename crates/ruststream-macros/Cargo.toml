@@ -17,7 +17,8 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "3", features = ["full"] }
+# `visit-mut` rewrites elided lifetimes in input types (the `Deserialized` view spellings).
+syn = { version = "3", features = ["full", "visit-mut"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

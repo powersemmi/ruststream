@@ -20,9 +20,17 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "otel"] 
 
 创建一个 `OpenTelemetry`，把它的消费侧层加到整个应用上，再把它的传播能力固化到回复发布者上：
 
-```rust
---8<-- "tests/opentelemetry.rs:wiring"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/opentelemetry.rs:wiring"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_opentelemetry.rs:wiring"
+    ```
 
 - `consume_layer()` 是消费侧的一个[层](middleware.md)：每次投递时，它读取传入的 `traceparent`，为
   处理器开一个 `tracing` span，并把*消费方*的 span 记录到工作消息头上。它对直接挂载的处理器，以及
@@ -63,9 +71,17 @@ let traceparent = ctx.headers().get_str("traceparent");
 provider 装成进程**全局**的，并把 `tracing` span 桥接进去，于是不必再接任何线，传播层已经开出来的
 那些 span 就会随之导出：
 
-```rust
---8<-- "examples/otel_export.rs:init"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/otel_export.rs:init"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/otel_export.rs:init"
+    ```
 
 这两个中间件承载了分发相关的指标，按处理器打标签（`messaging.destination.name`），遵循 messaging
 语义约定，并额外加上一个 `ruststream.*` 命名空间：
@@ -93,9 +109,17 @@ provider 装成进程**全局**的，并把 `tracing` span 桥接进去，于是
 一次性构建进一个存储对象，通过类型化状态共享出去（借助 `FromRef` 即可用 `State<..>` 注入），其中的
 一切都会走同一条 OTLP 管线：
 
-```rust
---8<-- "examples/otel_export.rs:business_metric"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/otel_export.rs:business_metric"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/otel_export.rs:business_metric"
+    ```
 
 针对这份清单，[`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana) 提供了一个
 现成的 Grafana 仪表盘：导入 `dashboards/ruststream.json`，把它指向任意一个接收 OTLP 指标、兼容

@@ -1,4 +1,4 @@
-//! Post-settle continuations from the Subscribers guide: `HandlerResult::ack().and_after(..)`
+//! Post-settle continuations from the Subscribers guide: `HandlerOutcome::ack().and_after(..)`
 //! attaches a side effect that runs after the message is settled, without gating the ack decision
 //! or affecting redelivery. The batch form attaches one continuation per element.
 //!
@@ -7,7 +7,7 @@
 //! ```
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, Settle};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -20,9 +20,9 @@ struct Order {
 /// Ack the order, then fire a non-critical follow-up once it is acknowledged. The continuation is
 /// at-most-once: if it is lost or panics, the already-acked order is not redelivered.
 #[subscriber("orders")]
-async fn handle(order: &Order) -> Settle {
+async fn handle(order: &Order) -> HandlerOutcome {
     let id = order.id;
-    HandlerResult::ack().and_after(async move {
+    HandlerOutcome::ack().and_after(async move {
         println!("order {id} acked; notifying downstream");
     })
 }
@@ -32,16 +32,16 @@ async fn handle(order: &Order) -> Settle {
 /// Per-element settlement: id 0 retries with no continuation, every other order acks and schedules
 /// its own follow-up. The continuation rides with the element, so a batch settles each message and
 /// its side effect independently.
-#[subscriber(batch("orders"))]
-async fn handle_page(orders: &[Order]) -> Vec<Settle> {
+#[subscriber("orders")]
+async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()
         .map(|order| {
             if order.id == 0 {
-                HandlerResult::retry().into()
+                HandlerOutcome::retry()
             } else {
                 let id = order.id;
-                HandlerResult::ack().and_after(async move {
+                HandlerOutcome::ack().and_after(async move {
                     println!("order {id} acked in batch; following up");
                 })
             }

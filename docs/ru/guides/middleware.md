@@ -16,17 +16,33 @@ RustStream две области middleware; обе построены на од
 также `publish_layer` и `on_startup`) больше не существует, поэтому слой, который не смог бы
 обернуть уже зарегистрированные обработчики, - ошибка компиляции, а не молчаливый no-op:
 
-```rust
---8<-- "examples/middleware_app_scope.rs:app_scope"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/middleware_app_scope.rs:app_scope"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/middleware_app_scope.rs:app_scope"
+    ```
 
 **Область роутера.** Собственное middleware роутеру даёт `Router::layer`: он оборачивает каждый
 обработчик этого роутера в момент монтирования (см. [Роутинг](routing.md#router-middleware)).
 Обработчики, смонтированные прямо в области брокера, остаются снаружи:
 
-```rust
---8<-- "examples/middleware_router_scope.rs:router_scope"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/middleware_router_scope.rs:router_scope"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/middleware_router_scope.rs:router_scope"
+    ```
 
 Обе программы целиком -
 [`middleware_app_scope.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware_app_scope.rs)
@@ -49,7 +65,7 @@ RustStream две области middleware; обе построены на од
 Слой превращает один обработчик в другой. Реализуйте `Layer<H>`:
 
 ```rust
-use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
+use ruststream::runtime::{Context, Handler, HandlerOutcome, Layer};
 
 --8<-- "examples/middleware.rs:layer_impl"
 ```
@@ -90,7 +106,7 @@ let handler = base_handler.with(LogLayer);
 use std::future::Future;
 use std::pin::Pin;
 
-use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
+use ruststream::runtime::{Context, DynMiddleware, HandlerOutcome, Next};
 
 --8<-- "examples/middleware.rs:dyn_middleware"
 ```
@@ -100,14 +116,28 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 написанный руками. Остальная цепочка диспетчеризации остаётся статической, накладные расходы есть
 только у самого стека:
 
-```rust
-use std::sync::Arc;
+=== "Макросы"
 
-use ruststream::memory::MemoryMessage;
-use ruststream::runtime::DynStack;
+    ```rust
+    use std::sync::Arc;
 
---8<-- "examples/middleware.rs:dyn_stack"
-```
+    use ruststream::memory::MemoryMessage;
+    use ruststream::runtime::DynStack;
+
+    --8<-- "examples/middleware.rs:dyn_stack"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    use std::sync::Arc;
+
+    use ruststream::memory::{MemoryBroker, MemoryMessage};
+    use ruststream::prelude::*;
+    use ruststream::runtime::{DynMiddleware, DynStack};
+
+    --8<-- "examples/manual/middleware.rs:dyn_stack"
+    ```
 
 Полная программа, где цепочка переключается переменной окружения, -
 [`examples/middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware.rs).

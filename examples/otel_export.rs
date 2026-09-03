@@ -17,7 +17,7 @@ use opentelemetry::metrics::Counter;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::Otel;
 use ruststream::runtime::cli::run_main;
-use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream, State};
+use ruststream::runtime::{App, AppInfo, HandlerOutcome, RustStream, State};
 use ruststream::{FromRef, subscriber};
 use serde::Deserialize;
 
@@ -42,10 +42,10 @@ struct AppState {
 }
 
 #[subscriber("orders")]
-async fn accept(order: &Order, State(metrics): State<OrderMetrics>) -> HandlerResult {
+async fn accept(order: &Order, State(metrics): State<OrderMetrics>) -> HandlerOutcome {
     metrics.accepted.add(1, &[KeyValue::new("region", "eu")]);
     let _ = order;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:business_metric]
 

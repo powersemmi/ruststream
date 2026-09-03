@@ -83,7 +83,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             const PARAMETERS: &'static [&'static str] = #parameters;
         }
 
-        impl #impl_generics ::ruststream::Message for #name #ty_generics #where_clause {
+        impl #impl_generics ::ruststream::MessageInfo for #name #ty_generics #where_clause {
             const NAME: &'static str = #name_str;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
         }
@@ -152,6 +152,11 @@ fn declared_entries(
                 #[allow(unused_imports)]
                 use ::ruststream::__private::NoHeadersSchemaProbe as _;
                 ::ruststream::__private::Probe::<#name #ty_generics>::new().headers_schema_json()
+            })
+            .with_serialized({
+                #[allow(unused_imports)]
+                use ::ruststream::__private::NoSerializedProbe as _;
+                ::ruststream::__private::Probe::<#name #ty_generics>::new().serialized_wire()
             }),
         ]
     }

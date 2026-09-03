@@ -17,7 +17,7 @@ use common::{Order, Receipt, order_bytes, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishContext, PublishExt, PublishTransform, Router,
+    AppInfo, HandlerOutcome, Outgoing, PublishContext, PublishExt, PublishTransform, Router,
     RustStream, TypedPublisher,
 };
 use ruststream::{BuildContext, Field, HeaderMap, IncomingMessage, Publisher, subscriber};
@@ -61,15 +61,15 @@ async fn rp_relay_on(o: &Order) -> Receipt {
 }
 
 #[subscriber("rp-out")]
-async fn rp_check(_r: &Receipt) -> HandlerResult {
+async fn rp_check(_r: &Receipt) -> HandlerOutcome {
     RP_OUT.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("rp-out-on")]
-async fn rp_check_on(_r: &Receipt) -> HandlerResult {
+async fn rp_check_on(_r: &Receipt) -> HandlerOutcome {
     RP_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Default-codec `include` on the publishing form, twice over: replies reach the reply topics.
@@ -111,15 +111,15 @@ async fn rpc_relay_on(o: &Order) -> Receipt {
 }
 
 #[subscriber("rpc-out")]
-async fn rpc_check(_r: &Receipt) -> HandlerResult {
+async fn rpc_check(_r: &Receipt) -> HandlerOutcome {
     RPC_OUT.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("rpc-out-on")]
-async fn rpc_check_on(_r: &Receipt) -> HandlerResult {
+async fn rpc_check_on(_r: &Receipt) -> HandlerOutcome {
     RPC_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Chain-codec `include` on the publishing form: the input decodes with the `with_codec` codec,
@@ -157,26 +157,26 @@ async fn chain_codec_router_publishing_replies() {
 static BP_OUT: AtomicUsize = AtomicUsize::new(0);
 static BP_OUT_ON: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber(batch("bp-in"), publish("bp-out"))]
+#[subscriber("bp-in", publish("bp-out"))]
 async fn bp_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("bp-in-on"), publish("bp-out-on"))]
+#[subscriber("bp-in-on", publish("bp-out-on"))]
 async fn bp_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
 #[subscriber("bp-out")]
-async fn bp_check(_r: &Receipt) -> HandlerResult {
+async fn bp_check(_r: &Receipt) -> HandlerOutcome {
     BP_OUT.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("bp-out-on")]
-async fn bp_check_on(_r: &Receipt) -> HandlerResult {
+async fn bp_check_on(_r: &Receipt) -> HandlerOutcome {
     BP_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Default-codec `include` on the batch publishing form: every batch element is republished to
@@ -208,26 +208,26 @@ async fn default_codec_router_batch_publishing_replies() {
 static BPC_OUT: AtomicUsize = AtomicUsize::new(0);
 static BPC_OUT_ON: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber(batch("bpc-in"), publish("bpc-out"))]
+#[subscriber("bpc-in", publish("bpc-out"))]
 async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("bpc-in-on"), publish("bpc-out-on"))]
+#[subscriber("bpc-in-on", publish("bpc-out-on"))]
 async fn bpc_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
 #[subscriber("bpc-out")]
-async fn bpc_check(_r: &Receipt) -> HandlerResult {
+async fn bpc_check(_r: &Receipt) -> HandlerOutcome {
     BPC_OUT.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("bpc-out-on")]
-async fn bpc_check_on(_r: &Receipt) -> HandlerResult {
+async fn bpc_check_on(_r: &Receipt) -> HandlerOutcome {
     BPC_OUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Chain-codec `include` on the batch publishing form: elements decode with the `with_codec`
@@ -289,10 +289,10 @@ static RL_STAMPED: LazyLock<std::sync::Mutex<Option<bool>>> =
 static RL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("rl-out")]
-async fn rl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+async fn rl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
     *RL_STAMPED.lock().unwrap() = Some(ctx.headers().get("x-app").is_some());
     RL_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -335,7 +335,7 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
 
 // The same on the BATCH router-publishing path: the app's publish_layer must reach a
 // router-mounted batch publishing handler.
-#[subscriber(batch("bl-in"), publish("bl-out"))]
+#[subscriber("bl-in", publish("bl-out"))]
 async fn bl_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -345,10 +345,10 @@ static BL_STAMPED: LazyLock<std::sync::Mutex<Option<bool>>> =
 static BL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("bl-out")]
-async fn bl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+async fn bl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
     *BL_STAMPED.lock().unwrap() = Some(ctx.headers().get("x-app").is_some());
     BL_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -435,10 +435,10 @@ static TC_CORR: LazyLock<std::sync::Mutex<Option<String>>> =
 static TC_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 #[subscriber("tc-out")]
-async fn tc_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+async fn tc_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
     *TC_CORR.lock().unwrap() = ctx.headers().correlation_id().map(str::to_owned);
     TC_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

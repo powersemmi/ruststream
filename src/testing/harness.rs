@@ -20,7 +20,7 @@ use crate::codec::{Codec, DefaultCodec};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::{CallCodec, MessageBody, message_of};
 use crate::runtime::{
-    ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, Publish,
+    ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
     PublishIdentity, PublishSink, RawBody, RegisteredBroker, RustStream, RustStreamError, Starter,
     TestParts, raw_of,
 };
@@ -177,7 +177,7 @@ impl TestBrokers<'_> {
 /// # #[cfg(all(feature = "testing", feature = "memory", feature = "json"))]
 /// # async fn demo() -> Result<(), ruststream::testing::TestError> {
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{AppInfo, Context, HandlerResult, RustStream};
+/// use ruststream::runtime::{AppInfo, Context, HandlerOutcome, RustStream};
 /// use ruststream::subscriber;
 /// use ruststream::testing::TestApp;
 /// use serde::{Deserialize, Serialize};
@@ -188,9 +188,9 @@ impl TestBrokers<'_> {
 /// }
 ///
 /// #[subscriber("orders")]
-/// async fn handle(order: &Order) -> HandlerResult {
+/// async fn handle(order: &Order) -> HandlerOutcome {
 ///     let _ = order;
-///     HandlerResult::Ack
+///     HandlerOutcome::ack()
 /// }
 ///
 /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -202,7 +202,7 @@ impl TestBrokers<'_> {
 ///     .subscriber("orders")
 ///     .assert_called_once()
 ///     .with(&Order { id: 1 })
-///     .settled(HandlerResult::Ack);
+///     .settled(HandlerOutcome::ack());
 /// # Ok(())
 /// # }
 /// ```
@@ -429,24 +429,30 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
-    /// use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
+    /// use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
     /// use ruststream::testing::TestApp;
-    /// use ruststream::{OutSlot, Publisher, subscriber};
+    /// use ruststream::{Deserialized, OutSlot, Publisher, subscriber};
+    ///
+    /// #[derive(Deserialized)]
+    /// struct Chunk<'a>(&'a [u8]);
     ///
     /// #[derive(OutSlot)]
     /// struct Encoded;
     ///
-    /// #[subscriber("chunks", raw)]
-    /// async fn transcode(chunk: &[u8], Out(out): Out<impl Publisher, Encoded>) -> HandlerResult {
-    ///     if out.raw(chunk).to("encoded").publish().await.is_err() {
-    ///         return HandlerResult::retry();
+    /// #[subscriber("chunks")]
+    /// async fn transcode(
+    ///     chunk: &Chunk<'_>,
+    ///     Out(out): Out<impl Publisher, Encoded>,
+    /// ) -> HandlerOutcome {
+    ///     if out.raw(chunk.0).to("encoded").publish().await.is_err() {
+    ///         return HandlerOutcome::retry();
     ///     }
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
     ///     .with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(transcode).out(Encoded, MemoryPublish).mount();
+    ///         b.include(transcode).out(Encoded, MemoryPublish).build();
     ///     });
     /// let tb = TestApp::start(app).await?;
     /// tb.broker::<MemoryBroker>().raw(b"frame").to("chunks").publish().await?;
@@ -510,7 +516,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+    /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
     /// use ruststream::testing::TestApp;
     /// use ruststream::{Outgoing, subscriber};
     /// use serde::{Deserialize, Serialize};
@@ -522,9 +528,9 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// }
     ///
     /// #[subscriber("orders")]
-    /// async fn handle(order: &Order) -> HandlerResult {
+    /// async fn handle(order: &Order) -> HandlerOutcome {
     ///     let _ = order.id;
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -539,7 +545,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     pub fn message<'a, T>(
         &'a self,
         value: &'a T,
-    ) -> Publish<InjectSink<'a>, MessageBody<'a, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<
+        InjectSink<'a>,
+        MessageBody<'a, T>,
+        CallCodec<DefaultCodec>,
+        HeadersUnset,
+        T::Form,
+    >
     where
         T: OutgoingDestination,
     {
@@ -554,7 +566,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<InjectSink<'a>, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<InjectSink<'a>, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -770,7 +782,7 @@ impl<'a> BrokerHandle<'a> {
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+    /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
     /// use ruststream::testing::TestApp;
     /// use ruststream::{Outgoing, subscriber};
     /// use serde::{Deserialize, Serialize};
@@ -782,9 +794,9 @@ impl<'a> BrokerHandle<'a> {
     /// }
     ///
     /// #[subscriber("orders")]
-    /// async fn handle(order: &Order) -> HandlerResult {
+    /// async fn handle(order: &Order) -> HandlerOutcome {
     ///     let _ = order.id;
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -805,7 +817,13 @@ impl<'a> BrokerHandle<'a> {
     pub fn message<'v, T>(
         &self,
         value: &'v T,
-    ) -> Publish<InjectSink<'a>, MessageBody<'v, T>, CallCodec<DefaultCodec>, HeadersUnset, T::Form>
+    ) -> PublishBuilder<
+        InjectSink<'a>,
+        MessageBody<'v, T>,
+        CallCodec<DefaultCodec>,
+        HeadersUnset,
+        T::Form,
+    >
     where
         T: OutgoingDestination,
     {
@@ -826,14 +844,17 @@ impl<'a> BrokerHandle<'a> {
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
-    /// use ruststream::subscriber;
+    /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
     /// use ruststream::testing::TestApp;
+    /// use ruststream::{Deserialized, subscriber};
     ///
-    /// #[subscriber("frames", raw)]
-    /// async fn handle(frame: &[u8]) -> HandlerResult {
-    ///     let _ = frame.len();
-    ///     HandlerResult::Ack
+    /// #[derive(Deserialized)]
+    /// struct Frame<'a>(&'a [u8]);
+    ///
+    /// #[subscriber("frames")]
+    /// async fn handle(frame: &Frame<'_>) -> HandlerOutcome {
+    ///     let _ = frame.0.len();
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -851,7 +872,7 @@ impl<'a> BrokerHandle<'a> {
     pub fn raw<'p, B>(
         &self,
         payload: &'p B,
-    ) -> Publish<InjectSink<'a>, RawBody<'p>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<InjectSink<'a>, RawBody<'p>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -939,5 +960,19 @@ impl BrokerHandle<'_> {
     pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
         let messages = self.testable.map(|t| t.published(name)).unwrap_or_default();
         PublishedAssertions::new(name.to_owned(), messages)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InjectSink, Target};
+
+    /// The sink travels inside a publish builder, which never hands it back, so its `Debug` is
+    /// reachable only from here - and it still has to name the type rather than leak the broker
+    /// handle it borrows.
+    #[test]
+    fn the_injection_sink_names_itself_without_its_broker() {
+        let sink = InjectSink(Target::Ambiguous);
+        assert_eq!(format!("{sink:?}"), "InjectSink { .. }");
     }
 }

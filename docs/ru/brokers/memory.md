@@ -63,8 +63,11 @@ dead-letter, поэтому зелёный тест здесь не говори
   `sequence(n)`). Перемотка вперёд пропускает доставки, стоявшие в очереди до цели; перемотка
   на конец лога или дальше пропускает всё опубликованное к этому моменту. Область действия - один
   экземпляр подписчика, а перемотка через хендл, разделяющий уже остановленную шину, падает с
-  `MemoryError::ShutDown`. Внутри приложения обработчик добирается до seeker-хендла через параметр
-  `Seek` (см. [Перемотку](../guides/subscribers.md#seeking)).
+  `MemoryError::ShutDown`. Внутри приложения контекст доставки (`MemoryContext`) несёт позицию и
+  seeker; обработчик читает их по ключам `Position` / `SeekHandle` (см.
+  [Перемотку](../guides/subscribers.md#seeking)). Пакетное тело называет вместо него
+  `MemoryBatchContext`: тот несёт seeker подписки под тем же ключом `SeekHandle` и не несёт
+  позиции, потому что пакет охватывает много доставок.
 - **Остановка.** Жизненный цикл полностью типизирован: `MemoryBroker::connect(self)` даёт
   `ConnectedMemoryBroker`, а его `shutdown`, поглощающий `self`, возвращает `ClosedMemoryBroker` -
   свидетеля, который сообщает, сколько регистраций подписчиков было отброшено при остановке.
@@ -81,11 +84,21 @@ dead-letter, поэтому зелёный тест здесь не говори
 удерживает форму дескриптора единой для всех брокеров. Из примера
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service):
 
-```rust
-use ruststream::memory::MemorySource;
+=== "Макросы"
 
---8<-- "examples/routed_service/orders.rs:descriptor"
-```
+    ```rust
+    use ruststream::memory::MemorySource;
+
+    --8<-- "examples/routed_service/orders.rs:descriptor"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    use ruststream::memory::{MemoryPublish, MemorySource};
+
+    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
+    ```
 
 ## Для тестов
 

@@ -29,12 +29,23 @@ crate。
 `#[ruststream::app]` 把一个构建器函数变成认识 `run` 和 `asyncapi gen` 的 `main`，因此不需要任何运行时
 样板代码：
 
-```rust
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, RustStream};
+=== "宏"
 
---8<-- "examples/quickstart.rs:app"
-```
+    ```rust
+    use ruststream::memory::MemoryBroker;
+    use ruststream::runtime::{AppInfo, RustStream};
+
+    --8<-- "examples/quickstart.rs:app"
+    ```
+
+=== "手写"
+
+    ```rust
+    use ruststream::memory::MemoryBroker;
+    use ruststream::prelude::*;
+
+    --8<-- "examples/manual/quickstart.rs:app"
+    ```
 
 由于分发逻辑就在生成出来的二进制程序里，`ruststream run` 和直接 `cargo run -- run` 启动服务的方式完全
 一样。`ruststream run` 只是一个便捷写法：找到目标 crate，再把命令转发给 `cargo`。

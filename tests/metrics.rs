@@ -9,14 +9,48 @@ mod common;
 
 use common::wait_for;
 
+use std::convert::Infallible;
+use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::Name;
 use ruststream::memory::MemoryBroker;
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RustStream,
-};
+use ruststream::prelude::*;
+use ruststream::runtime::{Input, SoloDeserialized};
+
+/// The payload view the body takes: whatever bytes arrive, undecoded, so the test's subject
+/// stays the metric rather than a message model.
+// The body needs the delivery, not its bytes; the field is what makes the type a payload view.
+#[allow(dead_code)]
+struct Frame<'a>(&'a [u8]);
+
+impl Deserialized for Frame<'_> {
+    type Output<'a> = Frame<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
+        Ok(Frame(payload))
+    }
+}
+
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
+}
+
+/// Acks whatever arrives: the subject is the metric the dispatch records around the body, not the
+/// body itself.
+struct Ping;
+
+impl<'p> Handle<Frame<'p>> for Ping {
+    fn handle(
+        &self,
+        _ping: &Frame<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        ready(Ok(()))
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consume_metrics_are_recorded() {
@@ -27,11 +61,7 @@ async fn consume_metrics_are_recorded() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(metrics.consume_layer())
         .with_broker(broker, |b| {
-            b.subscribe(
-                Name::new("pings"),
-                |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-                HandlerMetadata::raw("pings"),
-            );
+            b.include(subscriber("pings", Ping).build());
         });
 
     let running = app.start().await.expect("startup failed");
@@ -69,11 +99,11 @@ async fn consume_metrics_are_recorded_through_a_router() {
     // router-mounted handler, whose concrete type the router hides. That works only because
     // `MetricsLayer` implements `BlanketLayer`.
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include_router(Router::new().layer(metrics.consume_layer()).subscribe(
-            Name::new("pings"),
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-            HandlerMetadata::raw("pings"),
-        ));
+        b.include_router(
+            Router::new()
+                .layer(metrics.consume_layer())
+                .include(subscriber("pings", Ping).build()),
+        );
     });
 
     let running = app.start().await.expect("startup failed");
@@ -106,8 +136,7 @@ mod publish {
     use super::{Duration, wait_for};
     use ruststream::memory::{MemoryBroker, MemoryPublish};
     use ruststream::metrics::Metrics;
-    use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
-    use ruststream::{Broker, subscriber};
+    use ruststream::prelude::*;
 
     #[subscriber("requests", publish("responses"))]
     async fn reply(req: &Req) -> Resp {

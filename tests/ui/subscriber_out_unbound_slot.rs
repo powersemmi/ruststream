@@ -1,6 +1,9 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
-use ruststream::{OutSlot, Publisher, subscriber};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
+use ruststream::{Deserialized, OutSlot, Publisher, subscriber};
+
+#[derive(Deserialized)]
+struct Chunk<'a>(&'a [u8]);
 
 #[derive(OutSlot)]
 struct Encoded;
@@ -8,20 +11,20 @@ struct Encoded;
 #[derive(OutSlot)]
 struct Audit;
 
-#[subscriber("chunks", raw)]
+#[subscriber("chunks")]
 async fn transcode(
-    chunk: &[u8],
+    chunk: &Chunk<'_>,
     Out(_encoded): Out<impl Publisher, Encoded>,
     Out(_audit): Out<impl Publisher, Audit>,
-) -> HandlerResult {
-    let _ = chunk;
-    HandlerResult::Ack
+) -> HandlerOutcome {
+    let _ = chunk.0;
+    HandlerOutcome::ack()
 }
 
 fn main() {
-    // The Audit slot is never bound: `.mount()` must not compile, and the error names the
+    // The Audit slot is never bound: `.build()` must not compile, and the error names the
     // missing slot through `MissingSlot<Audit>` in the attachment type.
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(transcode).out(Encoded, MemoryPublish).mount();
+        b.include(transcode).out(Encoded, MemoryPublish).build();
     });
 }

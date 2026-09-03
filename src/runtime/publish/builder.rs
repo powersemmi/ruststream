@@ -12,6 +12,7 @@ use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
 
+use bytes::BytesMut;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -40,7 +41,7 @@ use super::sink::{CallCodec, PublishCodec, PublishSink};
 ///
 /// You never name this type; the entry points return it and the compiler carries it.
 #[must_use = "a publish builder does nothing until publish() is awaited"]
-pub struct Publish<Sink, Body, Enc, Hdrs, Dest> {
+pub struct PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
     sink: Sink,
     body: Body,
     codec: Enc,
@@ -48,9 +49,9 @@ pub struct Publish<Sink, Body, Enc, Hdrs, Dest> {
     dest: Dest,
 }
 
-impl<Sink, Body, Enc, Hdrs, Dest> fmt::Debug for Publish<Sink, Body, Enc, Hdrs, Dest> {
+impl<Sink, Body, Enc, Hdrs, Dest> fmt::Debug for PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Publish").finish_non_exhaustive()
+        f.debug_struct("PublishBuilder").finish_non_exhaustive()
     }
 }
 
@@ -165,6 +166,136 @@ impl SatisfiesContract<NoHeaders> for MapHeaders {}
 
 impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
 
+// ------------------------------------------------------------------------------ the two wires
+
+/// A value that already carries its bytes: `Serialize` means the framework's codec does the
+/// work, `Serialized` means it is already done by the user's own type.
+///
+/// A `Serialized` value leaves the service byte-for-byte with no codec anywhere on the path,
+/// selected purely by the type, on every typed surface: the `message(&value)` entry of a
+/// publish builder (an [`Out`](crate::runtime::Out) slot, a
+/// [`TypedPublisher`](super::TypedPublisher), a transaction scope), and the reply position (the
+/// same `.reply()` chain and `publish("dest")` clause an encoded reply uses).
+///
+/// # Implementing by hand
+///
+/// `#[derive(Serialized)]` (under the `macros` feature) covers a newtype or single-field struct
+/// over a byte buffer. Any other shape is the bytes plus the wire spellings that route the type
+/// onto the serialized wire: [`MessageWire`] for the typed publish entry, and
+/// [`ReplyShape`](crate::runtime::ReplyShape) for the reply position.
+///
+/// ```
+/// use ruststream::runtime::{
+///     MessageWire, ReplyShape, Serialized, SerializedReply, SerializedWire,
+/// };
+///
+/// struct Export(Vec<u8>);
+///
+/// impl Serialized for Export {
+///     fn bytes(&self) -> &[u8] {
+///         &self.0
+///     }
+/// }
+///
+/// impl MessageWire for Export {
+///     type Wire = SerializedWire;
+/// }
+///
+/// impl ReplyShape for Export {
+///     type Body = Self;
+///     type Headers = ();
+///     type Wire = SerializedReply;
+/// }
+///
+/// let export = Export(vec![7, 9]);
+/// assert_eq!(export.bytes(), &[7, 9]);
+/// ```
+pub trait Serialized {
+    /// The bytes the value publishes, exactly as they leave on the wire.
+    fn bytes(&self) -> &[u8];
+}
+
+/// The encoded wire of a typed publish: the resolved codec serializes the value.
+#[derive(Debug, Clone, Copy)]
+pub struct EncodedWire;
+
+/// The serialized wire of a typed publish: the value already carries its bytes
+/// ([`Serialized`]), and they leave as they are, with no codec.
+#[derive(Debug, Clone, Copy)]
+pub struct SerializedWire;
+
+/// The wire of a typed publish value: whether the resolved codec serializes it.
+///
+/// Implemented for every `serde::Serialize` value (the [`EncodedWire`]: the resolved codec
+/// encodes it), and per-type for [`Serialized`] values (the [`SerializedWire`]: the bytes leave
+/// as they are) - `#[derive(Serialized)]` writes that impl, or see [`Serialized`] for the
+/// hand-written form. The projection is what lets one `message(&value)` entry serve both wires:
+/// the value's type picks the lane, and the call site does not change.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not pick a publish wire",
+    note = "a typed publish takes a `serde::Serialize` value (the resolved codec encodes it) or \
+            a `#[derive(Serialized)]` type (its bytes leave as they are)"
+)]
+pub trait MessageWire {
+    /// The value's wire: [`EncodedWire`] or [`SerializedWire`].
+    type Wire;
+}
+
+// Without the opt-out, a type on neither lane is reported only through this impl's nested
+// `Serialize` obligation - serde's missing-derive guidance, one lane. With it the failure names
+// `MessageWire` (and, where rustc consults the trait directly, its both-lanes note); the
+// method-call path still leads with serde's note, which stays the right fix for the common case.
+#[diagnostic::do_not_recommend]
+impl<T: Serialize> MessageWire for T {
+    type Wire = EncodedWire;
+}
+
+/// The payload one wire produces: the codec's encode buffer, or the value's own bytes borrowed
+/// as they are. Machinery behind [`WirePayload`]; never named in user code.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum WireBytes<'v> {
+    /// The encoded wire's buffer, moved out of the codec.
+    Encoded(BytesMut),
+    /// The serialized wire's borrow of the value's own bytes.
+    Carried(&'v [u8]),
+}
+
+impl AsRef<[u8]> for WireBytes<'_> {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Encoded(bytes) => bytes,
+            Self::Carried(bytes) => bytes,
+        }
+    }
+}
+
+/// How one wire produces the outgoing payload for a value. Machinery behind the publish
+/// terminals, keyed by the value's [`MessageWire`] projection; never named in user code.
+#[doc(hidden)]
+pub trait WirePayload<T, Enc> {
+    /// Produces the bytes that leave: the encoded wire runs the resolved codec, the serialized
+    /// wire borrows the value's own bytes and never touches the codec.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] when the encoded wire's codec rejects the value; the serialized
+    /// wire cannot fail.
+    fn payload<'v>(value: &'v T, codec: &Enc) -> Result<WireBytes<'v>, CodecError>;
+}
+
+impl<T: Serialize, Enc: PublishCodec> WirePayload<T, Enc> for EncodedWire {
+    fn payload<'v>(value: &'v T, codec: &Enc) -> Result<WireBytes<'v>, CodecError> {
+        codec.codec().encode(value).map(WireBytes::Encoded)
+    }
+}
+
+impl<T: Serialized, Enc> WirePayload<T, Enc> for SerializedWire {
+    fn payload<'v>(value: &'v T, _codec: &Enc) -> Result<WireBytes<'v>, CodecError> {
+        Ok(WireBytes::Carried(value.bytes()))
+    }
+}
+
 /// The error of the publish builder: encoding the payload, serializing the typed headers, or the
 /// sink itself.
 #[derive(Debug, Error)]
@@ -181,7 +312,7 @@ pub enum PublishError<E> {
     Publish(#[source] E),
 }
 
-impl<Sink, Body, Enc, Hdrs, Dest> Publish<Sink, Body, Enc, Hdrs, Dest> {
+impl<Sink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
     /// The whole-tuple constructor the entry points share.
     pub(crate) const fn new(sink: Sink, body: Body, codec: Enc, headers: Hdrs, dest: Dest) -> Self {
         Self {
@@ -200,11 +331,11 @@ pub(crate) fn message_of<Sink, T, Enc>(
     sink: Sink,
     value: &T,
     codec: Enc,
-) -> Publish<Sink, MessageBody<'_, T>, Enc, HeadersUnset, T::Form>
+) -> PublishBuilder<Sink, MessageBody<'_, T>, Enc, HeadersUnset, T::Form>
 where
     T: OutgoingDestination,
 {
-    Publish::new(
+    PublishBuilder::new(
         sink,
         MessageBody(value),
         codec,
@@ -217,11 +348,11 @@ where
 pub(crate) fn raw_of<Sink, B>(
     sink: Sink,
     payload: &B,
-) -> Publish<Sink, RawBody<'_>, (), HeadersUnset, CallerName>
+) -> PublishBuilder<Sink, RawBody<'_>, (), HeadersUnset, CallerName>
 where
     B: AsRef<[u8]> + ?Sized,
 {
-    Publish::new(
+    PublishBuilder::new(
         sink,
         RawBody(payload.as_ref()),
         (),
@@ -230,16 +361,23 @@ where
     )
 }
 
-impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest> {
+impl<'a, Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest> {
     /// Names the codec for this publish, the most specific level of the codec ladder: it wins
     /// over the surface's codec, which in turn won over the application's and the crate default.
     ///
-    /// Only the typed entry point has this position; bytes are sent as they are.
+    /// Only the encoded wire has this position: bytes are sent as they are, and a
+    /// [`Serialized`] value's bytes leave as they are too - a codec named for one would be
+    /// silently ignored, so naming it does not compile.
+    // The wire bound rejects the misuse where it is written instead of letting the named codec
+    // become a no-op on the serialized wire.
     pub fn with_codec<C: Codec>(
         self,
         codec: C,
-    ) -> Publish<Sink, MessageBody<'a, T>, CallCodec<C>, Hdrs, Dest> {
-        Publish::new(
+    ) -> PublishBuilder<Sink, MessageBody<'a, T>, CallCodec<C>, Hdrs, Dest>
+    where
+        T: MessageWire<Wire = EncodedWire>,
+    {
+        PublishBuilder::new(
             self.sink,
             self.body,
             CallCodec(codec),
@@ -256,7 +394,7 @@ impl<'a, Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'a, T>, Enc, Hdrs, 
 /// value is the message's declared contract, serialized one entry per field, while a map is the
 /// transport level and stands for no contract at all (a message type declaring one still demands
 /// its value). Which of the two a call site passed rides in the type, so
-/// [`with_headers`](Publish::with_headers) is one method and the contract check stays a compile
+/// [`with_headers`](PublishBuilder::with_headers) is one method and the contract check stays a compile
 /// error either way.
 ///
 /// You never implement it: [`HeaderMap`] and `&H` of every serializable `H` already do.
@@ -292,7 +430,7 @@ impl HeaderSource for HeaderMap {
     }
 }
 
-impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
+impl<Sink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> {
     /// Supplies the headers of this publish: the message's declared contract by reference, or an
     /// already-built [`HeaderMap`] by value.
     ///
@@ -306,8 +444,8 @@ impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
     pub fn with_headers<S: HeaderSource>(
         self,
         headers: S,
-    ) -> Publish<Sink, Body, Enc, S::Position, Dest> {
-        Publish::new(
+    ) -> PublishBuilder<Sink, Body, Enc, S::Position, Dest> {
+        PublishBuilder::new(
             self.sink,
             self.body,
             self.codec,
@@ -317,7 +455,7 @@ impl<Sink, Body, Enc, Dest> Publish<Sink, Body, Enc, HeadersUnset, Dest> {
     }
 }
 
-impl<Sink, Body, Enc, Hdrs> Publish<Sink, Body, Enc, Hdrs, CallerName> {
+impl<Sink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, CallerName> {
     /// Names the destination of this publish.
     ///
     /// Present when the message type declares no name of its own, and on the byte entry point.
@@ -325,8 +463,8 @@ impl<Sink, Body, Enc, Hdrs> Publish<Sink, Body, Enc, Hdrs, CallerName> {
     pub fn to<'n>(
         self,
         name: impl Into<Cow<'n, str>>,
-    ) -> Publish<Sink, Body, Enc, Hdrs, SuppliedName<'n>> {
-        Publish::new(
+    ) -> PublishBuilder<Sink, Body, Enc, Hdrs, SuppliedName<'n>> {
+        PublishBuilder::new(
             self.sink,
             self.body,
             self.codec,
@@ -336,7 +474,7 @@ impl<Sink, Body, Enc, Hdrs> Publish<Sink, Body, Enc, Hdrs, CallerName> {
     }
 }
 
-impl<Sink, T, Enc, Hdrs> Publish<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
+impl<Sink, T, Enc, Hdrs> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
     T: TemplateAddress<Self>,
 {
@@ -432,8 +570,10 @@ async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     sink.send(msg).await.map_err(PublishError::Publish)
 }
 
-/// Encodes `value` and sends it, shared by the resolved and the rendered terminals.
-async fn encode_and_send<Sink, T, Enc, Hdrs>(
+/// Produces the value's wire payload and sends it, shared by the resolved and the rendered
+/// terminals. The wire is the value's own ([`MessageWire`]): a `Serialize` value encodes with
+/// the resolved codec, a [`Serialized`] one leaves byte-for-byte and the codec is never called.
+async fn wire_and_send<Sink, T, Enc, Hdrs>(
     sink: Sink,
     codec: Enc,
     value: &T,
@@ -442,27 +582,30 @@ async fn encode_and_send<Sink, T, Enc, Hdrs>(
 ) -> Result<(), PublishError<Sink::Error>>
 where
     Sink: PublishSink,
-    T: Serialize + Sync,
-    Enc: PublishCodec,
+    T: MessageWire + Sync,
+    T::Wire: WirePayload<T, Enc>,
     Hdrs: PublishHeaders,
 {
-    let payload = codec.codec().encode(value).map_err(PublishError::Encode)?;
-    deliver(sink, name, &payload, headers).await
+    let payload =
+        <T::Wire as WirePayload<T, Enc>>::payload(value, &codec).map_err(PublishError::Encode)?;
+    deliver(sink, name, payload.as_ref(), headers).await
 }
 
-impl<Sink, T, Enc, Hdrs, Dest> Publish<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
+impl<Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
 where
     Sink: PublishSink,
     T: OutgoingDestination + MessageHeaders + Sync,
     Enc: PublishCodec,
     Hdrs: PublishHeaders,
 {
-    /// Encodes the value with the resolved codec and publishes it to the resolved destination.
+    /// Publishes the value to the resolved destination, on the value's own wire
+    /// ([`MessageWire`]): a `Serialize` value encodes with the resolved codec, a
+    /// [`Serialized`] one leaves byte-for-byte.
     ///
     /// # Errors
     ///
-    /// Returns [`PublishError`] when the codec rejects the value, the typed headers do not
-    /// serialize, or the sink rejects the message.
+    /// Returns [`PublishError`] when the codec rejects an encoded value, the typed headers do
+    /// not serialize, or the sink rejects the message.
     ///
     /// # Cancel safety
     ///
@@ -470,10 +613,11 @@ where
     /// message in an indeterminate state.
     // The position bounds sit on the method, not on the impl block: on the block an
     // under-specified publish reads as "method not found" and loses the guidance the bounds
-    // carry, serde's own note about a missing derive included.
+    // carry, the wire projection's both-lanes note included.
     pub async fn publish(self) -> Result<(), PublishError<Sink::Error>>
     where
-        T: Serialize,
+        T: MessageWire,
+        T::Wire: WirePayload<T, Enc>,
         Hdrs: SatisfiesContract<T::Contract>,
         Dest: ResolvedName,
     {
@@ -487,25 +631,27 @@ where
         // The declared address is the fixed form's name, borrowed straight from the declaration;
         // the supplied form ignores it and lends its own.
         let name = dest.resolve(T::ADDRESS);
-        encode_and_send(sink, codec, body.0, headers, name).await
+        wire_and_send(sink, codec, body.0, headers, name).await
     }
 }
 
-impl<Sink, T, Enc, Hdrs> PublishAt for Publish<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
+impl<Sink, T, Enc, Hdrs> PublishAt
+    for PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
     Sink: PublishSink,
-    T: OutgoingDestination + MessageHeaders + Serialize + Sync,
+    T: OutgoingDestination + MessageHeaders + MessageWire + Sync,
+    T::Wire: WirePayload<T, Enc>,
     Enc: PublishCodec + Send,
     Hdrs: PublishHeaders + SatisfiesContract<T::Contract> + Send,
 {
     type Error = Sink::Error;
 
     async fn publish_at(self, name: &str) -> Result<(), PublishError<Sink::Error>> {
-        encode_and_send(self.sink, self.codec, self.body.0, self.headers, name).await
+        wire_and_send(self.sink, self.codec, self.body.0, self.headers, name).await
     }
 }
 
-impl<Sink, Hdrs, Dest> Publish<Sink, RawBody<'_>, (), Hdrs, Dest>
+impl<Sink, Hdrs, Dest> PublishBuilder<Sink, RawBody<'_>, (), Hdrs, Dest>
 where
     Sink: PublishSink,
     Hdrs: PublishHeaders,

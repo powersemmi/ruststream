@@ -26,13 +26,14 @@ use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
 };
 use ruststream::runtime::{
-    AppInfo, Context, DefaultSlot, HandlerMetadata, HandlerResult, HealthState, Out, Outgoing,
+    AppInfo, Context, DefaultSlot, Handle, HandlerOutcome, HealthState, IntoSource, Out, Outgoing,
     PublishContext, PublishError, PublishExt, PublishTransform, RustStream, RustStreamError,
-    TypedPublisher,
+    TypedPublisher, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, ConnectedBroker, DescribeServer, Publisher, ServerSpec, SubscriptionSource, subscriber,
+    Broker, ConnectedBroker, DescribeServer, Deserialized, Publisher, Serialized, ServerSpec,
+    SubscriptionSource, subscriber,
 };
 use tokio::sync::Notify;
 use tokio::time::timeout;
@@ -40,6 +41,14 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
 use common::{Order, Receipt, order_bytes};
+
+/// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
+/// The reply the byte-level relay returns: its bytes leave on the wire as they are.
+#[derive(Serialized)]
+struct Export(Vec<u8>);
 
 // ---------------------------------------------------------------------------------------------
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is
@@ -122,8 +131,8 @@ fn line_with<'a>(text: &'a str, markers: &[&str]) -> &'a str {
 }
 
 #[subscriber("cov.logged")]
-async fn logged(_order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn logged(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 /// The lifecycle log is the operator's only view of startup, so it must name the service, each
@@ -166,11 +175,11 @@ static FAIL_FAST_READY: Notify = Notify::const_new();
 
 /// Default policy: a panic fails fast, tearing the running service down.
 #[subscriber("cov.failfast")]
-async fn explodes(order: &Order) -> HandlerResult {
+async fn explodes(order: &Order) -> HandlerOutcome {
     // The test publishes ids other than u32::MAX, so this always panics; the trailing expression
     // keeps the body typed.
     assert_eq!(order.id, u32::MAX, "handler exploded");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// `run_until`'s second arm: the caller's shutdown future never resolves, so only the service
@@ -207,8 +216,8 @@ async fn run_until_returns_when_the_service_tears_itself_down() {
 static SIGNAL_READY: Notify = Notify::const_new();
 
 #[subscriber("cov.signalled")]
-async fn signalled(_order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn signalled(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 /// Sends `SIGTERM` to this process through the shell (the crate takes no libc dependency).
@@ -264,6 +273,7 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
 // Startup and teardown failures.
 
 /// A subscription descriptor the broker refuses to open, for the startup unwind.
+#[derive(Clone)]
 struct RefusedSubscription;
 
 impl SubscriptionSource<ConnectedMemoryBroker> for RefusedSubscription {
@@ -283,6 +293,29 @@ impl SubscriptionSource<ConnectedMemoryBroker> for RefusedSubscription {
     }
 }
 
+// What a broker crate writes next to its own descriptor, so the value constructors accept it.
+impl IntoSource for RefusedSubscription {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
+}
+
+/// The body behind the refused subscription: it never runs, so it only has to exist.
+struct NeverDelivered;
+
+impl<'p> Handle<Frame<'p>> for NeverDelivered {
+    fn handle(
+        &self,
+        _frame: &Frame<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        ready(Ok(()))
+    }
+}
+
 /// A subscription that cannot be opened aborts startup instead of running a service that is
 /// silently deaf, and the brokers connected so far are torn down on the way out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -294,11 +327,7 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
         "cov-refused-ingress",
         broker,
         |b| {
-            b.subscribe(
-                RefusedSubscription,
-                |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
-                HandlerMetadata::raw("cov.refused"),
-            );
+            b.include(subscriber_def(RefusedSubscription, NeverDelivered).build());
         },
     );
 
@@ -439,10 +468,10 @@ async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
 static HUNG_HANDLER: Notify = Notify::const_new();
 
 #[subscriber("cov.hung")]
-async fn hung(_order: &Order) -> HandlerResult {
+async fn hung(_order: &Order) -> HandlerOutcome {
     HUNG_HANDLER.notify_one();
     pending::<()>().await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A handler that never returns must not hold the service up forever: the drain gives up after
@@ -474,8 +503,8 @@ async fn the_shutdown_timeout_aborts_a_handler_that_never_returns() {
 static HUNG_CONTINUATION: Notify = Notify::const_new();
 
 #[subscriber("cov.continuation")]
-async fn with_continuation(_order: &Order) -> HandlerResult {
-    HandlerResult::ack().and_after(async {
+async fn with_continuation(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack().and_after(async {
         HUNG_CONTINUATION.notify_one();
         pending::<()>().await;
     })
@@ -512,9 +541,9 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
 static LABELED_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 #[subscriber("cov.labeled")]
-async fn labeled(order: &Order) -> HandlerResult {
+async fn labeled(order: &Order) -> HandlerOutcome {
     LABELED_SEEN.lock().expect("seen").push(order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// `with_broker_labeled_codec` combines both halves: the label becomes the broker's `AsyncAPI`
@@ -554,7 +583,7 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
     tb.broker::<MemoryBroker>()
         .subscriber("cov.labeled")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(*LABELED_SEEN.lock().expect("seen"), vec![11]);
 }
 
@@ -567,15 +596,15 @@ impl<C> PublishTransform<C> for Envelope {
     }
 }
 
-#[subscriber("cov.audit.in", raw, publish_raw("cov.audit.out"))]
-async fn audited_relay(frame: &[u8], Out(audit): Out<impl Publisher>) -> Vec<u8> {
+#[subscriber("cov.audit.in", publish("cov.audit.out"))]
+async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Export {
     audit
-        .raw(frame)
+        .raw(frame.0)
         .to("cov.audit.copy")
         .publish()
         .await
         .expect("the slot publisher is live");
-    frame.to_vec()
+    Export(frame.0.to_vec())
 }
 
 /// A byte-reply handler with an `Out` slot: the slot is bound explicitly and the reply leaves
@@ -586,7 +615,7 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
         RustStream::new(AppInfo::new("cov-audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(audited_relay)
                 .out(DefaultSlot, MemoryPublish)
-                .mount();
+                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -602,7 +631,7 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
         .with_raw(b"frame");
     let replies = tb
         .broker::<MemoryBroker>()
-        .published::<Vec<u8>>("cov.audit.out");
+        .published::<Export>("cov.audit.out");
     replies.assert_called_once().with_raw(b"frame");
 }
 
@@ -626,7 +655,7 @@ async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
             b.include(gate)
                 .publisher(TypedPublisher::new(MemoryPublish).transform(Envelope))
                 .out(DefaultSlot, MemoryPublish)
-                .mount();
+                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -654,9 +683,9 @@ async fn debug_reply(order: &Order) -> Receipt {
 }
 
 #[subscriber("cov.debug.slot")]
-async fn debug_slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerResult {
+async fn debug_slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     let _ = out;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Each registration builder is `Debug`, and none of them leaks the scope it borrows.
@@ -674,7 +703,7 @@ fn the_include_builders_render_a_debug_form() {
 
             let both = b.include(gate);
             assert_debug_form(&both, "IncludeSlotsWithReply");
-            both.out(DefaultSlot, MemoryPublish).mount();
+            both.out(DefaultSlot, MemoryPublish).build();
         });
 }
 

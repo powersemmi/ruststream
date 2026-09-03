@@ -9,6 +9,7 @@ use crate::runtime::slot::WithSource;
 
 use super::{
     BatchInjectMount, BatchPublishMount, CommitVia, IncludeSlots, InjectMount, PublishMount,
+    RawReplyMount,
 };
 use crate::runtime::app::scope::BrokerScope;
 
@@ -36,14 +37,21 @@ where
 pub type IncludePublishing<'s, B, Layers, C, State, Pipeline, Def, Source> =
     IncludeWith<'s, PublishMount, B, Layers, C, State, Pipeline, Def, Source>;
 
+/// The builder [`BrokerScope::include`](crate::runtime::BrokerScope::include) returns for a
+/// `publish("dest")` definition whose reply type is [`Serialized`](crate::runtime::Serialized).
+///
+/// The reply bytes leave as they are through a bare publisher.
+pub type IncludeRawReply<'s, B, Layers, C, State, Pipeline, Def, Source> =
+    IncludeWith<'s, RawReplyMount, B, Layers, C, State, Pipeline, Def, Source>;
+
 /// The builder [`BrokerScope::include`] returns for a handler with
 /// [`Out`](crate::runtime::Out) parameters: the attachment is the slot tuple, with no
 /// defaults.
 pub type IncludeOut<'s, B, Layers, C, State, Pipeline, Def, Slots> =
     IncludeSlots<'s, InjectMount, B, Layers, C, State, Pipeline, Def, Slots>;
 
-/// The builder [`BrokerScope::include`] returns for a `batch(.., publish("dest"))`
-/// definition.
+/// The builder [`BrokerScope::include`] returns for a batch publishing (`&[T]` +
+/// `publish("dest")`) definition.
 ///
 /// The attachment is the batch reply source: a typed stack, or its
 /// [`transactional`](crate::runtime::TypedPublisher::transactional) form for one transaction per batch.

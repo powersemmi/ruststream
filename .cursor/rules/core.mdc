@@ -13,6 +13,14 @@ alwaysApply: false
   `#[non_exhaustive]`. Never panic on user/network input - return `Result`.
 - Native `async fn in trait`; `+ Send` at the call site, not the trait. Destructors never panic or
   block. Features are strictly additive, never mutually exclusive.
+- Compile-time rejection is the default. The ladder for catching a MISUSE (not data - decode errors
+  and broker faults are runtime by nature) is compile error > build-time assert > startup error >
+  hot-path check, and the last rung is not an option. Prefer an enum over sibling `bool`/`Option`
+  fields with illegal combinations, a newtype (or `NonZero*`) over adjacent same-typed parameters,
+  and a typestate - a consuming `self` transition, a phase type parameter, a scope guard - over a
+  "call X before Y" contract held only by docs. A runtime check survives only where the force is
+  external (the language, the domain); mark those with a "why" comment. Put
+  `#[diagnostic::on_unimplemented]` guidance on bounds users will hit.
 - Gates: `just check` (`cargo fmt --check`, `clippy --all-targets --all-features -- -D warnings`,
   `cargo check` all-features and `--no-default-features`) + `just test`. SemVer pre-1.0: minor =
   breaking, patch = additive; `ruststream` and `ruststream-macros` versions are lockstep via
@@ -80,19 +88,21 @@ pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
 }
 ```
 
-## Feature-gated default-codec API
+## Feature-gated default codec
 
-The default-codec convenience methods only exist when a codec feature is on.
+`DefaultCodec` is a feature-selected alias, resolved by priority at compile time. It exists only
+when at least one codec feature is on, so every API that falls back to it is gated the same way
+(`#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]`); with no codec feature,
+every call site names a codec.
 
 ```rust
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-pub fn include<D>(&mut self, def: D)
-where
-    D: SubscriberDef,
-    // ...
-{
-    self.mount(def, crate::codec::DefaultCodec::default());
-}
+/// The codec used when an `include` / publisher call does not name one explicitly.
+#[cfg(feature = "json")]
+pub type DefaultCodec = JsonCodec;
+#[cfg(all(not(feature = "json"), feature = "cbor"))]
+pub type DefaultCodec = CborCodec;
+#[cfg(all(not(feature = "json"), not(feature = "cbor"), feature = "msgpack"))]
+pub type DefaultCodec = MsgpackCodec;
 ```
 
 ## Conformance self-test

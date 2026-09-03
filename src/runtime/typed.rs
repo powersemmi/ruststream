@@ -16,7 +16,7 @@ use tracing::warn;
 
 use super::context::Context;
 use super::failure::FailurePolicy;
-use super::handler::{Handler, HandlerResult, Settle};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, Decoded};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
@@ -44,8 +44,8 @@ pub struct Typed<M, Input, DecodeCodec, Inner> {
 }
 
 impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
-    /// Builds the adapter for any input kind: [`Decoded<T>`] decodes with `codec`,
-    /// [`RawBytes`](super::RawBytes) ignores it (pass `()`) and lends the payload itself.
+    /// Builds the adapter for any input kind: `Decoded<T>` decodes with `codec`, the
+    /// self-deserializing `Provided<F>` ignores it (pass `()`) and lends the payload itself.
     #[must_use]
     pub fn over(codec: DecodeCodec, inner: Inner) -> Self
     where
@@ -86,11 +86,11 @@ where
     St: Send + Sync,
     Inner: Handler<Input::Target, Cx, St>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
         // The decode product lives on this stack frame and the handler borrows its view, so the
         // input path allocates nothing of its own (a raw input borrows the payload straight out
         // of the broker's buffer).
-        match Input::decode(&self.codec, msg.payload()) {
+        match Input::decode(&self.codec, msg.payload(), msg.headers()) {
             Ok(owned) => {
                 self.inner
                     .handle(Input::view(&owned, msg.payload()), ctx)
@@ -109,11 +109,12 @@ where
                 match self.decode {
                     FailurePolicy::FailFast => {
                         ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerResult::drop()
+                        HandlerOutcome::drop()
                     }
-                    other => other.settlement().unwrap_or_else(HandlerResult::drop),
+                    other => other
+                        .settlement()
+                        .map_or_else(HandlerOutcome::drop, Into::into),
                 }
-                .into()
             }
         }
     }
@@ -132,7 +133,7 @@ mod tests {
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::failure::FailurePolicy;
-    use crate::runtime::handler::{Handler, HandlerResult};
+    use crate::runtime::handler::{Handler, HandlerOutcome, HandlerResult};
     use crate::{AckError, HeaderMap, IncomingMessage};
 
     struct StubMsg(Vec<u8>, HeaderMap);
@@ -162,7 +163,7 @@ mod tests {
             let value = *value;
             async move {
                 seen.store(value, Ordering::SeqCst);
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             }
         }
     }
@@ -188,7 +189,10 @@ mod tests {
     #[tokio::test]
     async fn raw_bytes_lend_the_payload_itself() {
         use super::Typed;
-        use crate::runtime::input::RawBytes;
+        use crate::runtime::input::Provided;
+
+        /// A marker family: the kind only labels the input, the view stays `&[u8]`.
+        struct Frame;
 
         let seen = Arc::new(AtomicU32::new(0));
         let inner = {
@@ -198,12 +202,12 @@ mod tests {
                 let len = u32::try_from(bytes.len()).unwrap();
                 async move {
                     seen.store(len, Ordering::SeqCst);
-                    HandlerResult::Ack
+                    HandlerOutcome::ack()
                 }
             }
         };
-        // No codec anywhere: the raw kind decodes with `()`.
-        let handler = Typed::<StubMsg, RawBytes, (), _>::over((), inner);
+        // No codec anywhere: the self-deserializing kind decodes with `()`.
+        let handler = Typed::<StubMsg, Provided<Frame>, (), _>::over((), inner);
         let state = ();
         let delivery = Delivery::empty();
         let headers = HeaderMap::new();

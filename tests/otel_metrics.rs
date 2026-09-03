@@ -17,7 +17,7 @@ use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::testing::{TestApp, expect_published};
 use ruststream::{ConnectedBroker, subscriber};
 use tokio::sync::{Mutex, Notify};
@@ -25,22 +25,22 @@ use tokio::sync::{Mutex, Notify};
 use common::{Order, connected};
 
 #[subscriber("otel.orders")]
-async fn consume(_order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn consume(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[subscriber("otel.drops")]
-async fn reject(_order: &Order) -> HandlerResult {
-    HandlerResult::drop()
+async fn reject(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::drop()
 }
 
 /// Panics on every delivery; the drop policy keeps the service alive across the panic.
 #[subscriber("otel.panics", on_failure(panic = drop))]
-async fn implode(order: &Order) -> HandlerResult {
+async fn implode(order: &Order) -> HandlerOutcome {
     // The test never publishes u32::MAX, so this always panics; the trailing expression keeps
-    // the body typed as HandlerResult.
+    // the body typed as HandlerOutcome.
     assert_eq!(order.id, u32::MAX, "handler exploded");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("otel.requests", publish("otel.confirmations"))]
@@ -324,9 +324,9 @@ static FAIL_ONCE: AtomicBool = AtomicBool::new(false);
 
 /// Replies once (the publish fails against the killed bus); redeliveries settle quietly.
 #[subscriber("otel.failing", publish("otel.nowhere"))]
-async fn confirm_once(order: &Order) -> Result<Order, HandlerResult> {
+async fn confirm_once(order: &Order) -> Result<Order, HandlerOutcome> {
     if FAIL_ONCE.swap(true, Ordering::SeqCst) {
-        return Err(HandlerResult::Ack);
+        return Err(HandlerOutcome::ack());
     }
     FAIL_ENTERED.notify_one();
     FAIL_PROCEED.notified().await;
@@ -460,10 +460,10 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
 /// Elements the batch handler has consumed so far, to wait on without sleeping.
 static BATCHED_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
 
-#[subscriber(batch("otel.batches"))]
-async fn absorb(orders: &[Order]) -> HandlerResult {
+#[subscriber("otel.batches")]
+async fn absorb(orders: &[Order]) -> HandlerOutcome {
     BATCHED_ELEMENTS.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

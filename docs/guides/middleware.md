@@ -16,17 +16,33 @@ compile time: the first `with_broker` moves the builder to a phase where `layer`
 `publish_layer`, and `on_startup`) no longer exist, so a layer that could not wrap the
 already-registered handlers is a compile error, not a silent no-op:
 
-```rust
---8<-- "examples/middleware_app_scope.rs:app_scope"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/middleware_app_scope.rs:app_scope"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/middleware_app_scope.rs:app_scope"
+    ```
 
 **Router scope.** Give a router its own middleware with `Router::layer`, which wraps every handler
 on that router when it is mounted (see [Routing](routing.md#router-middleware)). Handlers mounted
 directly on the broker scope stay outside it:
 
-```rust
---8<-- "examples/middleware_router_scope.rs:router_scope"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/middleware_router_scope.rs:router_scope"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/middleware_router_scope.rs:router_scope"
+    ```
 
 The two programs are
 [`middleware_app_scope.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware_app_scope.rs)
@@ -49,7 +65,7 @@ the type grows as you call `layer`.
 A layer transforms one handler into another. Implement `Layer<H>`:
 
 ```rust
-use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
+use ruststream::runtime::{Context, Handler, HandlerOutcome, Layer};
 
 --8<-- "examples/middleware.rs:layer_impl"
 ```
@@ -89,7 +105,7 @@ explicitly:
 use std::future::Future;
 use std::pin::Pin;
 
-use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
+use ruststream::runtime::{Context, DynMiddleware, HandlerOutcome, Next};
 
 --8<-- "examples/middleware.rs:dyn_middleware"
 ```
@@ -98,14 +114,28 @@ Only the *list* is dynamic. Build it at runtime, freeze it into a `DynStack`, an
 ordinary static `Layer` - compose it into the application stack with `layer`, exactly like a
 hand-written one. The rest of the dispatch chain stays static; only the stack itself pays:
 
-```rust
-use std::sync::Arc;
+=== "Macros"
 
-use ruststream::memory::MemoryMessage;
-use ruststream::runtime::DynStack;
+    ```rust
+    use std::sync::Arc;
 
---8<-- "examples/middleware.rs:dyn_stack"
-```
+    use ruststream::memory::MemoryMessage;
+    use ruststream::runtime::DynStack;
+
+    --8<-- "examples/middleware.rs:dyn_stack"
+    ```
+
+=== "Manual"
+
+    ```rust
+    use std::sync::Arc;
+
+    use ruststream::memory::{MemoryBroker, MemoryMessage};
+    use ruststream::prelude::*;
+    use ruststream::runtime::{DynMiddleware, DynStack};
+
+    --8<-- "examples/manual/middleware.rs:dyn_stack"
+    ```
 
 The full program, with the chain toggled by an environment variable, is
 [`examples/middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware.rs).

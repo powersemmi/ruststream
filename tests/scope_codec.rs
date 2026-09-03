@@ -14,7 +14,7 @@ use std::time::Duration;
 use common::{Order, Receipt, wait_for};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, TypedPublisher};
 use ruststream::subscriber;
 
 static PLAIN_ON: AtomicUsize = AtomicUsize::new(0);
@@ -26,21 +26,21 @@ static BPOUT: AtomicUsize = AtomicUsize::new(0);
 static BPOUT_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("sc-plain-on")]
-async fn plain_on(_o: &Order) -> HandlerResult {
+async fn plain_on(_o: &Order) -> HandlerOutcome {
     PLAIN_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
-#[subscriber(batch("sc-batch"))]
-async fn batch(orders: &[Order]) -> HandlerResult {
+#[subscriber("sc-batch")]
+async fn batch(orders: &[Order]) -> HandlerOutcome {
     BATCH.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
-#[subscriber(batch("sc-batch-on"))]
-async fn batch_on(orders: &[Order]) -> HandlerResult {
+#[subscriber("sc-batch-on")]
+async fn batch_on(orders: &[Order]) -> HandlerOutcome {
     BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("sc-pin", publish("sc-pout"))]
@@ -53,38 +53,38 @@ async fn relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber(batch("sc-bpin"), publish("sc-bpout"))]
+#[subscriber("sc-bpin", publish("sc-bpout"))]
 async fn batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber(batch("sc-bpin-on"), publish("sc-bpout-on"))]
+#[subscriber("sc-bpin-on", publish("sc-bpout-on"))]
 async fn batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
 #[subscriber("sc-pout")]
-async fn pout_check(_r: &Receipt) -> HandlerResult {
+async fn pout_check(_r: &Receipt) -> HandlerOutcome {
     POUT.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("sc-pout-on")]
-async fn pout_on_check(_r: &Receipt) -> HandlerResult {
+async fn pout_on_check(_r: &Receipt) -> HandlerOutcome {
     POUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("sc-bpout")]
-async fn bpout_check(_r: &Receipt) -> HandlerResult {
+async fn bpout_check(_r: &Receipt) -> HandlerOutcome {
     BPOUT.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("sc-bpout-on")]
-async fn bpout_on_check(_r: &Receipt) -> HandlerResult {
+async fn bpout_on_check(_r: &Receipt) -> HandlerOutcome {
     BPOUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// One codec scope, every scope-codec variant mounted: the plain and batch `include`s, and both
@@ -153,15 +153,15 @@ static D_POUT_ON: AtomicUsize = AtomicUsize::new(0);
 static D_BPOUT_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("d-plain-on")]
-async fn d_plain_on(_o: &Order) -> HandlerResult {
+async fn d_plain_on(_o: &Order) -> HandlerOutcome {
     D_PLAIN_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
-#[subscriber(batch("d-batch-on"))]
-async fn d_batch_on(orders: &[Order]) -> HandlerResult {
+#[subscriber("d-batch-on")]
+async fn d_batch_on(orders: &[Order]) -> HandlerOutcome {
     D_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("d-pin-on", publish("d-pout-on"))]
@@ -169,21 +169,21 @@ async fn d_relay_on(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber(batch("d-bpin-on"), publish("d-bpout-on"))]
+#[subscriber("d-bpin-on", publish("d-bpout-on"))]
 async fn d_batch_relay_on(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
 #[subscriber("d-pout-on")]
-async fn d_pout_on_check(_r: &Receipt) -> HandlerResult {
+async fn d_pout_on_check(_r: &Receipt) -> HandlerOutcome {
     D_POUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("d-bpout-on")]
-async fn d_bpout_on_check(_r: &Receipt) -> HandlerResult {
+async fn d_bpout_on_check(_r: &Receipt) -> HandlerOutcome {
     D_BPOUT_ON.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// The same family on the default-codec block: the plain and batch `include`s next to both

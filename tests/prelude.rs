@@ -42,9 +42,9 @@ async fn confirm(order: &Order, State(seen): State<Arc<AtomicU64>>) -> Confirmat
 /// A subscription named where the service is wired up, through the settings surface the prelude
 /// has to carry too.
 #[subscriber]
-async fn audit(order: &Order) -> HandlerResult {
+async fn audit(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

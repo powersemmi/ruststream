@@ -47,9 +47,17 @@ cargo run -- asyncapi gen
 
 ## Как выглядит точка входа
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
-```
+=== "Макросы"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/tutorial/main.rs:main"
+    ```
+
+=== "Вручную"
+
+    ```rust title="src/main.rs"
+    --8<-- "examples/manual/tutorial/main.rs:main"
+    ```
 
 Вы пишете функцию, которая собирает сервис, а макрос превращает её в `main`, разбирающий команды
 `run` и `asyncapi gen`.

@@ -5,11 +5,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::StreamExt;
 
 use super::super::dispatch::Delivery;
+use super::super::handler::HandlerResult;
 use super::super::publish::TypedPublisher;
 use super::*;
 use crate::codec::JsonCodec;
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
-use crate::runtime::Decoded;
+use crate::runtime::input::Decoded;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
@@ -64,11 +65,12 @@ impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
         batch: &[u32],
         (): &(),
         _ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<u32>, HandlerResult>> {
+    ) -> impl Future<Output = Result<Vec<u32>, BatchResult>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let result = self
-            .fail_with
-            .map_or_else(|| Ok(batch.iter().map(|n| n * 10).collect()), Err);
+        let result = self.fail_with.map_or_else(
+            || Ok(batch.iter().map(|n| n * 10).collect()),
+            |outcome| Err(BatchResult::Uniform(outcome.into())),
+        );
         ready(result)
     }
 }

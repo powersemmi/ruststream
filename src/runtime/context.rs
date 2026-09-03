@@ -16,7 +16,7 @@ use crate::{Field, FieldMut, HeaderMap};
 
 use super::dispatch::Delivery;
 use super::failure::{ErrorShutdown, FailurePolicy};
-use super::handler::HandlerResult;
+use super::handler::{HandlerOutcome, HandlerResult};
 
 /// A post-settle continuation: a boxed `Send` future the dispatcher runs after the message (or
 /// batch) has been settled.
@@ -214,7 +214,7 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerResult};
+    /// use ruststream::runtime::{Context, HandlerOutcome};
     ///
     /// struct AppState {
     ///     prefix: String,
@@ -223,9 +223,9 @@ impl<'a, C, S> Context<'a, C, S> {
     /// async fn handle<M: IncomingMessage>(
     ///     _msg: &M,
     ///     ctx: &mut Context<'_, (), AppState>,
-    /// ) -> HandlerResult {
+    /// ) -> HandlerOutcome {
     ///     let _prefix = &ctx.state().prefix;
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     /// ```
     #[must_use]
@@ -244,7 +244,7 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// ```
     /// use ruststream::{Field, IncomingMessage};
-    /// use ruststream::runtime::{Context, HandlerResult};
+    /// use ruststream::runtime::{Context, HandlerOutcome};
     ///
     /// // A broker context with one field and the key that reads it.
     /// struct Delivery {
@@ -259,9 +259,9 @@ impl<'a, C, S> Context<'a, C, S> {
     ///     }
     /// }
     ///
-    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Delivery>) -> HandlerResult {
+    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Delivery>) -> HandlerOutcome {
     ///     let _offset = ctx.context(Offset);
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     /// ```
     pub fn context<K: Field<C>>(&self, key: K) -> K::Value<'_> {
@@ -287,7 +287,7 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// ```
     /// use ruststream::{Field, FieldMut, IncomingMessage};
-    /// use ruststream::runtime::{Context, HandlerResult};
+    /// use ruststream::runtime::{Context, HandlerOutcome};
     ///
     /// #[derive(Default)]
     /// struct Scratch {
@@ -308,10 +308,10 @@ impl<'a, C, S> Context<'a, C, S> {
     ///     }
     /// }
     ///
-    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Scratch>) -> HandlerResult {
+    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Scratch>) -> HandlerOutcome {
     ///     ctx.set(User, 7);
     ///     assert_eq!(ctx.context(User), Some(&7));
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     /// ```
     pub fn set<K: FieldMut<C>>(&mut self, key: K, value: K::Owned) {
@@ -322,11 +322,12 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// The returned builder's [`then`](After::then) registers a future that the dispatcher runs
     /// once the message has been settled, but only if the actual settlement matches `outcome` by
-    /// kind. The four kinds are distinct: [`HandlerResult::Ack`], [`HandlerResult::drop`] (nack
-    /// without requeue), [`HandlerResult::retry`] (nack with requeue), and
-    /// [`HandlerResult::retry_after`] (which matches regardless of the delay). So a hook gated on
-    /// `drop()` does not fire on a `retry()` settlement, and vice versa. Multiple hooks accumulate
-    /// and every matching one runs.
+    /// kind. The four kinds are distinct: [`HandlerOutcome::ack`], [`HandlerOutcome::drop`] (nack
+    /// without requeue), [`HandlerOutcome::retry`] (nack with requeue), and
+    /// [`HandlerOutcome::retry_after`] (which matches regardless of the delay). So a hook gated
+    /// on `drop()` does not fire on a `retry()` settlement, and vice versa. Multiple hooks
+    /// accumulate and every matching one runs. Any continuation already attached to the gate
+    /// value itself is ignored: the hook future is what `then` registers.
     ///
     /// The hook is scoped to the whole delivery. On the batch path a `Context` is one per batch,
     /// so a hook registered here runs after the entire batch settles; because a batch has
@@ -345,27 +346,30 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, Handler, HandlerResult};
+    /// use ruststream::runtime::{Context, Handler, HandlerOutcome};
     ///
     /// fn use_after<M: IncomingMessage + 'static>() {
     ///     let _handler = |_msg: &M, ctx: &mut Context| {
-    ///         ctx.after(HandlerResult::Ack)
+    ///         ctx.after(HandlerOutcome::ack())
     ///             .then(async move { /* runs only after this message is acked */ });
-    ///         async { HandlerResult::Ack }
+    ///         async { HandlerOutcome::ack() }
     ///     };
     /// }
     /// ```
-    pub fn after(&mut self, outcome: HandlerResult) -> After<'_, 'a, C, S> {
+    // The gate is a just-built outcome token (`after(HandlerOutcome::ack())`); a reference
+    // parameter would force `&` noise at every call site.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn after(&mut self, outcome: HandlerOutcome) -> After<'_, 'a, C, S> {
         After {
             ctx: self,
-            gate: Some(OutcomeKind::of(outcome)),
+            gate: Some(OutcomeKind::of(outcome.outcome())),
         }
     }
 
     /// Registers a post-settle hook that runs only after the message is acked.
     ///
-    /// Sugar for `self.after(HandlerResult::Ack).then(fut)`; see [`after`](Self::after) for the
-    /// gating and cancel-safety semantics.
+    /// Sugar for `self.after(HandlerOutcome::ack()).then(fut)`; see [`after`](Self::after) for
+    /// the gating and cancel-safety semantics.
     ///
     /// # Cancel safety
     ///
@@ -376,12 +380,12 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerResult};
+    /// use ruststream::runtime::{Context, HandlerOutcome};
     ///
     /// fn use_after_ack<M: IncomingMessage + 'static>() {
     ///     let _handler = |_msg: &M, ctx: &mut Context| {
     ///         ctx.after_ack(async move { /* fire-and-forget once acked */ });
-    ///         async { HandlerResult::Ack }
+    ///         async { HandlerOutcome::ack() }
     ///     };
     /// }
     /// ```
@@ -407,12 +411,12 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerResult};
+    /// use ruststream::runtime::{Context, HandlerOutcome};
     ///
     /// fn use_after_settle<M: IncomingMessage + 'static>() {
     ///     let _handler = |_msg: &M, ctx: &mut Context| {
     ///         ctx.after_settle(async move { /* runs once the message is settled, any outcome */ });
-    ///         async { HandlerResult::retry() }
+    ///         async { HandlerOutcome::retry() }
     ///     };
     /// }
     /// ```
@@ -490,13 +494,13 @@ impl<C, S> After<'_, '_, C, S> {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerResult};
+    /// use ruststream::runtime::{Context, HandlerOutcome};
     ///
     /// fn use_then<M: IncomingMessage + 'static>() {
     ///     let _handler = |_msg: &M, ctx: &mut Context| {
-    ///         ctx.after(HandlerResult::drop())
+    ///         ctx.after(HandlerOutcome::drop())
     ///             .then(async move { /* runs only if the message is dropped (nack, no requeue) */ });
-    ///         async { HandlerResult::drop() }
+    ///         async { HandlerOutcome::drop() }
     ///     };
     /// }
     /// ```

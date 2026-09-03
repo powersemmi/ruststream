@@ -33,15 +33,31 @@
 Тестируемый обработчик (в настоящем сервисе он лежит в вашем модуле обработчиков, а тест его
 импортирует):
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:handler"
+    ```
 
 Сам тест:
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/doc_testing_memory.rs:test"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_doc_testing_memory.rs:test"
+    ```
 
 !!! info "Этот тест выполняется в CI этого репозитория"
     Код выше подтянут из
@@ -65,7 +81,8 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 
 Вход приходит через тот же билдер публикации, которым публикует сам сервис: `message(&value)`
 кодирует значение с `#[derive(Outgoing)]`, `raw(bytes)` отправляет байты как есть (случай
-недекодируемой полезной нагрузки и единственная форма для сырого подписчика), `with_headers(&meta)`
+недекодируемой полезной нагрузки и способ подать данные обработчику, который
+[десериализует байты сам](subscribers.md#raw-subscribers)), `with_headers(&meta)`
 прикрепляет типизированный контракт заголовков, а `to(name)` называет субъект, когда тип значения
 его не объявляет.
 
@@ -78,7 +95,7 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 | `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | число доставок |
 | `with(&value)` | последняя доставка декодируется в `value` (кодеком по умолчанию) |
 | `with_raw(bytes)` | последняя сырая полезная нагрузка |
-| `settled(HandlerResult::Ack)` | чем она завершилась |
+| `settled(HandlerOutcome::ack())` | чем она завершилась |
 | `assert_outcome(Outcome::Drop)` | классифицированный исход (ack / nack / drop / ошибка декодирования / паника) |
 | `panicked()` | обработчик упал в панику на последней доставке |
 | `assert_last_failed_to_decode()` | полезная нагрузка не декодировалась |
@@ -138,9 +155,17 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 записывает немедленное завершение `NackAfter` и возвращает управление, а сама повторная доставка
 запускается отдельно - сдвигом остановленных часов:
 
-```rust
---8<-- "tests/testing_harness.rs:retry_after"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "tests/testing_harness.rs:retry_after"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "tests/manual_testing_harness.rs:retry_after"
+    ```
 
 ## Интеграционные тесты против настоящего брокера {#integration-tests-against-a-real-broker}
 

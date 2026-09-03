@@ -100,7 +100,7 @@ pub trait IncomingMessage: Send + Sync {
 
     // Defaulted: a plain nack(true). Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
-    // HandlerResult::retry_after.
+    // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
 
     // Defaulted: None. Override (with the Partitioned capability) to feed the
@@ -272,7 +272,11 @@ subscription can be repositioned from outside the dispatch loop. Positions are b
 message via `Positioned::position` carries a pinned contract - seeking to it redelivers exactly
 that message - while constructed positions keep the semantics your position type documents.
 Document what one seek covers (a consumer instance, or a shared group cursor) and reset any ack
-bookkeeping the reposition invalidates.
+bookkeeping the reposition invalidates. To let handler bodies seek, carry the delivery's
+position and the subscription's seeker as fields of your per-delivery context and publish
+`ContextField` keys for them - the in-memory broker's `MemoryContext` with its `Position` /
+`SeekHandle` keys is the model. The batch forms reach the seeker through the batch context
+below, which carries the handle without the position.
 
 ### Extending the `Out` slot vocabulary
 
@@ -284,9 +288,17 @@ router) - declare your own capability trait, implement it for the value, and gra
 wrapper with one blanket impl delegating through `SlotPublisher::inner`. Handlers then bound
 their slot with your trait, and the concrete type still never appears in application code:
 
-```rust
---8<-- "tests/out_slots.rs:extension"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/out_slots.rs:extension"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:extension"
+    ```
 
 Publishes made through values obtained from `inner` bypass the harness's per-slot capture
 (like a settled owned transaction's buffer); they stay visible in the broker's publish log.
@@ -322,6 +334,17 @@ impl ContextField for Partition {
 ```
 
 A broker with no per-delivery fields uses `()` and skips all of this.
+
+Batch subscriptions get a context of their own, because a page spans many deliveries: build a
+second struct out of what the whole *subscription* shares (a seek handle, a stream name, a
+consumer group), implement `BuildBatchContext` on it - the runtime builds one per page from the
+page's first delivery - and publish `Field` keys so a page body reads it with `ctx.context(..)`.
+Per-delivery fields stay out of it: a position belongs to one delivery, so a page reads it off
+the elements instead. Keeping the two structs apart is what enforces that at compile time,
+since a per-delivery context does not implement `BuildBatchContext` and a page body therefore
+cannot name it. The in-memory broker's `MemoryBatchContext` - the subscription's seeker under
+the same `SeekHandle` key its per-delivery context publishes - is the model, and a broker with
+nothing subscription-scoped to offer implements nothing and leaves pages on the `()` default.
 
 ## Middleware on the async edges { #middleware-on-the-async-edges }
 

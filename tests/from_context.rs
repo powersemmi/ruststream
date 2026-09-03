@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, Context, FromContext, HandlerResult, RustStream, State};
+use ruststream::runtime::{AppInfo, Context, FromContext, HandlerOutcome, RustStream, State};
 use ruststream::testing::TestApp;
 use ruststream::{FromRef, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
@@ -28,18 +28,18 @@ struct AppState {
 struct Hits(Arc<AtomicU32>);
 
 impl<C: Send> FromContext<C, AppState> for Hits {
-    type Rejection = HandlerResult;
+    type Rejection = HandlerOutcome;
     fn from_context(
         ctx: &mut Context<'_, C, AppState>,
-    ) -> impl Future<Output = Result<Self, HandlerResult>> {
+    ) -> impl Future<Output = Result<Self, HandlerOutcome>> {
         ready(Ok(Self(ctx.state().hits.clone())))
     }
 }
 
 #[subscriber("orders")]
-async fn record(_order: &Order, hits: Hits) -> HandlerResult {
+async fn record(_order: &Order, hits: Hits) -> HandlerOutcome {
     hits.0.fetch_add(1, Ordering::Relaxed);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -62,7 +62,7 @@ async fn extractor_resolves_from_state() {
         .subscriber("orders")
         .assert_called_once()
         .with(&Order { id: 7 })
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(
         hits.load(Ordering::Relaxed),
         1,
@@ -70,7 +70,7 @@ async fn extractor_resolves_from_state() {
     );
 }
 
-// --- rejection path: a failing extractor skips the body and settles by its HandlerResult ---
+// --- rejection path: a failing extractor skips the body and settles by its HandlerOutcome ---
 
 struct GuardState {
     ran: Arc<AtomicBool>,
@@ -80,11 +80,11 @@ struct GuardState {
 struct Deny;
 
 impl<C: Send> FromContext<C, GuardState> for Deny {
-    type Rejection = HandlerResult;
+    type Rejection = HandlerOutcome;
     fn from_context(
         _ctx: &mut Context<'_, C, GuardState>,
-    ) -> impl Future<Output = Result<Self, HandlerResult>> {
-        ready(Err(HandlerResult::drop()))
+    ) -> impl Future<Output = Result<Self, HandlerOutcome>> {
+        ready(Err(HandlerOutcome::drop()))
     }
 }
 
@@ -93,9 +93,9 @@ async fn guarded(
     _order: &Order,
     ctx: &mut Context<'_, (), GuardState>,
     _deny: Deny,
-) -> HandlerResult {
+) -> HandlerOutcome {
     ctx.state().ran.store(true, Ordering::Relaxed);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -118,7 +118,7 @@ async fn extractor_rejection_short_circuits() {
         .subscriber("guard")
         .assert_called_once()
         .with(&Order { id: 1 })
-        .settled(HandlerResult::drop());
+        .settled(HandlerOutcome::drop());
     assert!(
         !ran.load(Ordering::Relaxed),
         "the handler body must not run when an extractor rejects"
@@ -138,9 +138,9 @@ struct DerivedState {
 }
 
 #[subscriber("derived")]
-async fn derived(_order: &Order, State(tally): State<Tally>) -> HandlerResult {
+async fn derived(_order: &Order, State(tally): State<Tally>) -> HandlerOutcome {
     tally.0.fetch_add(1, Ordering::Relaxed);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -168,7 +168,7 @@ async fn derive_from_ref_injects_fields() {
         .subscriber("derived")
         .assert_called_once()
         .with(&Order { id: 3 })
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(
         count.load(Ordering::Relaxed),
         1,

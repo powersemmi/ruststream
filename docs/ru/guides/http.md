@@ -28,9 +28,17 @@ HTTP-сервер уже остановлен. Издатель приходит
 `running.publisher(token)` сводит токен с брокером, который `start()` уже подключил. Сведённый
 издатель - обычное значение, которое безопасно клонировать в любое состояние HTTP-фреймворка:
 
-```rust
---8<-- "examples/http_outbox.rs:wiring"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:wiring"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:wiring"
+    ```
 
 ## Эндпоинт healthz {#a-healthz-endpoint}
 
@@ -52,9 +60,17 @@ fail-fast), и проба переживает `shutdown()`, поэтому ма
 Сторона подписчика - обычный обработчик: тот же сервис потребляет то, что производят его
 HTTP-эндпоинты, и эти события видит любой другой сервис, подписанный на брокер:
 
-```rust
---8<-- "examples/http_outbox.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/http_outbox.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/http_outbox.rs:handler"
+    ```
 
 ## Публикация прямо из запроса
 

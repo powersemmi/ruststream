@@ -1,5 +1,0 @@
-error: the reply of a raw handler is bytes and is never encoded; use publish_raw("dest") instead of publish(..)
- --> tests/ui/subscriber_raw_encoded_publish.rs:5:37
-  |
-5 | #[subscriber("frames", raw, publish("out"))]
-  |                                     ^^^^^

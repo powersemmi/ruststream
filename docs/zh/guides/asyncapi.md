@@ -33,14 +33,28 @@ ruststream asyncapi gen --yaml
 处理器的载荷类型只要 derive 了 `JsonSchema`，就会作为一个 schema 出现。RustStream 重导出了 `schemars`，
 所以你不需要直接依赖它：
 
-```rust
---8<-- "examples/asyncapi_http.rs:payload"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:payload"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:payload"
+    ```
 
 没有 `JsonSchema` 的类型照样可以作为处理器的载荷，只是它不会给文档贡献 schema。生成文档时，每出现
 一处这样的缺口就会打一条 `WARN` 日志（每个处理器或每条出站声明只报一次，并写明是哪个订阅或哪个通道、
-以及是什么类型；刻意不带 schema 的原始字节消息不在此列）。`Spec::messages_without_schema()` 会列出
+以及是什么类型）。`Spec::messages_without_schema()` 会列出
 受影响的消息组件；在测试里断言它为空，就能在 CI 里卡住 schema 覆盖率。
+
+自带线上格式的消息是刻意留下的例外。[`Deserialized`](subscribers.md#raw-subscribers) 输入、
+以已序列化形态发出的出站类型 - 带
+[`#[derive(Serialized)]`](subscribers.md#raw-subscribers) 的回复，或者某个槽位 `#[publishes(..)]`
+词典里的 `Serialized` 成员 - 会用它自己的名字收录进文档、不带载荷 schema；生成文档时不会为它
+告警，`messages_without_schema()` 也不会把它列出来：格式就是那些字节本身，schema 无话可说。
 
 除了载荷之外，文档还会带上**消息头的 schema**（来自处理器的 `Headers<T>` 参数，或者某个类型
 声明的 `headers = ..` 契约），以及为每一条已声明的出站消息生成的 **`send` 操作**，包括 `publish(..)`
@@ -57,31 +71,39 @@ ruststream asyncapi gen --yaml
 消息的 description，而 `#[schemars(title = "...")]`（或者 rename）决定组件的名字。没有 schema 时，
 组件以载荷类型命名，description 退回到处理器的文档注释（这条注释同时也是 `receive` 操作的说明）。
 
-若要显式控制这些元数据，包括为没有 `JsonSchema` 的类型控制，就实现 `Message` trait，它的优先级高于
-schema；或者 derive 它，那样会使用类型自身的名字和文档注释：
+若要显式控制这些元数据，包括为没有 `JsonSchema` 的类型控制，就实现 `MessageInfo` trait，它的优先级
+高于 schema；或者 derive 它，那样会使用类型自身的名字和文档注释：
 
-<!-- inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema -->
+<!-- inline-rust: minimal MessageInfo-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that MessageInfo takes precedence over the schema -->
 ```rust
-use ruststream::Message;
+use ruststream::MessageInfo;
 
 /// An order placed by a customer.
-#[derive(Message, serde::Deserialize)]
+#[derive(MessageInfo, serde::Deserialize)]
 struct Order {
     id: u64,
 }
 // In the document: components.messages.Order with that description.
 ```
 
-手写的 `impl Message` 可以让组件名与 Rust 类型名不同
+手写的 `impl MessageInfo` 可以让组件名与 Rust 类型名不同
 （`const NAME: &'static str = "CustomOrder";`），这样即使类型改名，线上契约也保持稳定。
 
 ## 服务器
 
 把你的服务所连接的服务器记录下来，它们就会出现在文档的 `servers` 一节里。直接构建一个 `ServerSpec`：
 
-```rust
---8<-- "examples/asyncapi_http.rs:server"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs:server"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs:server"
+    ```
 
 Broker crate 也可以实现 `DescribeServer` 能力，这样 `broker.describe_server()` 就会替你产出这份 spec
 （随框架发布的那几个 Broker 都实现了），而 `with_broker_labeled` 会自动把它记在该 Broker 的标签之下。
@@ -130,6 +152,14 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 `cargo run --example asyncapi_http --features macros,memory,asyncapi` 运行它，然后打开
 <http://127.0.0.1:8080/>。
 
-```rust
---8<-- "examples/asyncapi_http.rs"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/asyncapi_http.rs"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/asyncapi_http.rs"
+    ```

@@ -16,6 +16,7 @@
 mod builder;
 mod builders;
 mod form_eager;
+mod form_handle;
 mod form_out;
 mod form_publish;
 pub mod forms;
@@ -34,20 +35,21 @@ pub use builders::{
 };
 #[doc(hidden)]
 pub use builders::{RouterCommit, RouterSlotCommit};
+// The typed default-reply token is machinery, but the macro expansion names it in generated
+// types (the default attach of a sealed reply definition), so it is public and hidden.
+#[doc(hidden)]
+pub use mount::DefaultReply;
 pub use mount::IncludeDef;
 #[doc(hidden)]
 pub use mount::RouterMount;
 pub(crate) use mount::{
-    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultBareReply, DefaultReply,
-    InjectMount, InputCodec, MountCodec, PublishInjectMount, PublishMount,
+    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, InjectMount, InputCodec,
+    MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
 };
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
-use crate::runtime::batch::{
-    BatchDef, BatchWithHeadersDef, RawBatch, TypedBatch, TypedBatchWithHeaders,
-};
-use crate::runtime::input::Decoded;
+use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -59,7 +61,7 @@ pub(crate) use crate::runtime::SourceMessage;
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.
-type TypedRoute<B, S, D, C> = SubscribeRoute<
+pub(crate) type TypedRoute<B, S, D, C> = SubscribeRoute<
     S,
     Typed<SourceMessage<B, S>, <D as SubscriberDef>::Input, C, <D as SubscriberDef>::Handler>,
     <D as SubscriberDef>::Context,
@@ -67,44 +69,33 @@ type TypedRoute<B, S, D, C> = SubscribeRoute<
 
 /// The router that mounting a [`SubscriberDef`] `D` on source `S` (decoded with `C`) onto `R`
 /// produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
-type IncludedRouter<B, S, D, C, RC, RL, R> = Router<B, (TypedRoute<B, S, D, C>, R), RC, RL>;
+pub(crate) type IncludedRouter<B, S, D, C, RC, RL, R> =
+    Router<B, (TypedRoute<B, S, D, C>, R), RC, RL>;
 
 /// The route a [`BatchDef`] `D` mounted on source `S` (decoded with `C`) becomes.
-type BatchTypedRoute<B, S, D, C> = BatchRoute<
+pub(crate) type BatchTypedRoute<B, S, D, C> = BatchRoute<
     S,
     TypedBatch<SourceMessage<B, S>, <D as BatchDef>::Input, C, <D as BatchDef>::Handler>,
+    <D as BatchDef>::Context,
 >;
 
 /// The router that mounting a [`BatchDef`] `D` on source `S` (decoded with `C`) onto `R`
 /// produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
-type IncludedBatchRouter<B, S, D, C, RC, RL, R> =
+pub(crate) type IncludedBatchRouter<B, S, D, C, RC, RL, R> =
     Router<B, (BatchTypedRoute<B, S, D, C>, R), RC, RL>;
 
-/// The route a raw [`BatchDef`] `D` mounted on source `S` becomes: no codec is involved, so the
-/// adapter carries only the message type and the handler.
-type RawBatchRoute<B, S, D> =
-    BatchRoute<S, RawBatch<SourceMessage<B, S>, <D as BatchDef>::Handler>>;
-
-/// The router that mounting a raw [`BatchDef`] `D` on source `S` onto `R` produces.
-type IncludedRawBatchRouter<B, S, D, RC, RL, R> = Router<B, (RawBatchRoute<B, S, D>, R), RC, RL>;
-
-/// The route a [`BatchWithHeadersDef`] `D` mounted on source `S` (decoded with `C`) becomes: the
-/// element contracts are parsed by the adapter, so the route type differs only in that adapter.
-type BatchWithHeadersTypedRoute<B, S, D, C> = BatchRoute<
+/// The route a self-deserializing [`BatchDef`] `D` mounted on source `S` becomes: no codec is
+/// involved, so the adapter carries the message type, the element family `F` and the handler.
+type DeserializedBatchRoute<B, S, D, F> = BatchRoute<
     S,
-    TypedBatchWithHeaders<
-        SourceMessage<B, S>,
-        <D as BatchDef>::Input,
-        C,
-        <D as BatchWithHeadersDef>::Headers,
-        <D as BatchDef>::Handler,
-    >,
+    DeserializedBatch<SourceMessage<B, S>, F, <D as BatchDef>::Handler>,
+    <D as BatchDef>::Context,
 >;
 
-/// The router that mounting a [`BatchWithHeadersDef`] `D` on source `S` (decoded with `C`) onto
-/// `R` produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
-type IncludedBatchWithHeadersRouter<B, S, D, C, RC, RL, R> =
-    Router<B, (BatchWithHeadersTypedRoute<B, S, D, C>, R), RC, RL>;
+/// The router that mounting a self-deserializing [`BatchDef`] `D` on source `S` onto `R`
+/// produces.
+type IncludedRawBatchRouter<B, S, D, F, RC, RL, R> =
+    Router<B, (DeserializedBatchRoute<B, S, D, F>, R), RC, RL>;
 
 /// The router that mounting an injected definition `D` on source `S` (decoded with `C`,
 /// resolving its startup injections against the attachment `E`) onto `R` produces.
@@ -130,18 +121,6 @@ type RawReplyRouter<B, S, D, C, RP, E, RC, RL, R> =
 /// replying through the policy `RP`) onto `R` produces.
 type BatchPublishingRouter<B, S, D, C, RP, E, RC, RL, R> =
     Router<B, (BatchPublishingRoute<S, D, C, RP, E>, R), RC, RL>;
-
-/// The router that a [`Router::subscribe_batch`] closure registration produces: the slice
-/// handler `H` is wrapped in a [`TypedBatch`] decoding elements to `T` with `C`.
-type SubscribedBatchRouter<B, S, T, C, H, RC, RL, R> = Router<
-    B,
-    (
-        BatchRoute<S, TypedBatch<SourceMessage<B, S>, Decoded<T>, C, H>>,
-        R,
-    ),
-    RC,
-    RL,
->;
 
 /// The router that [`Router::merge`] produces: the merged router becomes one registration in the
 /// list.

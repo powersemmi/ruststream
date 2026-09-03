@@ -6,7 +6,7 @@
 
 mod common;
 
-use std::future::ready;
+use std::future::{Future, ready};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -16,17 +16,17 @@ use ruststream::memory::{
     MemoryPublisher, MemorySubscriber,
 };
 use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RouterHandlers,
-    RustStream, RustStreamError, TypedPublisher,
+    AppInfo, Context, Handle, HandlerMetadata, HandlerOutcome, PublishExt, Router, RouterHandlers,
+    RustStream, RustStreamError, TypedPublisher, subscriber as subscriber_def,
 };
-use ruststream::{IncomingMessage, Name, PairError, PublishPolicy, SubscriptionSource, subscriber};
+use ruststream::{IncomingMessage, PairError, PublishPolicy, SubscriptionSource, subscriber};
 
 #[subscriber("brc-in", publish("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber(batch("brc-batch-in"), publish("brc-out"))]
+#[subscriber("brc-batch-in", publish("brc-out"))]
 async fn brc_batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -49,7 +49,7 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
                 if payload == b"ping" {
                     BRC_HANDLED.fetch_add(1, Ordering::SeqCst);
                 }
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             }
         },
         HandlerMetadata::raw("brc-handle"),
@@ -75,6 +75,21 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
+/// A page body carrying no behaviour: the route kind is what the metadata sweep below reads, not
+/// what the body does with the page.
+struct MetaBatch;
+
+impl Handle<[Order]> for MetaBatch {
+    fn handle(
+        &self,
+        _orders: &[Order],
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+        ready(Ok(()))
+    }
+}
+
 /// Every route kind contributes its metadata, in registration order, through both the inherent
 /// `handlers()` and the [`RouterHandlers`] surface a nested router is collected through.
 #[test]
@@ -84,14 +99,10 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
     let router = Router::<MemoryBroker>::new()
         .handle(
             broker.subscribe("brc-meta-handle"),
-            |_msg: &MemoryMessage, _ctx: &mut Context| async { HandlerResult::Ack },
+            |_msg: &MemoryMessage, _ctx: &mut Context| async { HandlerOutcome::ack() },
             HandlerMetadata::raw("brc-meta-handle"),
         )
-        .subscribe_batch(
-            Name::new("brc-meta-batch"),
-            |_batch: &[Order], _ctx: &mut Context| async { HandlerResult::Ack },
-            HandlerMetadata::raw("brc-meta-batch"),
-        )
+        .include(subscriber_def("brc-meta-batch", MetaBatch).build())
         .include(brc_relay)
         .publisher(TypedPublisher::new(MemoryPublish))
         .include(brc_batch_relay)

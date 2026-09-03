@@ -50,8 +50,10 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
   （`Positioned::position`，它会把那一条消息原样重新投递），也可以直接构造
   （`MemoryPosition::start()` / `sequence(n)`）。向前定位会跳过目标之前排队的投递；定位到日志末尾或
   更靠后，则会跳过此前发布的全部消息。作用范围是单个订阅者实例；如果句柄别名指向的总线已经关闭，
-  通过它定位会以 `MemoryError::ShutDown` 报错。在应用内部，处理器通过 `Seek` 参数拿到 seeker（参见
-  [定位](../guides/subscribers.md#seeking)）。
+  通过它定位会以 `MemoryError::ShutDown` 报错。在应用内部，投递上下文（`MemoryContext`）携带位置和
+  seeker，处理器通过 `Position` / `SeekHandle` 键读取它们（参见
+  [定位](../guides/subscribers.md#seeking)）。批量函数体写的是 `MemoryBatchContext`：它在同一个
+  `SeekHandle` 键下携带订阅的 seeker，但不携带位置，因为一批横跨多次投递。
 - **关闭。** 这条阶梯是完全带类型的：`MemoryBroker::connect(self)` 产出 `ConnectedMemoryBroker`，而它
   消费自身的 `shutdown` 又产出 `ClosedMemoryBroker`，一个见证值，报告本次拆除丢弃了多少订阅者注册。
   关闭之后再使用别名句柄，无论是发布、提交事务还是发起请求，都会以 `MemoryError::ShutDown` /
@@ -66,11 +68,21 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
 一致。下面取自
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service) 示例：
 
-```rust
-use ruststream::memory::MemorySource;
+=== "宏"
 
---8<-- "examples/routed_service/orders.rs:descriptor"
-```
+    ```rust
+    use ruststream::memory::MemorySource;
+
+    --8<-- "examples/routed_service/orders.rs:descriptor"
+    ```
+
+=== "手写"
+
+    ```rust
+    use ruststream::memory::{MemoryPublish, MemorySource};
+
+    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
+    ```
 
 ## 用于测试
 

@@ -1,5 +1,5 @@
-error: a batch publishing handler returns the replies: Vec<Reply>, or Result<Vec<Reply>, HandlerResult>
- --> tests/ui/subscriber_batch_publish_not_vec.rs:5:35
-  |
-5 | async fn handle(orders: &[u8]) -> u8 {
-  |                                   ^^
+error: a batch publishing handler returns the replies: Vec<Reply>, or Result<Vec<Reply>, HandlerOutcome>
+  --> tests/ui/subscriber_batch_publish_not_vec.rs:11:38
+   |
+11 | async fn handle(orders: &[Order]) -> u8 {
+   |                                      ^^

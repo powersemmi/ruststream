@@ -3,9 +3,10 @@
 //! Header values travel as bytes and are string-encoded by convention, while the Rust side keeps
 //! a typed contract: a plain struct whose fields are scalars (numbers, booleans, strings, raw
 //! bytes, unit-only enums) or `Option`s of those. [`HeaderMap::insert_typed`] flattens such a
-//! struct into `field name -> string value` entries, and [`HeaderMap::to_typed`] parses them back,
-//! converting each value by what the target field expects. The same machinery backs the
-//! [`Headers`](crate::runtime::Headers) extractor.
+//! struct into `field name -> string value` entries, and the crate-internal `to_typed` parses
+//! them back, converting each value by what the target field expects. The parse direction
+//! reaches user code through the [`Message<H, P>`](crate::runtime::Message) input and the
+//! [`Headers`](crate::runtime::Headers) extractor, which ride the same machinery.
 
 mod de;
 mod ser;
@@ -16,7 +17,8 @@ use thiserror::Error;
 
 use crate::headers::HeaderMap;
 
-/// Error of [`HeaderMap::to_typed`]: the header map does not satisfy the typed contract.
+/// Error of the crate-internal `to_typed` parse: the header map does not satisfy the typed
+/// contract.
 ///
 /// Every variant names the offending header, so a failed extraction can be diagnosed from the
 /// error alone.
@@ -116,6 +118,10 @@ impl HeaderMap {
     ///
     /// # Examples
     ///
+    /// The method is crate-internal; user code reaches this parse through the
+    /// [`Message<H, P>`](crate::runtime::Message) input or the
+    /// [`Headers`](crate::runtime::Headers) extractor, against a contract like this one:
+    ///
     /// ```
     /// use ruststream::HeaderMap;
     /// use serde::Deserialize;
@@ -130,20 +136,16 @@ impl HeaderMap {
     /// let mut headers = HeaderMap::new();
     /// headers.insert("task_id", "7");
     /// headers.insert("chunk_no", "3");
-    ///
-    /// let meta: ChunkMeta = headers.to_typed()?;
-    /// assert_eq!(meta.task_id, 7);
-    /// assert_eq!(meta.chunk_no, 3);
-    /// assert_eq!(meta.trace, None);
-    /// # Ok::<(), ruststream::DeserializeHeadersError>(())
+    /// // `task_id` and `chunk_no` parse into their fields; the absent `trace` reads as `None`.
+    /// # let _ = headers;
     /// ```
-    pub fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
+    pub(crate) fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
         T::deserialize(de::HeadersDeserializer::new(self))
     }
 
     /// Serializes a typed contract into the header map, one entry per field.
     ///
-    /// The mirror of [`to_typed`](Self::to_typed): every field of the flat struct (or
+    /// The mirror of the crate-internal `to_typed` parse: every field of the flat struct (or
     /// string-keyed map) becomes a header named after the field, with the value string-encoded
     /// (numbers and booleans via their display form, unit-only enums as the variant name, byte
     /// fields as the raw value). An `Option` field that is `None` inserts nothing. Existing

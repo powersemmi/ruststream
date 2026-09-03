@@ -12,7 +12,7 @@ use std::error::Error;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
-    App, AppInfo, DefaultSlot, HandlerResult, Out, Outgoing, PublishContext, PublishLayer,
+    App, AppInfo, DefaultSlot, HandlerOutcome, Out, Outgoing, PublishContext, PublishLayer,
     PublishNext, PublishPipeline, PublishTransform, RustStream, Transactional, TypedPublisher,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
@@ -49,11 +49,11 @@ async fn respond(req: &Request) -> Response {
 
 // --8<-- [start:reply_result]
 // `Ok` publishes the reply and acks; `Err` publishes nothing and the dispatcher acts on the
-// returned HandlerResult (here: drop the malformed request instead of replying).
+// returned HandlerOutcome (here: drop the malformed request instead of replying).
 #[subscriber("validated-requests", publish("responses"))]
-async fn validate(req: &Request) -> Result<Response, HandlerResult> {
+async fn validate(req: &Request) -> Result<Response, HandlerOutcome> {
     if req.id == 0 {
-        return Err(HandlerResult::drop());
+        return Err(HandlerOutcome::drop());
     }
     Ok(Response { ok: true })
 }
@@ -65,11 +65,11 @@ async fn validate(req: &Request) -> Result<Response, HandlerResult> {
 // a live publisher - no registry, no erased lookup, no state plumbing. `Event` declares no
 // destination of its own, so the call site names one.
 #[subscriber("ingress")]
-async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
+async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     if out.message(event).to("egress").publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:forward]
 
@@ -92,7 +92,7 @@ async fn mirror(
     event: &Event,
     Out(primary): Out<impl Publisher, Primary>,
     Out(shadow): Out<impl Publisher, Shadow>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     if primary
         .message(event)
         .to("mirror-primary")
@@ -106,9 +106,9 @@ async fn mirror(
             .await
             .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:slots]
 
@@ -116,7 +116,7 @@ async fn mirror(
 // A reply form and an injected publisher in one handler: the reply answers on the fixed
 // destination while an audit copy fans out through the Out parameter.
 #[subscriber("gateway-requests", publish("gateway-responses"))]
-async fn gateway(req: &Request, Out(out): Out<impl Publisher>) -> Result<Response, HandlerResult> {
+async fn gateway(req: &Request, Out(out): Out<impl Publisher>) -> Result<Response, HandlerOutcome> {
     if out
         .message(&Event { id: req.id })
         .to("gateway-audit")
@@ -124,7 +124,7 @@ async fn gateway(req: &Request, Out(out): Out<impl Publisher>) -> Result<Respons
         .await
         .is_err()
     {
-        return Err(HandlerResult::retry());
+        return Err(HandlerOutcome::retry());
     }
     Ok(Response { ok: true })
 }
@@ -155,7 +155,7 @@ struct Orders;
 async fn route(
     event: &Event,
     Out(orders): Out<impl Publisher, Orders, (OrderConfirmed, OrderPlaced)>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     // Bound to one name: the destination is already resolved.
     if orders
         .message(&OrderConfirmed { id: event.id })
@@ -163,7 +163,7 @@ async fn route(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // Bound to a space of names: one setter per placeholder, and no publish until the last one
     // is bound.
@@ -175,9 +175,9 @@ async fn route(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:declared]
 
@@ -211,10 +211,10 @@ impl PublishLayer for AuditPublish {
 
 // --8<-- [start:batch_publishing]
 /// Confirms a whole page of orders; the replies become visible atomically on commit.
-#[subscriber(batch("orders"), publish("confirmations"))]
-async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerResult> {
+#[subscriber("orders", publish("confirmations"))]
+async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerOutcome> {
     if orders.is_empty() {
-        return Err(HandlerResult::drop()); // nothing published, whole batch settled
+        return Err(HandlerOutcome::drop()); // nothing published, whole batch settled
     }
     Ok(orders.iter().map(|o| Event { id: o.id }).collect())
 }
@@ -280,16 +280,16 @@ fn app() -> impl App {
             b.include(mirror)
                 .out(Shadow, MemoryPublish)
                 .out(Primary, MemoryPublish)
-                .mount();
+                .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
             // the reply keeps .publisher(..) (or its default); the Out parameter attaches
             // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
-            b.include(gateway).out(DefaultSlot, MemoryPublish).mount();
+            b.include(gateway).out(DefaultSlot, MemoryPublish).build();
             // --8<-- [end:publish_out_mount]
             // --8<-- [start:declared_mount]
             // the slot lists what it may publish; where each message goes is its own declaration
-            b.include(route).out(Orders, MemoryPublish).mount();
+            b.include(route).out(Orders, MemoryPublish).build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live

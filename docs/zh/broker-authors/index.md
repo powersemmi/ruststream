@@ -93,7 +93,7 @@ pub trait IncomingMessage: Send + Sync {
 
     // Defaulted: a plain nack(true). Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
-    // HandlerResult::retry_after.
+    // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
 
     // Defaulted: None. Override (with the Partitioned capability) to feed the
@@ -251,7 +251,10 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 订阅。位置由 Broker 自己拥有（在你自己的类型上提供 `KafkaPosition` 风格的构造函数）。通过
 `Positioned::position` 从一条已投递消息上捕获的位置带有钉住的契约：定位到它会精确地重新投递那一条
 消息；而构造出来的位置则保持你的位置类型所记载的语义。写清楚一次定位的作用范围（一个消费者实例，
-还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。
+还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。要让处理器主体能够定位，就把投递
+位置和订阅的 seeker 作为你的投递上下文的字段携带，并为它们发布 `ContextField` 键：内存 Broker 的
+`MemoryContext` 及其 `Position` / `SeekHandle` 键就是范本。批量的那些写法通过下面的批量上下文拿到
+seeker，它只带句柄、不带位置。
 
 ### 扩展 `Out` 槽位的词汇
 
@@ -261,9 +264,17 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 时，就声明你自己的能力 trait，为该值实现它，再用一个通过 `SlotPublisher::inner` 转发的全覆盖实现把
 它嫁接到包装器上。此后处理器就用你的 trait 约束自己的槽位，而具体类型依然不会出现在应用代码里：
 
-```rust
---8<-- "tests/out_slots.rs:extension"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "tests/out_slots.rs:extension"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_out_slots.rs:extension"
+    ```
 
 通过 `inner` 取出的值所做的发布会绕过测试套件按槽位的记录（就像一个已结算的 owned 事务的缓冲区那样）；
 它们仍然会出现在 Broker 的发布日志里。
@@ -298,6 +309,14 @@ impl ContextField for Partition {
 ```
 
 没有任何单条投递字段的 Broker 用 `()`，整节都可以跳过。
+
+批量订阅另有自己的上下文，因为一批横跨多次投递：把整条*订阅*共享的东西（seek 句柄、流的名字、
+消费者组）攒成第二个结构体，在它上面实现 `BuildBatchContext` - 运行时按批构造一个值，取自该批的
+第一次投递 - 再发布若干 `Field` 键，好让批量函数体用 `ctx.context(..)` 读它。逐次投递的字段不放
+进去：位置属于某一次投递，所以由批从元素上读。把两个结构体分开，正是让这条规则在编译期成立的
+办法：投递上下文并不实现 `BuildBatchContext`，因此批量函数体无法写出它。范本是内存 Broker 的
+`MemoryBatchContext` - 订阅的 seeker，用的还是它的投递上下文所发布的那个 `SeekHandle` 键。订阅级
+上没有东西可交的 Broker 什么都不用实现，批量停在 `()` 这个默认值上。
 
 ## 异步边界上的中间件 { #middleware-on-the-async-edges }
 

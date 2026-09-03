@@ -37,6 +37,147 @@ required-features = ["macros", "memory", "json", "metrics", "asyncapi", "logging
 name = "quickstart"
 required-features = ["macros", "memory", "json"]
 
+# The `manual_*` examples are the macro-free counterparts the guides show side by side with the
+# macro form. They deliberately do not require the `macros` feature: that is what proves the
+# hand-written path stands on its own.
+[[example]]
+name = "manual_quickstart"
+path = "examples/manual/quickstart.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_tutorial"
+path = "examples/manual/tutorial/main.rs"
+required-features = ["memory", "json", "asyncapi"]
+
+[[example]]
+name = "manual_tutorial_first_app"
+path = "examples/manual/tutorial/first_app.rs"
+required-features = ["memory", "json", "asyncapi"]
+
+[[example]]
+name = "manual_tutorial_reply_app"
+path = "examples/manual/tutorial/reply_app.rs"
+required-features = ["memory", "json", "asyncapi"]
+
+[[example]]
+name = "manual_subscribers"
+path = "examples/manual/subscribers.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_seek"
+path = "examples/manual/seek.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_publishing"
+path = "examples/manual/publishing.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_retry"
+path = "examples/manual/retry.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_failure_policy"
+path = "examples/manual/failure_policy.rs"
+
+[[example]]
+name = "manual_post_settle"
+path = "examples/manual/post_settle.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_routing"
+path = "examples/manual/routing.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_codecs"
+path = "examples/manual/codecs.rs"
+required-features = ["memory", "json", "cbor"]
+
+[[example]]
+name = "manual_custom_codec"
+path = "examples/manual/custom_codec.rs"
+required-features = ["memory", "json", "cbor"]
+
+[[example]]
+name = "manual_middleware"
+path = "examples/manual/middleware.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_middleware_app_scope"
+path = "examples/manual/middleware_app_scope.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_middleware_router_scope"
+path = "examples/manual/middleware_router_scope.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_context"
+path = "examples/manual/context.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_context_field"
+path = "examples/manual/context_field.rs"
+
+[[example]]
+name = "manual_from_context"
+path = "examples/manual/from_context.rs"
+required-features = ["testing", "memory", "json"]
+
+[[example]]
+name = "manual_typed_headers"
+path = "examples/manual/typed_headers.rs"
+required-features = ["testing", "memory", "json", "asyncapi"]
+
+[[example]]
+name = "manual_ctx_extractor"
+path = "examples/manual/ctx_extractor.rs"
+required-features = ["testing", "memory", "json"]
+
+[[example]]
+name = "manual_lifespan"
+path = "examples/manual/lifespan.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_asyncapi_http"
+path = "examples/manual/asyncapi_http.rs"
+required-features = ["memory", "asyncapi"]
+
+[[example]]
+name = "manual_metrics_http"
+path = "examples/manual/metrics_http.rs"
+required-features = ["memory", "metrics", "json"]
+
+[[example]]
+name = "manual_http_outbox"
+path = "examples/manual/http_outbox.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_logging_middleware"
+path = "examples/manual/logging_middleware.rs"
+required-features = ["memory", "json", "logging"]
+
+[[example]]
+name = "manual_routed_service_orders"
+path = "examples/manual/routed_service_orders.rs"
+required-features = ["memory", "json"]
+
+[[example]]
+name = "manual_otel_export"
+path = "examples/manual/otel_export.rs"
+required-features = ["otel", "memory", "json"]
+
 [[example]]
 name = "tutorial"
 path = "examples/tutorial/main.rs"
@@ -70,6 +211,7 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "failure_policy"
+required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "post_settle"
@@ -128,7 +270,9 @@ required-features = ["macros", "memory", "asyncapi"]
 
 [[example]]
 name = "metrics_http"
-required-features = ["macros", "memory", "metrics"]
+# `json` is load-bearing: the reply publisher needs a codec, so the example does not build
+# without one. It compiled only because `json` is a default feature.
+required-features = ["macros", "memory", "metrics", "json"]
 
 [[example]]
 name = "http_outbox"
@@ -346,6 +490,10 @@ tracing-opentelemetry = { version = "0.33", optional = true }
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Registrations on the manual path are documented by default, so an example's message types
+# derive `JsonSchema` whether or not the example itself turns the `asyncapi` feature on (the
+# crate re-exports `schemars` only under that feature).
+schemars = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 axum = "0.8"
 trybuild = "1"

@@ -23,6 +23,7 @@ cargo doc --all-features --open
 | `RustStream` | `ruststream::runtime` | объект приложения |
 | `RunningApp` | `ruststream::runtime` | запущенный сервис: готовность, сигнал fail-fast, мягкая остановка |
 | `Router` | `ruststream::runtime` | группа обработчиков с отложенным связыванием |
+| `Handle`, `subscriber` | `ruststream::runtime` | единственный трейт тела ручного пути и его единственный конструктор монтирования |
 | `FromContext`, `State`, `FromRef` | `ruststream::runtime` / `ruststream` | параметры-экстракторы обработчика и derive для внедрения состояния |
 | `Broker`, `Subscribe`, `Subscriber`, `Publisher`, `IncomingMessage` | `ruststream` | контракт брокера |
 | `SubscriptionSource`, `Name` | `ruststream` | дескрипторы подписки |

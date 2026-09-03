@@ -1,7 +1,7 @@
 //! Payment handlers: charging a payment across keyed worker lanes, and settling a batch of cleared
 //! payments in one transaction.
 
-use ruststream::runtime::HandlerResult;
+use ruststream::runtime::HandlerOutcome;
 use ruststream::subscriber;
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ use crate::domain::{Clearing, Payment, Repository, Settlement};
 pub(crate) async fn process_payment(
     payment: &Payment,
     ctx: &mut Context<'_, (), Repository>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let repo = ctx.state();
     tracing::debug!(order = payment.order_id, customer = %payment.customer, "charging payment");
     if repo
@@ -24,9 +24,9 @@ pub(crate) async fn process_payment(
         .await
         .is_err()
     {
-        return HandlerResult::retry_after(Duration::from_secs(2));
+        return HandlerOutcome::retry_after(Duration::from_secs(2));
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:workers]
 
@@ -37,7 +37,7 @@ pub(crate) async fn process_payment(
 // --8<-- [start:batch]
 // This handler ignores the app state, so it omits the `Context` parameter and stays generic over
 // the state; it still mounts alongside the stateful `process_payment` handler on the same router.
-#[subscriber(batch("clearings"), publish("settlements"))]
+#[subscriber("clearings", publish("settlements"))]
 pub(crate) async fn settle(clearings: &[Clearing]) -> Vec<Settlement> {
     clearings
         .iter()

@@ -6,6 +6,9 @@
 //!
 //! Each test binary compiles its own copy of this module and uses what it needs, hence the
 //! `dead_code` allowances.
+//!
+//! Registrations are documented by default, so every message type here derives `JsonSchema`:
+//! a suite mounting one of them is not asking to be the file that opts documentation out.
 
 use std::time::Duration;
 
@@ -34,7 +37,7 @@ pub(crate) async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) 
 /// publish it through the builder. It declares no name: the subject differs per suite, so the
 /// call site keeps naming it with `to(..)`.
 #[cfg_attr(feature = "macros", derive(ruststream::Outgoing))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Order {
     pub(crate) id: u32,
@@ -48,7 +51,7 @@ pub(crate) fn order_bytes(id: u32) -> Vec<u8> {
 
 /// The reply half of a request/reply suite: what a handler answers with when the answer's shape
 /// is not what the suite is asserting on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Receipt {
     pub(crate) id: u32,
@@ -57,7 +60,7 @@ pub(crate) struct Receipt {
 /// The stand-in message of the suites that forward rather than reply: same role as [`Order`],
 /// distinct so a test driving both sides can tell input from output.
 #[cfg_attr(feature = "macros", derive(ruststream::Outgoing))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Event {
     pub(crate) id: u64,
@@ -71,14 +74,14 @@ pub(crate) fn payload(id: u64) -> Vec<u8> {
 
 /// The request/response pair of the middleware suites, whose subject is what runs around a
 /// handler rather than what the handler carries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Req {
     pub(crate) n: u32,
 }
 
 /// The answer to a [`Req`]. See its docs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Resp {
     pub(crate) n: u32,

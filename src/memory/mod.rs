@@ -20,8 +20,8 @@ mod capability;
 
 use capability::SeekControl;
 pub use capability::{
-    MemoryPosition, MemoryRequester, MemorySeeker, MemoryTransaction, PARTITION_KEY_HEADER,
-    RequestError,
+    MemoryBatchContext, MemoryContext, MemoryPosition, MemoryRequester, MemorySeeker,
+    MemoryTransaction, PARTITION_KEY_HEADER, Position, RequestError, SeekHandle,
 };
 
 use std::{
@@ -618,6 +618,7 @@ impl Subscriber for MemorySubscriber {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         let requeue = self.requeue.clone();
+        let seeker = Arc::new(crate::Seekable::seeker(self));
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator.clone();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
@@ -642,6 +643,7 @@ impl Subscriber for MemorySubscriber {
                         return Poll::Ready(Some(Ok(MemoryMessage {
                             delivery: Some(delivery),
                             requeue: requeue.clone(),
+                            seek: Some(Arc::clone(&seeker)),
                             #[cfg(feature = "testing")]
                             coordinator: coordinator.clone(),
                         })));
@@ -736,6 +738,10 @@ impl Publisher for MemoryPublisher {
 pub struct MemoryMessage {
     delivery: Option<MemoryDelivery>,
     requeue: Sender,
+    /// The subscription's pre-minted seeker, shared per delivery so the seek context can build
+    /// off the message. `None` for a request-reply inbox message, which no dispatch loop and no
+    /// seek context ever sees.
+    seek: Option<Arc<MemorySeeker>>,
     /// A clone of the broker's harness coordinator. When set, this delivery is counted in flight and
     /// is decremented once when the message is consumed or dropped (see the `Drop` impl). `None`
     /// outside a harness run and for request-reply inbox messages (which are not dispatch-driven).

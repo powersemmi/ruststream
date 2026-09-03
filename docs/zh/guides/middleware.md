@@ -13,17 +13,33 @@
 另一个阶段，在那里 `layer`（以及 `publish_layer`、`on_startup`）已经不复存在，因此一个包裹不到已注册
 处理器的层是编译错误，而不是悄无声息地什么都不做：
 
-```rust
---8<-- "examples/middleware_app_scope.rs:app_scope"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/middleware_app_scope.rs:app_scope"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/middleware_app_scope.rs:app_scope"
+    ```
 
 **路由器作用域。** 用 `Router::layer` 给某个路由器配置它自己的中间件，它会在挂载该路由器时包裹
 上面的每一个处理器（参见[路由](routing.md#router-middleware)）。直接挂载在 Broker 作用域上的处理器
 不在其中：
 
-```rust
---8<-- "examples/middleware_router_scope.rs:router_scope"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/middleware_router_scope.rs:router_scope"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/middleware_router_scope.rs:router_scope"
+    ```
 
 这两个程序分别是
 [`middleware_app_scope.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware_app_scope.rs)
@@ -44,7 +60,7 @@
 一个层把某个处理器变换成另一个处理器。实现 `Layer<H>` 即可：
 
 ```rust
-use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
+use ruststream::runtime::{Context, Handler, HandlerOutcome, Layer};
 
 --8<-- "examples/middleware.rs:layer_impl"
 ```
@@ -82,7 +98,7 @@ let handler = base_handler.with(LogLayer);
 use std::future::Future;
 use std::pin::Pin;
 
-use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
+use ruststream::runtime::{Context, DynMiddleware, HandlerOutcome, Next};
 
 --8<-- "examples/middleware.rs:dyn_middleware"
 ```
@@ -91,14 +107,28 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 `Layer`，可以像手写的层那样用 `layer` 组合进应用栈。分发链的其余部分仍然是静态的；只有该栈自身
 付出代价：
 
-```rust
-use std::sync::Arc;
+=== "宏"
 
-use ruststream::memory::MemoryMessage;
-use ruststream::runtime::DynStack;
+    ```rust
+    use std::sync::Arc;
 
---8<-- "examples/middleware.rs:dyn_stack"
-```
+    use ruststream::memory::MemoryMessage;
+    use ruststream::runtime::DynStack;
+
+    --8<-- "examples/middleware.rs:dyn_stack"
+    ```
+
+=== "手写"
+
+    ```rust
+    use std::sync::Arc;
+
+    use ruststream::memory::{MemoryBroker, MemoryMessage};
+    use ruststream::prelude::*;
+    use ruststream::runtime::{DynMiddleware, DynStack};
+
+    --8<-- "examples/manual/middleware.rs:dyn_stack"
+    ```
 
 完整的程序（其中链条由一个环境变量开关控制）见
 [`examples/middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware.rs)。

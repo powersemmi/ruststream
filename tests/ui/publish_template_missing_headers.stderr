@@ -12,7 +12,7 @@ help: the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented 
    | impl SatisfiesContract<NoHeaders> for HeadersUnset {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `NoHeaders`, found `WithHeaders<PlacedMeta>`
-   = note: required for `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>` to implement `PublishAt`
+   = note: required for `PublishBuilder<&SlotPublisher<__RsOutW0, Events>, MessageBody<'_, Placed>, &__RsOutE0, HeadersUnset, NameTemplate>` to implement `PublishAt`
 note: required by a bound in `To::<Cont, S0>::publish`
   --> tests/ui/publish_template_missing_headers.rs:15:10
    |
@@ -39,7 +39,7 @@ help: the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented 
    | impl SatisfiesContract<NoHeaders> for HeadersUnset {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `NoHeaders`, found `WithHeaders<PlacedMeta>`
-   = note: required for `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>` to implement `PublishAt`
+   = note: required for `PublishBuilder<&SlotPublisher<__RsOutW0, Events>, MessageBody<'_, Placed>, &__RsOutE0, HeadersUnset, NameTemplate>` to implement `PublishAt`
 note: required by a bound in `To::<Cont, S0>::publish`
   --> tests/ui/publish_template_missing_headers.rs:15:10
    |
@@ -61,7 +61,7 @@ help: the trait `SatisfiesContract<WithHeaders<PlacedMeta>>` is not implemented 
    | impl SatisfiesContract<NoHeaders> for HeadersUnset {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `NoHeaders`, found `WithHeaders<PlacedMeta>`
-   = note: required for `ruststream::runtime::Publish<&__RsOut0, MessageBody<'_, Placed>, &__RsOutCodec0, HeadersUnset, NameTemplate>` to implement `PublishAt`
+   = note: required for `PublishBuilder<&SlotPublisher<__RsOutW0, Events>, MessageBody<'_, Placed>, &__RsOutE0, HeadersUnset, NameTemplate>` to implement `PublishAt`
 note: required by a bound in `To::<Cont, S0>::publish`
   --> tests/ui/publish_template_missing_headers.rs:15:10
    |

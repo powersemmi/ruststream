@@ -8,7 +8,7 @@
 use bytes::BytesMut;
 use ruststream::codec::{CborCodec, Codec, CodecError, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Router, RustStream, TypedPublisher};
 use ruststream::subscriber;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -87,15 +87,15 @@ struct Receipt {
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("audit")]
-async fn audit(order: &Order) -> HandlerResult {
+async fn audit(order: &Order) -> HandlerOutcome {
     println!("audited order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("billing", publish("receipts"))]

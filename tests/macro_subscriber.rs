@@ -16,10 +16,10 @@ use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
 };
 use ruststream::runtime::{
-    AppInfo, HandlerResult, Outgoing, PublishExt, PublishLayer, PublishNext, PublishTransform,
+    AppInfo, HandlerOutcome, Outgoing, PublishExt, PublishLayer, PublishNext, PublishTransform,
     RustStream, TypedPublisher,
 };
-use ruststream::{Broker, Message, Publisher, Subscribe, SubscriptionSource, subscriber};
+use ruststream::{Broker, MessageInfo, Publisher, Subscribe, SubscriptionSource, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -33,10 +33,10 @@ static HANDLED: AtomicU32 = AtomicU32::new(0);
 static HANDLED_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     HANDLED.fetch_add(order.id, Ordering::SeqCst);
     HANDLED_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A broker-specific subscription descriptor (stand-in for e.g. a Redis stream), named by the
@@ -84,10 +84,10 @@ static HANDLED_CTOR_NOTIFY: Notify = Notify::const_new();
 // The descriptor lives in the decorator: the macro pulls the `StreamSource` type out of the
 // constructor path and `include` mounts on `def.source()`, with the broker checked at compile time.
 #[subscriber(StreamSource::new("ctor.stream"))]
-async fn on_ctor(order: &Order) -> HandlerResult {
+async fn on_ctor(order: &Order) -> HandlerOutcome {
     HANDLED_CTOR.fetch_add(order.id, Ordering::SeqCst);
     HANDLED_CTOR_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -122,10 +122,10 @@ static HANDLED_CHAIN_NOTIFY: Notify = Notify::const_new();
 // A builder chain in the decorator: the macro follows the receivers down to `StreamSource::new`
 // for the type, and emits the whole chain as the source constructor.
 #[subscriber(StreamSource::new("placeholder").at("chain.stream"))]
-async fn on_chain(order: &Order) -> HandlerResult {
+async fn on_chain(order: &Order) -> HandlerOutcome {
     HANDLED_CHAIN.fetch_add(order.id, Ordering::SeqCst);
     HANDLED_CHAIN_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -155,7 +155,7 @@ async fn macro_builder_chain_in_decorator() {
 }
 
 /// An order placed by a customer.
-#[derive(Message)]
+#[derive(MessageInfo)]
 #[allow(dead_code)]
 struct DescribedOrder {
     id: u32,
@@ -199,10 +199,10 @@ static HANDLED_DEFAULT: AtomicU32 = AtomicU32::new(0);
 static HANDLED_DEFAULT_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("orders-default")]
-async fn handle_default(order: &Order) -> HandlerResult {
+async fn handle_default(order: &Order) -> HandlerOutcome {
     HANDLED_DEFAULT.fetch_add(order.id, Ordering::SeqCst);
     HANDLED_DEFAULT_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -255,12 +255,12 @@ async fn relay(p: &Ping) -> Ping {
 }
 
 #[subscriber("ping-out")]
-async fn check(p: &Ping, ctx: &mut Context) -> HandlerResult {
+async fn check(p: &Ping, ctx: &mut Context) -> HandlerOutcome {
     if ctx.headers().get("x-static").is_some() {
         STATIC_SEEN.store(p.n, Ordering::SeqCst);
     }
     STATIC_SEEN_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -336,13 +336,13 @@ async fn reply(req: &Request) -> Response {
 }
 
 #[subscriber("responses")]
-async fn capture(resp: &Response, ctx: &mut Context) -> HandlerResult {
+async fn capture(resp: &Response, ctx: &mut Context) -> HandlerOutcome {
     if ctx.headers().get("x-envelope").is_some() {
         REPLY_TAGGED.store(1, Ordering::SeqCst);
     }
     REPLY_DOUBLED.store(resp.doubled, Ordering::SeqCst);
     REPLY_DOUBLED_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -397,11 +397,11 @@ static CONFIRM_ACCEPTED: AtomicU32 = AtomicU32::new(0);
 static CONFIRM_ACCEPTED_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("confirm-in", publish("confirm-out"))]
-async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
+async fn confirm(order: &Order) -> Result<Confirmation, HandlerOutcome> {
     if order.id == 0 {
         CONFIRM_REJECTED.fetch_add(1, Ordering::SeqCst);
         CONFIRM_REJECTED_NOTIFY.notify_one();
-        return Err(HandlerResult::drop());
+        return Err(HandlerOutcome::drop());
     }
     Ok(Confirmation {
         id: order.id,
@@ -410,12 +410,12 @@ async fn confirm(order: &Order) -> Result<Confirmation, HandlerResult> {
 }
 
 #[subscriber("confirm-out")]
-async fn confirm_sink(c: &Confirmation) -> HandlerResult {
+async fn confirm_sink(c: &Confirmation) -> HandlerOutcome {
     if c.accepted {
         CONFIRM_ACCEPTED.store(c.id, Ordering::SeqCst);
         CONFIRM_ACCEPTED_NOTIFY.notify_one();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -429,7 +429,7 @@ async fn publishing_result_form_controls_ack_and_publish() {
 
     let running = app.start().await.expect("startup failed");
 
-    // Err(HandlerResult) skips the publish entirely.
+    // Err(HandlerOutcome) skips the publish entirely.
     let rejected = serde_json::to_vec(&Order { id: 0, total: 0.0 }).unwrap();
     ingress
         .raw(&rejected)
@@ -479,10 +479,10 @@ async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
 }
 
 #[subscriber("ctx-out")]
-async fn ctx_sink(resp: &Response) -> HandlerResult {
+async fn ctx_sink(resp: &Response) -> HandlerOutcome {
     CTX_REPLY.store(resp.doubled, Ordering::SeqCst);
     CTX_REPLY_NOTIFY.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -521,13 +521,13 @@ static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 
 /// Asks for a delayed redelivery on first sight, then acks: the not-ready-yet pattern.
 #[subscriber("deferred")]
-async fn eventually(order: &Order) -> HandlerResult {
+async fn eventually(order: &Order) -> HandlerOutcome {
     let _ = order;
     let prev = ATTEMPTS.fetch_add(1, Ordering::SeqCst);
     if prev == 0 {
-        return HandlerResult::retry_after(Duration::from_millis(10));
+        return HandlerOutcome::retry_after(Duration::from_millis(10));
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

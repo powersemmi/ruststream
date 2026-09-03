@@ -1,5 +1,0 @@
-error: a publish_raw handler must return the reply bytes: Vec<u8>, or Result<Vec<u8>, HandlerResult>
- --> tests/ui/subscriber_raw_publish_no_return.rs:6:1
-  |
-6 | async fn handle(frame: &[u8]) {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

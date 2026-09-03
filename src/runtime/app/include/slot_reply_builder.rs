@@ -7,7 +7,7 @@ use crate::Broker;
 
 use crate::runtime::slot::{BindSlot, OutSlot, WithSource};
 
-use super::{BatchPublishInjectMount, PublishInjectMount, SlotCommit};
+use super::{BatchPublishInjectMount, PublishInjectMount, RawReplyInjectMount, SlotCommit};
 use crate::runtime::app::scope::BrokerScope;
 
 /// A registration builder for a publishing handler that also takes
@@ -15,10 +15,10 @@ use crate::runtime::app::scope::BrokerScope;
 ///
 /// The reply side defaults like [`IncludeWith`](crate::runtime::IncludeWith) (override with
 /// [`publisher`](Self::publisher)); each slot binds with [`out`](Self::out), and the terminal
-/// [`mount`](Self::mount) commits - it exists only once every slot is bound, so a forgotten
+/// [`build`](Self::build) commits - it exists only once every slot is bound, so a forgotten
 /// binding is a compile error naming the slot. The per-form names are aliases:
 /// [`IncludePublishingOut`], [`IncludeBatchPublishingOut`].
-#[must_use = "a publishing handler with Out slots registers nothing until .out(..)+.mount() commits it"]
+#[must_use = "a publishing handler with Out slots registers nothing until .out(..)+.build() commits it"]
 pub struct IncludeSlotsWithReply<'s, Mount, B, Layers, C, State, Pipeline, Def, Reply, Slots>
 where
     B: Broker + 'static,
@@ -28,14 +28,33 @@ where
     _mount: PhantomData<Mount>,
 }
 
-/// The builder [`BrokerScope::include`] returns for a `publish("dest")` /
-/// `publish_raw("dest")` definition whose handler also takes
-/// [`Out`](crate::runtime::Out) parameters.
+/// The builder [`BrokerScope::include`] returns for a `publish("dest")` definition whose
+/// handler also takes [`Out`](crate::runtime::Out) parameters.
 pub type IncludePublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
     IncludeSlotsWithReply<'s, PublishInjectMount, B, Layers, C, State, Pipeline, Def, Reply, Slots>;
 
-/// The builder [`BrokerScope::include`] returns for a `batch(.., publish("dest"))`
-/// definition whose handler also takes [`Out`](crate::runtime::Out) parameters.
+/// The builder [`BrokerScope::include`] returns for a `publish("dest")` definition whose reply
+/// type is [`Serialized`](crate::runtime::Serialized).
+///
+/// The handler also takes [`Out`](crate::runtime::Out) parameters, bound one by one at the
+/// include site.
+pub type IncludeRawReplyOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
+    IncludeSlotsWithReply<
+        's,
+        RawReplyInjectMount,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Def,
+        Reply,
+        Slots,
+    >;
+
+/// The builder [`BrokerScope::include`] returns for a batch publishing (`&[T]` +
+/// `publish("dest")`) definition whose handler also takes [`Out`](crate::runtime::Out)
+/// parameters.
 pub type IncludeBatchPublishingOut<'s, B, Layers, C, State, Pipeline, Def, Reply, Slots> =
     IncludeSlotsWithReply<
         's,
@@ -115,7 +134,7 @@ where
 
     /// Binds one named [`Out`](crate::runtime::Out) slot, like [`IncludeSlots::out`](crate::runtime::IncludeSlots::out): by
     /// marker, in any order, next to the (optional) reply-side
-    /// [`publisher`](Self::publisher). Finish with [`mount`](Self::mount).
+    /// [`publisher`](Self::publisher). Finish with [`build`](Self::build).
     ///
     /// # Panics
     ///
@@ -157,7 +176,7 @@ where
     ///
     /// Never in practice: the internal expects guard builder invariants that hold until this
     /// commit consumes them.
-    pub fn mount(self)
+    pub fn build(self)
     where
         (Reply, Slots): SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
     {
@@ -187,7 +206,7 @@ where
         assert!(
             self.parts.is_none(),
             "a publishing handler with Out slots was included but never mounted: finish the \
-             chain with .mount()",
+             chain with .build()",
         );
     }
 }

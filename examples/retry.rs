@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -22,27 +22,27 @@ struct Payment {
 /// The not-ready-yet case: the upstream has not settled this payment, so an immediate
 /// redelivery would just spin. Ask the broker to redeliver no sooner than five seconds from now.
 #[subscriber("payments")]
-async fn reconcile(payment: &Payment) -> HandlerResult {
+async fn reconcile(payment: &Payment) -> HandlerOutcome {
     if !payment.settled {
-        return HandlerResult::retry_after(Duration::from_secs(5));
+        return HandlerOutcome::retry_after(Duration::from_secs(5));
     }
     println!("payment {} settled", payment.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:retry_after]
 
 // --8<-- [start:batch_retry_after]
 /// Selective outcomes carry per-element delays: settled payments ack immediately, pending ones
 /// come back in thirty seconds without holding up the rest of the page.
-#[subscriber(batch("payments"))]
-async fn reconcile_page(payments: &[Payment]) -> Vec<HandlerResult> {
+#[subscriber("payments")]
+async fn reconcile_page(payments: &[Payment]) -> Vec<HandlerOutcome> {
     payments
         .iter()
         .map(|payment| {
             if payment.settled {
-                HandlerResult::Ack
+                HandlerOutcome::ack()
             } else {
-                HandlerResult::retry_after(Duration::from_secs(30))
+                HandlerOutcome::retry_after(Duration::from_secs(30))
             }
         })
         .collect()
