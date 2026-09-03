@@ -3,86 +3,84 @@
 //! interaction is promised in prose. The remaining pairs are pinned elsewhere: workers x batch
 //! and retry x pools / lanes in `workers.rs` and `retry_semantics.rs`.
 //!
-//! Apps come up through `start()`, which resolves only after subscriptions are open, so every
-//! message is published exactly once - no republish loops.
-#![cfg(feature = "macros")]
+//! Each suite injects its deliveries together: a pool and a size-capped buffer only compose with
+//! anything while several deliveries are in flight, and the harness settles the whole reaction
+//! before the injections resolve.
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
-use std::{
-    sync::atomic::{AtomicUsize, Ordering},
-    time::Duration,
-};
+use std::time::Duration;
 
-use common::{Order, Receipt, connected, wait_for};
+use common::{Order, Receipt};
+use futures::future::join_all;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, TypedPublisher};
-use ruststream::testing::expect_published;
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, TypedPublisher};
+use ruststream::testing::TestApp;
 use ruststream::{Buffered, Name, nonzero, subscriber};
-
-static TX_HANDLED: AtomicUsize = AtomicUsize::new(0);
 
 /// Each batch's replies go out in one transaction; the pool runs the batches concurrently.
 #[subscriber("tx-in", publish("tx-out"), workers(2))]
 async fn tx_confirm(orders: &[Order]) -> Vec<Receipt> {
-    TX_HANDLED.fetch_add(orders.len(), Ordering::SeqCst);
     orders.iter().map(|o| Receipt { id: o.id }).collect()
+}
+
+/// The ids of every order the injections below carry.
+fn orders(count: u32) -> Vec<Order> {
+    (1..=count).map(|id| Order { id }).collect()
+}
+
+/// Sorted ids, so an assertion can name what arrived without naming the order a pool chose.
+fn sorted_ids(receipts: &[Receipt]) -> Vec<u32> {
+    let mut ids: Vec<u32> = receipts.iter().map(|r| r.id).collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// Transactional reply publishing composes with a batch pool: every delivered order is
 /// confirmed exactly through its own batch's transaction, with batches in flight concurrently.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transactional_replies_compose_with_a_batch_pool() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    // The observing side needs the TestableBroker surface, which lives on the connected form;
-    // the shared in-process bus makes this clone observe the app's broker.
-    let observer = connected(&broker).await;
-
     let replies = TypedPublisher::new(MemoryPublish).transactional();
-    let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(tx_confirm).publisher(replies);
     });
-
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     // Four orders, each published once; expect one committed receipt per handled order.
-    for id in 1..=4u32 {
-        publisher
-            .message(&Order { id })
-            .to("tx-in")
-            .publish()
-            .await
-            .expect("publish");
-    }
-    wait_for(
-        || TX_HANDLED.load(Ordering::SeqCst) >= 4,
-        Duration::from_secs(5),
+    let input = orders(4);
+    for result in join_all(
+        input
+            .iter()
+            .map(|order| tb.message(order).to("tx-in").publish()),
     )
-    .await;
+    .await
+    {
+        result.expect("publish");
+    }
 
-    let handled = TX_HANDLED.load(Ordering::SeqCst);
-    let receipts = expect_published(&observer, "tx-out", handled, Duration::from_secs(5)).await;
-    assert!(
-        receipts.len() >= handled,
-        "{} orders handled but only {} receipts committed",
-        handled,
-        receipts.len(),
+    let receipts: Vec<Receipt> = tb
+        .broker::<MemoryBroker>()
+        .published::<Receipt>("tx-out")
+        .decoded();
+    assert_eq!(
+        sorted_ids(&receipts),
+        [1, 2, 3, 4],
+        "every handled order must be confirmed exactly once",
     );
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
-
-static BUF_SEEN: AtomicUsize = AtomicUsize::new(0);
-static BUF_BATCHES: AtomicUsize = AtomicUsize::new(0);
 
 /// Client-side batching under a pool: the size cap or deadline (not the pool) closes a batch.
 #[subscriber(Buffered::<Name>::new(Name::new("buf-in"))
     .max_size(nonzero!(2))
     .max_wait(Duration::from_millis(10)), workers(2))]
 async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
-    BUF_SEEN.fetch_add(orders.len(), Ordering::SeqCst);
-    BUF_BATCHES.fetch_add(1, Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
@@ -90,37 +88,38 @@ async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
 /// the pool only bounds how many are processed at once. Every delivery is drained.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_sources_compose_with_a_batch_pool() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("buf", "0.1.0"))
-        .with_broker(broker, |b| b.include(buffered_drain));
-
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include(buffered_drain));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     // Six deliveries against a size cap of two: they cannot all fit in one batch.
-    for id in 1..=6u32 {
-        publisher
-            .message(&Order { id })
-            .to("buf-in")
-            .publish()
-            .await
-            .expect("publish");
-    }
-    wait_for(
-        || BUF_SEEN.load(Ordering::SeqCst) >= 6,
-        Duration::from_secs(5),
+    let input = orders(6);
+    for result in join_all(
+        input
+            .iter()
+            .map(|order| tb.message(order).to("buf-in").publish()),
     )
-    .await;
-    assert!(
-        BUF_BATCHES.load(Ordering::SeqCst) >= 2,
-        "everything arrived as a single batch; size/deadline closing did not engage",
+    .await
+    {
+        result.expect("publish");
+    }
+
+    let pages: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("buf-in").pages();
+    let mut drained: Vec<u32> = pages.iter().flatten().map(|o| o.id).collect();
+    // The pool runs pages concurrently, so which page lands first is its business; that every
+    // delivery ends up in one is not.
+    drained.sort_unstable();
+    assert_eq!(
+        drained,
+        [1, 2, 3, 4, 5, 6],
+        "every delivery must be drained"
     );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    assert!(
+        pages.iter().all(|page| page.len() <= 2),
+        "the size cap must close a batch before the pool does: {:?}",
+        pages.iter().map(Vec::len).collect::<Vec<_>>(),
+    );
 }
-
-static PUB_REPLIED: AtomicUsize = AtomicUsize::new(0);
 
 /// Reply publishing under a pool: replies are produced concurrently.
 #[subscriber("pub-in", publish("pub-out"), workers(3))]
@@ -130,7 +129,6 @@ async fn pooled_relay(o: &Order) -> Receipt {
 
 #[subscriber("pub-out")]
 async fn pooled_check(_r: &Receipt) -> HandlerOutcome {
-    PUB_REPLIED.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
@@ -138,29 +136,27 @@ async fn pooled_check(_r: &Receipt) -> HandlerOutcome {
 /// order across deliveries is not promised (the pool processes them concurrently).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_replies_compose_with_a_worker_pool() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("pub", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("pub", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(pooled_relay);
         b.include(pooled_check);
     });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    for id in 1..=4u32 {
-        publisher
-            .message(&Order { id })
-            .to("pub-in")
-            .publish()
-            .await
-            .expect("publish");
-    }
-    wait_for(
-        || PUB_REPLIED.load(Ordering::SeqCst) >= 4,
-        Duration::from_secs(5),
+    let input = orders(4);
+    for result in join_all(
+        input
+            .iter()
+            .map(|order| tb.message(order).to("pub-in").publish()),
     )
-    .await;
+    .await
+    {
+        result.expect("publish");
+    }
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    let replied: Vec<Receipt> = tb.broker::<MemoryBroker>().subscriber("pub-out").received();
+    assert_eq!(
+        sorted_ids(&replied),
+        [1, 2, 3, 4],
+        "every delivery's reply must arrive",
+    );
 }
