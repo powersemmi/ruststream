@@ -280,13 +280,18 @@ below, which carries the handle without the position.
 
 ### Extending the `Out` slot vocabulary
 
-An `Out<impl X, Marker>` handler parameter accepts any `X` the runtime's `SlotPublisher`
-wrapper implements; the core delegates its own capability set (`Publisher`,
-`TransactionalPublisher`, `OwnedTransactions`, `RequestReply`). When your paired value offers
-more than that - or is not a publisher at all (a per-partition producer cache, a shard
-router) - declare your own capability trait, implement it for the value, and graft it onto the
-wrapper with one blanket impl delegating through `SlotPublisher::inner`. Handlers then bound
-their slot with your trait, and the concrete type still never appears in application code:
+An `Out<impl X, Marker>` handler parameter accepts any `X` the live value behind the slot
+implements; on top of that the core delegates its own capability set (`Publisher`,
+`TransactionalPublisher`, `OwnedTransactions`, `RequestReply`). When your live value offers more
+than that - or is not a publisher at all (a per-partition producer cache, a shard router) -
+declare your own capability trait and implement it for the live value.
+
+What the body actually holds is the arena entry, `Slot<Marker, W, E, Body>`, a transparent window
+onto that value. Autoderef carries a method call through it, but not a trait bound: a helper
+written as `fn issue<L: Lanes>(lanes: &L)` rejects the entry with `E0277`. Add one blanket impl
+next to your trait - `impl<M, W: Lanes, E, Body> Lanes for Slot<M, W, E, Body>`, delegating
+through the entry's `Deref` - and helpers and bodies generic over the capability take the entry
+as it is. The concrete type still never appears in application code:
 
 === "Macros"
 
@@ -300,8 +305,23 @@ their slot with your trait, and the concrete type still never appears in applica
     --8<-- "tests/manual_out_slots.rs:extension"
     ```
 
-Publishes made through values obtained from `inner` bypass the harness's per-slot capture
-(like a settled owned transaction's buffer); they stay visible in the broker's publish log.
+Where the send happens is what shapes the trait, and there are two shapes.
+
+A **router-shaped** capability hands out a publisher and never sends one itself: the per-partition
+producer cache above picks the lane for a shard and returns it. What the handler publishes through
+that lane leaves by the unwrapped value, so it bypasses the harness's per-slot capture (like a
+settled owned transaction's buffer) and is asserted on the broker's publish log instead. That is
+the attribution boundary, and it is the price of handing out the inner publisher.
+
+A **step-shaped** capability sets one argument on a message and ends in a single publish: an
+ordering key, a priority, a QoS. Do not put the send in the trait. A publish that leaves through
+your own value is a publish the slot view stops seeing, and an argument like an ordering key is
+exactly what a test wants to assert on. Ride the entry's typed publish path instead
+(`out.message(&value).publish()`) and carry the argument as a header: a publisher holding it for a
+run of messages returns it from `Publisher::base_headers`, a call site setting it per message
+writes it with `.with_headers(..)`, and your `publish` reads it off the outgoing map and strips it
+before the wire. A value your publisher cannot read is a publish error, never a silent fallback to
+the default - the caller asked for an ordering it would not get.
 
 ## Per-delivery context and `Ctx` keys
 

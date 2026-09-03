@@ -102,6 +102,11 @@ use super::value::{HandleValue, Sealed};
 /// live type (or bounds `W` with the broker's trait) and calls it directly. A publisher-shaped
 /// entry additionally offers the typed publish builder through [`Publish`].
 ///
+/// Autoderef carries a method call, not a trait bound: a helper written as `fn f<L: Lanes>(l:
+/// &L)` rejects the entry a body holds. A broker crate that wants such helpers - or bodies
+/// generic over its capability - adds one blanket impl next to its trait,
+/// `impl<M, W: Lanes, E, Body> Lanes for Slot<M, W, E, Body>`, delegating through this `Deref`.
+///
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
 /// `#[subscriber]` parameter's third `Out` position narrows it; [`message`](Self::message)
 /// checks it at compile time (see [`ContainsMessage`]).

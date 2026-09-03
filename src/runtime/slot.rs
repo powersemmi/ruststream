@@ -151,17 +151,18 @@ impl<P, M> SlotPublisher<P, M> {
         }
     }
 
-    /// The paired value the slot wraps: the extension point for broker-defined capabilities.
+    /// The paired value this wrapper delegates to.
     ///
-    /// The core capability vocabulary ([`Publisher`], [`TransactionalPublisher`],
-    /// [`OwnedTransactions`], [`RequestReply`]) is delegated by this wrapper directly. A broker
-    /// whose paired value offers more than that - or is not a publisher at all (a per-partition
-    /// producer cache, a shard router) - declares its own capability trait and grafts it onto
-    /// the wrapper with a blanket impl delegating through this accessor; handlers then bound
-    /// their slot with that trait (`Out<impl PartitionLanes>`). The wrapper type itself never
-    /// appears in handler code, so this accessor is reachable only from such generic impls.
+    /// This is the wrapper's own delegation seam, not the extension point for broker-defined
+    /// capabilities: a handler body holds the arena entry
+    /// ([`Slot`](crate::runtime::Slot)), never this wrapper, so a trait grafted here is
+    /// unreachable from one. A broker whose paired value offers more than the core capability
+    /// vocabulary ([`Publisher`], [`TransactionalPublisher`], [`OwnedTransactions`],
+    /// [`RequestReply`]) - or is not a publisher at all (a per-partition producer cache, a shard
+    /// router) - implements its capability trait for the live value and grafts it onto the entry
+    /// instead, as [`Slot`](crate::runtime::Slot) documents.
     ///
-    /// Publishes made through values obtained this way bypass the slot's test-capture
+    /// Publishes made through the value obtained here bypass the slot's test-capture
     /// attribution, like a settled owned transaction's buffer: assert on the broker's publish
     /// log for those.
     ///
@@ -175,7 +176,8 @@ impl<P, M> SlotPublisher<P, M> {
     ///     fn lane_id(&self, partition: i32) -> String;
     /// }
     ///
-    /// // The broker crate grafts it onto the slot wrapper once, for every marker:
+    /// // The wrapper's own delegation: a slot entry reaches the live value through it. The
+    /// // impl a handler body needs is the one on `Slot`, not this one.
     /// impl<P: PartitionLanes, M: OutSlot> PartitionLanes for SlotPublisher<P, M> {
     ///     fn lane_id(&self, partition: i32) -> String {
     ///         self.inner().lane_id(partition)
