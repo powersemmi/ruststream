@@ -98,6 +98,13 @@ Broker，它就报告 `TestError::Ambiguous`。
 那两个断言（`with`、`with_raw`）会报出页的大小，而不是默默去检查其中某一个元素。在处理器主体运行
 之前就被解码策略拒掉的元素，由该策略结算，因此不在处理器看到的那一页里。
 
+!!! note "怎样凑出多于一个元素的一页"
+    `tb.message(&value).publish()` 在返回之前会把整个反应推到静止，而一个静止下来的反应会关闭那些
+    通过客户端 [`buffered`](subscribers.md#batch-subscribers) 适配器挂载的处理器的缓冲。因此一次
+    注入一条消息，得到的是每条消息一页，每页只有一个元素。要凑出一页，就在应用组装之前从 Broker
+    取一个生产者句柄，用它把整串消息发完（这一路上什么都不会静止），最后用 `tb.settle()` 把反应
+    推到静止一次。原生支持批量的 Broker 不受影响：那里由 Broker 决定一页在哪里结束。
+
 `tb.broker::<B>().published::<T>(name)` 断言处理器向下游发布了什么，数据取自 Broker 的发布日志：
 `.assert_called_once().with(&Receipt { id: 1 })`。
 

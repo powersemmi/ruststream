@@ -106,6 +106,15 @@ expected payload (`with`, `with_raw`) report the page size rather than silently 
 element of it. An element the decode policy rejected before the body ran is settled by that policy
 and is not part of the page the handler saw, so it does not appear.
 
+!!! note "Filling a page with more than one element"
+    `tb.message(&value).publish()` drives the whole reaction to a standstill before it returns, and
+    a settled reaction closes the buffer of a handler mounted through the client-side
+    [`buffered`](subscribers.md#batch-subscribers) adapter. Injecting messages one call at a time
+    therefore produces one page per message, each holding a single element. Take a producer handle
+    off the broker before the app is built, publish the whole run through it - nothing settles on
+    the way - and drive the reaction once with `tb.settle()`. A broker that batches natively is
+    unaffected: there the broker decides where a page ends.
+
 `tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
 the broker's publish log: `.assert_called_once().with(&Receipt { id: 1 })`.
 
