@@ -355,12 +355,11 @@ work unchanged. The reply clause becomes the body's `R` axis plus the one `.repl
 `.to(dest)` names the destination the reply type does not declare itself - and the wire follows the
 reply *type*, not the chain: a `serde::Serialize` `R` encodes through the codec, so it attaches
 `.publisher(TypedPublisher::new(policy))` (or nothing, for the broker's default), while an `R`
-implementing `Serialized` (the impls `#[derive(Serialized)]` writes: `fn bytes(&self) ->
-&[u8]` plus the wire spellings `MessageWire` with `type Wire = SerializedWire` and `ReplyShape`
-with `type Wire = SerializedReply`) leaves byte-for-byte and attaches a
+implementing `Serialized` (the impls above; `ReplyShape` with `type Wire = SerializedReply`
+covers the reply position) leaves byte-for-byte and attaches a
 plain policy - `.publisher(MemoryPublish)`, or nothing for the broker's default. There is one
-`.reply()` and one publisher step for both wires. A `Serialized` page reply does not exist: page
-replies publish through the reply codec. The `Out` slot parameter becomes the `O` axis:
+`.reply()` and one publisher step for both wires. A page reply always publishes through the
+reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
 `Outs<(Slot<Marker, W, Enc>,)>`, where `W` is the wired live value and `Enc` the include site's
 encode codec, with the capability the body needs stated as a mandatory bound on the whole entry,
 one entry per marker.
