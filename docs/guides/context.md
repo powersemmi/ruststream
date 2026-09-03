@@ -124,9 +124,6 @@ What the context exposes:
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 
-Closure handlers (the low-level `typed(codec, |msg, ctx| ...)` form) always take the context as
-their second argument.
-
 ## Per-delivery context
 
 Beside the shared application state, the context carries the broker's typed per-delivery context,
@@ -140,18 +137,17 @@ runtime miss.
 --8<-- "examples/context_field.rs:field"
 ```
 
-The context type is built from the message by `BuildContext`, which the runtime calls once per
-delivery; a broker with no per-delivery fields uses `()`, the default (so a `#[subscriber]` handler
-that names no context type - and takes no [`Ctx` extractor](#context-fields-as-parameters) - sees
-`Context<'_>`). Middleware can also carry a typed scratch value to a
+A broker with no per-delivery fields uses `()`, the default, so a `#[subscriber]` handler that
+names no context type - and takes no [`Ctx` extractor](#context-fields-as-parameters) - sees
+`Context<'_>`. Middleware can also carry a typed scratch value to a
 downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value)` and the handler
 `ctx.context(KEY)` it back - a correlation id, an authenticated user a layer resolved - without
 serializing it into the headers. The context is built fresh per delivery, so one delivery's values
 never leak into the next.
 
-A [batch handler](subscribers.md#batch-subscribers) gets one context per page, built off the
-page's first delivery by `BuildBatchContext`, and it carries the broker's *subscription-scoped*
-fields only - a seek handle, a stream name - which a page body names as its context type
+A [batch handler](subscribers.md#batch-subscribers) gets one context per page, and it carries the
+broker's *subscription-scoped* fields only - a seek handle, a stream name - which a page body
+names as its context type
 (`ctx: &mut Context<'_, MemoryBatchContext>` on the in-memory broker) and reads with
 `ctx.context(..)`. Per-delivery data stays out: a page spans many deliveries, so a position or a
 header rides the elements instead. The per-delivery and page context types are distinct, so a

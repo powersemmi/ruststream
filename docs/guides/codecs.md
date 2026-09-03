@@ -20,8 +20,14 @@ Codec features are strictly additive; enable as many as you need. Message types 
 
 `DefaultCodec` is a feature-selected alias: `json` if enabled, otherwise `cbor`, otherwise
 `msgpack`. It is what `include(def)` and `TypedPublisher::new(publisher)` use when nothing names a
-codec; neither takes a codec argument. It exists only when at least one codec feature is enabled;
-with no codec features, only the explicit-codec methods are available.
+codec; neither takes a codec argument.
+
+With no codec feature enabled at all, nothing can encode or decode, so anything that would need
+the default codec is a compile error naming the ways out: enable a codec feature, name a codec
+explicitly, or put the message on a byte lane. The byte lanes never need a codec - a
+[`Deserialized` input](subscribers.md#raw-subscribers) builds itself from the delivery's bytes,
+and a `Serialized` value carries its own - so a service that speaks only its own wire formats
+runs with no codec feature and loses nothing.
 
 ## Where the decode codec comes from
 
@@ -85,8 +91,8 @@ request follows the scope (the scope codec set with `with_broker_codec`, or the 
 `Router::with_codec`, else the default), while the reply codec travels on the stack attached
 with `.publisher(..)` - so the request and reply formats differ freely.
 
-There is no per-message-type codec (no associated codec on a message trait): the codec is a
-property of the mounting, not of the type.
+The codec is a property of the mounting, not of the message type: one type decodes as JSON on one
+subscription and as CBOR on another, and the mount site is the single place that says which.
 
 ## Decode failures
 
@@ -107,9 +113,6 @@ dropped (a nack without requeue). The policy is set per subscriber with the
     ```rust
     --8<-- "examples/manual/codecs.rs:decode_failure"
     ```
-
-When registering through the low-level `handle` SPI, the `Typed` wrapper returned by
-`typed(codec, handler)` takes the same policy through `on_decode_failure`.
 
 The policy values (`Drop`, `Retry`, `RetryAfter(..)`, `Skip`, `FailFast`), the defaults, and the
 retry caveats live in [Failure policy](failure-policy.md). The codec examples above are

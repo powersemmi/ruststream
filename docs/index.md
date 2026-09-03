@@ -55,10 +55,8 @@ Two architectural commitments shape the framework:
 
 ## Scope of this repository
 
-This site documents `ruststream`, the pure-Rust core (no PyO3, no concrete brokers). Concrete
-brokers (NATS, Kafka, RabbitMQ, Redis, MQTT) live in their own crates and pull `ruststream` from
-crates.io. The Python bindings live in the
-[`ruststream-py`](https://github.com/powersemmi/ruststream-py) repository.
+This site documents `ruststream`, the broker-agnostic core crate. Concrete brokers (NATS, Kafka,
+RabbitMQ, Redis, MQTT, and more) live in their own crates and pull `ruststream` from crates.io.
 
 The Rust API reference is published on [docs.rs](https://docs.rs/ruststream) - see
 [API reference](reference.md).

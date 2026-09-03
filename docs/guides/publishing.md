@@ -6,17 +6,19 @@ when it sends somewhere else, or to more than one place. Either way the handler 
 unconnected publisher: registrations carry publish *policies* (pure declarations), and the runtime
 pairs them with the connected broker at startup.
 
-An explicit publish is always the same builder, entered with `message(..)` and finished with
-`publish()`. There is one entry point because there is one kind of thing to publish: a value of a
-declared type. The wire follows that type: a `serde::Serialize` value encodes with the resolved
-codec, a `#[derive(Serialized)]` one leaves byte-for-byte with no codec on the path. Bytes a
-service already holds encoded are a `Serialized` type - naming them is what puts them in the
-generated document instead of leaving an anonymous payload on the channel. Which positions the
-call site has to fill - the destination, the typed headers, the codec - is decided by what the
-message type declares, so
-an under-specified publish is a compile error rather than a run-time surprise. `Publisher::publish`
-still exists underneath, but as the interface a broker crate implements (see
-[broker authors](../broker-authors/index.md)); a service writes the builder.
+An explicit publish is always the same builder: it starts with `message(..)` and ends with
+`publish()`. What travels is a value of a declared type, and the wire follows that type:
+
+```text
+message(&order)   -> codec -> bytes -> broker    (a Serialize value encodes)
+message(&export)  ->          bytes -> broker    (a Serialized value already is bytes)
+```
+
+Bytes a service already holds encoded travel as a `Serialized` newtype - naming them puts them
+in the generated document instead of leaving an anonymous payload on the channel. The positions
+the call site has to fill - the destination, the typed headers, the codec - follow from what the
+message type declares, so an under-specified publish is a compile error rather than a run-time
+surprise.
 
 ## Replying from a handler
 
@@ -39,7 +41,9 @@ sends it:
 
 Mount it with plain `include`. With nothing else said, the reply goes out through the broker's
 default publish policy under the default codec; to name the reply codec or add transforms, chain
-`.publisher(..)` with a [`TypedPublisher`] stack over the broker's publish policy
+`.publisher(..)` with a
+[`TypedPublisher`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.TypedPublisher.html)
+stack over the broker's publish policy
 (`TypedPublisher::new` uses the default codec; name one with `TypedPublisher::with_codec`). The
 stack is a declaration: the runtime pairs it with the connected broker at startup.
 
@@ -195,10 +199,11 @@ every declared message. See [typed headers](headers.md).
 The wire of a typed publish is selected by the type. `message(&value)` encodes a
 `serde::Serialize` value with the resolved codec, as above; a `#[derive(Serialized)]` type
 carries its own bytes, and the same call publishes them exactly as they are - no codec anywhere
-on the path. Everything else is the ordinary rules: give the type `#[derive(Outgoing)]` and list
-it in `#[publishes(..)]` like any model, and it is documented under its own name (with no
-payload schema, by design), its declared destination resolves the publish, and the dictionary,
-a declared message set and the headers positions gate it exactly as they gate an encoded model.
+on the path. Everything else follows the ordinary rules: give the type `#[derive(Outgoing)]` and
+list it in `#[publishes(..)]` like any model. It is documented under its own name (with no
+payload schema - the bytes are the format), its declared destination resolves the publish, and
+the dictionary, a declared message set and the headers positions gate it exactly as they gate an
+encoded model.
 
 === "Macros"
 
@@ -378,7 +383,7 @@ A batch handler's replies skip the per-message `.transform(..)` stack; add a tra
 `.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`.
 
 A `PublishLayer` implements an around/next signature, so it can short-circuit, retry, or
-observe (reserve "dynamic" for `PublishDynLayer` inside a `PublishDynStack`):
+observe:
 
 ```rust
 --8<-- "examples/publishing.rs:app_layer"
@@ -484,7 +489,7 @@ open on one `TypedPublisher` at a time.
 
 ## Batch publishing
 
-There is no direct batch-publish API on `Publisher`. For most brokers (NATS, Kafka) the client
-already coalesces writes, so a per-message `publish` loop achieves the same throughput. Where a
-broker has a genuine pipeline primitive (Redis), the broker crate exposes it as a broker-specific
+To publish many messages, publish them in a loop: for most brokers (NATS, Kafka) the client
+already coalesces writes, so the loop reaches the same throughput a dedicated batch call would.
+Where a broker has a genuine pipeline primitive (Redis), its crate exposes it as a broker-specific
 capability.

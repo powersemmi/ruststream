@@ -46,11 +46,17 @@ A handler's payload type appears as a schema when it derives `JsonSchema`. RustS
     --8<-- "examples/manual/asyncapi_http.rs:payload"
     ```
 
-A type without `JsonSchema` still works as a handler payload; it contributes no schema to the
-document. Generating the document logs a `WARN` per such gap (once per handler or outgoing
-declaration, naming the subscription or channel and the type), and
+On the `#[subscriber]` path a type without `JsonSchema` still works as a handler payload; it
+contributes no schema to the document. Generating the document logs a `WARN` per such gap (once
+per handler or outgoing declaration, naming the subscription or channel and the type), and
 `Spec::messages_without_schema()` lists the affected message components - assert it empty in a
 test to gate schema coverage in CI.
+
+A manual registration (the `subscriber(..)` chain) is stricter: it is documented by default, so
+under the `asyncapi` feature mounting it demands a schema from its message types, and a type
+without `JsonSchema` is a compile error naming the derive. `.describe(..)` on the chain sets the
+operation's description, and `.undocumented()` takes the one registration out of the document,
+which also lifts the schema obligation.
 
 A message that carries its own wire format is the deliberate exception. A
 [`Deserialized`](subscribers.md#raw-subscribers) input, an outgoing type on the serialized wire -
