@@ -46,8 +46,8 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
 ///
 /// `.transactional()` marks the wiring: the batch registration then publishes a page's replies
 /// inside one broker transaction, visible atomically on commit. It type-checks because
-/// the `MemoryPublish` policy pairs into a `MemoryPublisher`, which implements
-/// `TransactionalPublisher`; a broker without transactions fails to compile at the registration.
+/// the `MemoryPublish` policy pairs into a transactional publisher; a broker without
+/// transactions fails to compile at the registration.
 pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Repository> + use<> {
     let settlements = TypedPublisher::new(MemoryPublish).transactional();
 

@@ -181,9 +181,12 @@ in one step.
     --8<-- "examples/manual/publishing.rs:slots_mount"
     ```
 
-The capability in the bound can be refined: `Out<impl OwnedTransactions, Ledger>` compiles only
-against a policy whose live publisher supports owned transactions, checked at the include site
-with a diagnostic naming the missing capability. The slot marker is also the identity the
+The capability in the bound can be refined: `Out<impl OwnedTransactionalPublish, Ledger>` compiles
+only against a policy whose live publisher supports owned transactions, checked at the include
+site with a diagnostic naming the missing capability. The bound names the typed twin of a broker
+capability - `TransactionalPublish`, `OwnedTransactionalPublish`, `RequestReplyPublish` - never
+the broker's own trait; on the manual path the same bound is stated on the whole entry,
+`Slot<Ledger, W, E>: OwnedTransactionalPublish`. The slot marker is also the identity the
 [test harness](testing.md#asserting-on-out-slots) records publishes against.
 
 The `Out` parameter's optional third position declares what this handler sends
@@ -447,10 +450,9 @@ the whole batch, so the earlier replies may be published again on redelivery (at
 Calling `.transactional()` on the `TypedPublisher` switches the wiring to one broker transaction
 per batch: the runtime begins a transaction, publishes every reply, commits, and only then acks
 the incoming batch; any failure aborts, so replies are never half-visible. The transactional
-requirement is enforced where the wiring is consumed: mounting it needs the policy's live
-publisher to implement the `TransactionalPublisher` capability, so a broker without transactions
-still fails to compile. The single-message reply forms keep taking a plain `TypedPublisher`
-stack.
+requirement is enforced where the wiring is consumed: mounting it needs a policy whose live
+publisher is transactional, so a broker without transactions still fails to compile. The
+single-message reply forms keep taking a plain `TypedPublisher` stack.
 
 ## Manual transactions
 
@@ -470,22 +472,33 @@ publisher's codec and sends them directly: per-publisher transforms and the app-
 originating delivery) and do not run here. Dropping an unsettled scope logs a warning and leaves
 the broker transaction open on that handle - always settle explicitly.
 
+The bound that unlocks `begin()` is `TransactionalPublish`, and it reads the same on every
+surface: the transactional wiring above satisfies it, and so does an `Out` slot whose policy
+pairs a transactional publisher (`Out<impl TransactionalPublish, Journal>`, or
+`Slot<Journal, W, E>: TransactionalPublish` on the manual path). A handler then calls `begin()`
+on the entry and drives the scope exactly as above; a scope opened on a slot admits what the
+slot's own `message` admits - the marker's list, narrowed by the parameter's declared set - so a
+transaction cannot publish what the generated document never declared.
+
 The scope is the borrowed transaction kind: it borrows the handle's single broker-side
 transaction, so one scope per handle is open at a time. Brokers whose transactions are client
-buffers rather than producer state also implement the owned kind, `OwnedTransactions`: every
-`transaction()` call opens an independent transaction whose buffer lives in the returned
-`Transaction` value, so any number can be open concurrently on one handle and settling one never
-touches another. `publish` buffers into the value and `commit()` / `abort()` consume it - the
-same settle-by-consuming discipline as the scope - while dropping one merely discards its buffer
-(with a warning) instead of leaving a broker transaction open. Kafka-like brokers, whose client
-holds exactly one transaction per producer, implement only the borrowed kind.
+buffers rather than producer state also offer the owned kind, `OwnedTransactionalPublish`:
+every `transaction()` call opens an independent transaction whose buffer lives in the returned
+`TypedTransaction`, so any number can be open concurrently on one handle and settling one never
+touches another. `message(..).publish()` buffers into the value and `commit()` / `abort()`
+consume it - the same settle-by-consuming discipline as the scope - while dropping one merely
+discards its buffer (with a warning) instead of leaving a broker transaction open. Kafka-like
+brokers, whose client holds exactly one transaction per producer, offer only the borrowed kind.
 
-The owned kind has typed sugar too: on a `TypedPublisher` whose publisher implements
-`OwnedTransactions`, `transaction()` opens a `TypedTransaction` that owns the broker transaction
-and encodes with the publisher's codec - `let mut txn = typed.transaction().await?;`, then
-`txn.message(&value).publish().await?;` and `txn.commit().await?;`. Where `.transactional()` +
-`begin()` gives the borrowed scope (one per handle), any number of `TypedTransaction`s can be
-open on one `TypedPublisher` at a time.
+The owned kind is stated the same way everywhere too: a `TypedPublisher` whose publisher
+buffers client-side transactions is `OwnedTransactionalPublish`, and so is a slot bound with it
+(`Out<impl OwnedTransactionalPublish, Ledger>`). `transaction()` opens a `TypedTransaction` that
+owns the broker transaction and encodes with the surface's codec -
+`let mut txn = typed.transaction().await?;`, then `txn.message(&value).publish().await?;` and
+`txn.commit().await?;`. Where `.transactional()` + `begin()` gives the borrowed scope (one per
+handle), any number of `TypedTransaction`s can be open on one `TypedPublisher` at a time. An
+owned transaction's buffer settles outside the slot, so its publishes land in the broker's
+publish log rather than the slot's own capture.
 
 ## Batch publishing
 

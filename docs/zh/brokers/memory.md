@@ -34,15 +34,18 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
 每一个能力 trait 都基于该 Broker 自身的进程内语义原生实现，而不是去模拟另一个 Broker 的行为：
 
 - **请求-响应。** `broker.requester()` 返回一个 `MemoryRequester`，它的 `request` 会在 `reply-to`
-  消息头里带上一个唯一的进程内 inbox 再发布，并在第一条投递到该 inbox 的消息到达时完成。响应方从请求
+  消息头里带上一个唯一的进程内 inbox 再发布，并在第一条投递到该 inbox 的消息到达时完成；`MemoryRequest`
+  策略配对出的就是它，因此带 `RequestReplyPublish` 约束的槽位绑定到 `MemoryRequest`。响应方从请求
   中读出 `reply-to`，把回复发布到该名字上。无人应答的请求以 `RequestError::Timeout` 失败。
 - **批量。** `MemorySubscriber` 实现了 `BatchSubscriber`：一批由第一条 await 到的投递加上此时已经缓冲
   的全部消息组成，上限由 `set_batch_limit` 控制（默认 64）。不满一批也会立即发出，因此不涉及任何截止
   时间定时器。
-- **事务。** `MemoryPublisher` 实现了 `TransactionalPublisher`：`begin_transaction` 和 `commit` 之间
-  的发布会进入缓冲，并按发布顺序一起扇出；`abort` 则把它们丢弃。误用按 trait 契约以 `MemoryError` 报错：
-  第二次 `begin_transaction` 返回 `TransactionBusy`（已打开的事务不受影响），没有事务时的 `commit` /
-  `abort` 返回 `NoTransaction`。发布者句柄的克隆之间不共享事务。
+- **事务。** `MemoryPublish` 策略配对出的 `MemoryPublisher` 同时具备两种事务，因此带
+  `TransactionalPublish` 或 `OwnedTransactionalPublish` 约束的槽位或接线都绑定到 `MemoryPublish`。
+  作用域内的发布会进入缓冲，并在提交时按发布顺序一起扇出；中止则把它们丢弃；每个拥有式事务各自缓冲。
+  在原始句柄上的误用按 Broker 契约以 `MemoryError` 报错：已有事务打开时再次 begin 返回
+  `TransactionBusy`（已打开的事务不受影响），没有事务时的 commit 或 abort 返回 `NoTransaction`。
+  发布者句柄的克隆之间不共享事务。
 - **分区键。** `MemoryMessage` 实现了 `Partitioned`，从约定的 `partition-key` 消息头
   （`memory::PARTITION_KEY_HEADER`）读取键。
 - **定位。** `MemorySubscriber` 基于该 Broker 按名字维护的发布日志实现了 `Seekable`：在打开流之前先取得

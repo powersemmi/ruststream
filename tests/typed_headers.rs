@@ -14,11 +14,13 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream, TransactionalPublish,
+};
 use ruststream::testing::TestApp;
 use ruststream::{
-    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher, Serialized,
-    TransactionalPublisher, nonzero, subscriber,
+    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher, Serialized, nonzero,
+    subscriber,
 };
 use serde::{Deserialize, Serialize};
 
@@ -185,38 +187,39 @@ async fn from_headers_extracts_and_declared_messages_publish() {
 
 // --- capability composition: the first Out position stays the capability vocabulary. The
 // bound demands a transactional live publisher (statically checked against the policy at the
-// include site), the declared publishes (an inline tuple this time) ride inside the
-// transaction, and the whole capability surface stays reachable on the value, so a computed
-// destination keeps the byte-level escape hatch. ---
+// include site), the declared publishes (an inline tuple this time) ride inside the scope the
+// entry opens - under the same dictionary and declared set as the entry's own publishes - and
+// the plain builder stays reachable on the entry, so a computed destination keeps the
+// byte-level escape hatch. ---
 
 #[subscriber("txn.raw")]
 async fn transactional_convert(
     chunk: &Chunk,
-    Out(events): Out<impl TransactionalPublisher, Events, (ChunkDone, Progress, Wire)>,
+    Out(events): Out<impl TransactionalPublish, Events, (ChunkDone, Progress, Wire)>,
 ) -> HandlerOutcome {
-    if events.begin_transaction().await.is_err() {
+    let Ok(scope) = events.begin().await else {
         return HandlerOutcome::retry();
-    }
+    };
     let done = ChunkDone {
         output_key: format!("txn/{}", chunk.seq),
     };
     let done_meta = DoneMeta { task_id: chunk.seq };
-    if events
+    if scope
         .message(&Progress { percent: 50 })
         .publish()
         .await
         .is_err()
-        || events
+        || scope
             .message(&done)
             .with_headers(&done_meta)
             .publish()
             .await
             .is_err()
-        || events.commit().await.is_err()
+        || scope.commit().await.is_err()
     {
         return HandlerOutcome::retry();
     }
-    // The Publisher supertrait: a per-message computed destination stays available.
+    // The Publish supertrait: a per-message computed destination stays available.
     let audit = format!("audit.{}", chunk.seq);
     if events
         .message(&Wire(b"seen".to_vec()))
@@ -260,6 +263,8 @@ async fn typed_out_composes_with_transactional_capability() {
         .published::<ChunkDone>("chunks.done")
         .assert_called_once();
     broker.published::<()>("audit.9").assert_called_once();
+    // The scope publishes through the entry's attributed publisher: all three land on the slot.
+    assert_eq!(tb.out::<Events>().messages().len(), 3);
 }
 
 // --- failure policy: a header contract violation follows on_failure(decode = ..) ---

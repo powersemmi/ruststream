@@ -41,16 +41,20 @@ a simulation of another broker's:
 
 - **Request / reply.** `broker.requester()` returns a `MemoryRequester` whose `request` publishes
   with a unique in-process inbox in the `reply-to` header and resolves on the first message
-  delivered there. A responder reads `reply-to` from the request and publishes its reply to that
-  name. Requests nobody answers fail with `RequestError::Timeout`.
+  delivered there; the `MemoryRequest` policy pairs into it, so a slot bound with
+  `RequestReplyPublish` binds to `MemoryRequest`. A responder reads `reply-to` from the request
+  and publishes its reply to that name. Requests nobody answers fail with
+  `RequestError::Timeout`.
 - **Batches.** `MemorySubscriber` implements `BatchSubscriber`: a batch is the first awaited
   delivery plus everything already buffered, capped by `set_batch_limit` (default 64). Partial
   batches ship immediately, so no deadline timer is involved.
-- **Transactions.** `MemoryPublisher` implements `TransactionalPublisher`: publishes between
-  `begin_transaction` and `commit` are buffered and fan out together in publish order; `abort`
-  discards them. Misuse errors with `MemoryError` per the trait contract: a second
-  `begin_transaction` returns `TransactionBusy` (the open transaction is untouched), and
-  `commit` / `abort` without one return `NoTransaction`. Clones of a publisher handle do not
+- **Transactions.** `MemoryPublisher`, what the `MemoryPublish` policy pairs into, carries both
+  transaction kinds, so a slot or wiring bound with `TransactionalPublish` or
+  `OwnedTransactionalPublish` binds to `MemoryPublish`. Publishes inside a scope are buffered and
+  fan out together in publish order on commit; an abort discards them; every owned transaction
+  buffers on its own. Misuse on the raw handle errors with `MemoryError` per the broker contract:
+  a second begin while one is open returns `TransactionBusy` (the open transaction is untouched),
+  and a commit or abort without one returns `NoTransaction`. Clones of a publisher handle do not
   share its transaction.
 - **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
   well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).

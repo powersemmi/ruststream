@@ -14,12 +14,12 @@ use common::{Event, Wire};
 
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream, SlotPublisher,
+    AppInfo, DefaultSlot, HandlerOutcome, Out, OwnedTransactionalPublish, PublishExt, RustStream,
+    SlotPublisher,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    Broker, Deserialized, HeaderMap, OutSlot, OutgoingMessage, OwnedTransactions, PairError,
-    PublishPolicy, Publisher, Transaction, subscriber,
+    Broker, Deserialized, HeaderMap, OutSlot, PairError, PublishPolicy, Publisher, subscriber,
 };
 
 /// The payload view the slot-publishing body takes: the delivery's bytes, borrowed.
@@ -139,16 +139,22 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
         .with_raw(2u64.to_be_bytes().as_slice());
 }
 
-/// A capability-refined slot: the handler settles a ledger through owned transactions without
-/// naming a broker type; the memory publisher provides the capability.
+/// A capability-refined slot: the handler settles a ledger through an owned transaction without
+/// naming a broker type; the memory publisher provides the capability, and the transaction's
+/// typed entry admits what the slot's dictionary admits.
 #[subscriber("slots.ledger")]
-async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) -> HandlerOutcome {
+async fn settle(
+    event: &Event,
+    Out(tx): Out<impl OwnedTransactionalPublish, Encoded>,
+) -> HandlerOutcome {
     let Ok(mut txn) = tx.transaction().await else {
         return HandlerOutcome::retry();
     };
     let payload = serde_json::to_vec(event).expect("serializable");
     if txn
-        .publish(OutgoingMessage::new("slots.settled", payload.as_slice()))
+        .message(&Wire::of(payload))
+        .to("slots.settled")
+        .publish()
         .await
         .is_err()
         || txn.commit().await.is_err()

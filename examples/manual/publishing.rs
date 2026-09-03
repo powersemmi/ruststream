@@ -27,7 +27,6 @@ use ruststream::runtime::{
 use ruststream::runtime::Outgoing;
 use ruststream::{
     CallerName, FixedName, MessageHeaders, NameTemplate, NoHeaders, OutgoingDestination,
-    TransactionalPublisher,
 };
 use serde::{Deserialize, Serialize};
 
@@ -447,12 +446,12 @@ impl Handle<[Event], Vec<Event>> for Confirm {
 /// together on commit, or not at all. The scope owns the transaction, so a commit without a
 /// begin, a second commit, or a publish after settling do not compile. The wiring arrives
 /// already paired (the scope's `after_startup` hands it over live), so seeding cannot race the
-/// broker connect.
+/// broker connect; the bound names the capability the seeding needs, not the broker's publisher.
 async fn seed_events<P>(
     seeder: Transactional<P, JsonCodec>,
 ) -> Result<(), Box<dyn Error + Send + Sync>>
 where
-    P: TransactionalPublisher,
+    Transactional<P, JsonCodec>: TransactionalPublish,
 {
     let scope = seeder.begin().await?;
     scope
@@ -534,8 +533,7 @@ fn app() -> impl App {
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
             // .transactional() marks the wiring; the pairing checks that the policy's live
-            // publisher implements TransactionalPublisher. Without it, each reply publishes
-            // independently.
+            // publisher is transactional. Without it, each reply publishes independently.
             b.include(
                 subscriber("orders", Confirm)
                     .reply()
