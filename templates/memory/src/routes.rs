@@ -15,7 +15,7 @@ use crate::orders;
 /// declaration: the runtime pairs the policy with the connected broker at startup, so the router
 /// borrows no broker. `on_cancel` has no reply, so its `include` registers on its own. The router
 /// is a consuming builder, so a registration that takes an attachment commits through an explicit
-/// terminal (`.publisher(..)`, or `.mount()` for the broker's default policy) and the calls chain;
+/// terminal (`.publisher(..)`, or `.build()` for the broker's default policy) and the calls chain;
 /// the registration list is opaque, hence `impl RouterDef`.
 pub fn orders() -> impl RouterDef<MemoryBroker> {
     let confirmations = TypedPublisher::new(MemoryPublish);
