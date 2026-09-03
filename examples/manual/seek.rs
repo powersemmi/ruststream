@@ -1,7 +1,7 @@
-//! Repositioning live subscriptions without the `macros` feature: the definitions the attribute
-//! would generate, written out. The `Seek` parameter is a startup injection the runtime resolves
-//! off the subscription, and `start_at(..)` is a builder step on the declaration, so both are
-//! trait impls on a named type here.
+//! Repositioning live subscriptions without the `macros` feature: `start_at(..)` is a settings
+//! step chained on the mount, and the seeker rides the broker context axis - a body that declares
+//! `SeekContext<MemorySeeker>` reads its position and repositions its subscription straight
+//! through `Context`.
 //!
 //! ```text
 //! cargo run --example manual_seek --no-default-features --features memory,json
@@ -13,60 +13,29 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySeeker, MemorySource};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    Declared, Decoded, Fixed, Handler, IncludeDef, InjectCall, InjectDef, Open, Settle,
-    SubscriberBuilder, SubscriberDef, SubscriberSettings, forms,
-};
-use ruststream::{Seeker, StartAt};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 struct Job {
     id: u64,
 }
 
 // --8<-- [start:start_at]
 /// The audit trail: its subscription opens at the start of the log, so entries published
-/// before the service started are replayed into it.
+/// before the service started are replayed into it. The position itself is a settings step, so
+/// it is named where the handler is mounted, exactly as `workers` or `on_failure` would be.
 struct Record;
 
-impl Handler<Job> for Record {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, entry: &Job, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Job> for Record {
+    fn handle(
+        &self,
+        entry: &Job,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("audit: entry {}", entry.id);
-        ready(HandlerResult::ack().into())
-    }
-}
-
-impl SubscriberDef for Record {
-    type Input = Decoded<Job>;
-    type Context = ();
-    type Handler = Self;
-    type Source = MemorySource;
-
-    fn source(&self) -> MemorySource {
-        MemorySource::new("audit")
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-/// The start position is a settings step over the definition, and `start_at(..)` in the
-/// attribute is this chain: it decorates the source with [`StartAt`], which is what the state
-/// tuple records as `Fixed`. A definition declaring no settings implements
-/// [`IncludeDef`](ruststream::runtime::IncludeDef) instead and gets `Declared` for free, the way
-/// `Work` below does.
-impl Declared for Record {
-    type Form = forms::Subscribing;
-    type Settings =
-        SubscriberBuilder<Self, StartAt<MemorySource, MemoryPosition>, (Open, Open, Fixed)>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, MemorySource::new("audit")).start_at(MemoryPosition::start())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:start_at]
@@ -76,42 +45,25 @@ impl Declared for Record {
 /// resume point is dropped without touching the subscription itself.
 struct Work;
 
-impl IncludeDef for Work {
-    type Form = forms::Seek;
-}
-
-/// A handler taking injected parameters is an `InjectDef` rather than a plain `SubscriberDef`:
-/// the injection tuple names what the runtime prepares once the subscription opens, and
-/// `Seek<MemorySeeker>` resolves off the subscriber itself, so the body holds a live seeker.
-impl InjectDef for Work {
-    type Input = Decoded<Job>;
-    type Context = ();
-    type Source = MemorySource;
-    type Injections = (Seek<MemorySeeker>,);
-
-    fn source(&self) -> MemorySource {
-        MemorySource::new("jobs")
-    }
-}
-
-/// The body, over any application state: what the attribute puts in `InjectCall::call`, with the
-/// injections destructured out of the tuple exactly as the parameter patterns would.
-impl<S: Send + Sync> InjectCall<S> for Work {
-    async fn call(
+/// The body behind the attribute's `Seek(seeker)` parameter: seeking is the broker context axis
+/// of `Handle`, so declaring `SeekContext<MemorySeeker>` is the whole declaration - the runtime
+/// builds one per delivery off the subscription, and `ctx.seek(..)` repositions it.
+impl Handle<Job, (), (), SeekContext<MemorySeeker>> for Work {
+    async fn handle(
         &self,
         job: &Job,
-        (Seek(seeker),): &Self::Injections,
-        _ctx: &mut Context<'_, (), S>,
-    ) -> Settle {
+        _outs: &(),
+        ctx: &mut Context<'_, SeekContext<MemorySeeker>>,
+    ) -> Result<(), HandlerOutcome> {
         if job.id == 999 {
             // The poison marker carries the resume point: skip to the fourth log entry.
-            if seeker.seek(MemoryPosition::sequence(3)).await.is_err() {
-                return HandlerResult::retry().into();
+            if ctx.seek(MemoryPosition::sequence(3)).await.is_err() {
+                return Err(HandlerOutcome::retry());
             }
-            return HandlerResult::ack().into();
+            return Ok(());
         }
         println!("jobs: processed {}", job.id);
-        HandlerResult::ack().into()
+        Ok(())
     }
 }
 // --8<-- [end:handler]
@@ -129,12 +81,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --8<-- [start:mount]
-    // Both mount plainly: the runtime mints the seek handler's seeker off its subscription
-    // right after it opens, and the declaration's start position seeks the audit one before its
-    // first delivery.
+    // Both mount plainly: the seek body's context is built off its own subscription right after
+    // it opens, and the chained start position seeks the audit one before its first delivery.
     let app = RustStream::new(AppInfo::new("seek-demo", "0.1.0")).with_broker(broker, |b| {
-        b.include(Work);
-        b.include(Record);
+        b.include(subscriber(MemorySource::new("jobs"), Work).build());
+        b.include(
+            subscriber(MemorySource::new("audit"), Record)
+                .start_at(MemoryPosition::start())
+                .build(),
+        );
     });
     // --8<-- [end:mount]
     let running = app.start().await?;

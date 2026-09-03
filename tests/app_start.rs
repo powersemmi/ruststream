@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryError};
 use ruststream::runtime::{
-    App, AppInfo, Context, HandlerMetadata, HandlerResult, PublishError, PublishExt, RustStream,
+    App, AppInfo, Context, HandlerMetadata, HandlerOutcome, PublishError, PublishExt, RustStream,
     RustStreamError,
 };
 use ruststream::{Broker, ConnectedBroker, subscriber};
@@ -33,24 +33,24 @@ static SEEN: Notify = Notify::const_new();
 static TRAIT_SEEN: Notify = Notify::const_new();
 
 #[subscriber("started.orders")]
-async fn observe(_order: &Order) -> HandlerResult {
+async fn observe(_order: &Order) -> HandlerOutcome {
     SEEN.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("started.trait")]
-async fn observe_trait(_order: &Order) -> HandlerResult {
+async fn observe_trait(_order: &Order) -> HandlerOutcome {
     TRAIT_SEEN.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Default policy: a panic fails fast, tearing the started service down.
 #[subscriber("started.boom")]
-async fn boom(order: &Order) -> HandlerResult {
+async fn boom(order: &Order) -> HandlerOutcome {
     // The test publishes ids other than u32::MAX, so this assertion always fails (panics); the
-    // trailing expression keeps the body typed as HandlerResult.
+    // trailing expression keeps the body typed as HandlerOutcome.
     assert_eq!(order.id, u32::MAX, "handler exploded");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -181,8 +181,8 @@ async fn start_is_reachable_through_the_app_trait() {
 
 /// State-generic no-op subscriber for the lifecycle-hooks test below.
 #[subscriber("started.quiet")]
-async fn quiet(_order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn quiet(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -231,7 +231,7 @@ async fn failed_after_startup_waits_for_post_settle_continuations() {
     // The two-layer closure form is forced here: an async closure's future would borrow the
     // message and context arguments, and the handler bound needs an owned future.
     let handler = |_msg: &_, _ctx: &mut Context| async {
-        HandlerResult::ack().and_after(async {
+        HandlerOutcome::ack().and_after(async {
             CONT_IN_FLIGHT_HOOK.notify_one();
             CONT_IN_FLIGHT_TEST.notify_one();
             RELEASE.notified().await;

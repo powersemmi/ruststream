@@ -8,14 +8,11 @@
 use std::future::{Future, ready};
 
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, Declared, Decoded, OutgoingMessageMetadata, PublishingCall, PublishingDef,
-    SubscriberBuilder, forms,
-};
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, JsonSchema)]
 struct Order {
     id: u64,
     quantity: u32,
@@ -31,56 +28,24 @@ impl MessageHeaders for Order {
     type Contract = NoHeaders;
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, JsonSchema)]
 struct Confirmation {
     id: u64,
     accepted: bool,
 }
 
-/// The subscription source, the reply destination and the reply type live on `PublishingDef`;
-/// the body moves to `PublishingCall`, which stays generic over the state so it mounts on an app
-/// with any state type.
+/// The reply body without the attribute: the reply type sits in the `Handle` impl's second
+/// position, and the subscription source and the reply destination are named where the definition
+/// is built. The impl stays generic over the state so it mounts on an app with any state type.
 struct Confirm;
 
-impl Declared for Confirm {
-    type Form = forms::Publishing;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("orders"))
-    }
-}
-
-impl PublishingDef for Confirm {
-    type Input = Decoded<Order>;
-    type Injections = ();
-    type Reply = Confirmation;
-    type Context = ();
-    type Source = Name;
-
-    fn source(&self) -> Self::Source {
-        Name::new("orders")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "confirmations"
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        vec![OutgoingMessageMetadata::new(
-            "confirmations",
-            std::any::type_name::<Confirmation>(),
-        )]
-    }
-}
-
-impl<State: Send + Sync> PublishingCall<State> for Confirm {
-    fn call(
+impl<State: Send + Sync> Handle<Order, Confirmation, (), (), State> for Confirm {
+    fn handle(
         &self,
         order: &Order,
-        _injections: &Self::Injections,
+        _outs: &(),
         _ctx: &mut Context<'_, (), State>,
-    ) -> impl Future<Output = Result<Confirmation, HandlerResult>> + Send {
+    ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         ready(Ok(Confirmation {
             id: order.id,
             accepted: order.quantity > 0,
@@ -100,7 +65,13 @@ async fn confirms_valid_orders() {
         MemoryBroker::new(),
         |b| {
             let replies = TypedPublisher::new(MemoryPublish);
-            b.include(Confirm).publisher(replies);
+            b.include(
+                subscriber("orders", Confirm)
+                    .reply()
+                    .to("confirmations")
+                    .publisher(replies)
+                    .build(),
+            );
         },
     );
 
@@ -119,7 +90,7 @@ async fn confirms_valid_orders() {
         .subscriber("orders")
         .assert_called_once()
         .with(&Order { id: 1, quantity: 2 })
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.broker::<MemoryBroker>()
         .published::<Confirmation>("confirmations")
         .assert_called_once()

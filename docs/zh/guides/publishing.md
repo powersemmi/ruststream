@@ -49,9 +49,9 @@ Broker crate 要实现的接口（参见 [Broker 作者](../broker-authors/index
 
 ## 控制确认行为
 
-普通的回复写法总是先发布再 ack。想自己掌控，就改成返回 `Result<Reply, HandlerResult>`：`Ok(reply)` 会
-发布并 ack，`Err(result)` 什么都不发布，由分发器按返回的 `HandlerResult` 行事（`HandlerResult::drop()`
-表示进死信，`HandlerResult::retry()` 表示请求重新投递）：
+普通的回复写法总是先发布再 ack。想自己掌控，就改成返回 `Result<Reply, HandlerOutcome>`：`Ok(reply)` 会
+发布并 ack，`Err(outcome)` 什么都不发布，由分发器按返回的 `HandlerOutcome` 行事（`HandlerOutcome::drop()`
+表示进死信，`HandlerOutcome::retry()` 表示请求重新投递）：
 
 === "宏"
 
@@ -122,8 +122,8 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
 
 需要多个发布者的处理器要为每个参数指定一个**槽位标记**：一个派生了 `OutSlot` 的单元结构体，写在第二个
 类型参数的位置（`Out<impl Publisher, Primary>`）。挂载点用 `.out(marker, policy)` 绑定每一个标记，再用
-收尾的 `.mount()` 提交这次注册。这些调用是按标记绑定的，所以先后顺序无关紧要；把同一个槽位绑定两次
-（或者绑定一个处理器没有声明的标记）无法通过编译，而 `.mount()` 只有在每个槽位都绑定之后才存在，漏掉
+收尾的 `.build()` 提交这次注册。这些调用是按标记绑定的，所以先后顺序无关紧要；把同一个槽位绑定两次
+（或者绑定一个处理器没有声明的标记）无法通过编译，而 `.build()` 只有在每个槽位都绑定之后才存在，漏掉
 一次绑定就是编译错误，其附着类型会点名是哪个槽位（`MissingSlot<Audit>`）。如果只有一个无名的
 `Out<impl Publisher>` 参数，它绑定的是隐含的 `DefaultSlot`，用普通的 `.publisher(policy)` 调用即可，
 绑定和提交一步完成。
@@ -217,7 +217,7 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 该参数可以和每一种订阅者写法组合：与 `Seek` 参数并列、用在以字节为输入的处理器上、也用在批量处理器
 上（`b.include(f).publisher(..)`，进来的是一整页，出去的是逐元素的目的地）。在回复写法上，也就是
 `publish(..)` / `publish_raw(..)` 以及它们的批量对应形式，`.publisher(..)` 仍然是回复自己的附加项，
-注入的发布者则用 `.out(marker, ..)` 加上收尾的 `.mount()` 来附加（单个无名槽位用 `DefaultSlot`），
+注入的发布者则用 `.out(marker, ..)` 加上收尾的 `.build()` 来附加（单个无名槽位用 `DefaultSlot`），
 于是一个网关可以在固定的目的地上作答，同时通过注入把副本扇出出去：
 
 === "宏"
@@ -341,7 +341,7 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 
 一个接受 `&[T]` 的 `#[subscriber("in", publish("out"))]` 处理器会消费整个解码后的批量，并返回这一批的
 回复，也就是 consume-transform-produce 模式。`Ok(replies)` 把每一条回复发布到回复名下，并 ack 整批；
-`Err(result)` 什么都不发布，并用 `result` 结算整批（全有或全无：逐元素挑选结果与事务无法组合）：
+`Err(outcome)` 什么都不发布，并用 `outcome` 结算整批（全有或全无：逐元素挑选结果与事务无法组合）：
 
 === "宏"
 

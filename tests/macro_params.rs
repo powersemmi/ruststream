@@ -10,9 +10,9 @@
 ))]
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, FailurePolicy, HandlerResult, Out, RustStream};
+use ruststream::runtime::{AppInfo, FailurePolicy, HandlerOutcome, Out, RustStream};
 use ruststream::testing::TestApp;
-use ruststream::{Message, OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 static WORKERS: usize = 2;
@@ -24,7 +24,7 @@ struct Ping {
     id: u64,
 }
 
-#[derive(Message, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(MessageInfo, Serialize, Deserialize, Debug, PartialEq)]
 struct Pong {
     id: u64,
 }
@@ -54,7 +54,7 @@ async fn respond(ping: &Ping, Out(events): Out<impl Publisher, Events, Progress>
 async fn clause_values_come_from_constants_and_statics() {
     let app =
         RustStream::new(AppInfo::new("params", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(respond).out(Events, MemoryPublish).mount();
+            b.include(respond).out(Events, MemoryPublish).build();
         });
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
@@ -87,6 +87,6 @@ async fn clause_values_come_from_constants_and_statics() {
     broker
         .subscriber("params.pings")
         .assert_called(2)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     broker.published::<Pong>(REPLY_TOPIC).assert_called_once();
 }

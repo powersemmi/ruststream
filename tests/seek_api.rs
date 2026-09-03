@@ -16,7 +16,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySeeker, MemorySource};
-use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, Seek};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, RustStream, Seek};
 use ruststream::testing::{TestApp, expect_published};
 use ruststream::{Publisher, Seeker, subscriber};
 
@@ -31,15 +31,15 @@ use common::{Event, observed_memory, payload};
 static JOBS_PUBLISHED: Notify = Notify::const_new();
 
 #[subscriber(MemorySource::new("seek.jobs"))]
-async fn work(job: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+async fn work(job: &Event, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
     if job.id == 0 {
         // The producer uses id 0 as "resume from the third message".
         JOBS_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
-            return HandlerResult::retry();
+            return HandlerOutcome::retry();
         }
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -80,8 +80,8 @@ async fn a_seek_parameter_repositions_from_inside_the_handler() {
 }
 
 #[subscriber("seek.history", start_at(MemoryPosition::start()))]
-async fn replayer(_event: &Event) -> HandlerResult {
-    HandlerResult::Ack
+async fn replayer(_event: &Event) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -137,14 +137,14 @@ async fn forward_skipping(
     event: &Event,
     Out(out): Out<impl Publisher>,
     Seek(seeker): Seek<MemorySeeker>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     if event.id == 0 {
         // The poison marker: resume from the third message once the whole run is in the log.
         COMBO_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
-            return HandlerResult::retry();
+            return HandlerOutcome::retry();
         }
-        return HandlerResult::Ack;
+        return HandlerOutcome::ack();
     }
     let payload = serde_json::to_vec(event).expect("serializable");
     if out
@@ -154,9 +154,9 @@ async fn forward_skipping(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -201,16 +201,16 @@ static FRAMES_PUBLISHED: Notify = Notify::const_new();
 /// A raw handler with an injected seeker: the input axis lets the byte-level form compose
 /// with startup injections, borrowing the payload with no decode and no copy.
 #[subscriber("seek.frames", raw)]
-async fn raw_work(frame: &[u8], Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+async fn raw_work(frame: &[u8], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
     if frame == b"poison" {
         // The marker frame: resume from the third entry once the whole run is in the log.
         FRAMES_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
-            return HandlerResult::retry();
+            return HandlerOutcome::retry();
         }
-        return HandlerResult::Ack;
+        return HandlerOutcome::ack();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -259,7 +259,7 @@ static REPLAY_DONE: Notify = Notify::const_new();
 /// The tail marker (id 2) triggers one replay of the log from the second entry on; the guard
 /// keeps the redelivered marker from seeking again.
 #[subscriber(batch("seek.pages"))]
-async fn page_work(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+async fn page_work(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
     let seen_twice = {
         let mut ids = PAGE_IDS.lock().unwrap();
         ids.extend(events.iter().map(|event| event.id));
@@ -269,12 +269,12 @@ async fn page_work(events: &[Event], Seek(seeker): Seek<MemorySeeker>) -> Handle
         && !REPLAYED.swap(true, Ordering::SeqCst)
         && seeker.seek(MemoryPosition::sequence(1)).await.is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     if seen_twice {
         REPLAY_DONE.notify_one();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -314,15 +314,15 @@ static GATE_PUBLISHED: Notify = Notify::const_new();
 /// injections. The poison marker skips its own reply and repositions the subscription
 /// instead; only the post-seek event is answered.
 #[subscriber("seek.gate", publish("seek.gate.out"))]
-async fn gate(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> Result<Event, HandlerResult> {
+async fn gate(event: &Event, Seek(seeker): Seek<MemorySeeker>) -> Result<Event, HandlerOutcome> {
     if event.id == 0 {
         // The poison marker: resume from the third message once the whole run is in the
         // log, publishing nothing.
         GATE_PUBLISHED.notified().await;
         if seeker.seek(MemoryPosition::sequence(2)).await.is_err() {
-            return Err(HandlerResult::retry());
+            return Err(HandlerOutcome::retry());
         }
-        return Err(HandlerResult::Ack);
+        return Err(HandlerOutcome::ack());
     }
     Ok(Event { id: event.id * 10 })
 }
@@ -373,12 +373,12 @@ static PAGE_REPLAYED: AtomicBool = AtomicBool::new(false);
 async fn ledger(
     events: &[Event],
     Seek(seeker): Seek<MemorySeeker>,
-) -> Result<Vec<Event>, HandlerResult> {
+) -> Result<Vec<Event>, HandlerOutcome> {
     if events.iter().any(|event| event.id == 2)
         && !PAGE_REPLAYED.swap(true, Ordering::SeqCst)
         && seeker.seek(MemoryPosition::sequence(1)).await.is_err()
     {
-        return Err(HandlerResult::retry());
+        return Err(HandlerOutcome::retry());
     }
     Ok(events
         .iter()

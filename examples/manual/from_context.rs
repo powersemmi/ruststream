@@ -1,7 +1,7 @@
 //! Extractor parameters without the `macros` feature: `State<T>` is a plain public type, so a
 //! hand-written definition binds it exactly as the attribute does - one `FromContext` resolution
 //! per extractor, before the body runs. What the feature takes away is only the two derives: the
-//! definition is a named type with an `impl Handler`, and the state writes the per-field
+//! definition is a named type with an `impl Handle`, and the state writes the per-field
 //! `FromRef` impl `#[derive(FromRef)]` would have generated. Driven through the real dispatch
 //! path with the in-process `TestApp` harness.
 //!
@@ -13,14 +13,13 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{FromContext, Handler, HandlerMetadata, Settle, typed};
+use ruststream::runtime::FromContext;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -55,24 +54,33 @@ impl FromRef<AppState> for CreateOrder {
 // The interactor still arrives as a bound value rather than a `ctx.state().create_order`
 // reach-through: the extractor is public API, so the definition resolves it itself.
 // --8<-- [start:handler]
-/// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
-struct Handle;
+/// The handler body: `#[subscriber("orders")]` generates this struct and this impl.
+struct Receive;
 
-impl Handler<Order, (), AppState> for Handle {
-    async fn handle(&self, order: &Order, ctx: &mut Context<'_, (), AppState>) -> Settle {
+impl Handle<Order, (), (), (), AppState> for Receive {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_, (), AppState>,
+    ) -> Result<(), HandlerOutcome> {
         // One binding per extractor parameter, in declaration order, before the body: this is
         // what the attribute emits for `State(create_order): State<CreateOrder>`. A rejection
-        // settles the delivery by its `HandlerResult` and the body never runs.
+        // settles the delivery by its `HandlerOutcome` and the body never runs.
         let State(create_order) =
             match <State<CreateOrder> as FromContext<(), AppState>>::from_context(ctx).await {
                 Ok(value) => value,
-                Err(rejection) => return HandlerResult::from(rejection).into(),
+                Err(rejection) => return Err(HandlerOutcome::from(rejection)),
             };
 
         create_order.execute(order);
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
+
+// The state a body extracts from is the last axis of its own `impl Handle`, so
+// `subscriber(source, body)` mounts it unchanged: the mount reads `AppState` off the impl and
+// checks it against the app's.
 // --8<-- [end:handler]
 
 #[tokio::main]
@@ -84,11 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(AppState { create_order }))
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Receive).build());
         });
 
     let tb = TestApp::start(app).await?;

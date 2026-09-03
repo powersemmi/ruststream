@@ -211,6 +211,7 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "failure_policy"
+required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "post_settle"
@@ -489,6 +490,10 @@ tracing-opentelemetry = { version = "0.33", optional = true }
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Registrations on the manual path are documented by default, so an example's message types
+# derive `JsonSchema` whether or not the example itself turns the `asyncapi` feature on (the
+# crate re-exports `schemars` only under that feature).
+schemars = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 axum = "0.8"
 trybuild = "1"

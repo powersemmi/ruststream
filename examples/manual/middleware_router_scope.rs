@@ -6,7 +6,7 @@
 //! `middleware_app_scope.rs` for the other side).
 //!
 //! `Router` and its `layer` are plain runtime API, so the layer below is the same one the macro
-//! version uses; a router groups hand-written registrations through the same `subscribe` method a
+//! version uses; a router groups hand-written definitions through the same `include` method a
 //! broker scope has.
 //!
 //! ```text
@@ -16,15 +16,12 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    BlanketLayer, Handler, HandlerMetadata, Layer, RouterDef, Settle, typed,
-};
+use ruststream::runtime::{BlanketLayer, Handler, Layer};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -32,30 +29,43 @@ struct Order {
 /// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
 struct Orders;
 
-impl Handler<Order> for Orders {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Orders {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 struct Shipments;
 
-impl Handler<Order> for Shipments {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Shipments {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got shipment for order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 struct Audit;
 
-impl Handler<Order> for Audit {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Audit {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("audited order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
@@ -85,7 +95,7 @@ impl BlanketLayer for LogLayer {
 }
 
 impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         println!("router layer -> {}", ctx.name());
         self.0.handle(msg, ctx).await
     }
@@ -97,28 +107,16 @@ fn routes() -> impl RouterDef<MemoryBroker> {
     Router::new()
         .layer(LogLayer)
         // wrapped by LogLayer
-        .subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Orders),
-            HandlerMetadata::typed::<Order>("orders"),
-        )
+        .include(subscriber("orders", Orders).build())
         // wrapped by LogLayer
-        .subscribe(
-            Name::new("shipments"),
-            typed(JsonCodec, Shipments),
-            HandlerMetadata::typed::<Order>("shipments"),
-        )
+        .include(subscriber("shipments", Shipments).build())
 }
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("router-scope", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(routes());
         // directly on the scope: outside the router's stack
-        b.subscribe(
-            Name::new("audit"),
-            typed(JsonCodec, Audit),
-            HandlerMetadata::typed::<Order>("audit"),
-        );
+        b.include(subscriber("audit", Audit).build());
     })
 }
 // --8<-- [end:router_scope]

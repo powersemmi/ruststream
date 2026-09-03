@@ -10,7 +10,7 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ struct AppState {
 async fn handle_order(
     order: &Order,
     ctx: &mut ruststream::runtime::Context<'_, (), AppState>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let receipt = Receipt { order_id: order.id };
     let payload = serde_json::to_vec(&receipt).expect("serialize");
     if ctx
@@ -48,9 +48,9 @@ async fn handle_order(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Builds the service: one broker, the order handler, and a receipts publisher in state.
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .subscriber("orders")
         .assert_called_once()
         .with(&Order { id: 42 })
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 
     // It published the matching receipt downstream.
     tb.broker::<MemoryBroker>()

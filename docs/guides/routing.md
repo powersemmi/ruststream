@@ -9,7 +9,7 @@ scope.
 A `Router` mirrors the broker scope: `include` is the one entry point, mounting every definition
 form - plain, raw, batch, reply-publishing, injected - picked by the definition itself, next to
 `with_codec` (switches the chain's decode codec, see
-[Codecs](codecs.md#per-handler)) and the manual `handle` / `subscribe` registrations. The
+[Codecs](codecs.md#per-handler)) and the low-level `handle` registration. The
 subscription source always comes from the definition - `#[subscriber(..)]` takes the broker's own
 source expression, builder chain included - so there is nothing to name at the mount site. Every
 call consumes the router and returns a new one, so registrations chain:
@@ -40,8 +40,8 @@ RustStream::new(info).with_broker(broker, |b| {
 Handlers that need an attachment - a reply publisher, an
 [`Out`](publishing.md#publishing-from-inside-a-handler) slot - register on the router the same way
 as on the scope, except that the registration commits
-through an explicit terminal: `.publisher(policy)` names the wiring, `.mount()` takes the broker's
-own default publish policy, and `.out(marker, policy)` binds one named slot before `.mount()`. A
+through an explicit terminal: `.publisher(policy)` names the wiring, `.build()` takes the broker's
+own default publish policy, and `.out(marker, policy)` binds one named slot before `.build()`. A
 forgotten terminal never becomes a router, so the chain fails to compile. The policies stay pure
 declaration, so the router still needs no broker:
 

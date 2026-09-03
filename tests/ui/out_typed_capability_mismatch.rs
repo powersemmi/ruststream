@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
 use ruststream::{OutSlot, Outgoing, RequestReply, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -25,13 +25,13 @@ struct Events;
 async fn forward(
     _order: &Order,
     Out(out): Out<impl RequestReply, Events, Progress>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     let _ = out;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(forward).out(Events, MemoryPublish).mount();
+        b.include(forward).out(Events, MemoryPublish).build();
     });
 }

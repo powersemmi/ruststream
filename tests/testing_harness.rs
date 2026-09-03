@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use ruststream::memory::MemoryBroker;
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
 // needs no import (matching the `examples/publishing.rs` pattern).
-use ruststream::runtime::{AppInfo, HandlerResult, PublishError, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream};
 use ruststream::testing::{Outcome, TestApp, TestError};
 use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
@@ -34,30 +34,30 @@ struct Event {
 /// Acks every order; panics on id 0 (a deliberate negative-test trigger) under the default
 /// `panic = fail_fast`.
 #[subscriber("orders")]
-async fn handle_orders(order: &Order) -> HandlerResult {
+async fn handle_orders(order: &Order) -> HandlerOutcome {
     assert!(order.id != 0, "boom on id 0");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Drops every message (nack without requeue).
 #[subscriber("dropme")]
-async fn drop_all(order: &Order) -> HandlerResult {
+async fn drop_all(order: &Order) -> HandlerOutcome {
     let _ = order;
-    HandlerResult::drop()
+    HandlerOutcome::drop()
 }
 
 /// Panics on id 0 but `panic = skip` keeps the service running and acks the offending message.
 #[subscriber("skipper", on_failure(panic = skip))]
-async fn skip_panics(order: &Order) -> HandlerResult {
+async fn skip_panics(order: &Order) -> HandlerOutcome {
     assert!(order.id != 0, "boom on id 0");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Requeues forever, to exercise the quiescence step-budget guard.
 #[subscriber("loops")]
-async fn loop_forever(order: &Order) -> HandlerResult {
+async fn loop_forever(order: &Order) -> HandlerOutcome {
     let _ = order;
-    HandlerResult::retry()
+    HandlerOutcome::retry()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -77,7 +77,7 @@ async fn records_received_value_and_ack() {
         .subscriber("orders")
         .assert_called_once()
         .with(&Order { id: 7 })
-        .settled(HandlerResult::Ack)
+        .settled(HandlerOutcome::ack())
         .assert_outcome(Outcome::Ack);
 
     // The received messages can also be retrieved for custom inspection.
@@ -108,7 +108,7 @@ async fn records_drop_outcome() {
         .subscriber("dropme")
         .assert_called_once()
         .assert_outcome(Outcome::Drop)
-        .settled(HandlerResult::Nack { requeue: false });
+        .settled(HandlerOutcome::drop());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -186,7 +186,7 @@ async fn skip_policy_panic_keeps_running() {
         .subscriber("skipper")
         .assert_called_once()
         .panicked()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.assert_running();
     assert!(tb.run_result().is_ok());
 }
@@ -244,7 +244,7 @@ async fn custom_codec_assertions_use_the_handlers_codec() {
         .subscriber("orders")
         .assert_called_once()
         .with_codec(&CborCodec, &Order { id: 7 })
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     let received: Vec<Order> = tb
         .broker::<MemoryBroker>()
         .subscriber("orders")
@@ -259,12 +259,12 @@ struct Counter {
 }
 
 #[subscriber("retryonce")]
-async fn retry_once(order: &Order, ctx: &mut Context<'_, (), Counter>) -> HandlerResult {
+async fn retry_once(order: &Order, ctx: &mut Context<'_, (), Counter>) -> HandlerOutcome {
     let _ = order;
     if ctx.state().seen.fetch_add(1, Ordering::SeqCst) == 0 {
-        HandlerResult::retry()
+        HandlerOutcome::retry()
     } else {
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 }
 
@@ -290,7 +290,7 @@ async fn requeue_redelivers_and_settles() {
     tb.broker::<MemoryBroker>()
         .subscriber("retryonce")
         .assert_called(2)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
 
@@ -298,12 +298,12 @@ async fn requeue_redelivers_and_settles() {
 
 // --8<-- [start:retry_after]
 #[subscriber("delayed")]
-async fn delayed_retry(order: &Order, ctx: &mut Context<'_, (), Counter>) -> HandlerResult {
+async fn delayed_retry(order: &Order, ctx: &mut Context<'_, (), Counter>) -> HandlerOutcome {
     let _ = order;
     if ctx.state().seen.fetch_add(1, Ordering::SeqCst) == 0 {
-        HandlerResult::retry_after(std::time::Duration::from_secs(30))
+        HandlerOutcome::retry_after(std::time::Duration::from_secs(30))
     } else {
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 }
 
@@ -328,9 +328,9 @@ async fn retry_after_redelivers_after_advancing_time() {
     tb.broker::<MemoryBroker>()
         .subscriber("delayed")
         .assert_called_once()
-        .settled(HandlerResult::NackAfter {
-            delay: std::time::Duration::from_secs(30),
-        });
+        .settled(HandlerOutcome::retry_after(std::time::Duration::from_secs(
+            30,
+        )));
     assert_eq!(seen.load(Ordering::SeqCst), 1);
 
     // Advancing past the delay fires the redelivery and drives it to settle.
@@ -340,7 +340,7 @@ async fn retry_after_redelivers_after_advancing_time() {
     tb.broker::<MemoryBroker>()
         .subscriber("delayed")
         .assert_called(2)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
 // --8<-- [end:retry_after]
@@ -349,18 +349,18 @@ async fn retry_after_redelivers_after_advancing_time() {
 
 /// Forwards each order to the `events` channel on a second broker held in state.
 #[subscriber("ingress")]
-async fn forward(order: &Order, ctx: &mut Context<'_, (), Egress>) -> HandlerResult {
+async fn forward(order: &Order, ctx: &mut Context<'_, (), Egress>) -> HandlerOutcome {
     let event = Event { id: order.id };
     if ctx.state().egress.message(&event).publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("events")]
-async fn on_event(event: &Event) -> HandlerResult {
+async fn on_event(event: &Event) -> HandlerOutcome {
     let _ = event;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 struct Egress {
@@ -391,7 +391,7 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
     tb.broker_named("ingress")
         .subscriber("ingress")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.broker_named("egress")
         .subscriber("events")
         .assert_called_once()

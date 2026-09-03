@@ -1,6 +1,6 @@
 //! Router composition from the Routing guide, written without the `macros` feature: each group
-//! builder registers a named handler type with `subscribe`, and merging and mounting are the same
-//! router calls the macro form makes.
+//! builder mounts a named handler type with the `subscriber` constructor, and merging and mounting
+//! are the same router calls the macro form makes.
 //!
 //! ```text
 //! cargo run --example manual_routing --no-default-features --features memory,json
@@ -9,18 +9,16 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, RouterDef, Settle, typed};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Shipment {
     order_id: u64,
 }
@@ -28,44 +26,40 @@ struct Shipment {
 /// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
 struct Accept;
 
-impl Handler<Order> for Accept {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Accept {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("accepted order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 /// The definition value: `#[subscriber("shipments")]` generates this struct and this impl.
 struct Dispatch;
 
-impl Handler<Shipment> for Dispatch {
+impl Handle<Shipment> for Dispatch {
     fn handle(
         &self,
         shipment: &Shipment,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("dispatched shipment for order {}", shipment.order_id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 // --8<-- [start:builders]
 fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    Router::new().subscribe(
-        Name::new("orders"),
-        typed(JsonCodec, Accept),
-        HandlerMetadata::typed::<Order>("orders"),
-    )
+    Router::new().include(subscriber("orders", Accept).build())
 }
 
 fn shipping() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    Router::new().subscribe(
-        Name::new("shipments"),
-        typed(JsonCodec, Dispatch),
-        HandlerMetadata::typed::<Shipment>("shipments"),
-    )
+    Router::new().include(subscriber("shipments", Dispatch).build())
 }
 // --8<-- [end:builders]
 

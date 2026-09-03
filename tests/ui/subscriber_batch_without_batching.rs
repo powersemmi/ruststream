@@ -1,6 +1,6 @@
 use futures::Stream;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemorySubscriber};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use ruststream::{Subscribe, Subscriber, SubscriptionSource};
 use serde::Deserialize;
@@ -42,9 +42,9 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
 // The signature asks for several messages at once; this subscription delivers one at a time, so
 // the mount asks for the framework's buffer.
 #[subscriber(Trickle { name: "orders" })]
-async fn handle(orders: &[Order]) -> HandlerResult {
+async fn handle(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {

@@ -1,6 +1,6 @@
-//! The AsyncAPI example written without the `macros` feature: the payload declares itself
-//! through the trait impls the derives would emit, and the subscriber is a hand-written
-//! definition, so the generated document carries the same schema, name and description.
+//! The AsyncAPI example written without the `macros` feature: the payload keeps its `JsonSchema`
+//! derive (schemars' own, so no macro feature is involved) and the registration is documented by
+//! default, so the generated document carries the same schema, name and description.
 //!
 //! ```text
 //! cargo run --example manual_asyncapi_http --no-default-features --features memory,asyncapi
@@ -20,12 +20,9 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, Context, Decoded, Handler, HandlerResult, IncludeDef, RustStream, Settle,
-    SubscriberDef, forms,
-};
-use ruststream::schemars::{JsonSchema, schema_for};
-use ruststream::{Message, Name, SecurityScheme, ServerSpec};
+use ruststream::runtime::{AppInfo, Context, Handle, HandlerOutcome, RustStream, subscriber};
+use ruststream::schemars::JsonSchema;
+use ruststream::{SecurityScheme, ServerSpec};
 use serde::Deserialize;
 
 // --8<-- [start:payload]
@@ -36,58 +33,21 @@ struct Order {
     item: String,
 }
 
-// What `#[derive(Message)]` writes out: the component name and the doc comment as its
-// description. `JsonSchema` is schemars' own derive, so the payload schema itself needs no
-// macro feature.
-impl Message for Order {
-    const NAME: &'static str = "Order";
-    const DESCRIPTION: Option<&'static str> = Some("An order placed by a customer.");
-}
+/// The handler `#[subscriber("orders")]` would generate. A value definition is documented by
+/// default, so the schema is captured at the mount below with nothing to ask for (the exit is
+/// `.undocumented()`). The component's name and description follow from there: schemars carries
+/// the type's own doc comment into the schema, and the type name names the component.
+struct Receive;
 
-/// The subscriber definition `#[subscriber("orders")]` would generate. The document is built
-/// from these hooks: the attribute fills them in by probing the input type, a hand-written
-/// definition answers them itself, and `include` reads them either way.
-struct Handle;
-
-impl SubscriberDef for Handle {
-    type Input = Decoded<Order>;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Name {
-        Name::new("orders")
-    }
-
-    fn input_schema(&self) -> Option<String> {
-        Some(schema_for!(Order).as_value().to_string())
-    }
-
-    fn message_name(&self) -> Option<&'static str> {
-        Some(Order::NAME)
-    }
-
-    fn message_description(&self) -> Option<&'static str> {
-        Order::DESCRIPTION
-    }
-
-    fn into_handler(self) -> Self {
-        self
-    }
-}
-
-/// The form token tells `include` which mounting machinery this definition needs; a plain
-/// subscriber names `forms::Subscribing`.
-impl IncludeDef for Handle {
-    type Form = forms::Subscribing;
-}
-
-impl Handler<Order> for Handle {
-    // A body with nothing to await returns the future directly; `async fn` here would be an
-    // unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Receive {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("order {} ({})", order.id, order.item);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:payload]
@@ -110,7 +70,9 @@ fn service() -> RustStream {
                 .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS")),
         )
         // --8<-- [end:security]
-        .with_broker_labeled("in-process", MemoryBroker::new(), |b| b.include(Handle))
+        .with_broker_labeled("in-process", MemoryBroker::new(), |b| {
+            b.include(subscriber("orders", Receive).build());
+        })
 }
 // --8<-- [end:server]
 

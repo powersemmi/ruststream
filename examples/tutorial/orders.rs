@@ -1,7 +1,7 @@
 //! The tutorial's message types and handlers.
 
 // --8<-- [start:order]
-use ruststream::runtime::HandlerResult;
+use ruststream::runtime::HandlerOutcome;
 use ruststream::schemars::JsonSchema;
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
@@ -14,9 +14,9 @@ pub(crate) struct Order {
 }
 
 #[subscriber("orders")]
-pub(crate) async fn handle(order: &Order) -> HandlerResult {
+pub(crate) async fn handle(order: &Order) -> HandlerOutcome {
     println!("order {} x{}", order.id, order.quantity);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:order]
 

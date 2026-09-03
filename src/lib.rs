@@ -14,7 +14,8 @@
 //! * `memory`: [`memory::MemoryBroker`], an in-process broker usable in applications, prototypes
 //!   and tests.
 //! * `macros`: the `#[subscriber]`, [`#[ruststream::app]`](macro@app),
-//!   [`#[derive(Outgoing)]`](macro@Outgoing) and [`#[derive(Message)]`](macro@Message) macros.
+//!   [`#[derive(Outgoing)]`](macro@Outgoing) and [`#[derive(MessageInfo)]`](macro@MessageInfo)
+//!   macros.
 //! * `asyncapi`: `AsyncAPI` document generation and the HTML viewer.
 //! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`
@@ -66,8 +67,8 @@ pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, OwnedTransactions,
-    Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker, ServerSpec, Subscribe,
-    Transaction, TransactionalPublisher,
+    Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, SeekableMessage, Seeker,
+    ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
 pub use error::AckError;
 pub use field::{BuildContext, ContextField, Field, FieldMut};
@@ -75,8 +76,8 @@ pub use headers::HeaderMap;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::{
-    CallerName, DestinationForm, FixedName, HeadersContract, Message, MessageHeaders, NameTemplate,
-    NoHeaders, OutgoingDestination, WithHeaders,
+    CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
+    NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 pub use subscriber::Subscriber;
 pub use subscription::{FromName, Name, StartAt, SubscriptionSource, Unnamed};
@@ -104,15 +105,15 @@ pub use ruststream_macros::subscriber;
 #[cfg(feature = "macros")]
 pub use ruststream_macros::app;
 
-/// Derive macro for [`Message`] metadata (type name + doc description).
+/// Derive macro for [`MessageInfo`] metadata (type name + doc description).
 ///
 /// Available with the `macros` feature.
 #[cfg(feature = "macros")]
-pub use ruststream_macros::Message;
+pub use ruststream_macros::MessageInfo;
 
 /// Derive macro declaring everything a message type says about being sent: its destination
 /// ([`OutgoingDestination`]) and its optional header contract ([`MessageHeaders`]), plus the
-/// [`Message`] metadata the generated document reads.
+/// [`MessageInfo`] metadata the generated document reads.
 ///
 /// Available with the `macros` feature.
 #[cfg(feature = "macros")]
@@ -220,12 +221,12 @@ pub mod __private {
         }
     }
 
-    /// The trait fallback for [`Message`](crate::Message) metadata: chosen for any `T` the
+    /// The trait fallback for [`Message`](crate::MessageInfo) metadata: chosen for any `T` the
     /// inherent methods below do not cover.
     pub trait NoMessageProbe {
-        /// Returns `None` (the probed type does not implement `Message`).
+        /// Returns `None` (the probed type does not implement `MessageInfo`).
         fn message_name(&self) -> Option<&'static str>;
-        /// Returns `None` (the probed type does not implement `Message`).
+        /// Returns `None` (the probed type does not implement `MessageInfo`).
         fn message_description(&self) -> Option<&'static str>;
     }
 
@@ -239,15 +240,15 @@ pub mod __private {
         }
     }
 
-    impl<T: crate::Message> Probe<T> {
-        /// Returns [`Message::NAME`](crate::Message::NAME) for `T` (inherent; preferred over the
+    impl<T: crate::MessageInfo> Probe<T> {
+        /// Returns [`Message::NAME`](crate::MessageInfo::NAME) for `T` (inherent; preferred over the
         /// trait fallback).
         #[must_use]
         pub fn message_name(&self) -> Option<&'static str> {
             Some(T::NAME)
         }
 
-        /// Returns [`Message::DESCRIPTION`](crate::Message::DESCRIPTION) for `T` (inherent;
+        /// Returns [`Message::DESCRIPTION`](crate::MessageInfo::DESCRIPTION) for `T` (inherent;
         /// preferred over the trait fallback).
         #[must_use]
         pub fn message_description(&self) -> Option<&'static str> {

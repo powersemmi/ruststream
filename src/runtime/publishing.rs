@@ -4,7 +4,7 @@
 //! [`BrokerScope::include`](super::BrokerScope::include), chaining
 //! [`.publisher(..)`](super::IncludePublishing::publisher) to attach the reply publish policy
 //! (without it, the statement commits with the broker's default policy); on a
-//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.mount()`, which is what
+//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.build()`, which is what
 //! commits the registration. At startup the policy pairs into a
 //! [`TypedPublisher`] (the live connection + reply codec). The destination name comes from the
 //! macro; the publisher and codec come from wiring.
@@ -20,7 +20,7 @@ use crate::{IncomingMessage, OutgoingMessage, Publisher};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::{Handler, HandlerResult, Settle};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
@@ -48,12 +48,86 @@ pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+/// What an encoded reply value knows about leaving through a typed stack.
+///
+/// A `Serialize` reply encodes as the payload; a [`Message`](super::Message) pair additionally
+/// serializes its header contract into the outgoing headers. The bound is pipeline-agnostic,
+/// which is what lets the routes state it once per registration.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be encoded as a reply",
+    note = "an encoded reply is a `serde::Serialize` value (derive it), or a \
+            `Message<Headers, Payload>` pair whose halves are; reply bytes that must leave \
+            unencoded take the bare wire instead (`.publisher(Bare(policy))`)"
+)]
+pub trait EncodeReply: Send + Sync {
+    /// Delivers `self` through the typed reply stack.
+    #[doc(hidden)]
+    fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
+    where
+        Leaf: Publisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<Cx>,
+        Cx: Sync,
+        PP: PublishPipeline;
+}
+
+impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
+    async fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        Leaf: Publisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<Cx>,
+        Cx: Sync,
+        PP: PublishPipeline,
+    {
+        stack.publish(name, self, pipeline, cx).await
+    }
+}
+
+impl<Hd, Pd> EncodeReply for super::Message<Hd, Pd>
+where
+    Hd: Serialize + Send + Sync,
+    Pd: Serialize + Send + Sync,
+{
+    async fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        Leaf: Publisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<Cx>,
+        Cx: Sync,
+        PP: PublishPipeline,
+    {
+        stack
+            .publish_pair(name, &self.headers, &self.body, pipeline, cx)
+            .await
+    }
+}
+
 /// The encoded wiring: the reply serializes through the stack's reply codec, then travels the
-/// stack's transforms and the scope's publish pipeline.
+/// stack's transforms and the scope's publish pipeline. A [`Message`](super::Message) reply
+/// additionally carries its typed header contract into the outgoing headers.
 impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
     ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
 where
-    Reply: Serialize + Sync,
+    Reply: EncodeReply,
     DeliveryCx: Sync,
     Pipeline: PublishPipeline,
     Leaf: Publisher,
@@ -69,7 +143,7 @@ where
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
-        self.publish(name, reply, pipeline, cx).await
+        reply.deliver_typed(self, name, pipeline, cx).await
     }
 }
 
@@ -100,6 +174,12 @@ where
 /// The generated type carries the subscribe name, the reply name, and the reply type. *How* the
 /// reply is encoded (codec) and *through which* connection it is sent come from the
 /// [`TypedPublisher`] passed at wiring time.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a mountable reply definition",
+    note = "a `replying(..)` chain needs a destination before it mounts: chain `.to(\"subject\")`, \
+            or declare a fixed name on the reply type (`#[derive(Outgoing)]` with \
+            `#[outgoing(name = \"..\")]`)"
+)]
 pub trait PublishingDef: Send + Sync {
     /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`
     /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
@@ -169,13 +249,13 @@ pub trait PublishingDef: Send + Sync {
         Vec::new()
     }
 
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait. The macro
     /// fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     /// The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None
@@ -192,14 +272,15 @@ pub trait PublishingCall<S>: PublishingDef {
     /// Runs the handler body.
     ///
     /// `Ok(reply)` is encoded and published to [`reply_name`](PublishingDef::reply_name), then the
-    /// incoming message is acked. `Err(result)` skips publishing and the dispatcher acts on the
-    /// returned [`HandlerResult`] (for example [`HandlerResult::retry`] to ask for redelivery).
+    /// incoming message is acked. `Err(outcome)` skips publishing and the dispatcher settles by
+    /// the returned [`HandlerOutcome`] (for example [`HandlerOutcome::retry`] to ask for
+    /// redelivery), running its continuation after the settle.
     fn call(
         &self,
         input: &<Self::Input as InputKind>::Target,
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = Result<Self::Reply, HandlerResult>> + Send;
+    ) -> impl Future<Output = Result<Self::Reply, HandlerOutcome>> + Send;
 }
 
 /// Builds the registration metadata for a publishing definition mounted under `name`.
@@ -260,39 +341,45 @@ where
     Pipeline: Send + Sync,
     State: Send + Sync,
 {
-    async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {
-        // The publishing path settles by a bare outcome (no per-element continuation): decode,
-        // run, publish the reply, then ack. It converts to `Settle` with no `and_after`. The
+    async fn handle(
+        &self,
+        msg: &Msg,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) -> HandlerOutcome {
+        // The publishing path: decode, run, publish the reply, then ack. A body's `Err` outcome
+        // (with any `and_after` continuation it carries) settles the delivery directly. The
         // decode product lives on this stack frame and the handler borrows its view.
-        let owned =
-            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload()) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        subscription = %ctx.name(),
-                        message_type = <Def::Input as InputKind>::input_label(),
-                        error = %err,
-                        "codec decode failed",
-                    );
-                    #[cfg(any(feature = "testing", feature = "otel"))]
-                    ctx.mark_decode_failed();
-                    return match self.decode {
-                        FailurePolicy::FailFast => {
-                            ctx.fail_fast(&format!("decode failed: {err}"));
-                            HandlerResult::drop().into()
-                        }
-                        other => other
-                            .settlement()
-                            .unwrap_or_else(HandlerResult::drop)
-                            .into(),
-                    };
-                }
-            };
+        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
+            &self.codec,
+            msg.payload(),
+            msg.headers(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    message_type = <Def::Input as InputKind>::input_label(),
+                    error = %err,
+                    "codec decode failed",
+                );
+                #[cfg(any(feature = "testing", feature = "otel"))]
+                ctx.mark_decode_failed();
+                return match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerOutcome::drop()
+                    }
+                    other => other
+                        .settlement()
+                        .map_or_else(HandlerOutcome::drop, Into::into),
+                };
+            }
+        };
         let view = <Def::Input as InputKind>::view(&owned, msg.payload());
         let reply = match self.def.call(view, &self.injections, ctx).await {
             Ok(reply) => reply,
-            Err(result) => return result.into(),
+            Err(outcome) => return outcome,
         };
         let name = self.def.reply_name();
         let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
@@ -306,9 +393,9 @@ where
                 error = %err,
                 "reply publish failed",
             );
-            return HandlerResult::retry().into();
+            return HandlerOutcome::retry();
         }
-        HandlerResult::Ack.into()
+        HandlerOutcome::ack()
     }
 }
 
@@ -321,7 +408,7 @@ mod tests {
     use crate::Name;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
-    use crate::runtime::handler::HandlerResult;
+    use crate::runtime::handler::HandlerOutcome;
 
     /// A hand-written publishing def overriding nothing optional, pinning the trait defaults that
     /// the macro always fills in.
@@ -353,7 +440,7 @@ mod tests {
             input: &u32,
             (): &(),
             _ctx: &mut Context<'_, (), S>,
-        ) -> impl Future<Output = Result<u32, HandlerResult>> {
+        ) -> impl Future<Output = Result<u32, HandlerOutcome>> {
             ready(Ok(*input))
         }
     }
@@ -394,7 +481,7 @@ mod tests {
         use crate::runtime::context::Context;
         use crate::runtime::dispatch::Delivery;
         use crate::runtime::failure::FailurePolicy;
-        use crate::runtime::handler::{Handler, HandlerResult};
+        use crate::runtime::handler::Handler;
         use crate::runtime::publish::{PublishIdentity, TypedPublisher};
         use crate::runtime::publishing::PublishingHandler;
         use crate::testkit::log_capture::{find, start};
@@ -462,7 +549,7 @@ mod tests {
                 failure.get("error").is_some_and(|e| e.contains("decode")),
                 "the diagnostic must carry the codec error: {failure:?}",
             );
-            assert_eq!(settle.outcome(), HandlerResult::drop());
+            assert!(settle.is_drop());
         }
 
         /// A reply the broker rejects is diagnosed with the reply channel and asks for a
@@ -499,7 +586,7 @@ mod tests {
                     .is_some_and(|e| e.contains("shut down")),
                 "the diagnostic must carry the broker error: {failure:?}",
             );
-            assert_eq!(settle.outcome(), HandlerResult::retry());
+            assert!(settle.is_retry());
         }
     }
 

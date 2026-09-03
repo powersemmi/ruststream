@@ -1,22 +1,22 @@
 //! The `Ctx<K>` extractor without the `macros` feature. `Ctx<K>` and `ContextField` are plain
 //! public API, so the key is unchanged and the handler still binds the field through the same
-//! `FromContext` resolution the attribute emits. What the definition writes out by hand is the
-//! context type the attribute projected from the key. Driven through the real dispatch path with
-//! the in-process `TestApp` harness.
+//! `FromContext` resolution the attribute emits. What the handler writes out by hand is the context
+//! type the attribute projected from the key: it is the broker-context axis of the `Handle` impl,
+//! and `subscriber` reads it from there. Driven through the real dispatch path with the in-process
+//! `TestApp` harness.
 //!
 //! ```text
 //! cargo run --example manual_ctx_extractor --no-default-features --features testing,memory,json
 //! ```
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::prelude::*;
-use ruststream::runtime::{FromContext, Handler, HandlerMetadata, Settle, typed};
+use ruststream::runtime::FromContext;
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, ContextField};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -51,36 +51,41 @@ impl ContextField for PayloadLen {
 // --8<-- [end:key]
 
 // --8<-- [start:handler]
-/// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
+/// The handler body: `#[subscriber("orders")]` generates this struct and this impl.
 struct Audit;
 
 // The context type is written down rather than inferred: the attribute projected it from the key
 // as `<PayloadLen as ContextField>::Context`, which is this broker context.
-impl Handler<Order, DeliveryMeta> for Audit {
-    async fn handle(&self, order: &Order, ctx: &mut Context<'_, DeliveryMeta>) -> Settle {
+impl Handle<Order, (), (), DeliveryMeta> for Audit {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_, DeliveryMeta>,
+    ) -> Result<(), HandlerOutcome> {
         // What the attribute emits for a `Ctx(len): Ctx<PayloadLen>` parameter: the field is
         // resolved off the delivery context before the body runs, and binds by the same pattern.
         let Ctx(len) =
             match <Ctx<PayloadLen> as FromContext<DeliveryMeta, ()>>::from_context(ctx).await {
                 Ok(value) => value,
-                Err(rejection) => return HandlerResult::from(rejection).into(),
+                Err(rejection) => return Err(HandlerOutcome::from(rejection)),
             };
 
         println!("order {} arrived as {len} bytes", order.id);
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
+
+// `subscriber` reads the broker context off the `Handle` impl, so naming `DeliveryMeta` there is
+// the whole declaration: nothing repeats it at the mount, and `include` builds that context per
+// delivery.
 // --8<-- [end:handler]
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app =
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Audit),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Audit).build());
         });
 
     let tb = TestApp::start(app).await?;

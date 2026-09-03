@@ -4,7 +4,7 @@
 //! [`BrokerScope::include`](super::BrokerScope::include), chaining
 //! [`.publisher(..)`](super::IncludeBatchPublishing::publisher) to attach the reply publish
 //! policy (without it, the statement commits with the broker's default policy); on a
-//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.mount()`, which is what
+//! [`Router`](super::Router) the same chain ends in `.publisher(..)` or `.build()`, which is what
 //! commits the registration. At startup the policy pairs into a [`ReplyPublisher`]: a plain [`TypedPublisher`](super::TypedPublisher) publishes
 //! each reply independently, while a [`Transactional`](super::Transactional) one (built with
 //! [`TypedPublisher::transactional`](super::TypedPublisher::transactional)) makes the whole
@@ -17,11 +17,11 @@ use tracing::warn;
 
 use crate::IncomingMessage;
 
-use super::batch::{BatchHandler, decode_batch, settle};
+use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::HandlerResult;
+use super::handler::HandlerOutcome;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
@@ -93,13 +93,13 @@ pub trait BatchPublishingDef: Send + Sync {
         Vec::new()
     }
 
-    /// The element type's [`Message`](crate::Message) name, when it implements that trait. The
+    /// The element type's [`Message`](crate::MessageInfo) name, when it implements that trait. The
     /// macro fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The element type's [`Message`](crate::Message) description, when it implements that
+    /// The element type's [`Message`](crate::MessageInfo) description, when it implements that
     /// trait. The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None
@@ -116,13 +116,14 @@ pub trait BatchPublishingCall<S>: BatchPublishingDef {
     /// Runs the handler body on one decoded batch.
     ///
     /// `Ok(replies)` publishes every reply to [`reply_name`](BatchPublishingDef::reply_name) and
-    /// acks the batch; `Err(result)` publishes nothing and settles the whole batch with `result`.
+    /// acks the batch; `Err(result)` publishes nothing and settles the batch with `result` -
+    /// one uniform outcome, or one outcome per element.
     fn call(
         &self,
         batch: &[<Self::Input as InputKind>::Owned],
         injections: &Self::Injections,
         ctx: &mut Context<'_, (), S>,
-    ) -> impl Future<Output = Result<Vec<Self::Reply>, HandlerResult>> + Send;
+    ) -> impl Future<Output = Result<Vec<Self::Reply>, BatchResult>> + Send;
 }
 
 /// Builds the registration metadata for a batch publishing definition mounted under `name`.
@@ -187,7 +188,7 @@ where
         if accepted.is_empty() {
             return;
         }
-        let outcome = match self.def.call(&values, &self.injections, ctx).await {
+        let result = match self.def.call(&values, &self.injections, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
                 let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
@@ -196,7 +197,7 @@ where
                     .publish_batch(name, &replies, &self.pipeline, &pubcx)
                     .await
                 {
-                    Ok(()) => HandlerResult::Ack,
+                    Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
                     Err(err) => {
                         warn!(
                             target: "ruststream::dispatch",
@@ -206,15 +207,14 @@ where
                             error = %err,
                             "batch reply publish failed",
                         );
-                        HandlerResult::retry()
+                        BatchResult::Uniform(HandlerOutcome::retry())
                     }
                 }
             }
             Err(result) => result,
         };
-        for msg in accepted {
-            settle(msg, outcome, &subscription).await;
-        }
+        let tasks = ctx.tasks().clone();
+        settle_batch(accepted, result, &subscription, &tasks).await;
     }
 }
 

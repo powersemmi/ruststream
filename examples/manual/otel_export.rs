@@ -17,17 +17,13 @@ use std::process::ExitCode;
 use opentelemetry::KeyValue;
 use opentelemetry::global;
 use opentelemetry::metrics::Counter;
-use ruststream::Name;
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::Otel;
+use ruststream::prelude::*;
 use ruststream::runtime::cli::run_main;
-use ruststream::runtime::{
-    App, AppInfo, Context, Handler, HandlerMetadata, HandlerResult, RustStream, Settle, typed,
-};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -51,23 +47,26 @@ struct AppState {
 
 struct Accept;
 
-impl Handler<Order, (), AppState> for Accept {
-    // A body with nothing to await returns the future directly; `async fn` here would be an
-    // unused async on a trait impl.
+impl Handle<Order, (), (), (), AppState> for Accept {
     fn handle(
         &self,
         order: &Order,
+        _outs: &(),
         ctx: &mut Context<'_, (), AppState>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         ctx.state()
             .metrics
             .accepted
             .add(1, &[KeyValue::new("region", "eu")]);
         // Deserialized for schema realism; the example only counts orders.
         let _ = order.id;
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
+
+// The typed `AppState` is the last axis of the body's own `impl Handle`, so `subscriber(source,
+// body)` mounts it unchanged: the mount reads that state off the impl and checks it against the
+// app's.
 // --8<-- [end:business_metric]
 
 // --8<-- [start:init]
@@ -90,11 +89,7 @@ fn app(otel: &Otel) -> impl App + use<> {
             })
         })
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Accept),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Accept).build());
         })
 }
 

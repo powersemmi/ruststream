@@ -1,9 +1,12 @@
 //! The order-confirmation handler of the routed-service example, written without the `macros`
-//! feature. `#[subscriber(MemorySource::new("orders"), publish("confirmations"))]` mints a
-//! definition, and that definition is a `PublishingDef`: it names the same broker descriptor in
-//! `source`, the same reply channel in `reply_name`, and its `Result<Confirmation, HandlerResult>`
-//! return is the `PublishingCall` method's own signature. `include` mounts it exactly as it mounts
-//! a generated one, because a hand-written definition names its own mount form.
+//! feature. `#[subscriber(MemorySource::new("orders"), publish("confirmations"))]` mints a reply
+//! definition, and `subscriber(..).reply().to(..)` builds the same one from values: the same
+//! broker descriptor as the source, the same reply channel, and the body's
+//! `Result<Confirmation, HandlerOutcome>` return as the `Handle` method's own signature. `include`
+//! mounts it exactly as it mounts a generated one.
+//!
+//! The application state a body reads is the last axis of its `Handle` impl; this one reads a
+//! `Repository`, so the mount checks that state against the app's.
 //!
 //! ```text
 //! cargo run --example manual_routed_service_orders --no-default-features --features memory,json
@@ -16,11 +19,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemorySource};
 use ruststream::prelude::*;
-use ruststream::runtime::{Decoded, IncludeDef, PublishingCall, PublishingDef, forms};
 use serde::{Deserialize, Serialize};
 
 /// An order placed by a customer, delivered on the `orders` channel.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
     customer: String,
@@ -29,7 +31,7 @@ struct Order {
 }
 
 /// The reply published to `confirmations` for each accepted or rejected order.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 struct Confirmation {
     order_id: u64,
     accepted: bool,
@@ -79,49 +81,22 @@ impl Repository {
 ///
 /// Bound through the broker's own descriptor form, `MemorySource::new("orders")`, rather than a
 /// bare name - the slot where a real broker takes its own descriptor (a NATS `SubscribeOptions`,
-/// say). Returning `Result<Confirmation, HandlerResult>` keeps control of the acknowledgement:
+/// say). Returning `Result<Confirmation, HandlerOutcome>` keeps control of the acknowledgement:
 /// `Ok` publishes the reply and acks, while `Err` publishes nothing and hands the dispatcher a
-/// [`HandlerResult`] - here, retry on a transient store error and drop on a permanent one.
-/// `reply_name` names the reply channel; its publisher is wired at the mount site.
+/// [`HandlerOutcome`] - here, retry on a transient store error and drop on a permanent one.
+/// `.to(..)` names the reply channel; its publisher is wired on the same chain.
 // --8<-- [start:descriptor]
 struct Confirm;
 
-// The form token is what the attribute picks from the shape of the signature. Naming it is the
-// whole of `Declared` for a hand-written definition, and it is what makes `include` accept it.
-impl IncludeDef for Confirm {
-    type Form = forms::Publishing;
-}
-
-impl PublishingDef for Confirm {
-    type Input = Decoded<Order>;
-    type Injections = ();
-    type Reply = Confirmation;
-    type Context = ();
-    type Source = MemorySource;
-
-    fn source(&self) -> MemorySource {
-        MemorySource::new("orders")
-    }
-
-    fn reply_name(&self) -> &'static str {
-        "confirmations"
-    }
-
-    // Where the attribute lifts the handler's doc comment, the definition states it.
-    fn description(&self) -> Option<&str> {
-        Some("Confirms an order and replies on `confirmations`.")
-    }
-}
-
-// The state is named here, not on the definition: this handler reads a `Repository`, so it is a
-// `PublishingCall` for that state alone and mounts only on an application that carries it.
-impl PublishingCall<Repository> for Confirm {
-    async fn call(
+// The state is named on the body, not on a definition: this one reads a `Repository`, so it is a
+// `Handle` for that state alone and mounts only on an application that carries it.
+impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
+    async fn handle(
         &self,
         order: &Order,
-        _injections: &(),
+        _outs: &(),
         ctx: &mut Context<'_, (), Repository>,
-    ) -> Result<Confirmation, HandlerResult> {
+    ) -> Result<Confirmation, HandlerOutcome> {
         let repo = ctx.state();
         tracing::debug!(
             order = order.id,
@@ -136,25 +111,38 @@ impl PublishingCall<Repository> for Confirm {
             }),
             Err(e) if e.is_transient() => {
                 tracing::warn!(order = order.id, "store busy, asking for redelivery");
-                Err(HandlerResult::retry())
+                Err(HandlerOutcome::retry())
             }
             Err(e) => {
                 tracing::error!(order = order.id, error = %e, "dropping order");
-                Err(HandlerResult::drop())
+                Err(HandlerOutcome::drop())
             }
         }
     }
 }
+
+/// The mount, and the whole declaration the attribute's clauses carried: the broker's own
+/// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
+/// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays a
+/// chain step on both paths: `TypedPublisher::new(MemoryPublish)` pairs the policy with the
+/// default codec at startup.
+fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
+    Router::<MemoryBroker>::new().include(
+        subscriber(MemorySource::new("orders"), Confirm)
+            .reply()
+            .to("confirmations")
+            .publisher(TypedPublisher::new(MemoryPublish))
+            .describe("Confirms an order and replies on `confirmations`.")
+            .build(),
+    )
+}
 // --8<-- [end:descriptor]
 
-/// The reply publisher is wiring, so it stays at the mount site on both paths:
-/// `TypedPublisher::new(MemoryPublish)` pairs the policy with the default codec at startup.
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders-service", "0.1.0"))
         .on_startup(async move |()| Repository::open().await)
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(Confirm)
-                .publisher(TypedPublisher::new(MemoryPublish));
+            b.include_router(confirm_route());
         })
 }
 

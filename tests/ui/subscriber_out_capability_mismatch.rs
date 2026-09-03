@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
 use ruststream::{RequestReply, subscriber};
 use serde::Deserialize;
 
@@ -12,9 +12,9 @@ struct Order {
 // publisher) does not correlate replies: the include site fails to compile with the capability
 // diagnostic.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerResult {
+async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {

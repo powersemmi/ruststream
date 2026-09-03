@@ -66,12 +66,12 @@ definition's own form token is what picks that route.
 
 When one channel carries messages whose headers differ per event kind, keep the standard
 extractor out of it and write your own [`FromContext`] extractor: read the discriminator
-header, then parse the matching contract with [`HeaderMap::to_typed`] - the same machinery
-`Headers` uses. Declare the union of shapes on the input type (see the next section) so
-the document still shows the full contract.
+header off the untyped map ([`HeaderMap::get_str`]), then build the contract that kind calls
+for. Declare the union of shapes on the input type (see the next section) so the document
+still shows the full contract.
 
 [`FromContext`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.FromContext.html
-[`HeaderMap::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.to_typed
+[`HeaderMap::get_str`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.get_str
 
 ## Declaring a contract on a message type
 

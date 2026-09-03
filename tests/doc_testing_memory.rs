@@ -35,7 +35,7 @@ async fn confirm(order: &Order) -> Confirmation {
 
 // --8<-- [start:test]
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, TypedPublisher};
 use ruststream::testing::TestApp;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -64,7 +64,7 @@ async fn confirms_valid_orders() {
         .subscriber("orders")
         .assert_called_once()
         .with(&Order { id: 1, quantity: 2 })
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     tb.broker::<MemoryBroker>()
         .published::<Confirmation>("confirmations")
         .assert_called_once()

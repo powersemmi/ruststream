@@ -1,26 +1,25 @@
-//! The tutorial's router without the `macros` feature: the same group, over hand-written
-//! definitions.
+//! The tutorial's router without the `macros` feature: the same group, over the one value
+//! constructor.
 
 // --8<-- [start:routes]
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
-use ruststream::runtime::{HandlerMetadata, RouterDef, TypedPublisher, typed};
 
-use crate::orders::{Confirm, Handle, Order};
+use crate::orders::{Confirm, Receive};
 
-// A plain handler is registered with the subject and the codec; only the reply form needs
-// `include`, for the publisher it attaches. That wiring is still a publish policy - pure
-// declaration, so the router needs no broker at all.
+// Each handler is bound to its subject where it is mounted; the reply chain names its
+// destination and the publisher it leaves through. The publisher wiring is still a publish
+// policy - pure declaration, so the router needs no broker at all.
 pub(crate) fn orders() -> impl RouterDef<MemoryBroker> {
     let replies = TypedPublisher::new(MemoryPublish);
     Router::new()
-        .subscribe(
-            Name::new("orders"),
-            typed(JsonCodec, Handle),
-            HandlerMetadata::typed::<Order>("orders"),
+        .include(subscriber("orders", Receive).build())
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .publisher(replies)
+                .build(),
         )
-        .include(Confirm)
-        .publisher(replies)
 }
 // --8<-- [end:routes]

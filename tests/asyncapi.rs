@@ -6,7 +6,7 @@ use std::future::ready;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, OutgoingMessageMetadata, RustStream,
+    AppInfo, Context, HandlerMetadata, HandlerOutcome, OutgoingMessageMetadata, RustStream,
 };
 use ruststream::{SecurityScheme, ServerSpec};
 
@@ -17,13 +17,13 @@ fn build_spec_describes_handlers() {
         let orders = b.broker().subscribe("orders");
         b.handle(
             orders,
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
             HandlerMetadata::raw("orders").with_description("Handles orders"),
         );
         let alerts = b.broker().subscribe("alerts");
         b.handle(
             alerts,
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
             HandlerMetadata::typed::<u64>("alerts"),
         );
     });
@@ -72,7 +72,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
             .push(OutgoingMessageMetadata::new("c1", "bytes"));
         b.handle(
             first,
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
             first_meta,
         );
 
@@ -87,7 +87,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
             .push(OutgoingMessageMetadata::new("c2", "bytes"));
         b.handle(
             second,
-            |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
             second_meta,
         );
     });
@@ -192,7 +192,7 @@ fn labeled_memory_broker_is_an_in_process_server() {
             let orders = b.broker().subscribe("orders");
             b.handle(
                 orders,
-                |_msg: &_, _ctx: &mut Context| async { HandlerResult::Ack },
+                |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
                 HandlerMetadata::raw("orders"),
             );
         },
@@ -257,9 +257,9 @@ fn build_spec_emits_payload_schema() {
 
     /// Handles an order.
     #[subscriber("orders")]
-    async fn handle(order: &Order) -> HandlerResult {
+    async fn handle(order: &Order) -> HandlerOutcome {
         let _ = order;
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 
     let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
@@ -275,7 +275,7 @@ fn build_spec_emits_payload_schema() {
     assert!(props.get("total").is_some());
 }
 
-/// An order with custom `Message` metadata: the manual impl overrides both the component name and
+/// An order with custom `MessageInfo` metadata: the manual impl overrides both the component name and
 /// the description in the generated document.
 #[derive(serde::Deserialize)]
 struct RenamedOrder {
@@ -283,16 +283,16 @@ struct RenamedOrder {
     id: u32,
 }
 
-impl ruststream::Message for RenamedOrder {
+impl ruststream::MessageInfo for RenamedOrder {
     const NAME: &'static str = "CustomOrder";
     const DESCRIPTION: Option<&'static str> = Some("An order, renamed for the wire.");
 }
 
 /// Receives renamed orders.
 #[ruststream::subscriber("renamed-orders")]
-async fn handle_renamed(order: &RenamedOrder) -> HandlerResult {
+async fn handle_renamed(order: &RenamedOrder) -> HandlerOutcome {
     let _ = order;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[test]
@@ -306,11 +306,11 @@ fn message_impl_names_and_describes_the_component() {
         .components
         .messages
         .get("CustomOrder")
-        .expect("Message::NAME must name the component");
+        .expect("MessageInfo::NAME must name the component");
     assert_eq!(
         message.description.as_deref(),
         Some("An order, renamed for the wire."),
-        "Message::DESCRIPTION must describe the component",
+        "MessageInfo::DESCRIPTION must describe the component",
     );
 
     let operation = spec
@@ -340,9 +340,9 @@ struct Shipment {
 
 /// Receives shipments.
 #[ruststream::subscriber("shipments")]
-async fn handle_shipment(shipment: &Shipment) -> HandlerResult {
+async fn handle_shipment(shipment: &Shipment) -> HandlerOutcome {
     let _ = shipment;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[test]
@@ -352,7 +352,7 @@ fn schema_doc_comment_feeds_message_metadata() {
 
     let spec = build_spec(&app);
 
-    // No Message impl: the schemars title names the component and the type's own doc comment
+    // No MessageInfo impl: the schemars title names the component and the type's own doc comment
     // becomes the message description.
     let message = spec
         .components
@@ -429,9 +429,9 @@ fn server_security_lands_in_components_and_refs() {
 #[cfg(all(feature = "macros", feature = "json"))]
 mod typed_headers_spec {
     use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::runtime::{AppInfo, HandlerResult, Headers, Out, RustStream};
+    use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Out, RustStream};
     use ruststream::schemars::JsonSchema;
-    use ruststream::{Message, OutSlot, Outgoing, Publisher, subscriber};
+    use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
 
     use super::build_spec;
@@ -471,7 +471,7 @@ mod typed_headers_spec {
         id: u64,
     }
 
-    #[derive(Message, Serialize, JsonSchema)]
+    #[derive(MessageInfo, Serialize, JsonSchema)]
     #[message(headers(DoneMeta))]
     struct Response {
         ok: bool,
@@ -486,8 +486,8 @@ mod typed_headers_spec {
         _chunk: &Chunk,
         Headers(_meta): Headers<ChunkMeta>,
         Out(_events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-    ) -> HandlerResult {
-        HandlerResult::Ack
+    ) -> HandlerOutcome {
+        HandlerOutcome::ack()
     }
 
     #[subscriber("requests", publish("responses"))]
@@ -500,7 +500,7 @@ mod typed_headers_spec {
         let app = RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(convert).out(Events, MemoryPublish).mount();
+                b.include(convert).out(Events, MemoryPublish).build();
                 b.include(respond);
             },
         );
@@ -550,7 +550,7 @@ mod typed_headers_spec {
 #[cfg(all(feature = "macros", feature = "json"))]
 mod declared_destinations {
     use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::runtime::{AppInfo, HandlerResult, Out, RustStream};
+    use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
     use ruststream::schemars::JsonSchema;
     use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
@@ -591,9 +591,9 @@ mod declared_destinations {
     async fn route(
         order: &Order,
         Out(_events): Out<impl Publisher, Events, (OrderConfirmed, OrderPlaced, OrderArchived)>,
-    ) -> HandlerResult {
+    ) -> HandlerOutcome {
         let _ = order;
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     }
 
     #[test]
@@ -601,7 +601,7 @@ mod declared_destinations {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(route).out(Events, MemoryPublish).mount();
+                b.include(route).out(Events, MemoryPublish).build();
             },
         );
         let spec = build_spec(&app);
@@ -640,7 +640,7 @@ mod declared_destinations {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(route).out(Events, MemoryPublish).mount();
+                b.include(route).out(Events, MemoryPublish).build();
             },
         );
         let json = serde_json::to_value(build_spec(&app)).expect("the spec serializes");
@@ -664,16 +664,16 @@ struct Audited {
 
 /// Audits every order.
 #[ruststream::subscriber("orders.shared")]
-async fn audit_shared(order: &Audited) -> HandlerResult {
+async fn audit_shared(order: &Audited) -> HandlerOutcome {
     let _ = order;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// Bills every order.
 #[ruststream::subscriber("orders.shared")]
-async fn bill_shared(order: &Audited) -> HandlerResult {
+async fn bill_shared(order: &Audited) -> HandlerOutcome {
     let _ = order;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[test]

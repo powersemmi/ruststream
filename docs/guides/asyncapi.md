@@ -71,22 +71,22 @@ the description falls back to the handler's doc comment (which also documents th
 operation).
 
 To control the metadata explicitly - including for types without `JsonSchema` - implement the
-`Message` trait, which takes precedence over the schema; or derive it, which uses the type's name
-and doc comment:
+`MessageInfo` trait, which takes precedence over the schema; or derive it, which uses the type's
+name and doc comment:
 
-<!-- inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema -->
+<!-- inline-rust: minimal MessageInfo-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that MessageInfo takes precedence over the schema -->
 ```rust
-use ruststream::Message;
+use ruststream::MessageInfo;
 
 /// An order placed by a customer.
-#[derive(Message, serde::Deserialize)]
+#[derive(MessageInfo, serde::Deserialize)]
 struct Order {
     id: u64,
 }
 // In the document: components.messages.Order with that description.
 ```
 
-A manual `impl Message` can name the component differently from the Rust type
+A manual `impl MessageInfo` can name the component differently from the Rust type
 (`const NAME: &'static str = "CustomOrder";`), which keeps the wire contract stable across renames.
 
 ## Servers

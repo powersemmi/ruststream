@@ -90,7 +90,7 @@ contract, and `to(name)` names the subject when the value's type does not.
 | `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | the delivery count |
 | `with(&value)` | the most recent delivery decodes to `value` (with the default codec) |
 | `with_raw(bytes)` | the most recent raw payload |
-| `settled(HandlerResult::Ack)` | how it settled |
+| `settled(HandlerOutcome::ack())` | how it settled |
 | `assert_outcome(Outcome::Drop)` | the classified outcome (ack / nack / drop / decode-failure / panic) |
 | `panicked()` | the handler panicked on the last delivery |
 | `assert_last_failed_to_decode()` | the payload failed to decode |

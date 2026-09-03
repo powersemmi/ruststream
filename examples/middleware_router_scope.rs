@@ -11,8 +11,7 @@
 
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, BlanketLayer, Context, Handler, HandlerResult, Layer, Router, RouterDef, RustStream,
-    Settle,
+    AppInfo, BlanketLayer, Context, Handler, HandlerOutcome, Layer, Router, RouterDef, RustStream,
 };
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -23,21 +22,21 @@ struct Order {
 }
 
 #[subscriber("orders")]
-async fn orders(order: &Order) -> HandlerResult {
+async fn orders(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("shipments")]
-async fn shipments(order: &Order) -> HandlerResult {
+async fn shipments(order: &Order) -> HandlerOutcome {
     println!("got shipment for order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("audit")]
-async fn audit(order: &Order) -> HandlerResult {
+async fn audit(order: &Order) -> HandlerOutcome {
     println!("audited order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[derive(Clone)]
@@ -66,7 +65,7 @@ impl BlanketLayer for LogLayer {
 }
 
 impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         println!("router layer -> {}", ctx.name());
         self.0.handle(msg, ctx).await
     }

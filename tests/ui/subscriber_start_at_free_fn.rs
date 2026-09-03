@@ -1,4 +1,4 @@
-use ruststream::runtime::HandlerResult;
+use ruststream::runtime::HandlerOutcome;
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -13,9 +13,9 @@ fn latest() -> ruststream::memory::MemoryPosition {
 
 // The position type must be visible in the tokens: a free function hides it.
 #[subscriber("orders", start_at(latest()))]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

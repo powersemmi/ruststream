@@ -5,7 +5,7 @@
 //! ```
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -16,9 +16,9 @@ struct Order {
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

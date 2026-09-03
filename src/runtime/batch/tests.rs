@@ -24,12 +24,12 @@ async fn per_element_outcomes_settle_individually() {
 
     // 0 acks, 1 retries, 2 drops: only 1 may come back.
     let handler = typed_batch(JsonCodec, |batch: &[u32], _ctx: &mut Context| {
-        let outcomes: Vec<HandlerResult> = batch
+        let outcomes: Vec<HandlerOutcome> = batch
             .iter()
             .map(|n| match n {
-                1 => HandlerResult::retry(),
-                2 => HandlerResult::drop(),
-                _ => HandlerResult::Ack,
+                1 => HandlerOutcome::retry(),
+                2 => HandlerOutcome::drop(),
+                _ => HandlerOutcome::ack(),
             })
             .collect();
         async move { outcomes }
@@ -66,14 +66,14 @@ async fn per_element_continuations_run_after_settle() {
     let signal = Arc::clone(&ran);
     let handler = typed_batch(JsonCodec, move |batch: &[u32], _ctx: &mut Context| {
         let signal = Arc::clone(&signal);
-        let outcomes: Vec<Settle> = batch
+        let outcomes: Vec<HandlerOutcome> = batch
             .iter()
             .map(|n| {
                 if *n == 0 {
                     let signal = Arc::clone(&signal);
-                    HandlerResult::ack().and_after(async move { signal.notify_one() })
+                    HandlerOutcome::ack().and_after(async move { signal.notify_one() })
                 } else {
-                    HandlerResult::retry().into()
+                    HandlerOutcome::retry()
                 }
             })
             .collect();
@@ -110,7 +110,7 @@ async fn unmatched_remainder_is_retried() {
 
     // A buggy handler returning one outcome for a batch of three: the unmatched two retry.
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        vec![HandlerResult::Ack]
+        vec![HandlerOutcome::ack()]
     });
 
     let state = ();
@@ -138,11 +138,11 @@ async fn per_element_outcomes_carry_delays() {
 
     // 0 acks; 1 retries no sooner than five seconds from now.
     let handler = typed_batch(JsonCodec, |batch: &[u32], _ctx: &mut Context| {
-        let outcomes: Vec<HandlerResult> = batch
+        let outcomes: Vec<HandlerOutcome> = batch
             .iter()
             .map(|n| match n {
-                1 => HandlerResult::retry_after(std::time::Duration::from_secs(5)),
-                _ => HandlerResult::Ack,
+                1 => HandlerOutcome::retry_after(std::time::Duration::from_secs(5)),
+                _ => HandlerOutcome::ack(),
             })
             .collect();
         async move { outcomes }
@@ -172,7 +172,7 @@ async fn uniform_outcome_settles_the_whole_batch() {
     publish_numbers(&broker, "uniform", &[0, 1]).await;
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerResult::retry()
+        HandlerOutcome::retry()
     });
 
     let state = ();
@@ -192,14 +192,14 @@ async fn uniform_outcome_settles_the_whole_batch() {
 
 fn uniform_outcome(result: BatchResult) -> HandlerResult {
     match result {
-        BatchResult::Uniform(outcome) => outcome,
+        BatchResult::Uniform(outcome) => outcome.outcome(),
         other => panic!("expected a uniform settlement, got {other:?}"),
     }
 }
 
 fn per_element_outcomes(result: BatchResult) -> Vec<HandlerResult> {
     match result {
-        BatchResult::PerElement(settles) => settles.iter().map(Settle::outcome).collect(),
+        BatchResult::PerElement(settles) => settles.iter().map(HandlerOutcome::outcome).collect(),
         other => panic!("expected per-element settlements, got {other:?}"),
     }
 }
@@ -210,11 +210,11 @@ fn per_element_outcomes(result: BatchResult) -> Vec<HandlerResult> {
 #[test]
 fn handler_returns_map_onto_settlements() {
     assert_eq!(
-        uniform_outcome(BatchResult::Uniform(HandlerResult::retry()).into_batch_result()),
+        uniform_outcome(BatchResult::Uniform(HandlerOutcome::retry()).into_batch_result()),
         HandlerResult::retry(),
     );
     assert_eq!(
-        uniform_outcome(HandlerResult::retry().into_batch_result()),
+        uniform_outcome(HandlerOutcome::retry().into_batch_result()),
         HandlerResult::retry(),
     );
     assert_eq!(uniform_outcome(().into_batch_result()), HandlerResult::Ack);
@@ -227,19 +227,19 @@ fn handler_returns_map_onto_settlements() {
         HandlerResult::drop(),
     );
     assert_eq!(
-        uniform_outcome(Ok::<_, &str>(HandlerResult::retry()).into_batch_result()),
+        uniform_outcome(Ok::<_, &str>(HandlerOutcome::retry()).into_batch_result()),
         HandlerResult::retry(),
     );
     assert_eq!(
-        uniform_outcome(Err::<HandlerResult, &str>("boom").into_batch_result()),
+        uniform_outcome(Err::<HandlerOutcome, &str>("boom").into_batch_result()),
         HandlerResult::drop(),
     );
     assert_eq!(
-        per_element_outcomes(vec![Settle::from(HandlerResult::Ack)].into_batch_result()),
+        per_element_outcomes(vec![HandlerOutcome::ack()].into_batch_result()),
         [HandlerResult::Ack],
     );
     assert_eq!(
-        per_element_outcomes(vec![HandlerResult::drop()].into_batch_result()),
+        per_element_outcomes(vec![HandlerOutcome::drop()].into_batch_result()),
         [HandlerResult::drop()],
     );
 }
@@ -283,7 +283,7 @@ fn batch_def_defaults_register_without_documentation() {
 fn typed_batch_debug_reports_the_decode_policy() {
     let handler = typed_batch::<MemoryMessage, u32, _, _>(
         JsonCodec,
-        |_batch: &[u32], _ctx: &mut Context| async { HandlerResult::Ack },
+        |_batch: &[u32], _ctx: &mut Context| async { HandlerOutcome::ack() },
     )
     .with_decode(FailurePolicy::Retry);
 
@@ -305,7 +305,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     let collected = Arc::clone(&seen);
     let handler = typed_batch(JsonCodec, move |batch: &[u32], _ctx: &mut Context| {
         collected.lock().unwrap().extend_from_slice(batch);
-        async { HandlerResult::Ack }
+        async { HandlerOutcome::ack() }
     })
     .with_decode(FailurePolicy::FailFast);
 
@@ -368,7 +368,7 @@ async fn a_refused_ack_does_not_abort_the_batch() {
 
     settle_batch(
         batch,
-        BatchResult::Uniform(HandlerResult::Ack),
+        BatchResult::Uniform(HandlerOutcome::ack()),
         "refusing",
         &TaskTracker::new(),
     )
@@ -392,7 +392,7 @@ async fn outcome_count_mismatch_is_logged_with_both_counts() {
     ];
     settle_batch(
         batch,
-        BatchResult::PerElement(vec![Settle::from(HandlerResult::Ack)]),
+        BatchResult::PerElement(vec![HandlerOutcome::ack()]),
         "short-batch",
         &TaskTracker::new(),
     )
@@ -423,7 +423,7 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
 
     let (events, guard) = log_capture::start();
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     });
     let state = ();
     let delivery = Delivery::empty();
@@ -434,7 +434,7 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
 
     settle_batch(
         vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
-        BatchResult::Uniform(HandlerResult::Ack),
+        BatchResult::Uniform(HandlerOutcome::ack()),
         "diag-batch",
         &TaskTracker::new(),
     )
@@ -472,7 +472,7 @@ impl RawSliceHandler for Frames {
             .lock()
             .unwrap()
             .extend(batch.iter().map(|frame| frame.to_vec()));
-        ready(BatchResult::Uniform(HandlerResult::Ack))
+        ready(BatchResult::Uniform(HandlerOutcome::ack()))
     }
 }
 

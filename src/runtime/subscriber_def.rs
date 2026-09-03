@@ -61,13 +61,13 @@ pub trait SubscriberDef: Sized {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait. The macro
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait. The macro
     /// fills this in; the default omits it.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     /// The macro fills this in; the default omits it.
     fn message_description(&self) -> Option<&'static str> {
         None
@@ -112,14 +112,18 @@ mod tests {
     use crate::Name;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::{Delivery, Workers};
-    use crate::runtime::handler::{Handler, HandlerResult, Settle};
+    use crate::runtime::handler::{Handler, HandlerOutcome};
     use crate::runtime::input::{Decoded, RawBytes};
 
     struct Noop;
 
     impl Handler<u32> for Noop {
-        fn handle(&self, _msg: &u32, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> {
-            ready(HandlerResult::Ack.into())
+        fn handle(
+            &self,
+            _msg: &u32,
+            _ctx: &mut Context<'_>,
+        ) -> impl Future<Output = HandlerOutcome> {
+            ready(HandlerOutcome::ack())
         }
     }
 
@@ -188,9 +192,6 @@ mod tests {
         let delivery = Delivery::empty();
         let headers = HeaderMap::new();
         let mut ctx = Context::new("manual", &headers, &state, (), &delivery);
-        assert_eq!(
-            handler.handle(&7u32, &mut ctx).await.outcome(),
-            HandlerResult::Ack
-        );
+        assert!(handler.handle(&7u32, &mut ctx).await.is_ack());
     }
 }

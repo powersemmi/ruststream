@@ -10,6 +10,7 @@ mod dispatch;
 mod dynstack;
 mod extract;
 mod failure;
+mod handle;
 mod handler;
 mod inject;
 mod input;
@@ -55,7 +56,32 @@ pub use extract::{Ctx, FromContext, FromRef, Headers, State};
 #[cfg(feature = "testing")]
 pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
-pub use handler::{Handler, HandlerResult, IntoSettle, Settle};
+#[doc(hidden)]
+pub use handle::{
+    Axis, AxisDocs, BareReply, DeclaredDest, DefaultReplyAttach, DocState, Docs, EncodedReply,
+    HandleValue, IsDocumented, NamedDest, OneByOne, Page, PageBody, PageBytes, PagePair, Paged,
+    PagedAxis, ReplyPublisherForm, ReplyValue, Sealed, Solo, SoloAxis, SoloBody, SoloBytes,
+    SoloPair, VerdictFamily,
+};
+pub use handle::{
+    Bare, Documentable, Documented, Handle, Input, IntoSource, Message, Outs, Payload, Publish,
+    SeekContext, Slot, Undocumented, ValueBuilder, Verdict, subscriber,
+};
+#[doc(hidden)]
+pub use handle::{
+    EntryMarkers, OutPos, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyShape,
+    ReplySlotFormFor, SealedBatchPublishing, SealedBatchPublishingOut, SealedPublishing,
+    SealedPublishingOut, SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach,
+    UnbuiltDefinition,
+};
+#[doc(hidden)]
+pub use handler::IntoOutcome;
+pub use handler::{Handler, HandlerOutcome};
+// The status half of `HandlerOutcome`, for the crate's own policies, dispatch and test seams.
+// The consumers outside `runtime` are all feature-gated (metrics, otel, testing), so a minimal
+// build leaves this re-export unused.
+#[allow(unused_imports)]
+pub(crate) use handler::HandlerResult;
 pub use inject::{FromStartup, InjectCall, InjectDef, InjectHandler, Out, Seek};
 pub use input::{DecodeWith, Decoded, InputKind, RawBytes};
 #[cfg(feature = "testing")]
@@ -67,9 +93,9 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MissingSegment,
-    Outgoing, Publish, PublishAt, PublishCodec, PublishContext, PublishDynLayer, PublishDynNext,
-    PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity, PublishLayer,
-    PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
+    Outgoing, PublishAt, PublishBuilder, PublishCodec, PublishContext, PublishDynLayer,
+    PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity,
+    PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
     PublishTransformIdentity, PublishTransformStack, RawBody, ReplyPublisher, ReplyWiring,
     ResolvedName, SatisfiesContract, SuppliedName, TemplateAddress, TransactionPublishError,
     TransactionScope, Transactional, TypedHeaders, TypedPublisher, TypedTransaction, for_batch,
@@ -85,11 +111,12 @@ pub(crate) use publish::message_of;
 pub(crate) use publish::raw_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
-pub use publishing::{PublishingCall, PublishingDef, PublishingHandler, ReplySink};
+pub use publishing::{EncodeReply, PublishingCall, PublishingDef, PublishingHandler, ReplySink};
 pub use router::{
-    IncludeDef, Router, RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterDef,
-    RouterHandlers, RouterOut, RouterPublishing, RouterPublishingOut, RouterRawReply,
-    RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
+    DefaultBareReply, IncludeDef, Router, RouterBatchOut, RouterBatchPublishing,
+    RouterBatchPublishingOut, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
+    RouterPublishingOut, RouterRawReply, RouterRawReplyOut, RouterSink, RouterSlots,
+    RouterSlotsWithReply, RouterWith, forms,
 };
 #[doc(hidden)]
 pub use router::{RouterCommit, RouterMount, RouterSlotCommit};
@@ -97,6 +124,8 @@ pub use settings::{
     AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
+#[doc(hidden)]
+pub use settings::{DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
 pub use slot::{BindSlot, InitSlots, IntoSlotSource, MissingSlot, SlotPos, WithSource};
 pub use slot::{

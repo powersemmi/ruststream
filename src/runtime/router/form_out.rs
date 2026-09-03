@@ -2,7 +2,7 @@
 //! their builders resolve through.
 //!
 //! The attachment is a positional slot tuple, one element per marker, starting all-unbound. Each
-//! `.out(marker, policy)` binds one position and `.mount()` commits; the commit impls exist only
+//! `.out(marker, policy)` binds one position and `.build()` commits; the commit impls exist only
 //! for fully-bound tuples, so a forgotten binding is a compile error naming the slot. A handler
 //! with a single slot uses the `.publisher(policy)` shorthand, which binds and commits in one
 //! call.
@@ -24,6 +24,7 @@ use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::TypedPublisher;
 use crate::runtime::publishing::PublishingDef;
+use crate::runtime::settings::{DefMountCodec, MountsWith};
 use crate::runtime::slot::{BindSlots, HasSlots, InitSlots, IntoSlotSource, WithSource};
 
 use super::builder::Router;
@@ -132,16 +133,17 @@ macro_rules! impl_inject_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
+            Def: MountsWith<<Bound as InjectDef>::Input, RouteCodec>,
             Bound: InjectDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
-            Bound::Input: DecodeWith<RouteCodec::Codec>,
+            Bound::Input: DecodeWith<DefMountCodec<Def, <Bound as InjectDef>::Input, RouteCodec>>,
         {
             type Out = InjectedRouter<
                 B,
                 Bound::Source,
                 Bound,
-                RouteCodec::Codec,
+                DefMountCodec<Def, <Bound as InjectDef>::Input, RouteCodec>,
                 Extra,
                 RouteCodec,
                 RouteLayers,
@@ -155,10 +157,13 @@ macro_rules! impl_inject_out_commit {
             ) -> Self::Out {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
+                // The slots encode with the surface's codec; only the decode side honours the
+                // definition's own override.
                 let codec = router.codec.mount_codec();
+                let decode = def.mounted_codec(&router.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
-                router.mount_inject(source, def, codec, extra)
+                router.mount_inject(source, def, decode, extra)
             }
         }
     )+};
@@ -184,16 +189,18 @@ macro_rules! impl_batch_inject_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
+            Def: MountsWith<<Bound as BatchInjectDef>::Input, RouteCodec>,
             Bound: BatchInjectDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
-            Bound::Input: DecodeWith<RouteCodec::Codec>,
+            Bound::Input:
+                DecodeWith<DefMountCodec<Def, <Bound as BatchInjectDef>::Input, RouteCodec>>,
         {
             type Out = BatchInjectedRouter<
                 B,
                 Bound::Source,
                 Bound,
-                RouteCodec::Codec,
+                DefMountCodec<Def, <Bound as BatchInjectDef>::Input, RouteCodec>,
                 Extra,
                 RouteCodec,
                 RouteLayers,
@@ -207,10 +214,13 @@ macro_rules! impl_batch_inject_out_commit {
             ) -> Self::Out {
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = self;
+                // See the single-message commit: surface codec for the slots, override-aware
+                // codec for the decode.
                 let codec = router.codec.mount_codec();
+                let decode = def.mounted_codec(&router.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
-                router.mount_batch_inject(source, def, codec, extra)
+                router.mount_batch_inject(source, def, decode, extra)
             }
         }
     )+};
@@ -236,17 +246,19 @@ macro_rules! impl_publishing_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
+            Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec>,
             Bound: PublishingDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
-            Bound::Input: DecodeWith<RouteCodec::Codec>,
+            Bound::Input:
+                DecodeWith<DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>>,
             Policy: 'static,
         {
             type Out = PublishingRouter<
                 B,
                 Bound::Source,
                 Bound,
-                RouteCodec::Codec,
+                DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>,
                 Policy,
                 Extra,
                 RouteCodec,
@@ -262,10 +274,12 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
+                // Surface codec for the slots, override-aware codec for the decode.
                 let codec = router.codec.mount_codec();
+                let decode = def.mounted_codec(&router.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
-                router.mount_publishing_source(source, def, codec, reply.into_source(), extra)
+                router.mount_publishing_source(source, def, decode, reply.into_source(), extra)
             }
         }
 
@@ -281,17 +295,19 @@ macro_rules! impl_publishing_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
+            Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec>,
             Bound: PublishingDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
-            Bound::Input: DecodeWith<RouteCodec::Codec>,
+            Bound::Input:
+                DecodeWith<DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>>,
             Policy: 'static,
         {
             type Out = RawReplyRouter<
                 B,
                 Bound::Source,
                 Bound,
-                RouteCodec::Codec,
+                DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>,
                 Policy,
                 Extra,
                 RouteCodec,
@@ -307,10 +323,12 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
+                // Surface codec for the slots, override-aware codec for the decode.
                 let codec = router.codec.mount_codec();
+                let decode = def.mounted_codec(&router.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
-                router.mount_raw_reply_source(source, def, codec, reply.into_source(), extra)
+                router.mount_raw_reply_source(source, def, decode, reply.into_source(), extra)
             }
         }
 
@@ -326,17 +344,19 @@ macro_rules! impl_publishing_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
+            Def: MountsWith<<Bound as BatchPublishingDef>::Input, RouteCodec>,
             Bound: BatchPublishingDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
-            Bound::Input: DecodeWith<RouteCodec::Codec>,
+            Bound::Input:
+                DecodeWith<DefMountCodec<Def, <Bound as BatchPublishingDef>::Input, RouteCodec>>,
             Policy: 'static,
         {
             type Out = BatchPublishingRouter<
                 B,
                 Bound::Source,
                 Bound,
-                RouteCodec::Codec,
+                DefMountCodec<Def, <Bound as BatchPublishingDef>::Input, RouteCodec>,
                 Policy,
                 Extra,
                 RouteCodec,
@@ -352,13 +372,15 @@ macro_rules! impl_publishing_out_commit {
                 let (reply, slots) = self;
                 #[allow(non_snake_case)]
                 let ($($attach,)+) = slots;
+                // Surface codec for the slots, override-aware codec for the decode.
                 let codec = router.codec.mount_codec();
+                let decode = def.mounted_codec(&router.codec);
                 let (def, extra) = def.bind(($(($attach.into_source(), codec.clone()),)+));
                 let source = def.source();
                 router.mount_batch_publishing_source(
                     source,
                     def,
-                    codec,
+                    decode,
                     reply.into_source(),
                     extra,
                 )

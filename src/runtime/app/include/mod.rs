@@ -18,7 +18,7 @@ use super::scope::BrokerScope;
 // through the same tokens.
 pub(crate) use crate::runtime::router::{
     BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultBareReply, DefaultReply,
-    InjectMount, InputCodec, MountCodec, PublishInjectMount, PublishMount, forms,
+    InjectMount, MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, forms,
 };
 
 /// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in
@@ -61,6 +61,7 @@ mod builder;
 mod commit;
 mod forms_batch;
 mod forms_eager;
+mod forms_handle;
 mod forms_out;
 mod forms_publish;
 mod slot_builder;

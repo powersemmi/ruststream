@@ -23,7 +23,7 @@ use axum::{Json, Router};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    AppInfo, HandlerResult, HealthProbe, HealthState, PublishExt, RustStream,
+    AppInfo, HandlerOutcome, HealthProbe, HealthState, PublishExt, RustStream,
 };
 use ruststream::{Broker, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
@@ -43,9 +43,9 @@ struct OrderPlaced {
 /// The same service consumes what its HTTP endpoints produce; any other service subscribed to
 /// the broker would see the event too.
 #[subscriber("orders.placed")]
-async fn fulfil(order: &OrderPlaced) -> HandlerResult {
+async fn fulfil(order: &OrderPlaced) -> HandlerOutcome {
     println!("fulfilling order {} ({})", order.id, order.item);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

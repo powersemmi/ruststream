@@ -15,7 +15,7 @@ use std::{
 
 use common::{BackgroundRun, Order, order_bytes, wait_for};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
 use ruststream::subscriber;
 use tokio::sync::Notify;
 
@@ -33,24 +33,24 @@ struct Counters {
 /// retry-gated, and an ungated hook. The retry-gated one must never fire, proving drop and retry
 /// are distinct mechanics.
 #[subscriber("orders")]
-async fn handle_order(order: &Order, ctx: &mut Context<'_, (), Counters>) -> HandlerResult {
+async fn handle_order(order: &Order, ctx: &mut Context<'_, (), Counters>) -> HandlerOutcome {
     let c = ctx.state().clone();
     let outcome = if order.id % 2 == 1 {
-        HandlerResult::Ack
+        HandlerOutcome::ack()
     } else {
-        HandlerResult::drop()
+        HandlerOutcome::drop()
     };
 
     let ack = Arc::clone(&c.ack);
-    ctx.after(HandlerResult::Ack).then(async move {
+    ctx.after(HandlerOutcome::ack()).then(async move {
         ack.fetch_add(1, Ordering::SeqCst);
     });
     let dropped = Arc::clone(&c.dropped);
-    ctx.after(HandlerResult::drop()).then(async move {
+    ctx.after(HandlerOutcome::drop()).then(async move {
         dropped.fetch_add(1, Ordering::SeqCst);
     });
     let retried = Arc::clone(&c.retried);
-    ctx.after(HandlerResult::retry()).then(async move {
+    ctx.after(HandlerOutcome::retry()).then(async move {
         retried.fetch_add(1, Ordering::SeqCst);
     });
     let settle = Arc::clone(&c.settle);
@@ -122,13 +122,13 @@ static SLOW_HANDLED: Notify = Notify::const_new();
 
 /// A handler whose after-ack hook yields before completing, to prove graceful shutdown drains it.
 #[subscriber("slow")]
-async fn handle_slow(_order: &Order, ctx: &mut Context) -> HandlerResult {
+async fn handle_slow(_order: &Order, ctx: &mut Context) -> HandlerOutcome {
     ctx.after_ack(async {
         tokio::task::yield_now().await;
         SLOW_DONE.fetch_add(1, Ordering::SeqCst);
     });
     SLOW_HANDLED.notify_one();
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -168,16 +168,16 @@ static BATCH_NOTIFY: Notify = Notify::const_new();
 /// A batch handler: the ungated after_settle hook fires once per batch; the outcome-gated one is
 /// dropped on the batch path (per-element outcomes make a single gate ill-defined).
 #[subscriber(batch("batched"))]
-async fn handle_batch(orders: &[Order], ctx: &mut Context) -> HandlerResult {
+async fn handle_batch(orders: &[Order], ctx: &mut Context) -> HandlerOutcome {
     let _ = orders.len();
     ctx.after_settle(async {
         BATCH_SETTLE.fetch_add(1, Ordering::SeqCst);
         BATCH_NOTIFY.notify_one();
     });
-    ctx.after(HandlerResult::Ack).then(async {
+    ctx.after(HandlerOutcome::ack()).then(async {
         BATCH_GATED.fetch_add(1, Ordering::SeqCst);
     });
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -111,8 +111,8 @@
     --8<-- "examples/manual/codecs.rs:decode_failure"
     ```
 
-Если вы собираете обработчики вручную, обёртка `Typed`, которую возвращает `typed(codec, handler)`,
-принимает ту же политику через `on_decode_failure`.
+Если вы регистрируете обработчик через низкоуровневый SPI `handle`, обёртка `Typed`, которую
+возвращает `typed(codec, handler)`, принимает ту же политику через `on_decode_failure`.
 
 Значения политики (`Drop`, `Retry`, `RetryAfter(..)`, `Skip`, `FailFast`), умолчания и оговорки про
 повторы описаны в разделе [Политика отказов](failure-policy.md). Примеры с кодеками выше взяты из

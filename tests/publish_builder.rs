@@ -9,7 +9,7 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Out, PublishExt, RustStream, TypedPublisher};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, PublishExt, RustStream, TypedPublisher};
 use ruststream::testing::{TestApp, TestableBroker};
 use ruststream::{
     Broker, HeaderMap, OutSlot, Outgoing, OutgoingMessage, OwnedTransactions, Publisher,
@@ -64,7 +64,7 @@ struct Events;
 async fn convert(
     job: &Job,
     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress, OrderPlaced, OrderArchived)>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     // Fixed name: nothing to say about the destination.
     if out
         .message(&Progress { percent: 50 })
@@ -72,7 +72,7 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // Fixed name plus the declared header contract.
     let done = ChunkDone {
@@ -85,7 +85,7 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // Templated name: one setter per placeholder, in declaration order.
     if out
@@ -97,7 +97,7 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // Declared with the derive alone: the call site names the destination.
     if out
@@ -107,7 +107,7 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // Bytes: the same shape without a codec position.
     let mut headers = HeaderMap::new();
@@ -120,16 +120,16 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_destination_form_resolves_through_one_builder() {
     let app =
         RustStream::new(AppInfo::new("builder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(convert).out(Events, MemoryPublish).mount();
+            b.include(convert).out(Events, MemoryPublish).build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -271,7 +271,7 @@ async fn the_typed_publisher_and_transactions_carry_the_builder() {
 async fn settle(
     jobs: &[Job],
     Out(out): Out<impl Publisher, Events, Progress>,
-) -> Result<Vec<Job>, HandlerResult> {
+) -> Result<Vec<Job>, HandlerOutcome> {
     for job in jobs {
         if out
             .message(&Progress {
@@ -281,7 +281,7 @@ async fn settle(
             .await
             .is_err()
         {
-            return Err(HandlerResult::retry());
+            return Err(HandlerOutcome::retry());
         }
     }
     Ok(jobs.iter().map(|job| Job { id: job.id }).collect())
@@ -294,7 +294,7 @@ async fn a_batch_publishing_handler_carries_the_builder() {
             b.include(settle)
                 .publisher(TypedPublisher::new(MemoryPublish))
                 .out(Events, MemoryPublish)
-                .mount();
+                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -317,7 +317,7 @@ async fn a_batch_publishing_handler_carries_the_builder() {
 fn a_publish_builder_hides_its_wiring() {
     let publisher = MemoryBroker::new().publisher();
     let pending = publisher.message(&Progress { percent: 1 });
-    assert_eq!(format!("{pending:?}"), "Publish { .. }");
+    assert_eq!(format!("{pending:?}"), "PublishBuilder { .. }");
 }
 
 /// The typed headers of a message with no contract are rejected, but an arbitrary transport map

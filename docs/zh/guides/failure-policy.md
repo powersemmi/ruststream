@@ -75,8 +75,8 @@ RustStream 用同一套词汇结算这两者，都通过 `on_failure(..)` 子句
 - 运行时会捕获 panic（`catch_unwind`），所以一个 panic 的处理器绝不会拖死分发循环。在 `fail_fast` 下，
   消息保持未结算状态，因此具备重新投递能力的 Broker 会在服务重启之后把它交回来；在其他策略下，运行时会
   结算消息，订阅者继续消费。捕获只在展开式 panic 配置下有效；用 `panic = "abort"` 时进程早已不复存在。
-- 解码失败以 `Result` 的形式浮现，不涉及任何展开；`decode` 策略直接结算这条消息。手写处理器时同样可以
-  设置该策略：带类型的适配器 `typed(codec, handler)` 返回一个 `Typed` 包装器，它的
+- 解码失败以 `Result` 的形式浮现，不涉及任何展开；`decode` 策略直接结算这条消息。在底层的 `handle`
+  SPI 上同样可以设置该策略：带类型的适配器 `typed(codec, handler)` 返回一个 `Typed` 包装器，它的
   `on_decode_failure` 接收一个 `FailurePolicy`（参见[编解码器](codecs.md#decode-failures)）。
 - 在批量路径上，该策略作用于每一批的解码（其中每个元素独立解码）以及批量处理器中的 panic。不存在按
   元素的 panic 处理。

@@ -104,7 +104,7 @@ pub trait IncomingMessage: Send + Sync {
 
     // Defaulted: a plain nack(true). Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
-    // HandlerResult::retry_after.
+    // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
 
     // Defaulted: None. Override (with the Partitioned capability) to feed the

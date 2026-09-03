@@ -8,7 +8,7 @@
 
 use crate::Broker;
 use crate::codec::Codec;
-use crate::runtime::input::{Decoded, RawBytes};
+use crate::runtime::input::{Decoded, DecodedPair, RawBytes};
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
@@ -77,6 +77,16 @@ impl<C: MountCodec, T> InputCodec<Decoded<T>> for C {
     }
 }
 
+// A pair input decodes its payload with the surface codec, exactly like a plain decoded one
+// (the headers side needs no codec at all).
+impl<C: MountCodec, H, P> InputCodec<DecodedPair<H, P>> for C {
+    type Codec = <C as MountCodec>::Codec;
+
+    fn input_codec(&self) -> Self::Codec {
+        self.mount_codec()
+    }
+}
+
 impl<C> InputCodec<RawBytes> for C {
     type Codec = ();
 
@@ -89,7 +99,11 @@ impl<C> InputCodec<RawBytes> for C {
 pub struct DefaultReply;
 
 /// The default commit of the byte-reply form: the broker's plain publish policy taken bare.
-#[doc(hidden)]
+///
+/// On the manual reply chain it doubles as the raw wire's default spelling:
+/// `.publisher(DefaultBareReply)` sends the body's returned bytes as they are through the
+/// broker's default publisher (an explicit policy is wrapped instead:
+/// `.publisher(Bare(policy))`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultBareReply;
 

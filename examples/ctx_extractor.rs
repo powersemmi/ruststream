@@ -9,7 +9,7 @@
 //! ```
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
-use ruststream::runtime::{AppInfo, Ctx, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, ContextField, IncomingMessage, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
@@ -52,9 +52,9 @@ impl ContextField for PayloadLen {
 // The field arrives as an argument; no `&mut Context` parameter, no context type named - the
 // macro projects it from the key.
 #[subscriber("orders")]
-async fn audit(order: &Order, Ctx(len): Ctx<PayloadLen>) -> HandlerResult {
+async fn audit(order: &Order, Ctx(len): Ctx<PayloadLen>) -> HandlerOutcome {
     println!("order {} arrived as {len} bytes", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

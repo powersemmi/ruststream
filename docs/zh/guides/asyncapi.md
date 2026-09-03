@@ -65,22 +65,22 @@ ruststream asyncapi gen --yaml
 消息的 description，而 `#[schemars(title = "...")]`（或者 rename）决定组件的名字。没有 schema 时，
 组件以载荷类型命名，description 退回到处理器的文档注释（这条注释同时也是 `receive` 操作的说明）。
 
-若要显式控制这些元数据，包括为没有 `JsonSchema` 的类型控制，就实现 `Message` trait，它的优先级高于
-schema；或者 derive 它，那样会使用类型自身的名字和文档注释：
+若要显式控制这些元数据，包括为没有 `JsonSchema` 的类型控制，就实现 `MessageInfo` trait，它的优先级
+高于 schema；或者 derive 它，那样会使用类型自身的名字和文档注释：
 
-<!-- inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema -->
+<!-- inline-rust: minimal MessageInfo-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that MessageInfo takes precedence over the schema -->
 ```rust
-use ruststream::Message;
+use ruststream::MessageInfo;
 
 /// An order placed by a customer.
-#[derive(Message, serde::Deserialize)]
+#[derive(MessageInfo, serde::Deserialize)]
 struct Order {
     id: u64,
 }
 // In the document: components.messages.Order with that description.
 ```
 
-手写的 `impl Message` 可以让组件名与 Rust 类型名不同
+手写的 `impl MessageInfo` 可以让组件名与 Rust 类型名不同
 （`const NAME: &'static str = "CustomOrder";`），这样即使类型改名，线上契约也保持稳定。
 
 ## 服务器

@@ -16,14 +16,14 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::schemars::JsonSchema;
-use ruststream::{Message, SecurityScheme, ServerSpec, subscriber};
+use ruststream::{MessageInfo, SecurityScheme, ServerSpec, subscriber};
 use serde::Deserialize;
 
 // --8<-- [start:payload]
 /// An order placed by a customer.
-#[derive(Debug, Deserialize, Message, JsonSchema)]
+#[derive(Debug, Deserialize, MessageInfo, JsonSchema)]
 struct Order {
     id: u64,
     item: String,
@@ -31,9 +31,9 @@ struct Order {
 // --8<-- [end:payload]
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("order {} ({})", order.id, order.item);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 // --8<-- [start:server]

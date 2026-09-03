@@ -256,8 +256,8 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
 #[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 

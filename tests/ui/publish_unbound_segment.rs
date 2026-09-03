@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -21,14 +21,14 @@ struct Events;
 // `region` is never bound, so the address builder still carries its unbound segment and has no
 // publish terminal - the error names the segment that was forgotten.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Placed>) -> HandlerResult {
+async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Placed>) -> HandlerOutcome {
     let _ = out
         .message(&Placed { id: order.id })
         .to()
         .tenant("acme")
         .publish()
         .await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

@@ -54,7 +54,7 @@ instead. See [Lifespan](lifespan.md) for the startup-hook contract.
 Reaching for a dependency through `ctx.state().field` always works, but a handler can also take it
 as a parameter. Any handler parameter after the message (and the optional `&mut Context`) whose type
 implements `FromContext` is an **extractor**: the runtime resolves it from the delivery before the
-body runs, and a failed extraction settles the message by the rejection's `HandlerResult` without
+body runs, and a failed extraction settles the message by the rejection's `HandlerOutcome` without
 running the body.
 
 To inject a piece of the state, derive `FromRef` on the state and take `State<T>` in the handler -
@@ -124,8 +124,8 @@ What the context exposes:
 | `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
 
-Closure handlers (the manual `typed(codec, |msg, ctx| ...)` form) always take the context as their
-second argument.
+Closure handlers (the low-level `typed(codec, |msg, ctx| ...)` form) always take the context as
+their second argument.
 
 ## Per-delivery context
 
@@ -248,14 +248,14 @@ acked the message, off the delivery path, so it never delays the ack or the next
 Three forms, all additive:
 
 - `ctx.after(outcome).then(fut)` - runs only if the message settles by `outcome`, matched **by
-  kind**. The four kinds are distinct: `Ack`, `drop()` (nack, no requeue), `retry()` (nack,
+  kind**. The four kinds are distinct: `ack()`, `drop()` (nack, no requeue), `retry()` (nack,
   requeue), and `retry_after()` (matched regardless of the delay). Drop and retry are separate
   mechanics, so a hook gated on `drop()` does not fire on a `retry()` settlement, and vice versa.
-- `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerResult::Ack).then(fut)`.
+- `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerOutcome::ack()).then(fut)`.
 - `ctx.after_settle(fut)` - runs after the message settles, whatever the outcome.
 
-A handler can also attach a continuation through its return value: any outcome converts into a
-`Settle` with `.and_after(fut)`, which is how a batch handler gets per-element continuations. See
+A handler can also attach a continuation through its return value: any outcome carries one through
+`.and_after(fut)`, which is how a batch handler gets per-element continuations. See
 [Post-settle continuations](subscribers.md#post-settle-continuations) for that form; the semantics
 below apply to both.
 

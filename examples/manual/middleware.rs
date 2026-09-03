@@ -2,10 +2,11 @@
 //! hand-written static layer and a dynamic middleware chain built at runtime, both composed into
 //! the application stack.
 //!
-//! Middleware is macro-free already: a `Layer` mints a wrapper type that implements `Handler` by
-//! delegating to the one it wraps, which is the same shape a hand-written handler has. So the
-//! layer and the dynamic chain below are identical to the macro version, and only the handlers
-//! they wrap - named types with an `impl Handler` - and their registration differ.
+//! Middleware is macro-free already: a `Layer` mints a wrapper type that implements the dispatch
+//! trait `Handler` by delegating to the one it wraps, and the runtime derives that dispatch
+//! handler from either path's body. So the layer and the dynamic chain below are identical to the
+//! macro version, and only the handlers they wrap - named types with an `impl Handle` - and their
+//! registration differ.
 //!
 //! ```text
 //! AUDIT=1 cargo run --example manual_middleware --no-default-features --features memory,json
@@ -16,37 +17,42 @@ use std::future::{Future, ready};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    DynMiddleware, DynStack, Handler, HandlerMetadata, Identity, Layer, Next, Settle, Stack, typed,
-};
+use ruststream::runtime::{DynMiddleware, DynStack, Handler, Identity, Layer, Next, Stack};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
 /// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
-struct Handle;
+struct Receive;
 
-impl Handler<Order> for Handle {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Receive {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 struct Returns;
 
-impl Handler<Order> for Returns {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Returns {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got return for order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
@@ -64,11 +70,11 @@ impl<H> Layer<H> for LogLayer {
 }
 
 impl<M: Send + Sync, H: Handler<M>> Handler<M> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
         println!("-> {}", ctx.name());
-        let settle = self.0.handle(msg, ctx).await;
+        let outcome = self.0.handle(msg, ctx).await;
         println!("<- {}", ctx.name());
-        settle
+        outcome
     }
 }
 // --8<-- [end:layer_impl]
@@ -84,7 +90,7 @@ impl<I: Send + Sync> DynMiddleware<I> for Audit {
         input: &'a I,
         ctx: &'a mut Context<'_>,
         next: Next<'a, I>,
-    ) -> Pin<Box<dyn Future<Output = Settle> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = HandlerOutcome> + Send + 'a>> {
         Box::pin(async move {
             println!("[{}] handling {}", self.service, ctx.name());
             next.run(input, ctx).await
@@ -113,16 +119,8 @@ fn app() -> RustStream<Stack<DynStack<MemoryMessage>, Stack<LogLayer, Identity>>
         .layer(LogLayer)
         .layer(stack)
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
-            b.subscribe(
-                Name::new("returns"),
-                typed(JsonCodec, Returns),
-                HandlerMetadata::typed::<Order>("returns"),
-            );
+            b.include(subscriber("orders", Receive).build());
+            b.include(subscriber("returns", Returns).build());
         })
     // --8<-- [end:dyn_stack]
 }

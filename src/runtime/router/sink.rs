@@ -158,39 +158,6 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.handlers.push(meta);
     }
 
-    /// Erases a source and its handler into a starter; the subscription opens against the
-    /// connected broker.
-    pub(crate) fn push_subscribe<S, H, Cx>(
-        &mut self,
-        source: S,
-        handler: H,
-        meta: HandlerMetadata,
-        policies: FailurePolicies,
-    ) where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
-        H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
-    {
-        let handler = Arc::new(handler);
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_dispatch(
-                        subscriber, handler, token, name, state, delivery, failure,
-                    ))
-                })
-            },
-        ));
-        self.handlers.push(meta);
-    }
-
     /// Pushes a fully custom starter, for the one mount the factory helpers cannot express:
     /// applying a [`BlanketLayer`](crate::runtime::BlanketLayer) inside the startup closure
     /// (its RPITIT return captures the layer borrow, so the applied handler cannot leave a

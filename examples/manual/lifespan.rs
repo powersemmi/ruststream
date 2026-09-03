@@ -4,7 +4,7 @@
 //!
 //! The hooks themselves are plain builder methods on `RustStream`, so nothing about them changes
 //! here. What changes is the handler: with no `State<T>` extractor parameter to declare, the
-//! handler names the state as the third `Context` generic and reads it with `ctx.state()`.
+//! handler names the state as the last axis of its `Handle` impl and reads it with `ctx.state()`.
 //!
 //! The `Database` here is a stand-in for any async resource (a `sqlx::PgPool`, an HTTP client);
 //! only its `connect` / `close` calls would differ.
@@ -17,13 +17,12 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, Identity, Settle, typed};
+use ruststream::runtime::Identity;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -56,20 +55,28 @@ impl Database {
 }
 
 // --8<-- [start:handler]
-// The handler names the app's state type as the third `Context` generic; `ctx.state()` then borrows
-// the typed `Database` directly, with no lookup or downcast. This is the object the `State<T>`
-// extractor would have handed over, reached by hand.
-struct Handle;
+// The handler names the app's state type as the state axis of its `Handle` impl; `ctx.state()` then
+// borrows the typed `Database` directly, with no lookup or downcast. This is the object the
+// `State<T>` extractor would have handed over, reached by hand.
+struct Receive;
 
-impl Handler<Order, (), Database> for Handle {
-    async fn handle(&self, order: &Order, ctx: &mut Context<'_, (), Database>) -> Settle {
+impl Handle<Order, (), (), (), Database> for Receive {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_, (), Database>,
+    ) -> Result<(), HandlerOutcome> {
         let db = ctx.state();
         if db.insert_order(order.id).await.is_err() {
-            return HandlerResult::retry().into();
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::ack().into()
+        Ok(())
     }
 }
+
+// The state is part of the body's own signature, so `subscriber(source, body)` mounts it unchanged:
+// the mount reads `Database` off the `Handle` impl and checks it against the app's.
 // --8<-- [end:handler]
 
 // --8<-- [start:hooks]
@@ -86,11 +93,7 @@ fn app() -> RustStream<Identity, Database> {
         // bound the post-shutdown drain of in-flight handlers
         .shutdown_timeout(Duration::from_secs(10))
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Receive).build());
         })
 }
 // --8<-- [end:hooks]

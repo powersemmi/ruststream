@@ -2,22 +2,22 @@
 
 /// Metadata about a message type, used to name and describe it in an `AsyncAPI` document.
 ///
-/// Derive with `#[derive(Message)]` (requires the `macros` feature): the derive uses the type's
+/// Derive with `#[derive(MessageInfo)]` (requires the `macros` feature): the derive uses the type's
 /// name as [`NAME`](Self::NAME) and its doc comment as [`DESCRIPTION`](Self::DESCRIPTION).
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::Message;
+/// use ruststream::MessageInfo;
 ///
 /// struct Order;
-/// impl Message for Order {
+/// impl MessageInfo for Order {
 ///     const NAME: &'static str = "Order";
 /// }
 ///
 /// assert_eq!(Order::NAME, "Order");
 /// ```
-pub trait Message {
+pub trait MessageInfo {
     /// The message name, used as the `AsyncAPI` component name.
     const NAME: &'static str;
 
@@ -29,7 +29,7 @@ pub trait Message {
 ///
 /// `#[derive(Outgoing)]` implements it: `#[outgoing(headers = Meta)]` on the type sets the
 /// contract to [`WithHeaders<Meta>`], and a declaration without it sets [`NoHeaders`]
-/// (`#[derive(Message)]` with `#[message(headers(Meta))]` does the same for a type that
+/// (`#[derive(MessageInfo)]` with `#[message(headers(Meta))]` does the same for a type that
 /// declares no destination). The contract types both message documentation (the `AsyncAPI`
 /// headers schema of the message) and the publish builder: `publish()` compiles only with the
 /// headers the contract declares (none for [`NoHeaders`]).
@@ -65,7 +65,7 @@ pub trait MessageHeaders {
 
 /// The header contract of a message that carries no typed headers.
 ///
-/// See [`MessageHeaders`]; a `#[derive(Message)]` without a `#[message(headers(..))]` attribute
+/// See [`MessageHeaders`]; a `#[derive(MessageInfo)]` without a `#[message(headers(..))]` attribute
 /// declares this contract.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct NoHeaders;
@@ -73,7 +73,7 @@ pub struct NoHeaders;
 // Bare collection payloads are common message bodies (a batch as `Vec<Item>`, a plain text
 // message) but cannot derive `Message`, and the orphan rule keeps downstream crates from
 // implementing this foreign trait on them - so the contract lives here: none. A collection
-// payload that needs a header contract wraps in a `#[derive(Message)]` newtype.
+// payload that needs a header contract wraps in a `#[derive(MessageInfo)]` newtype.
 impl<T> MessageHeaders for Vec<T> {
     type Contract = NoHeaders;
 }
@@ -84,7 +84,7 @@ impl MessageHeaders for String {
 
 /// The header contract of a message whose headers are the typed struct `H`.
 ///
-/// See [`MessageHeaders`]; `#[message(headers(H))]` on a `#[derive(Message)]` type declares
+/// See [`MessageHeaders`]; `#[message(headers(H))]` on a `#[derive(MessageInfo)]` type declares
 /// this contract. `H` is serialized into the header map on the typed publish path and lifted
 /// into the message's `AsyncAPI` headers schema when it implements [`schemars::JsonSchema`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

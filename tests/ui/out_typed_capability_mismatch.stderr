@@ -1,10 +1,11 @@
-error[E0277]: the trait bound `InjectHandler<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)>, JsonCodec>: Handler<MemoryMessage>` is not satisfied
+error[E0277]: `InjectHandler<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)>, JsonCodec>` cannot handle `MemoryMessage`
   --> tests/ui/out_typed_capability_mismatch.rs:35:55
    |
-35 |         b.include(forward).out(Events, MemoryPublish).mount();
+35 |         b.include(forward).out(Events, MemoryPublish).build();
    |                                                       ^^^^^ unsatisfied trait bound
    |
    = help: the trait `Handler<MemoryMessage>` is not implemented for `InjectHandler<SubscriberBuilder<__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, JsonCodec>, Name, (Open, Open, Open)>, JsonCodec>`
+   = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
 help: the trait `Handler<Msg, <Def as InjectDef>::Context, State>` is conditionally implemented for `InjectHandler<Def, DecodeCodec>`
   --> src/runtime/inject.rs
    |
@@ -19,19 +20,19 @@ help: the trait `Handler<Msg, <Def as InjectDef>::Context, State>` is conditiona
    | |_______________________|
    |
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open)>>`
-note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
+note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
   --> src/runtime/app/include/slot_builder.rs
    |
-   |     pub fn mount(self)
+   |     pub fn build(self)
    |            ----- required by a bound in this associated function
    |     where
    |         Slots: SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
 
 error[E0277]: `MemoryPublisher` does not support request / reply messaging
   --> tests/ui/out_typed_capability_mismatch.rs:35:55
    |
-35 |         b.include(forward).out(Events, MemoryPublish).mount();
+35 |         b.include(forward).out(Events, MemoryPublish).build();
    |                                                       ^^^^^ the trait `RequestReply` is not implemented for `MemoryPublisher`
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
@@ -48,6 +49,11 @@ help: the following other types implement trait `RequestReply`
    | |     EncodeCodec: Send + Sync,
    | |_____________________________^ `TypedSlot<P, Body, M, EncodeCodec>`
    |
+  ::: src/runtime/handle/outs.rs
+   |
+   |   impl<M: OutSlot, W: RequestReply, E: Send + Sync> RequestReply for Slot<M, W, E> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Slot<M, W, E>`
+   |
   ::: src/memory/capability.rs
    |
    |   impl RequestReply for MemoryRequester {
@@ -62,12 +68,12 @@ note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, Events>, J
 27 |     Out(out): Out<impl RequestReply, Events, Progress>,
    |                        ------------ unsatisfied trait bound introduced here
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open)>>`
-note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
+note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
   --> src/runtime/app/include/slot_builder.rs
    |
-   |     pub fn mount(self)
+   |     pub fn build(self)
    |            ----- required by a bound in this associated function
    |     where
    |         Slots: SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::mount`
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots>::build`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

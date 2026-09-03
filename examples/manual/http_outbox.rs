@@ -1,6 +1,7 @@
 //! The transactional-outbox service written without the `macros` feature: the subscriber is a
-//! named type with an `impl Handler`, the event declares its destination through the trait impls
-//! the `Outgoing` derive would emit, and `main` registers with `subscribe`.
+//! named type with an `impl Handle`, the event declares its destination through the trait impls
+//! the `Outgoing` derive would emit, and `main` mounts the handler with the `subscriber`
+//! constructor.
 //!
 //! ```text
 //! cargo run --example manual_http_outbox --no-default-features --features memory,json
@@ -25,18 +26,16 @@ use axum::{Json, Router};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerMetadata, HandlerResult, HealthProbe, HealthState,
-    PublishExt, RustStream, Settle, typed,
+    AppInfo, Context, Handle, HandlerOutcome, HealthProbe, HealthState, PublishExt, RustStream,
+    subscriber,
 };
-use ruststream::{
-    Broker, FixedName, Message, MessageHeaders, Name, NoHeaders, OutgoingDestination,
-};
+use ruststream::{Broker, FixedName, MessageHeaders, MessageInfo, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 // --8<-- [start:event]
 /// The integration event the HTTP side hands to the messaging side.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 struct OrderPlaced {
     id: u64,
     item: String,
@@ -44,7 +43,7 @@ struct OrderPlaced {
 
 // The three impls `#[derive(Outgoing)]` with `#[outgoing(name = "orders.placed")]` writes out.
 // The destination lives on the type, which is why the relay below never names one; the header
-// contract is what lets `publish()` compile with no typed headers; `Message` names the type in
+// contract is what lets `publish()` compile with no typed headers; `MessageInfo` names the type in
 // an AsyncAPI document (unused here, but part of the same declaration).
 impl OutgoingDestination for OrderPlaced {
     type Form = FixedName;
@@ -55,7 +54,7 @@ impl MessageHeaders for OrderPlaced {
     type Contract = NoHeaders;
 }
 
-impl Message for OrderPlaced {
+impl MessageInfo for OrderPlaced {
     const NAME: &'static str = "OrderPlaced";
     const DESCRIPTION: Option<&'static str> =
         Some("The integration event the HTTP side hands to the messaging side.");
@@ -67,16 +66,15 @@ impl Message for OrderPlaced {
 /// the broker would see the event too.
 struct Fulfil;
 
-impl Handler<OrderPlaced> for Fulfil {
-    // A body with nothing to await returns the future directly; `async fn` here would be an
-    // unused async on a trait impl.
+impl Handle<OrderPlaced> for Fulfil {
     fn handle(
         &self,
         order: &OrderPlaced,
+        _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("fulfilling order {} ({})", order.id, order.item);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:handler]
@@ -154,15 +152,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A token, not a publisher: minted before registration, paired after start.
     let egress = broker.bind(MemoryPublish);
     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-        b.subscribe(
-            Name::new(OrderPlaced::ADDRESS),
-            typed(JsonCodec, Fulfil),
-            // The attribute reads the description off the handler's doc comment; `subscribe` is
-            // handed it, along with the name and the input type name.
-            HandlerMetadata::typed::<OrderPlaced>(OrderPlaced::ADDRESS).with_description(
-                "The same service consumes what its HTTP endpoints produce; any other service \
-                 subscribed to the broker would see the event too.",
-            ),
+        // The attribute reads the description off the handler's doc comment; on the value path
+        // `describe` states it.
+        b.include(
+            subscriber(OrderPlaced::ADDRESS, Fulfil)
+                .describe(
+                    "The same service consumes what its HTTP endpoints produce; any other \
+                     service subscribed to the broker would see the event too.",
+                )
+                .build(),
         );
     });
 

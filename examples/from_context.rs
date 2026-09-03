@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream, State};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, State};
 use ruststream::testing::TestApp;
 use ruststream::{FromRef, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
@@ -45,9 +45,9 @@ struct AppState {
 // The interactor arrives as a handler argument; no `ctx.state().create_order` reach-through.
 // --8<-- [start:handler]
 #[subscriber("orders")]
-async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerResult {
+async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerOutcome {
     create_order.execute(order);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

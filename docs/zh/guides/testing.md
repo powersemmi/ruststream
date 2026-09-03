@@ -84,7 +84,7 @@ Broker，它就报告 `TestError::Ambiguous`。
 | `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | 投递次数 |
 | `with(&value)` | 最近一次投递解码（用默认编解码器）之后等于 `value` |
 | `with_raw(bytes)` | 最近一次的原始载荷 |
-| `settled(HandlerResult::Ack)` | 结算的方式 |
+| `settled(HandlerOutcome::ack())` | 结算的方式 |
 | `assert_outcome(Outcome::Drop)` | 归类之后的结算结果（ack / nack / drop / 解码失败 / panic） |
 | `panicked()` | 处理器在最后一次投递上发生了 panic |
 | `assert_last_failed_to_decode()` | 载荷解码失败 |

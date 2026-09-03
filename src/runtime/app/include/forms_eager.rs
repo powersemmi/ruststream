@@ -11,8 +11,10 @@ use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 use crate::runtime::{RawSliceHandler, SliceHandler, SliceHandlerWithHeaders};
 
-use super::{IncludeMount, MountCodec, forms};
+use super::{IncludeMount, forms};
 use crate::runtime::app::scope::BrokerScope;
+use crate::runtime::inject::InjectDef;
+use crate::runtime::settings::{DefMountCodec, MountsWith};
 
 // ---------------------------------------------------------------------------------------------
 // Plain subscribing: eager, no builder.
@@ -21,12 +23,11 @@ impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, Stat
     for forms::Subscribing
 where
     B: Broker + 'static,
-    C: MountCodec,
-    Def: SubscriberDef,
+    Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, C>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message: 'static,
-    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
+    Def::Input: DecodeWith<DefMountCodec<Def, <Def as SubscriberDef>::Input, C>>,
     Def::Handler: 'static,
     Def::Context: BuildContext<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
@@ -37,7 +38,7 @@ where
         Typed<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             Def::Input,
-            C::Codec,
+            DefMountCodec<Def, <Def as SubscriberDef>::Input, C>,
             Def::Handler,
         >,
     >,
@@ -50,8 +51,8 @@ where
     type Out = ();
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let codec = def.mounted_codec(&scope.codec);
         let source = def.source();
-        let codec = scope.codec.mount_codec();
         scope.mount_subscriber(source, def, codec);
     }
 }
@@ -106,13 +107,12 @@ impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, Stat
     for forms::Seek
 where
     B: Broker + 'static,
-    C: MountCodec,
-    Def: InjectCall<State> + 'static,
+    Def: InjectCall<State> + MountsWith<<Def as InjectDef>::Input, C> + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: Sync + Send + 'static,
     <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message:
         Send + Sync + 'static,
-    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
+    Def::Input: DecodeWith<DefMountCodec<Def, <Def as InjectDef>::Input, C>>,
     Def::Context: BuildContext<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
         > + Send
@@ -123,7 +123,10 @@ where
         + Sync
         + 'static,
     State: Send + Sync + 'static,
-    Layers: Layer<InjectHandler<Def, <C as MountCodec>::Codec>> + Clone + Send + 'static,
+    Layers: Layer<InjectHandler<Def, DefMountCodec<Def, <Def as InjectDef>::Input, C>>>
+        + Clone
+        + Send
+        + 'static,
     Layers::Handler: Handler<
             <<Def::Source as SubscriptionSource<Connected<B>>>::Subscriber as Subscriber>::Message,
             Def::Context,
@@ -133,8 +136,9 @@ where
     type Out = ();
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let codec = def.mounted_codec(&scope.codec);
         let source = def.source();
-        scope.mount_inject(source, def, ((),));
+        scope.mount_inject(source, def, codec, ((),));
     }
 }
 
@@ -145,19 +149,18 @@ impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, Stat
     for forms::Batch
 where
     B: Broker + 'static,
-    C: MountCodec,
-    Def: BatchDef,
+    Def: BatchDef + MountsWith<<Def as BatchDef>::Input, C>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
-    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
+    Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, C>>,
     Def::Handler: SliceHandler<<Def::Input as InputKind>::Owned, State> + 'static,
     State: Send + Sync + 'static,
 {
     type Out = ();
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let codec = def.mounted_codec(&scope.codec);
         let source = def.source();
-        let codec = scope.codec.mount_codec();
         scope.mount_batch(source, def, codec);
     }
 }
@@ -191,11 +194,10 @@ impl<'s, B, Layers, C, State, Pipeline, Def> IncludeMount<'s, B, Layers, C, Stat
     for forms::BatchWithHeaders
 where
     B: Broker + 'static,
-    C: MountCodec,
-    Def: BatchWithHeadersDef,
+    Def: BatchWithHeadersDef + MountsWith<<Def as BatchDef>::Input, C>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     <Def::Source as SubscriptionSource<Connected<B>>>::Subscriber: BatchSubscriber + Send + 'static,
-    Def::Input: DecodeWith<<C as MountCodec>::Codec>,
+    Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, C>>,
     Def::Handler: SliceHandlerWithHeaders<
             <Def::Input as InputKind>::Owned,
             <Def as BatchWithHeadersDef>::Headers,
@@ -206,8 +208,8 @@ where
     type Out = ();
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+        let codec = def.mounted_codec(&scope.codec);
         let source = def.source();
-        let codec = scope.codec.mount_codec();
         scope.mount_batch_with_headers(source, def, codec);
     }
 }

@@ -94,7 +94,7 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 | `assert_called_once()` / `assert_called(n)` / `assert_not_called()` | число доставок |
 | `with(&value)` | последняя доставка декодируется в `value` (кодеком по умолчанию) |
 | `with_raw(bytes)` | последняя сырая полезная нагрузка |
-| `settled(HandlerResult::Ack)` | чем она завершилась |
+| `settled(HandlerOutcome::ack())` | чем она завершилась |
 | `assert_outcome(Outcome::Drop)` | классифицированный исход (ack / nack / drop / ошибка декодирования / паника) |
 | `panicked()` | обработчик упал в панику на последней доставке |
 | `assert_last_failed_to_decode()` | полезная нагрузка не декодировалась |

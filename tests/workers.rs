@@ -8,6 +8,7 @@
 mod common;
 
 use std::{
+    future::{Future, ready},
     sync::{
         Arc, LazyLock, Mutex,
         atomic::{AtomicU32, AtomicUsize, Ordering},
@@ -16,13 +17,8 @@ use std::{
 };
 
 use common::{Order, order_bytes, wait_for};
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerResult, PublishExt, Router, RustStream, Workers,
-    typed,
-};
-use ruststream::{HeaderMap, Name, nonzero, subscriber};
+use ruststream::prelude::*;
 use tokio::sync::Barrier;
 
 static CRUNCHED: AtomicU32 = AtomicU32::new(0);
@@ -31,10 +27,10 @@ static GATE: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(4));
 /// Four deliveries must be in flight at once to pass the barrier; a sequential loop would
 /// deadlock on the first one.
 #[subscriber("jobs", workers(4))]
-async fn crunch(_job: &Order) -> HandlerResult {
+async fn crunch(_job: &Order) -> HandlerOutcome {
     GATE.wait().await;
     CRUNCHED.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -71,7 +67,7 @@ static KEYED_SEEN: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
 
 /// Records (key, id) pairs; per-key arrival order must match publish order.
 #[subscriber("keyed", workers(4, by_key))]
-async fn keyed(order: &Order, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerResult {
+async fn keyed(order: &Order, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
     let key = ctx
         .headers()
         .get_str("partition-key")
@@ -80,7 +76,7 @@ async fn keyed(order: &Order, ctx: &mut ruststream::runtime::Context<'_>) -> Han
     // Encourage interleaving between lanes; each lane itself stays sequential.
     tokio::task::yield_now().await;
     KEYED_SEEN.lock().unwrap().push((key, order.id));
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -140,9 +136,9 @@ static PAGES: AtomicUsize = AtomicUsize::new(0);
 
 /// Batch form composing with a pool: up to two pages in flight.
 #[subscriber(batch("pages"), workers(2))]
-async fn settle(orders: &[Order]) -> HandlerResult {
+async fn settle(orders: &[Order]) -> HandlerOutcome {
     PAGES.fetch_add(orders.len(), Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -168,9 +164,29 @@ async fn batch_pool_dispatches_batches() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// The functional-path pool: a `Router::subscribe` closure with `.workers(Workers::pool(nonzero!(3)))`.
-/// Three deliveries must be in flight at once to pass the barrier; the default sequential loop
-/// would deadlock on the first one.
+/// The manual path's body of the pool test: it passes the barrier only if the requested number of
+/// deliveries is in flight at once.
+struct CrunchJobs {
+    crunched: Arc<AtomicU32>,
+    gate: Arc<Barrier>,
+}
+
+impl Handle<Order> for CrunchJobs {
+    async fn handle(
+        &self,
+        _order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        self.gate.wait().await;
+        self.crunched.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// The manual-path pool: a `subscriber(..)` definition with `.workers(Workers::pool(nonzero!(3)))`
+/// named on the router. Three deliveries must be in flight at once to pass the barrier; the
+/// default sequential loop would deadlock on the first one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closure_subscription_pool_runs_concurrently() {
     let broker = MemoryBroker::new();
@@ -179,26 +195,13 @@ async fn closure_subscription_pool_runs_concurrently() {
     let crunched = Arc::new(AtomicU32::new(0));
     let gate = Arc::new(Barrier::new(3));
 
-    let handler = {
-        let crunched = Arc::clone(&crunched);
-        let gate = Arc::clone(&gate);
-        typed(JsonCodec, move |_order: &Order, _ctx: &mut Context| {
-            let crunched = Arc::clone(&crunched);
-            let gate = Arc::clone(&gate);
-            async move {
-                gate.wait().await;
-                crunched.fetch_add(1, Ordering::SeqCst);
-                HandlerResult::Ack
-            }
-        })
+    let handler = CrunchJobs {
+        crunched: Arc::clone(&crunched),
+        gate: Arc::clone(&gate),
     };
 
     let router = Router::<MemoryBroker>::new()
-        .subscribe(
-            Name::new("fn-jobs"),
-            handler,
-            HandlerMetadata::raw("fn-jobs"),
-        )
+        .include(subscriber("fn-jobs", handler).build())
         .workers(Workers::pool(nonzero!(3)));
 
     let app = RustStream::new(AppInfo::new("fn-jobs", "0.1.0"))
@@ -226,8 +229,23 @@ async fn closure_subscription_pool_runs_concurrently() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// The functional batch path: a `Router::subscribe_batch` slice closure receives whole decoded
-/// batches without a macro definition.
+/// The manual path's page body: it counts what the page carried, so the batch either arrived as a
+/// page or did not.
+struct CountPages(Arc<AtomicUsize>);
+
+impl Handle<[Order]> for CountPages {
+    fn handle(
+        &self,
+        orders: &[Order],
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+        self.0.fetch_add(orders.len(), Ordering::SeqCst);
+        ready(Ok(()))
+    }
+}
+
+/// The manual batch path: a page body receives whole decoded batches without a macro definition.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closure_batch_subscription_receives_batches() {
     let broker = MemoryBroker::new();
@@ -235,24 +253,8 @@ async fn closure_batch_subscription_receives_batches() {
 
     let seen = Arc::new(AtomicUsize::new(0));
 
-    let handler = {
-        let seen = Arc::clone(&seen);
-        move |orders: &[Order], _ctx: &mut Context| {
-            let count = orders.len();
-            let seen = Arc::clone(&seen);
-            async move {
-                seen.fetch_add(count, Ordering::SeqCst);
-                HandlerResult::Ack
-            }
-        }
-    };
-
     let router = Router::<MemoryBroker>::new()
-        .subscribe_batch(
-            Name::new("fn-pages"),
-            handler,
-            HandlerMetadata::raw("fn-pages"),
-        )
+        .include(subscriber("fn-pages", CountPages(Arc::clone(&seen))).build())
         .workers(Workers::pool(nonzero!(2)));
 
     let app = RustStream::new(AppInfo::new("fn-pages", "0.1.0"))

@@ -13,24 +13,24 @@ use std::time::Duration;
 use common::{Order, wait_for};
 use ruststream::codec::{CborCodec, Codec, MsgpackCodec};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, PublishExt, Router, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, Router, RustStream};
 use ruststream::subscriber;
 
 static CBOR_SEEN: AtomicUsize = AtomicUsize::new(0);
 static MSGPACK_SEEN: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("orders-cbor")]
-async fn cbor_order(order: &Order) -> HandlerResult {
+async fn cbor_order(order: &Order) -> HandlerOutcome {
     assert_eq!(order.id, 7);
     CBOR_SEEN.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("orders-msgpack")]
-async fn msgpack_order(order: &Order) -> HandlerResult {
+async fn msgpack_order(order: &Order) -> HandlerOutcome {
     assert_eq!(order.id, 7);
     MSGPACK_SEEN.fetch_add(1, Ordering::SeqCst);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 /// A `cbor` router and a `msgpack` router share one app: each decodes payloads its own codec

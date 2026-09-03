@@ -39,7 +39,7 @@ pub trait RouterCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, Def>: 
 #[diagnostic::on_unimplemented(
     message = "not every Out slot of this handler is bound",
     label = "the attachment still contains a `MissingSlot<..>` naming the unbound slot",
-    note = "bind each remaining slot with .out(marker, policy) before .mount()"
+    note = "bind each remaining slot with .out(marker, policy) before .build()"
 )]
 pub trait RouterSlotCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, Def>: Sized {
     /// See [`RouterCommit::Out`].
@@ -51,10 +51,10 @@ pub trait RouterSlotCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, De
 /// A registration builder over one attachment, generic over its mount token.
 ///
 /// [`publisher`](Self::publisher) commits with an explicit reply policy and
-/// [`mount`](Self::mount) commits with the broker's default one; both consume the builder and
+/// [`build`](Self::build) commits with the broker's default one; both consume the builder and
 /// return the grown router. The per-form names are aliases: [`RouterPublishing`],
 /// [`RouterBatchPublishing`].
-#[must_use = "a router registration is only added once .publisher(policy) or .mount() commits it"]
+#[must_use = "a router registration is only added once .publisher(policy) or .build() commits it"]
 pub struct RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
 where
     B: Broker + 'static,
@@ -160,7 +160,7 @@ where
     /// [`DefaultPublish`](crate::DefaultPublish) policy, the terminal for a reply that needs no
     /// wiring of its own.
     #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
-    pub fn mount(
+    pub fn build(
         self,
     ) -> <Fallback as RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
     where
@@ -173,7 +173,7 @@ where
 /// A registration builder for a handler with [`Out`](crate::runtime::Out) slots.
 ///
 /// Each [`out`](Self::out) call binds one named slot (in any order) and the terminal
-/// [`mount`](Self::mount) commits - it exists only once every slot is bound, so a forgotten
+/// [`build`](Self::build) commits - it exists only once every slot is bound, so a forgotten
 /// binding is a compile error naming the slot. A handler with a single slot skips the ceremony:
 /// [`publisher`](Self::publisher) binds it and commits in one call. The per-form names are
 /// aliases: [`RouterOut`], [`RouterBatchOut`].
@@ -181,7 +181,7 @@ where
 /// The subscription source is not carried here: a slot-taking definition is only instantiated
 /// once the sources are bound, so its source comes from the instantiated definition at the
 /// commit.
-#[must_use = "a router registration is only added once .publisher(policy) or .out(..) + .mount() commits it"]
+#[must_use = "a router registration is only added once .publisher(policy) or .out(..) + .build() commits it"]
 pub struct RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
 where
     B: Broker + 'static,
@@ -215,7 +215,7 @@ where
     /// its publish policy (or a [`Bound`](crate::runtime::Bound) token for a cross-broker
     /// target). Calls bind by marker, so their order does not matter; binding the same slot
     /// twice, or a marker the handler does not declare, fails to compile. Finish with
-    /// [`mount`](Self::mount).
+    /// [`build`](Self::build).
     // The unit marker drives inference, so it travels by value to keep the call site
     // `.out(Encoded, ..)`; the return type names the builder with the bound slot.
     #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
@@ -243,7 +243,7 @@ where
 
     /// Commits the registration. Exists only once every slot is bound: a chain that still has
     /// a `MissingSlot<..>` in its attachment fails to compile here, naming the slot.
-    pub fn mount(
+    pub fn build(
         self,
     ) -> <Slots as RouterSlotCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
     where
@@ -259,7 +259,7 @@ where
     B: Broker + 'static,
 {
     /// Binds the handler's single [`Out`](crate::runtime::Out) slot and commits, no
-    /// [`mount`](Self::mount) needed: the one-slot shorthand
+    /// [`build`](Self::build) needed: the one-slot shorthand
     /// (`router.include(forward).publisher(MemoryPublish)`).
     #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
     pub fn publisher<Policy>(
@@ -284,9 +284,9 @@ where
 /// [`Out`](crate::runtime::Out) slots: the reply attachment next to the slot tuple.
 ///
 /// [`publisher`](Self::publisher) replaces the reply side (defaulted when the call is omitted),
-/// each slot binds with [`out`](Self::out), and the terminal [`mount`](Self::mount) commits. The
+/// each slot binds with [`out`](Self::out), and the terminal [`build`](Self::build) commits. The
 /// per-form names are aliases: [`RouterPublishingOut`], [`RouterBatchPublishingOut`].
-#[must_use = "a router registration is only added once .mount() commits it"]
+#[must_use = "a router registration is only added once .build() commits it"]
 pub struct RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
 where
     B: Broker + 'static,
@@ -320,7 +320,7 @@ where
 
     /// Attaches the reply source, like [`RouterWith::publisher`]. Unlike there it is not a
     /// terminal: the slots still have to be bound, so the chain finishes with
-    /// [`mount`](Self::mount).
+    /// [`build`](Self::build).
     #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
     pub fn publisher<Policy>(
         self,
@@ -369,7 +369,7 @@ where
     /// every slot is bound: a chain that still has a `MissingSlot<..>` in its attachment fails
     /// to compile here, naming the slot.
     #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
-    pub fn mount(
+    pub fn build(
         self,
     ) -> <(Reply, Slots) as RouterSlotCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
     where

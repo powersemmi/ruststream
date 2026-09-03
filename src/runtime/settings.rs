@@ -13,15 +13,15 @@
 //! # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 //! # mod demo {
 //! use ruststream::nonzero;
-//! use ruststream::runtime::{HandlerResult, SubscriberSettings};
+//! use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
 //! use ruststream::subscriber;
 //! # #[derive(serde::Deserialize)]
 //! # struct Order;
 //!
 //! // The attribute fixes the worker policy; the name is left to the mount site.
 //! #[subscriber(workers(4))]
-//! async fn audit(order: &Order) -> HandlerResult {
-//!     HandlerResult::Ack
+//! async fn audit(order: &Order) -> HandlerOutcome {
+//!     HandlerOutcome::ack()
 //! }
 //!
 //! # fn wire(subject: String) {
@@ -38,11 +38,13 @@ use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+use crate::codec::Codec;
 use crate::{Buffered, FromName, StartAt, Unnamed};
 
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
-use super::router::IncludeDef;
+use super::input::{Decoded, DecodedPair, RawBytes};
+use super::router::{IncludeDef, InputCodec};
 
 /// A setting the attribute left out, still fillable at the mount site.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -75,7 +77,9 @@ pub trait Declared: Sized {
 }
 
 // A hand-written definition names its own form and carries its own settings, so it is already
-// what the mount machinery drives.
+// what the mount machinery drives. The decoded forms additionally resolve their codec through
+// the builder, so a bare definition serves the raw forms; a decoded one declares through
+// `SubscriberBuilder::new` in its own `Declared` impl, exactly as the attribute expands.
 impl<T: IncludeDef> Declared for T {
     type Form = <T as IncludeDef>::Form;
     type Settings = Self;
@@ -95,11 +99,14 @@ impl<T: IncludeDef> Declared for T {
 /// `(workers, failure policies, start position)` over [`Open`] / [`Fixed`]. The subscription's
 /// name is recorded in `Src` instead: an unnamed definition carries [`Unnamed<S>`], which is no
 /// [`SubscriptionSource`](crate::SubscriptionSource) at all, so mounting it is a compile error.
-pub struct SubscriberBuilder<Def, Src, State> {
+/// The `DefCodec` parameter is the decode codec [`codec`](Self::codec) named, `()` while the
+/// surface's own applies.
+pub struct SubscriberBuilder<Def, Src, State, DefCodec = ()> {
     def: Def,
     source: Src,
     workers: Workers,
     failures: FailurePolicies,
+    codec: DefCodec,
     _state: PhantomData<fn() -> State>,
 }
 
@@ -115,16 +122,43 @@ impl<Def, Src> SubscriberBuilder<Def, Src, AllOpen> {
             source,
             workers: Workers::sequential(),
             failures: FailurePolicies::default(),
+            codec: (),
             _state: PhantomData,
         }
     }
 }
 
 impl<Def, Src, State> SubscriberBuilder<Def, Src, State> {
+    /// Decodes this registration with `codec`, overriding the surface's codec: the top rung of
+    /// the codec ladder (the [`DefaultCodec`](crate::codec::DefaultCodec), then the scope's or
+    /// the chain's codec, then this).
+    ///
+    /// Available once per registration - the override has no open slot to fill twice - and only
+    /// meaningful on the decoded forms: a raw registration reads no codec at all.
+    #[must_use]
+    pub fn codec<C: Codec>(self, codec: C) -> SubscriberBuilder<Def, Src, State, C> {
+        SubscriberBuilder {
+            def: self.def,
+            source: self.source,
+            workers: self.workers,
+            failures: self.failures,
+            codec,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// The pieces a step rebuilds from: the source moves out, so a step can wrap it without
     /// demanding `Clone` of a broker's descriptor.
-    fn into_parts(self) -> (Def, Src, Workers, FailurePolicies) {
-        (self.def, self.source, self.workers, self.failures)
+    fn into_parts(self) -> (Def, Src, Workers, FailurePolicies, DefCodec) {
+        (
+            self.def,
+            self.source,
+            self.workers,
+            self.failures,
+            self.codec,
+        )
     }
 
     /// Rebuilds a builder from moved-out pieces, at whatever source and settings state the step
@@ -134,18 +168,138 @@ impl<Def, Src, State> SubscriberBuilder<Def, Src, State> {
         source: NewSrc,
         workers: Workers,
         failures: FailurePolicies,
-    ) -> SubscriberBuilder<Def, NewSrc, NewState> {
+        codec: DefCodec,
+    ) -> SubscriberBuilder<Def, NewSrc, NewState, DefCodec> {
         SubscriberBuilder {
             def,
             source,
             workers,
             failures,
+            codec,
+            _state: PhantomData,
+        }
+    }
+
+    /// Splits the wrapped definition, keeping the source and the collected settings on the
+    /// remainder: the hook the sealed mounts extract their pre-attached pieces through.
+    pub(crate) fn split_def<NewDef, Extra>(
+        self,
+        f: impl FnOnce(Def) -> (NewDef, Extra),
+    ) -> (SubscriberBuilder<NewDef, Src, State, DefCodec>, Extra) {
+        let (def, source, workers, failures, codec) = self.into_parts();
+        let (def, extra) = f(def);
+        (
+            SubscriberBuilder {
+                def,
+                source,
+                workers,
+                failures,
+                codec,
+                _state: PhantomData,
+            },
+            extra,
+        )
+    }
+
+    /// Replaces the wrapped definition, keeping the source and the collected settings: the hook
+    /// the value-definition methods (`describe`, `documented`, `to`, ...) grow their
+    /// definitions through.
+    pub(crate) fn map_def<NewDef>(
+        self,
+        f: impl FnOnce(Def) -> NewDef,
+    ) -> SubscriberBuilder<NewDef, Src, State, DefCodec> {
+        let (def, source, workers, failures, codec) = self.into_parts();
+        SubscriberBuilder {
+            def: f(def),
+            source,
+            workers,
+            failures,
+            codec,
             _state: PhantomData,
         }
     }
 }
 
-impl<Def, Src, State> Declared for SubscriberBuilder<Def, Src, State>
+/// The codec one registration decodes with, resolved from its input kind, the builder's
+/// [`codec`](SubscriberBuilder::codec) override, and the surface: a named override wins on a
+/// decoded input, a byte input asks for no codec at all, and `()` (nothing named) falls back to
+/// the surface's own resolution. Machinery behind `include`; the `()`-vs-named split mirrors
+/// the surface-codec fallback pattern of [`InputCodec`].
+#[doc(hidden)]
+pub trait DefinitionInputCodec<Input, Surface> {
+    /// The resolved codec.
+    type Codec: Clone + Send + Sync + 'static;
+
+    /// Produces it, fresh per registration.
+    fn resolve(&self, surface: &Surface) -> Self::Codec;
+}
+
+impl<Input, Surface: InputCodec<Input>> DefinitionInputCodec<Input, Surface> for () {
+    type Codec = Surface::Codec;
+
+    fn resolve(&self, surface: &Surface) -> Self::Codec {
+        surface.input_codec()
+    }
+}
+
+impl<T, Surface, C> DefinitionInputCodec<Decoded<T>, Surface> for C
+where
+    C: Codec + Clone + Send + Sync + 'static,
+{
+    type Codec = C;
+
+    fn resolve(&self, _surface: &Surface) -> C {
+        self.clone()
+    }
+}
+
+// The override applies to a pair input the same way: the payload side decodes with it.
+impl<H, P, Surface, C> DefinitionInputCodec<DecodedPair<H, P>, Surface> for C
+where
+    C: Codec + Clone + Send + Sync + 'static,
+{
+    type Codec = C;
+
+    fn resolve(&self, _surface: &Surface) -> C {
+        self.clone()
+    }
+}
+
+// A byte input decodes with `()` whatever the chain named: the override has nothing to apply to.
+impl<Surface, C: Codec> DefinitionInputCodec<RawBytes, Surface> for C {
+    type Codec = ();
+
+    fn resolve(&self, _surface: &Surface) {}
+}
+
+/// What the mount machinery asks of a definition's settings: the codec its input decodes with,
+/// override and surface fallback resolved in one place. Machinery behind `include`.
+#[doc(hidden)]
+pub trait MountsWith<Input, Surface> {
+    /// The resolved codec.
+    type Codec: Clone + Send + Sync + 'static;
+
+    /// Produces it, fresh per registration.
+    fn mounted_codec(&self, surface: &Surface) -> Self::Codec;
+}
+
+impl<Def, Src, State, DC, Input, Surface> MountsWith<Input, Surface>
+    for SubscriberBuilder<Def, Src, State, DC>
+where
+    DC: DefinitionInputCodec<Input, Surface>,
+{
+    type Codec = DC::Codec;
+
+    fn mounted_codec(&self, surface: &Surface) -> Self::Codec {
+        self.codec.resolve(surface)
+    }
+}
+
+/// The codec a definition `D` with input `I` mounts with on the surface `S`. Tames the
+/// projection in the mount impls.
+pub(crate) type DefMountCodec<D, I, S> = <D as MountsWith<I, S>>::Codec;
+
+impl<Def, Src, State, DefCodec> Declared for SubscriberBuilder<Def, Src, State, DefCodec>
 where
     Def: Declared,
 {
@@ -157,7 +311,7 @@ where
     }
 }
 
-impl<Def, Src, State> fmt::Debug for SubscriberBuilder<Def, Src, State> {
+impl<Def, Src, State, DefCodec> fmt::Debug for SubscriberBuilder<Def, Src, State, DefCodec> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubscriberBuilder")
             .field("workers", &self.workers)
@@ -182,12 +336,12 @@ pub trait NameStep: Sized {
     fn apply_name(self, name: Cow<'static, str>) -> Self::Out;
 }
 
-impl<Def, S: FromName, State> NameStep for SubscriberBuilder<Def, Unnamed<S>, State> {
-    type Out = SubscriberBuilder<Def, S, State>;
+impl<Def, S: FromName, State, DC> NameStep for SubscriberBuilder<Def, Unnamed<S>, State, DC> {
+    type Out = SubscriberBuilder<Def, S, State, DC>;
 
     fn apply_name(self, name: Cow<'static, str>) -> Self::Out {
-        let (def, _unnamed, workers, failures) = self.into_parts();
-        Self::from_parts(def, S::from_name(name), workers, failures)
+        let (def, _unnamed, workers, failures, codec) = self.into_parts();
+        Self::from_parts(def, S::from_name(name), workers, failures, codec)
     }
 }
 
@@ -206,12 +360,12 @@ pub trait WorkersStep: Sized {
     fn apply_workers(self, workers: Workers) -> Self::Out;
 }
 
-impl<Def, Src, F, P> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P)> {
-    type Out = SubscriberBuilder<Def, Src, (Fixed, F, P)>;
+impl<Def, Src, F, P, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P), DC> {
+    type Out = SubscriberBuilder<Def, Src, (Fixed, F, P), DC>;
 
     fn apply_workers(self, workers: Workers) -> Self::Out {
-        let (def, source, _default, failures) = self.into_parts();
-        Self::from_parts(def, source, workers, failures)
+        let (def, source, _default, failures, codec) = self.into_parts();
+        Self::from_parts(def, source, workers, failures, codec)
     }
 }
 
@@ -230,12 +384,12 @@ pub trait FailureStep: Sized {
     fn apply_failures(self, policies: FailurePolicies) -> Self::Out;
 }
 
-impl<Def, Src, W, P> FailureStep for SubscriberBuilder<Def, Src, (W, Open, P)> {
-    type Out = SubscriberBuilder<Def, Src, (W, Fixed, P)>;
+impl<Def, Src, W, P, DC> FailureStep for SubscriberBuilder<Def, Src, (W, Open, P), DC> {
+    type Out = SubscriberBuilder<Def, Src, (W, Fixed, P), DC>;
 
     fn apply_failures(self, policies: FailurePolicies) -> Self::Out {
-        let (def, source, workers, _defaults) = self.into_parts();
-        Self::from_parts(def, source, workers, policies)
+        let (def, source, workers, _defaults, codec) = self.into_parts();
+        Self::from_parts(def, source, workers, policies, codec)
     }
 }
 
@@ -255,12 +409,18 @@ pub trait StartAtStep<P>: Sized {
     fn apply_start_at(self, position: P) -> Self::Out;
 }
 
-impl<Def, Src, W, F, P> StartAtStep<P> for SubscriberBuilder<Def, Src, (W, F, Open)> {
-    type Out = SubscriberBuilder<Def, StartAt<Src, P>, (W, F, Fixed)>;
+impl<Def, Src, W, F, P, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W, F, Open), DC> {
+    type Out = SubscriberBuilder<Def, StartAt<Src, P>, (W, F, Fixed), DC>;
 
     fn apply_start_at(self, position: P) -> Self::Out {
-        let (def, source, workers, failures) = self.into_parts();
-        Self::from_parts(def, StartAt::new(source, position), workers, failures)
+        let (def, source, workers, failures, codec) = self.into_parts();
+        Self::from_parts(
+            def,
+            StartAt::new(source, position),
+            workers,
+            failures,
+            codec,
+        )
     }
 }
 
@@ -273,13 +433,13 @@ pub trait BufferedStep: Sized {
     fn apply_buffered(self, max_size: NonZeroUsize, max_wait: Duration) -> Self::Out;
 }
 
-impl<Def, Src, State> BufferedStep for SubscriberBuilder<Def, Src, State> {
-    type Out = SubscriberBuilder<Def, Buffered<Src>, State>;
+impl<Def, Src, State, DC> BufferedStep for SubscriberBuilder<Def, Src, State, DC> {
+    type Out = SubscriberBuilder<Def, Buffered<Src>, State, DC>;
 
     fn apply_buffered(self, max_size: NonZeroUsize, max_wait: Duration) -> Self::Out {
-        let (def, source, workers, failures) = self.into_parts();
+        let (def, source, workers, failures, codec) = self.into_parts();
         let buffered = Buffered::new(source).max_size(max_size).max_wait(max_wait);
-        Self::from_parts(def, buffered, workers, failures)
+        Self::from_parts(def, buffered, workers, failures, codec)
     }
 }
 
@@ -293,15 +453,15 @@ pub trait MapSourceStep<F>: Sized {
     fn apply_map_source(self, f: F) -> Self::Out;
 }
 
-impl<Def, Src, State, F, NewSrc> MapSourceStep<F> for SubscriberBuilder<Def, Src, State>
+impl<Def, Src, State, F, NewSrc, DC> MapSourceStep<F> for SubscriberBuilder<Def, Src, State, DC>
 where
     F: FnOnce(Src) -> NewSrc,
 {
-    type Out = SubscriberBuilder<Def, NewSrc, State>;
+    type Out = SubscriberBuilder<Def, NewSrc, State, DC>;
 
     fn apply_map_source(self, f: F) -> Self::Out {
-        let (def, source, workers, failures) = self.into_parts();
-        Self::from_parts(def, f(source), workers, failures)
+        let (def, source, workers, failures, codec) = self.into_parts();
+        Self::from_parts(def, f(source), workers, failures, codec)
     }
 }
 
@@ -322,14 +482,14 @@ where
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::nonzero;
-/// use ruststream::runtime::{FailurePolicies, FailurePolicy, HandlerResult, SubscriberSettings};
+/// use ruststream::runtime::{FailurePolicies, FailurePolicy, HandlerOutcome, SubscriberSettings};
 /// use ruststream::subscriber;
 /// # #[derive(serde::Deserialize)]
 /// # struct Order;
 ///
 /// #[subscriber]
-/// async fn audit(order: &Order) -> HandlerResult {
-///     HandlerResult::Ack
+/// async fn audit(order: &Order) -> HandlerOutcome {
+///     HandlerOutcome::ack()
 /// }
 ///
 /// # fn wire(shard: u8) {
@@ -419,14 +579,14 @@ pub trait SubscriberSettings: Declared {
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::MemorySource;
-    /// use ruststream::runtime::{HandlerResult, SubscriberSettings};
+    /// use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
     /// use ruststream::subscriber;
     /// # #[derive(serde::Deserialize)]
     /// # struct Order;
     ///
     /// #[subscriber(MemorySource)]
-    /// async fn audit(order: &Order) -> HandlerResult {
-    ///     HandlerResult::Ack
+    /// async fn audit(order: &Order) -> HandlerOutcome {
+    ///     HandlerOutcome::ack()
     /// }
     ///
     /// # fn wire() {

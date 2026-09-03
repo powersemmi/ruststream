@@ -72,8 +72,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::HeaderMap;
 use crate::runtime::{
-    BlanketLayer, Context, Handler, HandlerResult, HealthProbe, HealthState, Layer, Outgoing,
-    PublishLayer, PublishNext, PublishPipeline, Settle,
+    BlanketLayer, Context, Handler, HandlerOutcome, HandlerResult, HealthProbe, HealthState, Layer,
+    Outgoing, PublishLayer, PublishNext, PublishPipeline,
 };
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
@@ -501,7 +501,11 @@ where
     S: Send + Sync,
     H: Handler<M, C, S>,
 {
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Settle> + Send {
+    fn handle(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
         let name = ctx.name().to_owned();
         let queue_time = queue_time_seconds(ctx.headers());
         async move {

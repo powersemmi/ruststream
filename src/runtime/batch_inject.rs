@@ -5,7 +5,7 @@
 //! resolves the [`FromStartup`](super::FromStartup) tuple after the subscription opens and
 //! before the first batch, so injected values are live by construction. The batch shape needs
 //! its own definition pair because the handler consumes a slice and returns a
-//! [`BatchResult`], not a per-message [`Settle`](super::Settle).
+//! [`BatchResult`], not a per-message [`HandlerOutcome`](super::HandlerOutcome).
 
 use std::future::Future;
 
@@ -70,12 +70,12 @@ pub trait BatchInjectDef: Send + Sync {
         Vec::new()
     }
 
-    /// The element type's [`Message`](crate::Message) name, when it implements that trait.
+    /// The element type's [`Message`](crate::MessageInfo) name, when it implements that trait.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The element type's [`Message`](crate::Message) description, when it implements that
+    /// The element type's [`Message`](crate::MessageInfo) description, when it implements that
     /// trait.
     fn message_description(&self) -> Option<&'static str> {
         None
@@ -161,7 +161,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::super::dispatch::Delivery;
-    use super::super::handler::HandlerResult;
+    use super::super::handler::HandlerOutcome;
     use super::super::input::Decoded;
     use super::*;
     use crate::codec::JsonCodec;
@@ -208,7 +208,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .extend(batch.iter().map(|n| n * factor));
-            ready(BatchResult::Uniform(HandlerResult::Ack))
+            ready(BatchResult::Uniform(HandlerOutcome::ack()))
         }
     }
 

@@ -49,7 +49,7 @@
 
 通过 `ctx.state().field` 去够依赖当然一直可用，但处理器也可以直接把依赖作为参数收下。在消息参数
 （以及可选的 `&mut Context`）之后，凡是类型实现了 `FromContext` 的处理器参数，都是一个**提取器**：
-运行时会在函数体运行之前从这次投递中解析出它；一旦解析失败，消息就按拒绝值携带的 `HandlerResult`
+运行时会在函数体运行之前从这次投递中解析出它；一旦解析失败，消息就按拒绝值携带的 `HandlerOutcome`
 结算，函数体根本不会运行。
 
 要注入状态中的某一部分，在状态类型上 derive `FromRef`，然后在处理器里接收 `State<T>` 即可，不必手写
@@ -118,7 +118,7 @@ Broker 的发布者、一个客户端连接池：
 | `after(outcome).then(fut)` | `()` | 按结算结果过滤的[结算后钩子](#post-settle-hooks) |
 | `after_ack(fut)` / `after_settle(fut)` | `()` | 结算后钩子的语法糖（ack 之后 / 任何结算之后） |
 
-闭包形式的处理器（手写的 `typed(codec, |msg, ctx| ...)`）总是把上下文作为第二个参数接收。
+闭包形式的处理器（底层的 `typed(codec, |msg, ctx| ...)`）总是把上下文作为第二个参数接收。
 
 ## 按投递的上下文 { #per-delivery-context }
 
@@ -230,13 +230,13 @@ Broker 的发布者、一个客户端连接池：
 三种写法，彼此叠加：
 
 - `ctx.after(outcome).then(fut)`，只有消息按 `outcome` 结算时才运行，匹配是**按种类**进行的。四种
-  种类彼此不同：`Ack`、`drop()`（nack，不重新入队）、`retry()`（nack，重新入队）以及 `retry_after()`
+  种类彼此不同：`ack()`、`drop()`（nack，不重新入队）、`retry()`（nack，重新入队）以及 `retry_after()`
   （无论延迟多久都算匹配）。drop 和 retry 是两套不同的机制，因此挂在 `drop()` 上的钩子不会在
   `retry()` 结算时触发，反之亦然。
-- `ctx.after_ack(fut)`，是 `ctx.after(HandlerResult::Ack).then(fut)` 的语法糖。
+- `ctx.after_ack(fut)`，是 `ctx.after(HandlerOutcome::ack()).then(fut)` 的语法糖。
 - `ctx.after_settle(fut)`，只要消息结算就运行，无论结果如何。
 
-处理器也可以通过返回值挂上后续任务：任何结算结果都能用 `.and_after(fut)` 转成一个 `Settle`，批量
+处理器也可以通过返回值挂上后续任务：任何结算结果都能用 `.and_after(fut)` 带上一个后续任务，批量
 处理器正是这样为每个元素分别挂上后续任务的。这种写法见[结算后的后续任务](subscribers.md#post-settle-continuations)；
 下面讲的语义对两种写法都适用。
 

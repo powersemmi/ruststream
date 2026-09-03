@@ -38,7 +38,7 @@ serde = { version = "1", features = ["derive"] }
     --8<-- "examples/manual/tutorial/orders.rs:order"
     ```
 
-处理器返回一个 [`HandlerResult`](../guides/subscribers.md#acking)：要么是 `Ack`，要么是一个丢弃或
+处理器返回一个 [`HandlerOutcome`](../guides/subscribers.md#acking)：要么是 ack，要么是一个丢弃或
 重新入队该消息的 `nack`。返回 `()` 或 `Result<(), E>` 同样可行，它们会转换成一个结果（`Ok` 表示
 ack，`Err` 表示丢弃）。
 
@@ -123,7 +123,7 @@ cargo run -- run
     ```
 
 路由器上的注册要以一个显式的终结调用收尾。`.publisher(..)` 指定回复的接线方式 - 发布策略是纯粹的
-声明，所以路由器依旧不需要 Broker - 而 `.mount()` 则采用 Broker 自带的默认发布策略，也就是把第 4 步
+声明，所以路由器依旧不需要 Broker - 而 `.build()` 则采用 Broker 自带的默认发布策略，也就是把第 4 步
 自动拿到的那一份显式写出来。路由器的其余接口参见[路由](../guides/routing.md)。
 
 === "宏"

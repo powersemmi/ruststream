@@ -165,6 +165,7 @@ impl RequestReply for MemoryRequester {
             Ok(Some(reply)) => Ok(MemoryMessage {
                 delivery: Some(reply),
                 requeue: tx,
+                seek: None,
                 // The inbox reply is consumed here, not by a dispatch loop, and its enqueue was not
                 // counted (see `fanout`), so it carries no coordinator.
                 #[cfg(feature = "testing")]
@@ -193,6 +194,7 @@ impl BatchSubscriber for MemorySubscriber {
         let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator.clone();
+        let seeker = Arc::new(Seekable::seeker(self));
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
         futures::stream::poll_fn(move |cx| {
@@ -216,6 +218,7 @@ impl BatchSubscriber for MemorySubscriber {
             let mut batch = vec![MemoryMessage {
                 delivery: Some(first),
                 requeue: requeue.clone(),
+                seek: Some(Arc::clone(&seeker)),
                 #[cfg(feature = "testing")]
                 coordinator: coordinator.clone(),
             }];
@@ -232,6 +235,7 @@ impl BatchSubscriber for MemorySubscriber {
                     Poll::Ready(Some(delivery)) => batch.push(MemoryMessage {
                         delivery: Some(delivery),
                         requeue: requeue.clone(),
+                        seek: Some(Arc::clone(&seeker)),
                         #[cfg(feature = "testing")]
                         coordinator: coordinator.clone(),
                     }),
@@ -661,6 +665,21 @@ impl Positioned for MemoryMessage {
 
     fn position(&self) -> MemoryPosition {
         MemoryPosition(self.delivery.as_ref().map_or(0, |d| d.seq))
+    }
+}
+
+impl crate::SeekableMessage for MemoryMessage {
+    type Seeker = MemorySeeker;
+
+    /// # Panics
+    ///
+    /// Panics on a request-reply inbox message, which is not a subscription delivery; no
+    /// dispatch loop (and therefore no seek context) ever builds off one.
+    fn seeker(&self) -> MemorySeeker {
+        self.seek
+            .as_deref()
+            .expect("a seek context builds only off subscription deliveries")
+            .clone()
     }
 }
 

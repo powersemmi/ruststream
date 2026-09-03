@@ -12,22 +12,22 @@ use std::time::Duration;
 use common::{Order, order_bytes};
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{
-    AppInfo, HandlerResult, HealthState, PublishExt, RustStream, RustStreamError,
+    AppInfo, HandlerOutcome, HealthState, PublishExt, RustStream, RustStreamError,
 };
 use ruststream::subscriber;
 
 #[subscriber("health.ok")]
-async fn fine(_order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn fine(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 
 /// Default policy: a panic fails fast, tearing the started service down.
 #[subscriber("health.boom")]
-async fn explode(order: &Order) -> HandlerResult {
+async fn explode(order: &Order) -> HandlerOutcome {
     // The test publishes ids other than u32::MAX, so this assertion always fails (panics); the
-    // trailing expression keeps the body typed as HandlerResult.
+    // trailing expression keeps the body typed as HandlerOutcome.
     assert_eq!(order.id, u32::MAX, "handler exploded");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::Deserialize;
 
@@ -22,9 +22,9 @@ struct Events;
 // Publishing a value the codec cannot encode does not compile, and the rejection carries serde's
 // own guidance about the missing derive rather than reading as a missing method.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Archived>) -> HandlerResult {
+async fn forward(order: &Order, Out(out): Out<impl Publisher, Events, Archived>) -> HandlerOutcome {
     let _ = out.message(&Archived { id: order.id }).publish().await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

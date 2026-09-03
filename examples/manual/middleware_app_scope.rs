@@ -4,8 +4,8 @@
 //! `middleware_router_scope.rs` for that side).
 //!
 //! `layer` and `include_router` are plain runtime API, so the layer below is the same one the
-//! macro version uses; what changes is that each handler is a named type registered with
-//! `subscribe`.
+//! macro version uses; what changes is that each handler is a named type bound to its source by
+//! the `subscriber` constructor.
 //!
 //! ```text
 //! cargo run --example manual_middleware_app_scope --no-default-features --features memory,json
@@ -14,15 +14,12 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    BlanketLayer, Handler, HandlerMetadata, Identity, Layer, Settle, Stack, typed,
-};
+use ruststream::runtime::{BlanketLayer, Handler, Identity, Layer, Stack};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -30,30 +27,43 @@ struct Order {
 /// The definition value: `#[subscriber("orders")]` generates this struct and this impl.
 struct Orders;
 
-impl Handler<Order> for Orders {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Orders {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 struct Shipments;
 
-impl Handler<Order> for Shipments {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Shipments {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("got shipment for order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
 struct Audit;
 
-impl Handler<Order> for Audit {
-    fn handle(&self, order: &Order, _ctx: &mut Context<'_>) -> impl Future<Output = Settle> + Send {
+impl Handle<Order> for Audit {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         println!("audited order {}", order.id);
-        ready(HandlerResult::ack().into())
+        ready(Ok(()))
     }
 }
 
@@ -70,7 +80,7 @@ impl<H> Layer<H> for LogLayer {
 }
 
 impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S> for Logged<H> {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         println!("app layer -> {}", ctx.name());
         self.0.handle(msg, ctx).await
     }
@@ -97,24 +107,12 @@ fn app() -> RustStream<Stack<LogLayer, Identity>> {
         .layer(LogLayer)
         .with_broker(MemoryBroker::new(), |b| {
             // wrapped by LogLayer
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Orders),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Orders).build());
             // wrapped by LogLayer
-            b.subscribe(
-                Name::new("shipments"),
-                typed(JsonCodec, Shipments),
-                HandlerMetadata::typed::<Order>("shipments"),
-            );
+            b.include(subscriber("shipments", Shipments).build());
 
             // Mounted through a router: also wrapped by the app stack.
-            b.include_router(Router::new().subscribe(
-                Name::new("audit"),
-                typed(JsonCodec, Audit),
-                HandlerMetadata::typed::<Order>("audit"),
-            ));
+            b.include_router(Router::new().include(subscriber("audit", Audit).build()));
         })
 }
 // --8<-- [end:app_scope]

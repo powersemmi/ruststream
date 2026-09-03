@@ -68,12 +68,12 @@
 
 Когда по одному каналу идут сообщения, у которых заголовки различаются в зависимости от вида события,
 стандартный экстрактор туда лучше не пускать: напишите свой на трейте [`FromContext`] - прочитайте
-заголовок-дискриминатор, а затем разберите подходящий контракт через [`HeaderMap::to_typed`], ту же
-машинерию, которой пользуется `Headers`. Объединение форм объявите на входном типе (см. следующий
+заголовок-дискриминатор из нетипизированной карты ([`HeaderMap::get_str`]), а затем соберите тот
+контракт, которого требует этот вид. Объединение форм объявите на входном типе (см. следующий
 раздел), чтобы документ по-прежнему показывал контракт целиком.
 
 [`FromContext`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.FromContext.html
-[`HeaderMap::to_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.to_typed
+[`HeaderMap::get_str`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.get_str
 
 ## Объявление контракта на типе сообщения
 

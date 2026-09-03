@@ -19,7 +19,7 @@ use crate::{Broker, Connected, IncomingMessage, PairError, PublishPolicy, Seekab
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::{Handler, HandlerResult, Settle};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
@@ -55,18 +55,18 @@ use super::slot::{DefaultSlot, OutSlot, SlotPublisher, TypedSlot};
 /// ```
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
-/// use ruststream::runtime::{HandlerResult, Out};
+/// use ruststream::runtime::{HandlerOutcome, Out};
 /// use ruststream::{Publisher, subscriber};
 /// # #[derive(serde::Deserialize)]
 /// # struct Event { id: u64 }
 ///
 /// #[subscriber("ingress")]
-/// async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerResult {
+/// async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
 ///     let payload = event.id.to_be_bytes();
 ///     if out.raw(&payload).to("out").publish().await.is_err() {
-///         return HandlerResult::retry();
+///         return HandlerOutcome::retry();
 ///     }
-///     HandlerResult::Ack
+///     HandlerOutcome::ack()
 /// }
 /// # }
 /// ```
@@ -90,20 +90,20 @@ pub struct Out<P, M = DefaultSlot, Body = (), EncodeCodec = ()>(
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::{MemoryPosition, MemorySeeker, MemorySource};
-/// use ruststream::runtime::{HandlerResult, Seek};
+/// use ruststream::runtime::{HandlerOutcome, Seek};
 /// use ruststream::{Seeker, subscriber};
 /// # #[derive(serde::Deserialize)]
 /// # struct Job { id: u64, poisoned_until: Option<usize> }
 ///
 /// /// Skips forward past a region the producer marked poisoned.
 /// #[subscriber(MemorySource::new("jobs"))]
-/// async fn work(job: &Job, Seek(seeker): Seek<MemorySeeker>) -> HandlerResult {
+/// async fn work(job: &Job, Seek(seeker): Seek<MemorySeeker>) -> HandlerOutcome {
 ///     if let Some(resume_at) = job.poisoned_until {
 ///         if seeker.seek(MemoryPosition::sequence(resume_at)).await.is_err() {
-///             return HandlerResult::retry();
+///             return HandlerOutcome::retry();
 ///         }
 ///     }
-///     HandlerResult::Ack
+///     HandlerOutcome::ack()
 /// }
 /// # }
 /// ```
@@ -279,12 +279,12 @@ pub trait InjectDef: Send + Sync {
         Vec::new()
     }
 
-    /// The input type's [`Message`](crate::Message) name, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) name, when it implements that trait.
     fn message_name(&self) -> Option<&'static str> {
         None
     }
 
-    /// The input type's [`Message`](crate::Message) description, when it implements that trait.
+    /// The input type's [`Message`](crate::MessageInfo) description, when it implements that trait.
     fn message_description(&self) -> Option<&'static str> {
         None
     }
@@ -300,7 +300,7 @@ pub trait InjectCall<S>: InjectDef {
         input: &<Self::Input as InputKind>::Target,
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = Settle> + Send;
+    ) -> impl Future<Output = HandlerOutcome> + Send;
 }
 
 /// Builds the registration metadata for an injected definition mounted under `name`.
@@ -345,35 +345,41 @@ where
     DecodeCodec: Send + Sync,
     State: Send + Sync,
 {
-    async fn handle(&self, msg: &Msg, ctx: &mut Context<'_, Def::Context, State>) -> Settle {
+    async fn handle(
+        &self,
+        msg: &Msg,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) -> HandlerOutcome {
         // The decode product lives on this stack frame and the handler borrows its view, so
         // the input path allocates nothing of its own (a raw input borrows the payload
         // straight out of the broker's buffer).
-        let owned =
-            match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg.payload()) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::dispatch",
-                        subscription = %ctx.name(),
-                        message_type = <Def::Input as InputKind>::input_label(),
-                        error = %err,
-                        "codec decode failed",
-                    );
-                    #[cfg(any(feature = "testing", feature = "otel"))]
-                    ctx.mark_decode_failed();
-                    return match self.decode {
-                        FailurePolicy::FailFast => {
-                            ctx.fail_fast(&format!("decode failed: {err}"));
-                            HandlerResult::drop().into()
-                        }
-                        other => other
-                            .settlement()
-                            .unwrap_or_else(HandlerResult::drop)
-                            .into(),
-                    };
-                }
-            };
+        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
+            &self.codec,
+            msg.payload(),
+            msg.headers(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.name(),
+                    message_type = <Def::Input as InputKind>::input_label(),
+                    error = %err,
+                    "codec decode failed",
+                );
+                #[cfg(any(feature = "testing", feature = "otel"))]
+                ctx.mark_decode_failed();
+                return match self.decode {
+                    FailurePolicy::FailFast => {
+                        ctx.fail_fast(&format!("decode failed: {err}"));
+                        HandlerOutcome::drop()
+                    }
+                    other => other
+                        .settlement()
+                        .map_or_else(HandlerOutcome::drop, Into::into),
+                };
+            }
+        };
         let view = <Def::Input as InputKind>::view(&owned, msg.payload());
         self.def.call(view, &self.injections, ctx).await
     }

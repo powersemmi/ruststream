@@ -12,7 +12,7 @@
 === "Макросы"
 
     ```rust
-    use ruststream::runtime::HandlerResult;
+    use ruststream::runtime::HandlerOutcome;
     use ruststream::subscriber;
 
     --8<-- "examples/subscribers.rs:contract"
@@ -78,25 +78,25 @@ Publisher>` получает живого издателя, которого р�
 
 ### Подтверждение {#acking}
 
-Возвращать можно всё, что преобразуется в [`Settle`] (единица завершения доставки: исход плюс
-необязательное продолжение после завершения):
+Возвращать можно всё, что преобразуется в [`HandlerOutcome`] (единица завершения доставки: статус
+для брокера плюс необязательное продолжение после завершения):
 
 | Возвращаемое значение | Что происходит |
 |---|---|
-| `HandlerResult::ack()` (или `HandlerResult::Ack`) | подтвердить; брокер удаляет сообщение |
-| `HandlerResult::retry()` | nack с возвратом в очередь (повторная доставка позже) |
-| `HandlerResult::retry_after(delay)` | nack с просьбой доставить повторно не раньше, чем через `delay` |
-| `HandlerResult::drop()` | nack без возврата в очередь (отбросить или отправить в dead-letter) |
-| `()` | всегда `Ack` |
-| `Result<(), E>` | `Ack` при `Ok`, `drop` при `Err` |
-| `Result<HandlerResult, E>` | внутренний исход при `Ok`, `drop` при `Err` |
-| `Settle` (любое из перечисленного выше с `.and_after(..)`) | завершить доставку этим исходом, затем выполнить продолжение |
+| `HandlerOutcome::ack()` | подтвердить; брокер удаляет сообщение |
+| `HandlerOutcome::retry()` | nack с возвратом в очередь (повторная доставка позже) |
+| `HandlerOutcome::retry_after(delay)` | nack с просьбой доставить повторно не раньше, чем через `delay` |
+| `HandlerOutcome::drop()` | nack без возврата в очередь (отбросить или отправить в dead-letter) |
+| `()` | всегда подтверждает |
+| `Result<(), E>` | подтверждение при `Ok`, отбрасывание при `Err` |
+| `Result<HandlerOutcome, E>` | внутренний исход при `Ok`, отбрасывание при `Err` |
+| `HandlerOutcome::ack().and_after(..)` (любой исход) | завершить доставку этим исходом, затем выполнить продолжение |
 
 У самого сообщения `ack` поглощает `self`, поэтому система типов не даёт сделать ack дважды.
 
 ### Продолжения после завершения доставки {#post-settle-continuations}
 
-`HandlerResult::ack().and_after(fut)` прикрепляет к возвращаемому исходу продолжение: некритичное
+`HandlerOutcome::ack().and_after(fut)` прикрепляет к возвращаемому исходу продолжение: некритичное
 уведомление, медленную доработку, прогрев кеша. Подходит любой исход (`drop().and_after(..)` тоже
 корректен, нейтральное прочтение - «после завершения доставки»):
 
@@ -171,7 +171,7 @@ Publisher>` получает живого издателя, которого р�
   потеряется.
 
 Форма `batch_retry_after` складывается с
-[выборочным завершением пакета](#selective-acknowledgement): `Vec<HandlerResult>` несёт задержки
+[выборочным завершением пакета](#selective-acknowledgement): `Vec<HandlerOutcome>` несёт задержки
 поэлементно, так что неготовые записи отходят на паузу, не задерживая остальной пакет:
 
 === "Макросы"
@@ -241,8 +241,8 @@ Publisher>` получает живого издателя, которого р�
 <!-- inline-rust: illustrative descriptor sketch; OrdersStream is a stand-in for a broker crate's SubscriptionSource type, which lives in another crate and has no in-repo compiled home (the real NATS form is pulled in just below) -->
 ```rust
 #[subscriber(OrdersStream::new("orders", "workers"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
@@ -257,8 +257,8 @@ async fn handle(order: &Order) -> HandlerResult {
 <!-- inline-rust: illustrative builder-chain source; the concrete options type lives in a broker crate, so there is no in-repo compiled home -->
 ```rust
 #[subscriber(StreamOptions::new("orders").durable("audit"))]
-async fn handle(order: &Order) -> HandlerResult {
-    HandlerResult::Ack
+async fn handle(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
 }
 ```
 
@@ -293,7 +293,7 @@ async fn handle(order: &Order) -> HandlerResult {
 <!-- inline-rust: two compile-fail one-liners; a compiling example cannot host code that must not compile (the pinned diagnostics live in tests/ui) -->
 ```rust
 #[subscriber("orders", workers(4))]
-async fn handle(order: &Order) -> HandlerResult { HandlerResult::Ack }
+async fn handle(order: &Order) -> HandlerOutcome { HandlerOutcome::ack() }
 
 b.include(handle.name("other"));    // does not compile: the name is already given
 b.include(handle.on_failure(..));   // fine: the attribute said nothing about failures
@@ -391,9 +391,9 @@ RustStream::new(info).with_broker(broker, |b| {
 
 - Элементы, которые не удалось декодировать, получают nack поштучно (по политике обработки ошибок
   декодирования) и до обработчика не доходят; остальные приходят одним срезом.
-- Возвращённое значение завершает весь пакет. Одиночный `HandlerResult` (или `()` / `Result<_, E>`)
-  одинаково завершает **каждое** сообщение: `Ack` подтверждает все, `retry()` возвращает в очередь
-  все.
+- Возвращённое значение завершает весь пакет. Одиночный `HandlerOutcome` (или `()` /
+  `Result<_, E>`) одинаково завершает **каждое** сообщение: `ack()` подтверждает все, `retry()`
+  возвращает в очередь все.
 - Заголовки отдельных сообщений в форме `&[T]` недоступны, и контекст начинается с пустыми
   заголовками.
 - Глобальные для приложения и роутерные middleware оборачивают обработчики отдельных сообщений и к
@@ -402,7 +402,7 @@ RustStream::new(info).with_broker(broker, |b| {
 ### Выборочное подтверждение {#selective-acknowledgement}
 
 Частый случай - частичная готовность: часть сообщений пакета обработана, а остальные ещё не готовы и
-должны быть доставлены повторно, не утаскивая за собой уже удавшиеся. Верните `Vec<HandlerResult>`,
+должны быть доставлены повторно, не утаскивая за собой уже удавшиеся. Верните `Vec<HandlerOutcome>`,
 чтобы элемент `i` среза завершился исходом `i`:
 
 === "Макросы"
@@ -511,7 +511,7 @@ RustStream::new(info).with_broker(broker, |b| {
 [`Codec`](codecs.md) и оставайтесь на типизированном пути.
 
 Сырой подписчик умеет и отвечать тем же: клауза `publish_raw("dest")` публикует возвращённые байты
-(`-> Vec<u8>` или `-> Result<Vec<u8>, HandlerResult>` - для того же явного управления ack, что и в
+(`-> Vec<u8>` или `-> Result<Vec<u8>, HandlerOutcome>` - для того же явного управления ack, что и в
 типизированной форме ответа) как есть, на имя ответа, через голого издателя, прикреплённого в месте
 `include` (`b.include(relay).publisher(policy)`, либо через политику публикации брокера по умолчанию,
 если вызова нет). Кодека нет ни с одной стороны, а неудачная публикация ответа даёт доставке nack с
@@ -615,9 +615,9 @@ RustStream::new(info).with_broker(broker, |b| {
 ## Макрос или вручную
 
 `#[subscriber]` - это сахар над обобщённым API. Макрос генерирует типизированный обработчик и его
-метаданные; ту же регистрацию можно написать руками через `typed` (он декодирует полезную нагрузку),
-обработчик-замыкание или обработчик-структуру и `HandlerMetadata`. Обе формы ниже регистрируют один
-и тот же обработчик.
+метаданные; ту же регистрацию можно написать руками: именованный тип, чей `impl Handle` несёт тело,
+привязывается к источнику через `subscriber(source, body)` и запечатывается вызовом `.build()`. Обе
+формы ниже регистрируют один и тот же обработчик.
 
 === "Макрос"
 
@@ -633,9 +633,7 @@ RustStream::new(info).with_broker(broker, |b| {
 === "Вручную"
 
     ```rust
-    use ruststream::Name;
-    use ruststream::codec::JsonCodec;
-    use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
+    use ruststream::prelude::*;
 
     // inside with_broker(...):
     --8<-- "examples/subscribers.rs:manual"

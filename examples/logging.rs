@@ -10,7 +10,7 @@
 //! verbosity; without it the default `info` filter applies.
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -20,9 +20,9 @@ struct Order {
 }
 
 #[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     tracing::info!(order.id, "processing order");
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[ruststream::app]

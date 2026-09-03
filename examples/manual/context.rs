@@ -1,5 +1,5 @@
 //! The Context guide's example written without the `macros` feature: the handler is a named type
-//! whose `impl Handler` reads all three things the per-delivery `Context` carries (the channel
+//! whose `impl Handle` reads all three things the per-delivery `Context` carries (the channel
 //! name, the headers working copy, shared state), plus a middleware that enriches the headers
 //! before it runs.
 //!
@@ -12,13 +12,12 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::runtime::{Handler, HandlerMetadata, Identity, Layer, Settle, Stack, typed};
+use ruststream::runtime::{Handler, Identity, Layer, Stack};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
@@ -34,19 +33,18 @@ struct AppConfig {
 // --8<-- [end:state]
 
 // --8<-- [start:handler]
-/// The definition value: `#[subscriber("orders")]` generates this struct and this impl. The two
-/// context parameters the attribute would infer are spelled out - `()` for the broker's
+/// The handler body: `#[subscriber("orders")]` generates this struct and this impl. The axes the
+/// attribute would infer are spelled out - no reply, no injections, `()` for the broker's
 /// per-delivery context, `AppConfig` for the application state.
-struct Handle;
+struct Receive;
 
-impl Handler<Order, (), AppConfig> for Handle {
-    // A body with nothing to await returns the future directly, the same shape the rest of the
-    // workspace uses; `async fn` here would be an unused async on a trait impl.
+impl Handle<Order, (), (), (), AppConfig> for Receive {
     fn handle(
         &self,
         order: &Order,
+        _outs: &(),
         ctx: &mut Context<'_, (), AppConfig>,
-    ) -> impl Future<Output = Settle> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         // 1. The channel the message arrived on.
         println!("received on {}", ctx.name());
 
@@ -58,7 +56,7 @@ impl Handler<Order, (), AppConfig> for Handle {
         // 3. The typed app-level shared state, borrowed through state().
         let config = ctx.state();
         if config.reject_zero_ids && order.id == 0 {
-            return ready(HandlerResult::drop().into());
+            return ready(Err(HandlerOutcome::drop()));
         }
 
         // 4. A post-settle hook: fires after the broker has acked this message, off the delivery
@@ -69,11 +67,12 @@ impl Handler<Order, (), AppConfig> for Handle {
             println!("order {id} acked; sending the confirmation");
         });
 
-        // The future resolves to `Settle`, so the outcome converts: the attribute inserts this
-        // conversion around the body it moves here.
-        ready(HandlerResult::Ack.into())
+        ready(Ok(()))
     }
 }
+
+// The state a body reads is the last axis of its own `impl Handle`, so `subscriber(source, body)`
+// mounts it unchanged: the mount checks the impl's state type against the app's.
 // --8<-- [end:handler]
 
 // --8<-- [start:enrich]
@@ -98,7 +97,7 @@ static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S>
     for WithRequestId<H>
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> Settle {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         if ctx.headers().get("x-request-id").is_none() {
             let id = format!("req-{}", NEXT_REQUEST.fetch_add(1, Ordering::Relaxed));
             ctx.headers_mut().insert("x-request-id", id.into_bytes());
@@ -110,9 +109,8 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 
 // --8<-- [start:app]
 // `on_startup` fixes the app's state type to `AppConfig`; `.layer` then grows the global stack.
-// `subscribe` mounts the handler: the source resolves at startup, `typed` names the codec the
-// declaration site would have carried, and the metadata records what the attribute would have
-// captured from the signature.
+// `include` mounts the constructed definition: the source resolves at startup, and the scope codec
+// (here the default) decodes.
 fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
     RustStream::new(AppInfo::new("context", "0.1.0"))
         .on_startup(async move |()| {
@@ -122,11 +120,7 @@ fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
         })
         .layer(RequestId)
         .with_broker(MemoryBroker::new(), |b| {
-            b.subscribe(
-                Name::new("orders"),
-                typed(JsonCodec, Handle),
-                HandlerMetadata::typed::<Order>("orders"),
-            );
+            b.include(subscriber("orders", Receive).build());
         })
 }
 

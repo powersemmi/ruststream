@@ -6,8 +6,8 @@ error[E0277]: this subscriber's worker policy is already fixed
    |
    = help: the trait `WorkersStep` is not implemented for `SubscriberBuilder<handle, Name, (Fixed, Open, Open)>`
    = note: a setting is named once: keep `workers(..)` in the attribute, or drop it there and name the policy here
-help: the trait `WorkersStep` is implemented for `SubscriberBuilder<Def, Src, (Open, F, P)>`
+help: the trait `WorkersStep` is implemented for `SubscriberBuilder<Def, Src, (Open, F, P), DC>`
   --> src/runtime/settings.rs
    |
-   | impl<Def, Src, F, P> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P)> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | impl<Def, Src, F, P, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P), DC> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

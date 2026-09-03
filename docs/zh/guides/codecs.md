@@ -105,7 +105,8 @@ feature 都不开时，就只剩下需要显式指定编解码器的那些方法
     --8<-- "examples/manual/codecs.rs:decode_failure"
     ```
 
-手写处理器时，`typed(codec, handler)` 返回的 `Typed` 包装器通过 `on_decode_failure` 接收同样的策略。
+通过底层的 `handle` SPI 注册时，`typed(codec, handler)` 返回的 `Typed` 包装器通过
+`on_decode_failure` 接收同样的策略。
 
 各个策略取值（`Drop`、`Retry`、`RetryAfter(..)`、`Skip`、`FailFast`）、默认值以及重试方面的注意事项，
 参见[失败策略](failure-policy.md)。上面这些编解码器示例出自

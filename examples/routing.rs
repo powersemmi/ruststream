@@ -6,7 +6,7 @@
 //! ```
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerResult, Router, RouterDef, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Router, RouterDef, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -21,15 +21,15 @@ struct Shipment {
 }
 
 #[subscriber("orders")]
-async fn accept(order: &Order) -> HandlerResult {
+async fn accept(order: &Order) -> HandlerOutcome {
     println!("accepted order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("shipments")]
-async fn dispatch(shipment: &Shipment) -> HandlerResult {
+async fn dispatch(shipment: &Shipment) -> HandlerOutcome {
     println!("dispatched shipment for order {}", shipment.order_id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 // --8<-- [start:builders]

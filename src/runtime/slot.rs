@@ -22,7 +22,9 @@ use std::ops::Deref;
 use std::time::Duration;
 
 use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publish::{HeadersUnset, MessageBody, Publish, RawBody, message_of, raw_of};
+use crate::runtime::publish::{
+    HeadersUnset, MessageBody, PublishBuilder, RawBody, message_of, raw_of,
+};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
@@ -246,7 +248,7 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
 
 /// Membership of a message type in an `Out` parameter's declared message list.
 ///
-/// The declaration is a tuple listing types, a set-defining type (a `#[derive(Message)]` type
+/// The declaration is a tuple listing types, a set-defining type (a `#[derive(MessageInfo)]` type
 /// declares itself, a `#[derive(OutMessages)]` enum declares its variants' models), or the
 /// unrestricted `()` (any dictionary type). The `Index` parameter is inferred per call, like
 /// the slot-binding machinery's positions; a duplicate type in a declaration is rejected where
@@ -361,7 +363,7 @@ impl<M: OutSlot> OutMessages<M> for () {
 /// ```
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
-/// use ruststream::runtime::{HandlerResult, Out};
+/// use ruststream::runtime::{HandlerOutcome, Out};
 /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
 /// use serde::{Deserialize, Serialize};
 /// # #[derive(serde::Deserialize)]
@@ -392,18 +394,18 @@ impl<M: OutSlot> OutMessages<M> for () {
 /// async fn convert(
 ///     event: &Event,
 ///     Out(out): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-/// ) -> HandlerResult {
+/// ) -> HandlerOutcome {
 ///     // No headers contract on Progress: publish straight away.
 ///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-///         return HandlerResult::retry();
+///         return HandlerOutcome::retry();
 ///     }
 ///     // ChunkDone declares DoneMeta: with_headers is demanded by the contract.
 ///     let done = ChunkDone { output_key: format!("out/{}", event.id) };
 ///     let meta = DoneMeta { task_id: event.id };
 ///     if out.message(&done).with_headers(&meta).publish().await.is_err() {
-///         return HandlerResult::retry();
+///         return HandlerOutcome::retry();
 ///     }
-///     HandlerResult::Ack
+///     HandlerOutcome::ack()
 /// }
 /// # }
 /// ```
@@ -511,14 +513,14 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     /// [`PublishedThrough`]) and in the parameter's declared message set; everything else - the
     /// destination and the header contract - comes from the type's `#[derive(Outgoing)]`
     /// declaration, so the builder demands exactly the positions that declaration leaves open
-    /// (see [`Publish`]).
+    /// (see [`PublishBuilder`]).
     ///
     /// # Examples
     ///
     /// ```
     /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
-    /// use ruststream::runtime::{HandlerResult, Out};
+    /// use ruststream::runtime::{HandlerOutcome, Out};
     /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
     /// use serde::Serialize;
     /// # #[derive(serde::Deserialize)]
@@ -538,18 +540,18 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     /// async fn convert(
     ///     event: &Event,
     ///     Out(out): Out<impl Publisher, Events, Progress>,
-    /// ) -> HandlerResult {
+    /// ) -> HandlerOutcome {
     ///     if out.message(&Progress { percent: 100 }).publish().await.is_err() {
-    ///         return HandlerResult::retry();
+    ///         return HandlerOutcome::retry();
     ///     }
-    ///     HandlerResult::Ack
+    ///     HandlerOutcome::ack()
     /// }
     /// # }
     /// ```
     pub fn message<'a, T, Index>(
         &'a self,
         value: &'a T,
-    ) -> Publish<&'a P, MessageBody<'a, T>, &'a EncodeCodec, HeadersUnset, T::Form>
+    ) -> PublishBuilder<&'a P, MessageBody<'a, T>, &'a EncodeCodec, HeadersUnset, T::Form>
     where
         Body: ContainsMessage<T, Index>,
         T: OutgoingDestination + PublishedThrough<M>,
@@ -565,7 +567,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
     pub fn raw<'a, B>(
         &'a self,
         payload: &'a B,
-    ) -> Publish<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
+    ) -> PublishBuilder<&'a P, RawBody<'a>, (), HeadersUnset, CallerName>
     where
         B: AsRef<[u8]> + ?Sized,
     {
@@ -576,7 +578,7 @@ impl<P, Body, M, EncodeCodec> TypedSlot<P, Body, M, EncodeCodec> {
 /// The "not bound yet" placeholder of the `Out` slot marked `M` at the include site.
 ///
 /// The marker rides in the type so the compile error of an incomplete registration (a
-/// `.mount()` whose attachment tuple still contains a `MissingSlot<..>`) names the slot that
+/// `.build()` whose attachment tuple still contains a `MissingSlot<..>`) names the slot that
 /// was forgotten. A value of this type never reaches the runtime: committing requires every
 /// position bound.
 #[doc(hidden)]

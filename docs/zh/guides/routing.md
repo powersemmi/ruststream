@@ -7,7 +7,7 @@
 
 `Router` 与 Broker 作用域是对应的：`include` 是唯一的入口，各种定义形式（普通、原始、批量、发布回复、
 带注入）都由定义自身决定，全部经它挂载，旁边则是 `with_codec`（切换该链上的解码编解码器，参见
-[编解码器](codecs.md#per-handler)）以及手工的 `handle` / `subscribe` 注册。订阅来源始终来自定义本身，
+[编解码器](codecs.md#per-handler)）以及底层的 `handle` 注册。订阅来源始终来自定义本身，
 `#[subscriber(..)]` 直接接收 Broker 自己的来源表达式，包括构建器链在内，因此挂载点没有任何东西需要
 再命名。每次调用都会消费掉路由器并返回一个新的，所以注册可以链式书写：
 
@@ -36,8 +36,8 @@ RustStream::new(info).with_broker(broker, |b| {
 
 需要附加物的处理器，比如一个回复发布者、一个
 [`Out`](publishing.md#publishing-from-inside-a-handler) 槽位，在路由器上的注册方式与在作用域上一样，
-区别只在于注册要通过一个显式的终结调用来提交：`.publisher(policy)` 指定接线方式，`.mount()` 采用
-Broker 自带的默认发布策略，`.out(marker, policy)` 则在 `.mount()` 之前绑定一个具名槽位。忘记写终结
+区别只在于注册要通过一个显式的终结调用来提交：`.publisher(policy)` 指定接线方式，`.build()` 采用
+Broker 自带的默认发布策略，`.out(marker, policy)` 则在 `.build()` 之前绑定一个具名槽位。忘记写终结
 调用就永远得不到路由器，整条链也无法通过编译。这些策略仍然是纯粹的声明，因此路由器依旧不需要
 Broker：
 

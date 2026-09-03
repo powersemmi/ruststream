@@ -1,4 +1,4 @@
-use ruststream::runtime::{HandlerResult, Out};
+use ruststream::runtime::{HandlerOutcome, Out};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -27,14 +27,14 @@ struct Events;
 // dictionary is what the generated document reports as leaving the slot, so a publish outside
 // it does not compile.
 #[subscriber("orders")]
-async fn forward(order: &Order, Out(out): Out<impl Publisher, Events>) -> HandlerResult {
+async fn forward(order: &Order, Out(out): Out<impl Publisher, Events>) -> HandlerOutcome {
     let _ = out
         .message(&Rogue {
             note: order.id.to_string(),
         })
         .publish()
         .await;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 fn main() {}

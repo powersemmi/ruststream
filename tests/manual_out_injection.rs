@@ -1,104 +1,46 @@
 //! The macro-free counterpart of `tests/out_injection.rs`: a handler that receives a live
 //! publisher as an injected parameter, written out as a definition.
 //!
-//! An `Out` parameter is the one place the attribute splits the declaration in two: the unit
-//! struct the include site names carries the slot list (`HasSlots`) and the instantiation
-//! (`BindSlots`), while the definition proper lands on a publisher-generic type, so the
-//! attachment at the include site decides the publisher type with nothing erased.
+//! An injected publisher reaches the body through the arena: the `Handle` impl names one `Slot`
+//! per marker, and the publisher type stays generic, so the attachment at the include site decides
+//! it with nothing erased.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 mod common;
 
-use std::marker::PhantomData;
-
 use common::{Event, connected, expect_id};
 
-use ruststream::codec::Codec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    AllOpen, BindSlots, Declared, Decoded, DefaultSlot, HasSlots, InjectCall, InjectDef,
-    OutgoingMessageMetadata, PublishExt, Settle, SlotPublisher, SubscriberBuilder, forms,
-};
-use ruststream::{Broker, ConnectedBroker};
 
-/// The whole content of a definition generic over its slot publishers: the inferred types and
-/// nothing else, so the definition stays a zero-sized value the mount site builds for free.
-type SlotTypes<T> = PhantomData<fn() -> T>;
-
-/// The definition value the include site names: it carries the slot list and nothing else, so it
-/// stays a zero-sized value the mount builds for free.
+/// The handler body over its injected publisher. The slot's publisher type is a parameter of the
+/// impl, so the definition stays a zero-sized value the mount site builds for free.
 struct Crossing;
 
-impl Declared for Crossing {
-    type Form = forms::Out;
-    type Settings = SubscriberBuilder<Self, Name, AllOpen>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("out.crossing"))
-    }
-}
-
-impl HasSlots for Crossing {
-    type Markers = (DefaultSlot,);
-}
-
-impl<Conn, Enc, Policy> BindSlots<Conn, ((Policy, Enc),)> for Crossing
+impl<Egress, Enc, State> Handle<Event, (), Outs<(Slot<DefaultSlot, Egress, Enc>,)>, (), State>
+    for Crossing
 where
-    Conn: ConnectedBroker,
-    Policy: PublishPolicy<Conn>,
-{
-    type Bound = CrossingDef<SlotPublisher<Policy::Live, DefaultSlot>, Enc>;
-    type Extra = ((Policy, Enc),);
-
-    fn bind(self, sources: ((Policy, Enc),)) -> (Self::Bound, Self::Extra) {
-        (CrossingDef(PhantomData), sources)
-    }
-}
-
-/// The definition the slot publisher and the scope codec are threaded into. It is never
-/// constructed with a value in it: the injected publisher reaches the body through the
-/// injections tuple, and the generics only pin its type.
-struct CrossingDef<Egress, Enc>(SlotTypes<(Egress, Enc)>);
-
-impl<Egress, Enc> InjectDef for CrossingDef<Egress, Enc>
-where
-    Egress: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
-{
-    type Input = Decoded<Event>;
-    type Context = ();
-    type Source = Name;
-    type Injections = (Out<Egress, DefaultSlot, (), Enc>,);
-
-    fn source(&self) -> Self::Source {
-        Name::new("out.crossing")
-    }
-
-    fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
-        // An unrestricted slot declares its marker's whole dictionary; the implicit one has none.
-        <DefaultSlot as OutSlot>::outgoing()
-    }
-}
-
-impl<State, Egress, Enc> InjectCall<State> for CrossingDef<Egress, Enc>
-where
+    Slot<DefaultSlot, Egress, Enc>: Publish,
     State: Send + Sync,
-    Egress: Publisher + Send + Sync + 'static,
-    Enc: Codec + Send + Sync + 'static,
 {
-    async fn call(
+    async fn handle(
         &self,
         event: &Event,
-        injections: &Self::Injections,
+        outs: &Outs<(Slot<DefaultSlot, Egress, Enc>,)>,
         _ctx: &mut Context<'_, (), State>,
-    ) -> Settle {
-        let Out(out) = &injections.0;
+    ) -> Result<(), HandlerOutcome> {
         let payload = serde_json::to_vec(event).expect("serializable");
-        if out.raw(&payload).to("out.other").publish().await.is_err() {
-            return HandlerResult::retry().into();
+        if outs
+            .get(DefaultSlot)
+            .raw(&payload)
+            .to("out.other")
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerOutcome::retry());
         }
-        HandlerResult::Ack.into()
+        Ok(())
     }
 }
 
@@ -118,7 +60,8 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
             let _ = b; // the target broker may mount its own handlers here
         })
         .with_broker(ingress_broker, |b| {
-            b.include(Crossing).publisher(to_other);
+            b.include(subscriber("out.crossing", Crossing).build())
+                .publisher(to_other);
         });
     // --8<-- [end:cross_broker]
     let running = app.start().await.expect("startup failed");

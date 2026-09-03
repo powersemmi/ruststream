@@ -20,6 +20,11 @@ help: the following other types implement trait `RequestReply`
    | |     EncodeCodec: Send + Sync,
    | |_____________________________^ `TypedSlot<P, Body, M, EncodeCodec>`
    |
+  ::: src/runtime/handle/outs.rs
+   |
+   |   impl<M: OutSlot, W: RequestReply, E: Send + Sync> RequestReply for Slot<M, W, E> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Slot<M, W, E>`
+   |
   ::: src/memory/capability.rs
    |
    |   impl RequestReply for MemoryRequester {
@@ -30,7 +35,7 @@ note: required for `__RsOutDef_forward<SlotPublisher<MemoryPublisher, DefaultSlo
    |
 14 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
-15 | async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerResult {
+15 | async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerOutcome {
    |                                                     ------------ unsatisfied trait bound introduced here
    = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open)>>`
 note: required by a bound in `IncludeSlots::<'_, Mount, B, Layers, C, State, Pipeline, Def, (ruststream::runtime::MissingSlot<M>,)>::publisher`

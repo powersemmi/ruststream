@@ -31,7 +31,7 @@ serde = { version = "1", features = ["derive"] }
 | `msgpack` | rmp-serde | `MsgpackCodec` |
 | `cbor` | ciborium | `CborCodec` |
 | `memory` | - | `MemoryBroker`, эталонный in-memory брокер |
-| `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]`, `#[derive(Message)]` |
+| `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]`, `#[derive(MessageInfo)]` |
 | `asyncapi` | schemars, serde_norway | генерация AsyncAPI и HTML-просмотрщик |
 | `metrics` | prometheus | middleware и экспортёр Prometheus |
 | `logging` | tracing-subscriber | `ruststream::logging`, цветной консольный логгер ([Логирование](../guides/logging.md)) |

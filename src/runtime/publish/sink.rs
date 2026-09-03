@@ -102,7 +102,7 @@ impl<T: Transaction> PublishSink for &mut T {
 }
 
 /// The codec position of a publish builder: the surface's own codec, or one named at the call
-/// with [`with_codec`](super::Publish::with_codec).
+/// with [`with_codec`](super::PublishBuilder::with_codec).
 ///
 /// The two forms are `&C` (the surface's codec, borrowed - the scope, router or application
 /// level of the codec ladder) and [`CallCodec<C>`] (a codec named at the call, the most specific
@@ -126,7 +126,7 @@ impl<C: Codec> PublishCodec for &C {
 
 /// A codec named at the call site, the most specific level of the codec ladder.
 ///
-/// Produced by [`Publish::with_codec`](super::Publish::with_codec); you never construct it
+/// Produced by [`PublishBuilder::with_codec`](super::PublishBuilder::with_codec); you never construct it
 /// directly.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct CallCodec<C>(pub(crate) C);

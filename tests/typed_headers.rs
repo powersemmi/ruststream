@@ -14,7 +14,7 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerResult, Headers, Out, Router, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Out, Router, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::{
     Buffered, Name, OutMessages, OutSlot, Outgoing, Publisher, TransactionalPublisher, nonzero,
@@ -86,7 +86,7 @@ async fn convert(
     chunk: &Chunk,
     Headers(meta): Headers<ChunkMeta>,
     Out(events): Out<impl Publisher, Events, ConvertSends>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     // No headers contract on Progress: publish directly.
     if events
         .message(&Progress { percent: 100 })
@@ -94,7 +94,7 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // ChunkDone declares DoneMeta: with_headers is required by the contract.
     let done = ChunkDone {
@@ -110,21 +110,21 @@ async fn convert(
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // A sequence payload publishes like any declared model.
     let frames = Frames(vec![Frame { offset: chunk.seq }]);
     if events.message(&frames).publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn from_headers_extracts_and_declared_messages_publish() {
     let app =
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(convert).out(Events, MemoryPublish).mount();
+            b.include(convert).out(Events, MemoryPublish).build();
         });
     let tb = TestApp::start(app).await.expect("start");
 
@@ -142,7 +142,7 @@ async fn from_headers_extracts_and_declared_messages_publish() {
     broker
         .subscriber("chunks.raw")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 
     // The destinations come from each message's own declaration, not from handler code.
     broker
@@ -182,9 +182,9 @@ async fn from_headers_extracts_and_declared_messages_publish() {
 async fn transactional_convert(
     chunk: &Chunk,
     Out(events): Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>,
-) -> HandlerResult {
+) -> HandlerOutcome {
     if events.begin_transaction().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     let done = ChunkDone {
         output_key: format!("txn/{}", chunk.seq),
@@ -203,14 +203,14 @@ async fn transactional_convert(
             .is_err()
         || events.commit().await.is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
     // The Publisher supertrait: a per-message computed destination stays available.
     let audit = format!("audit.{}", chunk.seq);
     if events.raw(b"seen").to(audit).publish().await.is_err() {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -219,7 +219,7 @@ async fn typed_out_composes_with_transactional_capability() {
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(transactional_convert)
                 .out(Events, MemoryPublish)
-                .mount();
+                .build();
         });
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
@@ -233,7 +233,7 @@ async fn typed_out_composes_with_transactional_capability() {
     broker
         .subscriber("txn.raw")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 
     broker
         .published::<Progress>("chunks.progress")
@@ -248,15 +248,15 @@ async fn typed_out_composes_with_transactional_capability() {
 // --- failure policy: a header contract violation follows on_failure(decode = ..) ---
 
 #[subscriber("audit")]
-async fn strict(_chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
+async fn strict(_chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
     let _ = meta;
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[subscriber("lenient", on_failure(decode = skip))]
-async fn lenient(_chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
+async fn lenient(_chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
     let _ = meta;
-    HandlerResult::retry()
+    HandlerOutcome::retry()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -279,7 +279,7 @@ async fn header_contract_violation_follows_decode_policy() {
     broker
         .subscriber("audit")
         .assert_called_once()
-        .settled(HandlerResult::drop())
+        .settled(HandlerOutcome::drop())
         .assert_last_failed_to_decode();
 
     // on_failure(decode = skip) covers the header contract too: the delivery is acked past,
@@ -293,16 +293,16 @@ async fn header_contract_violation_follows_decode_policy() {
     broker
         .subscriber("lenient")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
 // --- raw input composes with Headers: bytes body, typed header contract ---
 
 #[subscriber("frames", raw, on_failure(decode = skip))]
-async fn frame(payload: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerResult {
+async fn frame(payload: &[u8], Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
     assert!(!payload.is_empty());
     assert_eq!(meta.chunk_no, 3);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -326,7 +326,7 @@ async fn raw_input_composes_with_from_headers() {
     broker
         .subscriber("frames")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 
     // And the raw handler still applies the decode policy to a broken contract.
     broker
@@ -338,13 +338,13 @@ async fn raw_input_composes_with_from_headers() {
     broker
         .subscriber("frames")
         .assert_called(2)
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
 }
 
 // --- no declared set: the publish stays available, gated by the marker's list alone ---
 
 #[subscriber("unrestricted.raw")]
-async fn unrestricted(chunk: &Chunk, Out(events): Out<impl Publisher, Events>) -> HandlerResult {
+async fn unrestricted(chunk: &Chunk, Out(events): Out<impl Publisher, Events>) -> HandlerOutcome {
     let _ = chunk;
     if events
         .message(&Progress { percent: 1 })
@@ -352,16 +352,16 @@ async fn unrestricted(chunk: &Chunk, Out(events): Out<impl Publisher, Events>) -
         .await
         .is_err()
     {
-        return HandlerResult::retry();
+        return HandlerOutcome::retry();
     }
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unrestricted_slot_publishes_any_listed_type() {
     let app =
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(unrestricted).out(Events, MemoryPublish).mount();
+            b.include(unrestricted).out(Events, MemoryPublish).build();
         });
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
@@ -375,7 +375,7 @@ async fn unrestricted_slot_publishes_any_listed_type() {
     broker
         .subscriber("unrestricted.raw")
         .assert_called_once()
-        .settled(HandlerResult::Ack);
+        .settled(HandlerOutcome::ack());
     broker
         .published::<Progress>("chunks.progress")
         .assert_called_once()
@@ -389,14 +389,14 @@ async fn unrestricted_slot_publishes_any_listed_type() {
 mod generic_message_derives {
     #![allow(dead_code)]
 
-    use ruststream::{Message, Outgoing};
+    use ruststream::{MessageInfo, Outgoing};
 
-    #[derive(Message)]
+    #[derive(MessageInfo)]
     struct Borrowed<'a> {
         s: &'a str,
     }
 
-    #[derive(Message)]
+    #[derive(MessageInfo)]
     struct Wrapper<T: Clone>(T);
 
     #[derive(Outgoing)]
@@ -427,13 +427,14 @@ static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec
 // per-element alignment is actually exercised across more than one element. The wait bound stays
 // at its 10 ms default: a longer one would only make the suite wait for the tail batch.
 #[subscriber(batch(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2))))]
-async fn bulk(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerResult {
+async fn bulk(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
     let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
     seen.push((
         chunks.iter().map(|chunk| chunk.seq).collect(),
         meta.iter().map(|m| (m.task_id, m.chunk_no)).collect(),
     ));
-    HandlerResult::Ack
+    drop(seen);
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -506,12 +507,13 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
 static ROUTED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
 
 #[subscriber(batch("chunks.routed"))]
-async fn routed(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerResult {
+async fn routed(chunks: &[Chunk], Headers(meta): Headers<Vec<ChunkMeta>>) -> HandlerOutcome {
     let mut seen = ROUTED_SEEN.lock().expect("the test holds no poisoned lock");
     for (chunk, meta) in chunks.iter().zip(&meta) {
         seen.push((chunk.seq, meta.chunk_no));
     }
-    HandlerResult::Ack
+    drop(seen);
+    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
