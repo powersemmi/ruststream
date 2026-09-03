@@ -45,10 +45,11 @@ impl<T> Admits<T, ()> for AnyDeclared {}
 /// publish after settling is a compile error. This is the hand-written counterpart of the
 /// per-page transaction the runtime drives for a `.transactional()` reply wiring.
 ///
-/// The scope encodes values with the surface's codec and sends them directly: the reply
-/// [`PublishTransform`](crate::runtime::PublishTransform) stack and the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer)
-/// middleware do not run here - both belong to the dispatch path, where a delivery context
-/// exists.
+/// The scope encodes values with the surface's codec and sends them into the open transaction
+/// directly: it opens on the surface's own publisher, so a slot's
+/// [`OutTransform`](crate::runtime::OutTransform) stack, the reply
+/// [`PublishTransform`](crate::runtime::PublishTransform) stack and the app-wide
+/// [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware do not run here.
 ///
 /// `Admit` is the surface the scope was opened on, and gates what [`message`](Self::message)
 /// admits (see [`Admits`]): a scope opened on a slot admits what the slot's typed entry admits,
@@ -216,9 +217,11 @@ impl<P, Enc, Admit> fmt::Debug for TransactionScope<'_, P, Enc, Admit> {
 /// [`abort`](Self::abort), both of which consume the value, so a double commit or a publish
 /// after settling is a compile error.
 ///
-/// Like the scope, it encodes values and sends them directly: the reply [`PublishTransform`](crate::runtime::PublishTransform)
-/// stack and the app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware belong
-/// to the dispatch path, where a delivery context exists, and do not run here. `Admit` is the
+/// Like the scope, it encodes values and buffers them directly: the publish paths a mount site
+/// composes - a slot's [`OutTransform`](crate::runtime::OutTransform) stack, the reply
+/// [`PublishTransform`](crate::runtime::PublishTransform) stack, the app-wide
+/// [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware - end in a send, and
+/// the buffer is not one, so none of them run here. `Admit` is the
 /// surface the transaction was opened on and gates what [`message`](Self::message) admits, as
 /// on the scope (see [`Admits`]).
 ///

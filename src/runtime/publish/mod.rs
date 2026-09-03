@@ -1,7 +1,8 @@
 //! Outgoing message and the publish middleware pipeline.
 //!
-//! When a handler's reply is published (via `#[subscriber(.., publish(..))]`), it flows through a
-//! chain of [`PublishLayer`] before reaching the broker publisher. Middleware transform the
+//! Every publish a handler makes - the reply of a `#[subscriber(.., publish(..))]` form, and every
+//! message that leaves through an injected [`Out`](super::Out) slot - flows through a chain of
+//! [`PublishLayer`] before reaching the broker publisher. Middleware transform the
 //! payload (for example, wrap it in a Confluent / Avro envelope) and enrich the headers
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
