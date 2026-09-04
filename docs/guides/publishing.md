@@ -11,7 +11,7 @@ An explicit publish is always the same builder: it starts with `message(..)` and
 
 ```text
 message(&order)   -> codec -> bytes -> broker    (a Serialize value encodes)
-message(&export)  ->          bytes -> broker    (a Serialized value already is bytes)
+message(&export)  ->          bytes -> broker    (a Serialized value produces its own)
 ```
 
 Bytes a service already holds encoded travel as a `Serialized` newtype - naming them puts them
@@ -69,7 +69,7 @@ Decoding of the incoming request follows the scope (the scope codec set with
 built. See [Codecs](codecs.md#the-publish-side).
 
 One clause serves both wires, because the choice belongs to the reply type rather than to the
-clause. A `serde::Serialize` reply encodes, as above. A `#[derive(Serialized)]` reply carries
+clause. A `serde::Serialize` reply encodes, as above. A `#[derive(Serialized)]` reply produces
 its own bytes and leaves byte-for-byte, so its `.out(Reply, ..)` takes the policy and nothing
 else: there is no codec to name on that wire, and `.codec(..)` after it does not compile. See
 [raw subscribers](subscribers.md#raw-subscribers).
@@ -214,8 +214,9 @@ every declared message. See [typed headers](headers.md).
 
 The wire of a typed publish is selected by the type. `message(&value)` encodes a
 `serde::Serialize` value with the resolved codec, as above; a `#[derive(Serialized)]` type
-carries its own bytes, and the same call publishes them exactly as they are - no codec anywhere
-on the path. Everything else follows the ordinary rules: give the type `#[derive(Outgoing)]` and
+produces its own bytes - holding them, or writing them on the spot - and the same call publishes
+them exactly as they are, with no codec anywhere on the path. Everything else follows the
+ordinary rules: give the type `#[derive(Outgoing)]` and
 list it in `#[publishes(..)]` like any model. It is documented under its own name (with no
 payload schema - the bytes are the format), its declared destination resolves the publish, and
 the dictionary, a declared message set and the headers positions gate it exactly as they gate an

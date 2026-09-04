@@ -575,7 +575,7 @@ implement [`Codec`](codecs.md) instead and keep the typed path.
 
 A handler on this lane replies through the same `publish("dest")` clause every reply form uses,
 and the reply *type* picks the wire by the same mnemonic: a `serde::Serialize` reply encodes
-through the reply codec, a `#[derive(Serialized)]` newtype carries its own bytes and leaves
+through the reply codec, a `#[derive(Serialized)]` reply produces its own bytes and leaves
 byte-for-byte, exactly as the handler returned it. Return the reply directly, or as
 `Result<Export, HandlerOutcome>` for the same explicit ack control the encoded form has.
 

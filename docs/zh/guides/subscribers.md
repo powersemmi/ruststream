@@ -527,7 +527,7 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 
 这条路径上的处理器，回复用的是和其他回复写法完全相同的那一个 `publish("dest")` 子句；用哪种传输方式
 发出去，同样由回复的*类型*按这套助记法来选：实现了 `serde::Serialize` 的回复由回复的编解码器编码；
-带 `#[derive(Serialized)]` 的 newtype 自带字节，按字节原样发出，和处理器返回时一模一样。直接返回
+带 `#[derive(Serialized)]` 的回复自己产出字节，按字节原样发出，和处理器返回时一模一样。直接返回
 这个回复，或者写成 `Result<Export, HandlerOutcome>`，后者提供与编码写法相同的显式 ack 控制。
 
 发布者来自挂载点：两种传输方式都用同一种写法指定策略（`b.include(relay).out(Reply, Publish)`），
