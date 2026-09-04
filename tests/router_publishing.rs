@@ -353,8 +353,8 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let router =
-        Router::<MemoryBroker>::new().include(bl_relay.batch(nonzero!(8)).publisher(Publish).build());
+    let router = Router::<MemoryBroker>::new()
+        .include(bl_relay.batch(nonzero!(8)).publisher(Publish).build());
 
     let app = RustStream::new(AppInfo::new("bl", "0.1.0"))
         .publish_layer(StampApp)

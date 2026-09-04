@@ -1,15 +1,15 @@
 error[E0277]: `MemoryRequester` does not support broker-side transactions
-  --> tests/ui/reply_transactional_mismatch.rs:26:53
+  --> tests/ui/reply_transactional_mismatch.rs:26:11
    |
-26 |         b.include(confirm).publisher(MemoryRequest).transactional();
-   |                                                     ^^^^^^^^^^^^^ the trait `TransactionalPublisher` is not implemented for `MemoryRequester`
+26 |         b.include(
+   |           ^^^^^^^ the trait `TransactionalPublisher` is not implemented for `MemoryRequester`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> src/memory/capability.rs
+  --> src/runtime/slot.rs
    |
-   |   impl TransactionalPublisher for MemoryPublisher {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+   |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
   ::: src/runtime/handle/outs.rs
    |
@@ -17,17 +17,10 @@ help: the following other types implement trait `TransactionalPublisher`
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: src/runtime/slot.rs
+  ::: src/memory/capability.rs
    |
-   |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |   impl TransactionalPublisher for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
    = note: required for `ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>` to implement `PublishPolicy<ConnectedMemoryBroker>`
-   = note: required for `ruststream::runtime::WithSource<ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::BatchPublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Page<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::DefaultReply>>, Name, (Open, Open, Open)>>`
-note: required by a bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, ruststream::runtime::WithSource<W>>::transactional`
-  --> src/runtime/app/include/builder.rs
-   |
-   |     pub fn transactional(
-   |            ------------- required by a bound in this associated function
-...
-   |         WithSource<W::Out>: CommitVia<Mount, B, Layers, C, State, Pipeline, Def>,
-   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeWith::<'s, Mount, B, Layers, C, State, Pipeline, Def, WithSource<W>>::transactional`
+   = note: required for `ruststream::runtime::WithSource<ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>` to implement `runtime::app::include::commit::CommitVia<runtime::router::mount::BatchPublishMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Page<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest, ()>>, Name, (Open, Open, Open, Fixed)>>`
+   = note: required for `SealedBatchPublishing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Page<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest, ruststream::runtime::WithSource<ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>>>, Name, (Open, Open, Open, Fixed)>>`

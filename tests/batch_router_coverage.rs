@@ -107,7 +107,12 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
         .include(brc_relay)
         .publisher(Publish)
         .build()
-        .include(brc_batch_relay.batch(nonzero!(64)).publisher(Publish).build());
+        .include(
+            brc_batch_relay
+                .batch(nonzero!(64))
+                .publisher(Publish)
+                .build(),
+        );
 
     assert!(format!("{router:?}").contains("Router"));
 
