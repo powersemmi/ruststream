@@ -12,10 +12,10 @@ mod common;
 
 use common::{Event, Wire};
 
-use ruststream::PairError;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::testing::TestApp;
+use ruststream::{OutgoingMessage, PairError};
 
 /// The payload view the slot-publishing body takes: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -176,6 +176,152 @@ async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
         .published::<Event>("slots.settled")
         .assert_called_once()
         .with(&Event { id: 4 });
+}
+
+/// The same settling, driven through the raw capability methods instead of the typed openers:
+/// the entry delegates each of them, so a body that drives `begin_transaction` / `commit` by
+/// hand keeps the slot attribution on what it publishes in between.
+#[subscriber("slots.by-hand")]
+async fn settle_by_hand(
+    event: &Event,
+    Out(journal): Out<impl TransactionalPublisher, Encoded>,
+) -> HandlerOutcome {
+    if TransactionalPublisher::begin_transaction(journal)
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    let payload = serde_json::to_vec(event).expect("serializable");
+    if journal
+        .message(&Wire::of(payload))
+        .to("slots.by-hand.settled")
+        .publish()
+        .await
+        .is_err()
+        || TransactionalPublisher::commit(journal).await.is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_raw_capability_calls_keep_the_slot_attribution() {
+    let app = RustStream::new(AppInfo::new("slots-by-hand", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(settle_by_hand)
+                .out(Encoded, TransactionalPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Event { id: 6 })
+        .to("slots.by-hand")
+        .publish()
+        .await
+        .expect("publish");
+
+    // The publish went through the entry, so the slot view has it; the commit released it to the
+    // broker, so the publish log has it too.
+    tb.out::<Encoded>()
+        .assert_called_once()
+        .decoded_as::<Event>()
+        .with(&Event { id: 6 });
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("slots.by-hand.settled")
+        .assert_called_once()
+        .with(&Event { id: 6 });
+}
+
+/// A broker refusing a raw capability call reports it in the entry's own error type, so the body
+/// settles on the refusal instead of unwinding. The body commits with nothing open, the refusal
+/// the in-memory broker gives on demand.
+#[subscriber("slots.refused")]
+async fn commit_without_begin(
+    _event: &Event,
+    Out(journal): Out<impl TransactionalPublisher, Encoded>,
+) -> HandlerOutcome {
+    if TransactionalPublisher::commit(journal).await.is_err() {
+        return HandlerOutcome::drop();
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_capability_call_comes_back_as_the_entrys_error() {
+    let app = RustStream::new(AppInfo::new("slots-refused", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(commit_without_begin)
+                .out(Encoded, TransactionalPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Event { id: 8 })
+        .to("slots.refused")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("slots.refused")
+        .assert_called_once()
+        .settled(HandlerOutcome::drop());
+    tb.out::<Encoded>().assert_not_called();
+}
+
+/// The typed opener and the raw one share the name `transaction`, and the inherent typed one
+/// wins; the raw capability method stays reachable through the trait path. What it hands back is
+/// the broker's own transaction value, so the body publishes into it at the byte level - and
+/// what that buffer settles leaves outside the slot, in the broker's publish log alone.
+#[subscriber("slots.raw-owned")]
+async fn settle_raw(
+    event: &Event,
+    Out(ledger): Out<impl OwnedTransactions, Encoded>,
+) -> HandlerOutcome {
+    let Ok(mut txn) = OwnedTransactions::transaction(ledger).await else {
+        return HandlerOutcome::retry();
+    };
+    let payload = serde_json::to_vec(event).expect("serializable");
+    if txn
+        .publish(OutgoingMessage::new("slots.raw-owned.settled", &payload))
+        .await
+        .is_err()
+        || txn.commit().await.is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_raw_owned_transaction_settles_outside_the_slot() {
+    let app = RustStream::new(AppInfo::new("slots-raw-owned", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(settle_raw)
+                .out(Encoded, TransactionalPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Event { id: 5 })
+        .to("slots.raw-owned")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("slots.raw-owned.settled")
+        .assert_called_once()
+        .with(&Event { id: 5 });
+    tb.out::<Encoded>().assert_not_called();
 }
 
 // A slot left unbound is a compile error, not a runtime one: `.build()` does not exist until

@@ -12,7 +12,7 @@ mod common;
 use std::error::Error;
 use std::future::{Future, ready};
 
-use common::Order;
+use common::{Order, Wire};
 
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
@@ -223,6 +223,40 @@ async fn a_broker_settings_trait_reaches_a_slot_policy() {
         .published::<Order>("pre.mount.audit")
         .assert_called_once()
         .with(&Order { id: 6 });
+}
+
+/// The byte-for-byte reply: its bytes are the payload, so the wiring carries the publish policy
+/// and nothing else.
+#[subscriber("mount.raw", publish("mount.raw.receipts"))]
+async fn echo_raw(order: &Order) -> Wire {
+    Wire::of(order.id.to_be_bytes())
+}
+
+/// ...and the settings trait reaches that wiring too: a policy is all it carries, and replacing
+/// it is what `map_publisher` does, so the position with no codec and no transform stack is
+/// configured the same way as every other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_settings_trait_reaches_a_byte_for_byte_reply_policy() {
+    let app = RustStream::new(AppInfo::new("mount-map-raw", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(echo_raw)
+                .out(Reply, Prefixed::default())
+                .prefixed("pre.");
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 4 })
+        .to("mount.raw")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("pre.mount.raw.receipts")
+        .assert_called_once()
+        .with_raw(4u32.to_be_bytes().as_slice());
 }
 
 /// Where the two surfaces genuinely differ: a slot's publish pipeline is part of the

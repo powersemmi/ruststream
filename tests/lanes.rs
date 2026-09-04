@@ -113,6 +113,17 @@ async fn the_lanes_compose_end_to_end() {
         .published::<Vec<u8>>("lanes.encode.out")
         .assert_called_once()
         .with_raw(&7usize.to_be_bytes());
+    // A page of self-deserializing views carries no model to decode back into, so what the body
+    // was handed is read at the byte level: one page, holding the frame as it was published.
+    let pages = tb
+        .broker::<MemoryBroker>()
+        .subscriber("lanes.frames")
+        .pages_raw();
+    let seen: Vec<Vec<&[u8]>> = pages
+        .iter()
+        .map(|page| page.iter().map(AsRef::as_ref).collect())
+        .collect();
+    assert_eq!(seen, vec![vec![b"page".as_slice()]]);
 
     tb.shutdown().await.expect("graceful shutdown");
 }

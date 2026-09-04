@@ -544,12 +544,25 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
         .include(relay)
         .build()
         .include(bulk_relay.batch(nonzero!(64)))
+        .build()
+        .include(forward)
+        .out(DefaultSlot, Publish)
+        .build()
+        .include(forward_page.batch(nonzero!(64)))
+        .out(DefaultSlot, Publish)
         .build();
 
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
     assert_eq!(
         names,
-        ["rp.seek.in", "rp.raw.in", "rp.reply.in", "rp.batch.in"]
+        [
+            "rp.seek.in",
+            "rp.raw.in",
+            "rp.reply.in",
+            "rp.batch.in",
+            "rp.out.in",
+            "rp.page.in",
+        ]
     );
 }
 
