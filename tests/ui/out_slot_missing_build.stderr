@@ -1,0 +1,16 @@
+error: unused `MountingSlots` that must be used
+  --> tests/ui/out_slot_missing_build.rs:32:13
+   |
+32 |             b.include(mirror).out(Audit, MemoryPublish);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: a handler with Out slots is not mounted until `.build()` commits it: bind every slot with `.out(marker, policy)`, then finish the chain with `.build()`
+note: the lint level is defined here
+  --> tests/ui/out_slot_missing_build.rs:7:9
+   |
+ 7 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+   |
+32 |             let _ = b.include(mirror).out(Audit, MemoryPublish);
+   |             +++++++

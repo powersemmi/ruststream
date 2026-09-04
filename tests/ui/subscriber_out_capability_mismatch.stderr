@@ -36,12 +36,12 @@ note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<DefaultS
    = note: required for `Router<MemoryBroker, (runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
    = note: 1 redundant requirement hidden
    = note: required for `RouterWith<runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<forward, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<MemoryPublish>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
-note: required by a bound in `Mounting::<'_, B, Layers, C, State, Pipeline, Chain, ruststream::runtime::OnBuild>::build`
+note: required by a bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
   --> src/runtime/app/include/guard.rs
    |
    |     pub fn build(self)
    |            ----- required by a bound in this associated function
    |     where
    |         Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'_, B, Layers, C, State, Pipeline, Chain, OnBuild>::build`
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

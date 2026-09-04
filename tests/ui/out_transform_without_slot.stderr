@@ -8,11 +8,11 @@ error[E0277]: this step has no publish position to apply to
    |
    = help: the trait `ruststream::runtime::NamedStep` is not implemented for `ruststream::runtime::NoOutBound`
    = note: a step rides the position named right before it: `.out(Reply, Policy).transform(..)` for a reply, `.out(Marker, Policy).transform(..)` for a slot
-note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>, Term>::transform`
+note: required by a bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
   --> src/runtime/app/include/guard.rs
    |
    |     pub fn transform<N>(
    |            --------- required by a bound in this associated function
 ...
    |         Attach: TransformLast<N, Last, Step: NamedStep>,
-   |                                              ^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>, Term>::transform`
+   |                                              ^^^^^^^^^ required by this bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`

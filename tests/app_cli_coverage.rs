@@ -677,10 +677,10 @@ async fn debug_slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerOut
     HandlerOutcome::ack()
 }
 
-/// One guard serves every shape a scope registration takes, it renders as `Mounting`, and it
-/// never leaks the scope it borrows.
+/// Each guard names the terminal it commits through - `Mounting` for a registration the drop
+/// finishes, `MountingSlots` for one `.build()` does - and neither leaks the scope it borrows.
 #[test]
-fn the_mount_guard_renders_a_debug_form() {
+fn the_mount_guards_render_their_debug_forms() {
     let _app =
         RustStream::new(AppInfo::new("cov-debug", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             // A reply-only registration is complete as it stands, so dropping the guard commits.
@@ -689,18 +689,36 @@ fn the_mount_guard_renders_a_debug_form() {
             drop(reply);
 
             let slots = b.include(debug_slot);
-            assert_debug_form(&slots, "Mounting");
+            assert_debug_form(&slots, "MountingSlots");
             slots.out(DefaultSlot, Publish).build();
 
             let both = b.include(gate);
-            assert_debug_form(&both, "Mounting");
+            assert_debug_form(&both, "MountingSlots");
             both.out(DefaultSlot, Publish).build();
         });
 }
 
+/// The backstop under the `must_use` warning: a mount site that ignored it registered nothing,
+/// and the drop says so instead of starting a service whose handler never consumes.
+#[test]
+#[should_panic(expected = "included but never mounted")]
+fn a_slot_chain_dropped_before_build_refuses_to_vanish() {
+    let _app = RustStream::new(AppInfo::new("cov-unbuilt", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            // What the lint warns about, written deliberately: the chain never reaches `.build()`.
+            let _ = b.include(debug_slot).out(DefaultSlot, Publish);
+        },
+    );
+}
+
 fn assert_debug_form<T: std::fmt::Debug>(value: &T, expected: &str) {
     let rendered = format!("{value:?}");
-    assert!(rendered.starts_with(expected), "{rendered}");
+    assert_eq!(
+        rendered.split(' ').next(),
+        Some(expected),
+        "the guard must render as {expected}: {rendered}",
+    );
     assert!(
         !rendered.contains("BrokerScope"),
         "the guard must not render the scope it borrows: {rendered}",

@@ -27,19 +27,11 @@ help: the following other types implement trait `TransactionalPublisher`
    = note: required for `Router<MemoryBroker, (runtime::router::routes_publish::BatchPublishingRoute<Name, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Fixed)>, JsonCodec, ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>, ((),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
    = note: 1 redundant requirement hidden
    = note: required for `RouterWith<runtime::router::mount::BatchPublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Fixed)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>, ()), ruststream::runtime::ReplyLast>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
-   = note: required for `ruststream::runtime::OnDrop` to implement `ruststream::runtime::ScopeTerminal<MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::BatchPublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Fixed)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>, ()), ruststream::runtime::ReplyLast>>`
-note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>, Term>::transactional`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transactional`
   --> src/runtime/app/include/guard.rs
    |
-   |       pub fn transactional(
-   |              ------------- required by a bound in this associated function
+   |     pub fn transactional(
+   |            ------------- required by a bound in this associated function
 ...
-   |           Term: ScopeTerminal<
-   |  _______________^
-   | |                 B,
-   | |                 Layers,
-   | |                 C,
-...  |
-   | |                 RouterWith<Mount, R, Def, <Attach as TransactionalLast<Last>>::Out, Last>,
-   | |             >,
-   | |_____________^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>, Term>::transactional`
+   |             ScopeCommit<B, Layers, C, State, Pipeline>,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transactional`
