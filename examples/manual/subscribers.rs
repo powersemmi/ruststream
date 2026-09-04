@@ -16,7 +16,6 @@ use std::error::Error;
 use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{Input, SoloDeserialized};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

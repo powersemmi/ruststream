@@ -12,7 +12,6 @@ use common::{connected, expect_id};
 
 use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 
 /// What crosses the two brokers. Declared here rather than taken from `common`, whose own

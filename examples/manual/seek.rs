@@ -12,7 +12,6 @@ use std::future::{Future, ready};
 use std::time::Duration;
 
 use ruststream::memory::prelude::*;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 

@@ -8,7 +8,6 @@
 use std::future::{Future, ready};
 
 use ruststream::prelude::*;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

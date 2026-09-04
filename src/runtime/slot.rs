@@ -41,7 +41,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::OutSlot;
+/// use ruststream::prelude::*;
 ///
 /// #[derive(Clone, Copy, Debug)]
 /// struct Encoded;
@@ -75,7 +75,7 @@ pub trait OutSlot: 'static {
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{DefaultSlot, OutSlot};
+/// use ruststream::prelude::*;
 ///
 /// assert_eq!(<DefaultSlot as OutSlot>::NAME, "default");
 /// ```
@@ -101,7 +101,7 @@ impl OutSlot for DefaultSlot {
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{OutSlot, PublishedThrough};
+/// use ruststream::prelude::*;
 ///
 /// struct Progress;
 ///
@@ -304,7 +304,7 @@ impl_contains_message! {
 /// ```
 /// # #[cfg(all(feature = "macros", feature = "json"))]
 /// # mod demo {
-/// use ruststream::{OutMessages, Outgoing};
+/// use ruststream::prelude::*;
 /// use serde::Serialize;
 ///
 /// #[derive(Outgoing, Serialize)]

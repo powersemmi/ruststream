@@ -16,17 +16,13 @@ use std::future::{Future, ready};
 use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    BoundSegment, MissingSegment, OutMessages, OutPipeline, OutTransform, OutgoingMessageMetadata,
-    PublishAt, PublishContext, PublishError, PublishLayer, PublishNext, PublishPipeline,
-    PublishTransform, PublishedThrough, TemplateAddress,
+    BoundSegment, MissingSegment, OutPipeline, OutTransform, PublishAt, PublishContext,
+    PublishError, PublishLayer, PublishNext, PublishPipeline, PublishTransform, TemplateAddress,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::Outgoing;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NameTemplate, NoHeaders, OutgoingDestination,
-};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

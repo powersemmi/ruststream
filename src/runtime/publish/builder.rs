@@ -185,9 +185,7 @@ impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
 /// [`ReplyShape`](crate::runtime::ReplyShape) for the reply position.
 ///
 /// ```
-/// use ruststream::runtime::{
-///     MessageWire, ReplyShape, Serialized, SerializedReply, SerializedWire,
-/// };
+/// use ruststream::prelude::*;
 ///
 /// struct Export(Vec<u8>);
 ///

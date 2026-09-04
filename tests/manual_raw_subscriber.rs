@@ -14,9 +14,7 @@ use std::future::{Future, ready};
 use std::sync::Mutex;
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{Input, MessageWire, SerializedReply, SerializedWire, SoloDeserialized};
 use ruststream::testing::TestApp;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";

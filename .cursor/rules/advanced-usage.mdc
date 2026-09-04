@@ -69,9 +69,11 @@ alwaysApply: false
   reply traits `Serialized` / `ReplyShape`, the injections arena `Outs` / `Slot` and the publisher
   capability traits a slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`), plus `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`,
-  `DefaultSlot`, `RouterDef` and `nonzero!`). The lane machinery the impls name -
-  `Input`, `SoloDeserialized`, `SerializedReply` - stays an explicit
-  `use ruststream::runtime::{..}`.
+  `DefaultSlot`, `RouterDef` and `nonzero!`), and so do the spellings the hand-written impls
+  name: `Input` / `SoloDeserialized`, `MessageWire` / `SerializedWire`, `SerializedReply`,
+  `OutgoingDestination` with `CallerName` / `FixedName` / `NameTemplate`, `MessageHeaders` with
+  `NoHeaders` / `WithHeaders`, `PublishedThrough`, `OutMessages` / `OutgoingMessageMetadata`,
+  and `FromContext`. A service without the feature imports nothing beyond the glob.
 - Mount with `b.include(subscriber(source, body).build())` (the portable form: the source resolves
   at startup), or `b.handle(subscriber, handler, metadata)` when you already hold an open
   subscriber. Routers have the same `include` method, so grouping still works.
@@ -174,8 +176,6 @@ elements and coherence cannot split the two.
 
 ```rust
 use std::convert::Infallible;
-
-use ruststream::runtime::{Input, SoloDeserialized};
 
 struct Frame<'a>(&'a [u8]);
 
@@ -328,9 +328,6 @@ Without the `macros` feature the same impls are written by hand; the caller-name
 short ones, and then the value publishes like any declared message:
 
 ```rust
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutSlot, OutgoingDestination};
-use ruststream::runtime::{OutMessages, OutgoingMessageMetadata};
-
 impl OutgoingDestination for Receipt {
     type Form = CallerName; // FixedName / NameTemplate for a declared destination
 }

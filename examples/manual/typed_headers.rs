@@ -15,15 +15,9 @@ use std::future::{Future, ready};
 
 use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{
-    ContainsMessage, Input, MessageWire, OutMessages, OutgoingMessageMetadata, PublishedThrough,
-    SerializedWire, SlotPos, SoloDeserialized,
-};
+use ruststream::runtime::{ContainsMessage, SlotPos};
 use ruststream::schemars::{JsonSchema, schema_for};
 use ruststream::testing::TestApp;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeaders,
-};
 use serde::{Deserialize, Serialize};
 
 /// The schema a declaration contributes to the document. The derives reach it through an autoref
