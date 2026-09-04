@@ -22,7 +22,7 @@ use super::context::Context;
 use super::handler::{Handler, HandlerOutcome};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`], or to one
-/// registration with [`Router::with`](super::Router::with).
+/// registration with the `layer` step of the chain that mounts it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot wrap `{H}`",
     note = "a layer that wraps one registration implements `Layer<H>` for the handler it wraps; \

@@ -71,9 +71,9 @@ pub trait OutSlot: 'static {
 
 /// The implicit marker of a single unnamed `Out<impl Publisher>` parameter.
 ///
-/// A handler with one `Out` parameter needs no marker: the parameter binds to this slot, and
-/// the include site attaches its policy with the plain
-/// [`publisher`](super::IncludeWith::publisher) call.
+/// A handler with one `Out` parameter needs no marker: the parameter binds to this slot, and the
+/// include site attaches its policy by naming the marker like any other, `.out(DefaultSlot,
+/// policy)`.
 ///
 /// # Examples
 ///
