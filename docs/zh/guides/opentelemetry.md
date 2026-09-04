@@ -98,7 +98,7 @@ provider 装成进程**全局**的，并把 `tracing` span 桥接进去，于是
 | `messaging.client.sent.messages` | 计数器，失败时带 `error.type` | 发布次数 |
 | `messaging.client.operation.duration` | 直方图 | 发布操作本身 |
 | `ruststream.message.payload.size` | 直方图（`By`） | 已发布载荷的大小 |
-| `ruststream.batch.size` | 直方图 | 交给批量处理器的、解码后的批次大小 |
+| `ruststream.batch.size` | 直方图 | 交给批量处理器的、解码后的批量大小 |
 | `ruststream.app.state` | 可观测仪表 | 生命周期状态，经由 `otel.observe_health(running.health())` 取自 [`RunningApp::health`](http.md#a-healthz-endpoint) |
 
 批量处理器会绕过按消息计的消费侧层（这是文档里写明的[中间件](middleware.md)例外），因此
