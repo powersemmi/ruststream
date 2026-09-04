@@ -199,8 +199,13 @@ async fn settle_by_hand(
         .publish()
         .await
         .is_err()
-        || TransactionalPublisher::commit(journal).await.is_err()
     {
+        // The handle carries the open transaction, so a body driving it by hand closes it before
+        // it hands the delivery back: the next one begins on a free handle.
+        let _ = TransactionalPublisher::abort(journal).await;
+        return HandlerOutcome::retry();
+    }
+    if TransactionalPublisher::commit(journal).await.is_err() {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
@@ -292,8 +297,11 @@ async fn settle_raw(
         .publish(OutgoingMessage::new("slots.raw-owned.settled", &payload))
         .await
         .is_err()
-        || txn.commit().await.is_err()
     {
+        let _ = txn.abort().await;
+        return HandlerOutcome::retry();
+    }
+    if txn.commit().await.is_err() {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
