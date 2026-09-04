@@ -172,7 +172,7 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
     let app = RustStream::new(AppInfo::new("batched", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(handle_batch.batch(nonzero!(64)))
+            b.include(handle_batch.batch(nonzero!(64)));
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

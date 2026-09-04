@@ -93,10 +93,9 @@ async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
 /// the pool only bounds how many are processed at once. Every delivery is drained.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_sources_compose_with_a_batch_pool() {
-    let app = RustStream::new(AppInfo::new("buf", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| b.include(buffered_drain.batch(nonzero!(2))),
-    );
+    let app = RustStream::new(AppInfo::new("buf", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(buffered_drain.batch(nonzero!(2)));
+    });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // Six deliveries against a size cap of two: they cannot all fit in one batch.

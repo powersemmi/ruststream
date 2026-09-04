@@ -271,7 +271,7 @@ async fn per_element_outcomes_retry_individually() {
             async move { Ok::<_, std::convert::Infallible>(Attempts { retried_once }) }
         })
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(reconcile.batch(nonzero!(64)))
+            b.include(reconcile.batch(nonzero!(64)));
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

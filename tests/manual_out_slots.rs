@@ -300,7 +300,7 @@ impl ShardLanes for LaneRouter {
 // transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own
 // traits. A body holds the entry, so without this impl the capability is reachable by autoderef
 // for a method call but never satisfies a trait bound.
-impl<M, W: ShardLanes, E, Body> ShardLanes for Slot<M, W, E, Body> {
+impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
         (**self).lane(shard)
     }

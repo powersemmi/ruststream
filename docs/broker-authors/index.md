@@ -347,12 +347,12 @@ implements; on top of that the core delegates its own capability set (`Publisher
 than that - or is not a publisher at all (a per-partition producer cache, a shard router) -
 declare your own capability trait and implement it for the live value.
 
-What the body actually holds is the arena entry, `Slot<Marker, W, E, Body>`, a transparent window
-onto that value. Autoderef carries a method call through it, but not a trait bound: a helper
+What the body actually holds is the arena entry, `Slot<Marker, W, E, Pipe, Body>`, a transparent
+window onto that value. Autoderef carries a method call through it, but not a trait bound: a helper
 written as `fn issue<L: Lanes>(lanes: &L)` rejects the entry with `E0277`. Add one blanket impl
-next to your trait - `impl<M, W: Lanes, E, Body> Lanes for Slot<M, W, E, Body>`, delegating
-through the entry's `Deref` - and helpers and bodies generic over the capability take the entry
-as it is. The concrete type still never appears in application code:
+next to your trait - `impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`,
+delegating through the entry's `Deref` - and helpers and bodies generic over the capability take
+the entry as it is. The concrete type still never appears in application code:
 
 === "Macros"
 

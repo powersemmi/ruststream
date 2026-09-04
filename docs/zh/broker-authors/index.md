@@ -314,10 +314,10 @@ seeker，它只带句柄、不带位置。
 活值提供的能力不止于此，或者它根本就不是发布者（一个按分区的 producer 缓存、一个分片路由器）时，
 就声明你自己的能力 trait，并为这个活值实现它。
 
-处理器主体手里拿到的并不是那个值，而是竞技场里的条目 `Slot<Marker, W, E, Body>`，一扇通向它的透明
+处理器主体手里拿到的并不是那个值，而是竞技场里的条目 `Slot<Marker, W, E, Pipe, Body>`，一扇通向它的透明
 窗口。自动解引用能把方法调用送过这扇窗，却送不过 trait 约束：写成 `fn issue<L: Lanes>(lanes: &L)`
 的辅助函数会以 `E0277` 拒收这个条目。在你的 trait 旁边加上一个全覆盖实现
-`impl<M, W: Lanes, E, Body> Lanes for Slot<M, W, E, Body>`，通过条目的 `Deref` 转发，此后按能力
+`impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`，通过条目的 `Deref` 转发，此后按能力
 泛型的辅助函数和主体就能原样接收这个条目。具体类型依然不会出现在应用代码里：
 
 === "宏"

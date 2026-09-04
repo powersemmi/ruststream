@@ -32,8 +32,10 @@ async fn refuse(orders: &[Order]) -> HandlerOutcome {
 /// behind an answer that named no element in particular.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_uniform_refusal_settles_every_element_of_the_page() {
-    let app = RustStream::new(AppInfo::new("uniform", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(refuse.batch(nonzero!(64))));
+    let app =
+        RustStream::new(AppInfo::new("uniform", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(refuse.batch(nonzero!(64)));
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     for id in 0..3u32 {
@@ -88,7 +90,9 @@ async fn a_uniform_ack_runs_its_attached_work_once_for_the_page() {
             let counter = state_counter;
             async move { Ok::<_, std::convert::Infallible>(Continued(counter)) }
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(accept.batch(nonzero!(64))));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(accept.batch(nonzero!(64)));
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 9 })

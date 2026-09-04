@@ -16,8 +16,8 @@ use ruststream::memory::{MemoryBroker, MemorySource};
 use ruststream::runtime::{
     AppInfo, HandlerOutcome, Router, RustStream, SubscriberSettings, layers::TracingLayer,
 };
-use ruststream::{nonzero, subscriber};
 use ruststream::testing::TestApp;
+use ruststream::{nonzero, subscriber};
 
 /// Publishes one order to each topic and asserts every one of them reached its handler exactly
 /// once. Nothing else is recorded: the subject is which registrations mount, not what they do.

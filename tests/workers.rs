@@ -140,8 +140,10 @@ async fn settle(orders: &[Order]) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_pool_dispatches_batches() {
-    let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(settle.batch(nonzero!(8))));
+    let app =
+        RustStream::new(AppInfo::new("pages", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(settle.batch(nonzero!(8)));
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
