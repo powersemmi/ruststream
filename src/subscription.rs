@@ -257,6 +257,51 @@ impl<S, P> StartAt<S, P> {
             position,
         }
     }
+
+    /// Replaces the wrapped source with `f`'s result, keeping the position.
+    ///
+    /// A broker's own settings trait is bound to its descriptor type, and a `start_at(..)` in the
+    /// attribute (or at the mount site) puts this wrapper between the builder and that
+    /// descriptor - so those methods are no longer in scope on the source the chain carries. This
+    /// is how a second impl over `StartAt<Descriptor, P>` reaches them again, in one line per
+    /// setting:
+    /// `self.map_source(|source| source.map_inner(|inner| inner.durable("workers")))`.
+    ///
+    /// The source type may change, which is what a descriptor that wraps another one (the
+    /// client-side [`Buffered`](crate::Buffered) batcher, a broker's own adapter) needs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "memory")]
+    /// # {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::memory::{ConnectedMemoryBroker, MemoryPosition, MemorySource};
+    /// use ruststream::{Buffered, StartAt, SubscriptionSource};
+    ///
+    /// // What `start_at(..)` builds at the mount site: the broker's descriptor, wrapped.
+    /// let source = StartAt::new(MemorySource::new("orders"), MemoryPosition::start());
+    ///
+    /// // The broker's own setting reaches the descriptor underneath - here the client-side
+    /// // batch buffer a transport with no batching of its own wraps it in - and the position
+    /// // the mount site named stays where it was.
+    /// let buffered =
+    ///     source.map_inner(|inner| Buffered::new(inner).max_wait(Duration::from_millis(25)));
+    ///
+    /// assert_eq!(
+    ///     SubscriptionSource::<ConnectedMemoryBroker>::name(&buffered),
+    ///     "orders",
+    /// );
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn map_inner<T>(self, f: impl FnOnce(S) -> T) -> StartAt<T, P> {
+        StartAt {
+            inner: f(self.inner),
+            position: self.position,
+        }
+    }
 }
 
 impl<S, P> fmt::Debug for StartAt<S, P> {
@@ -323,5 +368,23 @@ mod tests {
             "orders"
         );
         assert!(format!("{source:?}").contains("StartAt"));
+    }
+
+    /// The wrapper hides the descriptor a broker's settings trait is bound to, so it hands it
+    /// back: the mapped source is what the subscription opens on, and the position is untouched.
+    #[test]
+    fn a_start_position_hands_back_the_source_it_wraps() {
+        let renamed =
+            StartAt::new(MemorySource::new("orders"), MemoryPosition::start()).map_inner(|inner| {
+                assert_eq!(
+                    SubscriptionSource::<ConnectedMemoryBroker>::name(&inner),
+                    "orders",
+                );
+                MemorySource::new("orders-7")
+            });
+        assert_eq!(
+            SubscriptionSource::<ConnectedMemoryBroker>::name(&renamed),
+            "orders-7",
+        );
     }
 }
