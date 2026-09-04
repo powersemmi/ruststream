@@ -21,6 +21,7 @@
 
 use std::{fmt, time::Duration};
 
+use super::helpers::unique_subject;
 use crate::{
     AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
     Publisher, Subscribe, Subscriber, SubscriptionSource, testing::TestableBroker,
@@ -38,6 +39,16 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// between each other. Each scenario connects the broker (the consuming ladder transition) and
 /// drives the connected form through the broker's own [`Subscribe`] /
 /// [`TestableBroker::inject`] surface.
+///
+/// This is the routing contract and nothing else. A capability
+/// ([`BatchSubscriber`](crate::BatchSubscriber),
+/// [`RequestReply`](crate::RequestReply), [`TransactionalPublisher`](crate::TransactionalPublisher),
+/// [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`](crate::Seekable)) has a suite of
+/// its own in [`capabilities`](super::capabilities), which the broker calls for each capability it
+/// implements: none of them can be folded in here, because the bound would either exclude every
+/// broker that declines the capability or demand the in-process transport implement it. So a
+/// broker running `run_suite` alone has not checked its batches - `capabilities::batches` is the
+/// call that does, against the broker's own subscription source.
 ///
 /// # Panics
 ///
@@ -84,7 +95,9 @@ where
 /// * `make_publisher` produces a publisher from the connected form.
 ///
 /// Run it from the broker crate, against a real server where one is needed (NATS, Kafka, ...) or
-/// in-process for the in-memory broker.
+/// in-process for the in-memory broker. The subject it publishes under is unique per run (see
+/// [`unique_subject`](super::helpers::unique_subject)), so a server that keeps what an earlier run
+/// left - a retained log, a durable queue - does not fail the next one.
 ///
 /// # Examples
 ///
@@ -119,21 +132,21 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
-    const SUBJECT: &str = "conformance.lifecycle";
+    let subject = unique_subject("conformance.lifecycle");
 
     let connected = make_broker()
         .connect()
         .await
         .expect("broker must connect after synchronous construction");
 
-    let mut subscriber = make_source(SUBJECT)
+    let mut subscriber = make_source(&subject)
         .subscribe(&connected)
         .await
         .expect("subscription source must open against the connected form");
     let publisher = make_publisher(&connected);
 
     publisher
-        .publish(OutgoingMessage::new(SUBJECT, b"lifecycle".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"lifecycle".as_slice()))
         .await
         .expect("publish after connect failed");
 
@@ -160,7 +173,7 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     // the shutdown is the surface that must stay honest at runtime.
     assert!(
         publisher
-            .publish(OutgoingMessage::new(SUBJECT, b"post-shutdown".as_slice()))
+            .publish(OutgoingMessage::new(&subject, b"post-shutdown".as_slice()))
             .await
             .is_err(),
         "publish through a handle aliasing the closed connection must error",

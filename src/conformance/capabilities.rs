@@ -6,6 +6,13 @@
 //! not call it. Like [`harness::lifecycle`](super::harness::lifecycle), every suite is built from
 //! caller-supplied factories so it stays broker-agnostic, and the in-memory broker is the
 //! executable reference that passes all of them.
+//!
+//! Every suite names its subject through
+//! [`unique_subject`](super::helpers::unique_subject) rather than fixing one, so a run reads only
+//! its own messages. A fixed subject would pass once and fail on the second run against any
+//! broker that keeps what the first left: a retained log, a durable queue, a key namespace. The
+//! suites are therefore re-runnable against one server, and two of them can run at once in one
+//! process.
 
 use std::{fmt, num::NonZeroUsize, time::Duration};
 
@@ -13,6 +20,7 @@ use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
 use super::harness::{expect_next, expect_no_more};
+use super::helpers::unique_subject;
 use crate::{
     AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage,
     OutgoingMessage, OwnedTransactions, Positioned, Publisher, RequestReply, Seekable, Seeker,
@@ -68,11 +76,14 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
-    const SUBJECT: &str = "conformance.request_reply";
+    let subject = unique_subject("conformance.request_reply");
+    // Derived from the same run, so the "nobody answers" leg cannot collide with a responder
+    // another run of this suite left listening.
+    let unanswered_subject = format!("{subject}.void");
 
     let connected = make_broker().connect().await.expect("broker must connect");
 
-    let mut responder = make_source(SUBJECT)
+    let mut responder = make_source(&subject)
         .subscribe(&connected)
         .await
         .expect("responder subscription must open after connect");
@@ -109,7 +120,7 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
         }
     };
     let request = requester.request(
-        OutgoingMessage::new(SUBJECT, b"ping".as_slice()),
+        OutgoingMessage::new(&subject, b"ping".as_slice()),
         DEFAULT_TIMEOUT,
     );
 
@@ -123,7 +134,7 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
 
     let unanswered = requester
         .request(
-            OutgoingMessage::new("conformance.request_reply.void", b"ping".as_slice()),
+            OutgoingMessage::new(&unanswered_subject, b"ping".as_slice()),
             MISS_TIMEOUT,
         )
         .await;
@@ -176,15 +187,16 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
-    const SUBJECT: &str = "conformance.batches";
     const COUNT: u32 = 10;
     // Smaller than the run, so a broker that ignores the size it is given is caught by the
     // batch-length assertion below rather than by luck of timing.
     const BATCH: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 
+    let subject = unique_subject("conformance.batches");
+
     let connected = make_broker().connect().await.expect("broker must connect");
 
-    let mut subscriber = make_source(SUBJECT)
+    let mut subscriber = make_source(&subject)
         .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
@@ -192,7 +204,7 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 
     for i in 0..COUNT {
         publisher
-            .publish(OutgoingMessage::new(SUBJECT, i.to_be_bytes().as_slice()))
+            .publish(OutgoingMessage::new(&subject, i.to_be_bytes().as_slice()))
             .await
             .expect("publish failed");
     }
@@ -276,11 +288,11 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Pub: TransactionalPublisher,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
-    const SUBJECT: &str = "conformance.transactions";
+    let subject = unique_subject("conformance.transactions");
 
     let connected = make_broker().connect().await.expect("broker must connect");
 
-    let mut subscriber = make_source(SUBJECT)
+    let mut subscriber = make_source(&subject)
         .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
@@ -292,11 +304,11 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .await
         .expect("begin_transaction failed");
     publisher
-        .publish(OutgoingMessage::new(SUBJECT, b"first".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"first".as_slice()))
         .await
         .expect("publish inside transaction failed");
     publisher
-        .publish(OutgoingMessage::new(SUBJECT, b"second".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"second".as_slice()))
         .await
         .expect("publish inside transaction failed");
     expect_no_more(&mut stream, "transactions: before commit").await;
@@ -324,7 +336,7 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .await
         .expect("begin_transaction failed");
     publisher
-        .publish(OutgoingMessage::new(SUBJECT, b"discarded".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"discarded".as_slice()))
         .await
         .expect("publish inside transaction failed");
     publisher.abort().await.expect("abort failed");
@@ -349,7 +361,7 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     );
     // The rejected second begin must not have disturbed the open transaction.
     publisher
-        .publish(OutgoingMessage::new(SUBJECT, b"third".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"third".as_slice()))
         .await
         .expect("publish inside transaction failed");
     publisher
@@ -418,21 +430,21 @@ pub async fn owned_transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Pub: OwnedTransactions,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
-    const SUBJECT: &str = "conformance.owned_transactions";
+    let subject = unique_subject("conformance.owned_transactions");
 
     let connected = make_broker().connect().await.expect("broker must connect");
 
-    let mut subscriber = make_source(SUBJECT)
+    let mut subscriber = make_source(&subject)
         .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
     let publisher = make_publisher(&connected);
     let mut stream = std::pin::pin!(subscriber.stream());
 
-    owned_settlement(&publisher, &mut stream, SUBJECT).await;
-    owned_concurrent_settlements(&publisher, &mut stream, SUBJECT).await;
-    owned_concurrent_commits(&publisher, &mut stream, SUBJECT).await;
-    owned_direct_publish(&publisher, &mut stream, SUBJECT).await;
+    owned_settlement(&publisher, &mut stream, &subject).await;
+    owned_concurrent_settlements(&publisher, &mut stream, &subject).await;
+    owned_concurrent_commits(&publisher, &mut stream, &subject).await;
+    owned_direct_publish(&publisher, &mut stream, &subject).await;
 
     connected
         .shutdown()
@@ -668,12 +680,13 @@ pub async fn seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
-    const SUBJECT: &str = "conformance.seeking";
     const COUNT: u8 = 5;
+
+    let subject = unique_subject("conformance.seeking");
 
     let connected = make_broker().connect().await.expect("broker must connect");
 
-    let mut subscriber = make_source(SUBJECT)
+    let mut subscriber = make_source(&subject)
         .subscribe(&connected)
         .await
         .expect("subscription must open after connect");
@@ -683,7 +696,7 @@ pub async fn seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 
     for i in 0..COUNT {
         publisher
-            .publish(OutgoingMessage::new(SUBJECT, &[i]))
+            .publish(OutgoingMessage::new(&subject, &[i]))
             .await
             .expect("publish failed");
     }
@@ -748,7 +761,7 @@ pub async fn seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     expect_no_more(&mut stream, "seeking: after the forward target").await;
 
     publisher
-        .publish(OutgoingMessage::new(SUBJECT, &[COUNT]))
+        .publish(OutgoingMessage::new(&subject, &[COUNT]))
         .await
         .expect("publish failed");
     let live = expect_next(&mut stream, "seeking: after a new publish").await;
