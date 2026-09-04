@@ -14,12 +14,9 @@
 //! stack, which must be a `BlanketLayer` (every bundled layer is). `TracingLayer` here applies to
 //! both `confirm` and `reject`, mounted through the `routes` module.
 
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::layers::TracingLayer;
-use ruststream::runtime::{
-    AppInfo, HandlerOutcome, Identity, Router, RouterDef, RustStream, Stack,
-};
-use ruststream::subscriber;
+use ruststream::runtime::{Identity, Stack};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

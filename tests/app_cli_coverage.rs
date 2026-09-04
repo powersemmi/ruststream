@@ -22,19 +22,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use ruststream::codec::CborCodec;
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemorySubscriber,
-};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, DefaultSlot, Handle, HandlerOutcome, HealthState, IntoSource, Out, Outgoing,
-    PublishContext, PublishError, PublishExt, PublishTransform, RustStream, RustStreamError,
-    TypedPublisher, subscriber as subscriber_def,
+    HealthState, IntoSource, Outgoing, PublishContext, PublishError, PublishTransform,
+    RustStreamError, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
-use ruststream::{
-    Broker, ConnectedBroker, DescribeServer, Deserialized, Publisher, Serialized, ServerSpec,
-    SubscriptionSource, subscriber,
-};
+use ruststream::{ConnectedBroker, DescribeServer, ServerSpec, SubscriptionSource};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
@@ -50,7 +45,6 @@ struct Frame<'a>(&'a [u8]);
 #[derive(Serialized)]
 struct Export(Vec<u8>);
 
-// ---------------------------------------------------------------------------------------------
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is
 // interested, so what the service reports about itself is observable only with one installed.
 
@@ -168,7 +162,6 @@ async fn the_lifecycle_logs_name_the_service_brokers_and_subscribers() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
 // run / run_until: the two foreground forms.
 
 static FAIL_FAST_READY: Notify = Notify::const_new();
@@ -269,7 +262,6 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
     outcome.expect("the signalled shutdown must be graceful");
 }
 
-// ---------------------------------------------------------------------------------------------
 // Startup and teardown failures.
 
 /// A subscription descriptor the broker refuses to open, for the startup unwind.
@@ -462,7 +454,6 @@ async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
 // The graceful-shutdown timeout: both what it bounds (handlers, post-settle continuations).
 
 static HUNG_HANDLER: Notify = Notify::const_new();
@@ -535,7 +526,6 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
         .expect("an abandoned continuation is not a shutdown failure");
 }
 
-// ---------------------------------------------------------------------------------------------
 // The builder surface: the labeled-codec registration and the include builders.
 
 static LABELED_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -608,14 +598,12 @@ async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Ex
 }
 
 /// A byte-reply handler with an `Out` slot: the slot is bound explicitly and the reply leaves
-/// through the broker's default publish policy, with no `.publisher(..)` in the chain.
+/// through the broker's default publish policy, with no `.out(Reply, ..)` in the chain.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
     let app =
         RustStream::new(AppInfo::new("cov-audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(audited_relay)
-                .out(DefaultSlot, MemoryPublish)
-                .build();
+            b.include(audited_relay).out(DefaultSlot, Publish).build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -646,15 +634,16 @@ async fn gate(order: &Order, Out(audit): Out<impl Publisher>) -> Receipt {
     Receipt { id: order.id }
 }
 
-/// The reply side of a publishing handler with slots is overridable: `.publisher(..)` replaces
+/// The reply side of a publishing handler with slots is overridable: `.out(Reply, ..)` replaces
 /// the default reply source, and the rest of the chain still binds the slots.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
     let app =
         RustStream::new(AppInfo::new("cov-gate", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(gate)
-                .publisher(TypedPublisher::new(MemoryPublish).transform(Envelope))
-                .out(DefaultSlot, MemoryPublish)
+                .out(Reply, Publish)
+                .transform(Envelope)
+                .out(DefaultSlot, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -688,22 +677,24 @@ async fn debug_slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerOut
     HandlerOutcome::ack()
 }
 
-/// Each registration builder is `Debug`, and none of them leaks the scope it borrows.
+/// One guard serves every shape a scope registration takes, it renders as `Mounting`, and it
+/// never leaks the scope it borrows.
 #[test]
-fn the_include_builders_render_a_debug_form() {
+fn the_mount_guard_renders_a_debug_form() {
     let _app =
         RustStream::new(AppInfo::new("cov-debug", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            // A reply-only registration is complete as it stands, so dropping the guard commits.
             let reply = b.include(debug_reply);
-            assert_debug_form(&reply, "IncludeWith");
-            reply.publisher(TypedPublisher::new(MemoryPublish));
+            assert_debug_form(&reply, "Mounting");
+            drop(reply);
 
             let slots = b.include(debug_slot);
-            assert_debug_form(&slots, "IncludeSlots");
-            slots.publisher(MemoryPublish);
+            assert_debug_form(&slots, "Mounting");
+            slots.out(DefaultSlot, Publish).build();
 
             let both = b.include(gate);
-            assert_debug_form(&both, "IncludeSlotsWithReply");
-            both.out(DefaultSlot, MemoryPublish).build();
+            assert_debug_form(&both, "Mounting");
+            both.out(DefaultSlot, Publish).build();
         });
 }
 
@@ -712,6 +703,6 @@ fn assert_debug_form<T: std::fmt::Debug>(value: &T, expected: &str) {
     assert!(rendered.starts_with(expected), "{rendered}");
     assert!(
         !rendered.contains("BrokerScope"),
-        "the builder must not render the scope it borrows: {rendered}",
+        "the guard must not render the scope it borrows: {rendered}",
     );
 }

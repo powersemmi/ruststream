@@ -9,8 +9,7 @@ use std::error::Error;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -42,10 +41,10 @@ impl Handle<Payment> for Reconcile {
 
 // --8<-- [start:batch_retry_after]
 /// Selective outcomes carry per-element delays: settled payments ack immediately, pending ones
-/// come back in thirty seconds without holding up the rest of the page.
-struct ReconcilePage;
+/// come back in thirty seconds without holding up the rest of the batch.
+struct ReconcileBatch;
 
-impl Handle<[Payment]> for ReconcilePage {
+impl Handle<[Payment]> for ReconcileBatch {
     fn handle(
         &self,
         payments: &[Payment],
@@ -69,8 +68,13 @@ impl Handle<[Payment]> for ReconcilePage {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("payments", Reconcile).build());
-        // Batches dispatch per page rather than per delivery, and the page input is what says so.
-        b.include(subscriber("payments", ReconcilePage).build());
+        // Batches dispatch per batch rather than per delivery, and the batch input is what says
+        // so; the batch size is the one parameter the mount owes the broker.
+        b.include(
+            subscriber("payments", ReconcileBatch)
+                .batch(nonzero!(64))
+                .build(),
+        );
     })
 }
 

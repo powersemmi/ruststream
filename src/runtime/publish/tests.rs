@@ -194,8 +194,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
 
     let (events, guard) = capture_events();
 
-    let wrapper = TypedPublisher::new(PendingCommit).transactional();
-    let scope = wrapper.begin().await.expect("begin failed");
+    let scope = PendingCommit.begin().await.expect("begin failed");
     {
         let mut commit = std::pin::pin!(scope.commit());
         assert!(
@@ -492,47 +491,44 @@ async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
     assert_eq!(decoded, 7);
 }
 
-/// The transactional wiring reports the same reply codec as the stack it wraps: the batch
-/// mounts read it off either shape to decode the incoming batch.
+/// The transactional sink reports the same reply codec as the stack it wraps: the batch mounts
+/// read it off either shape.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[test]
-fn the_transactional_wiring_reports_the_reply_codec() {
+fn the_transactional_sink_reports_the_reply_codec() {
     use crate::codec::{Codec, JsonCodec};
     use crate::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
-    let wiring = TypedPublisher::with_codec(broker.publisher(), JsonCodec).transactional();
+    let sink = Transactional::live(TypedPublisher::with_codec(broker.publisher(), JsonCodec));
 
-    let from_wiring: u32 = ReplyWiring::decode_codec(&wiring)
-        .decode(b"7")
-        .expect("decode through the wiring codec");
-    let from_reply: u32 = ReplyPublisher::<()>::reply_codec(&wiring)
+    let decoded: u32 = ReplyPublisher::<()>::reply_codec(&sink)
         .decode(b"7")
         .expect("decode through the reply codec");
-    assert_eq!((from_wiring, from_reply), (7, 7));
+    assert_eq!(decoded, 7);
 }
 
-/// The wiring stacks hide their leaf and codec from Debug: a publisher is not a data type,
+/// The live sinks hide their leaf and codec from Debug: a publisher is not a data type,
 /// and its connection must not print.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[test]
-fn the_wiring_stacks_render_without_their_leaf() {
+fn the_live_sinks_render_without_their_leaf() {
     use crate::codec::JsonCodec;
     use crate::memory::MemoryPublish;
 
     let typed = TypedPublisher::with_codec(MemoryPublish, JsonCodec);
     assert_eq!(format!("{typed:?}"), "TypedPublisher { .. }");
     assert_eq!(
-        format!("{:?}", typed.transactional()),
+        format!("{:?}", Transactional::live(typed)),
         "Transactional { .. }",
     );
 }
 
-/// A typed publisher over a policy leaf is itself a policy: pairing swaps the leaf for its
-/// live form and the codec travels along, so the paired stack publishes.
+/// The wiring a mount site's chain builds is a policy: pairing swaps the policy leaf for its
+/// live form and the named codec travels along, so the paired stack publishes.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[tokio::test]
-async fn a_typed_publisher_over_a_policy_pairs_into_its_live_form() {
+async fn a_reply_wiring_pairs_into_its_live_sink() {
     use futures::StreamExt;
 
     use crate::codec::JsonCodec;
@@ -543,10 +539,11 @@ async fn a_typed_publisher_over_a_policy_pairs_into_its_live_form() {
     let mut subscriber = broker.subscribe("paired");
     let connected = broker.clone().connect().await.expect("connect failed");
 
-    let live = TypedPublisher::with_codec(MemoryPublish, JsonCodec)
+    let live = ReplyWiring::new(MemoryPublish)
+        .name_codec(JsonCodec)
         .pair(&connected)
         .await
-        .expect("pairing a typed publisher over a policy failed");
+        .expect("pairing a reply wiring failed");
 
     let headers = HeaderMap::new();
     let cx = PublishContext::new("in", &headers, &());
@@ -564,11 +561,11 @@ async fn a_typed_publisher_over_a_policy_pairs_into_its_live_form() {
     msg.ack().await.expect("ack failed");
 }
 
-/// The transactional wiring pairs like the plain one, and its scope holds the publishes back
-/// until the commit.
+/// A `.transactional()` wiring pairs like the plain one, into the sink that wraps a batch's
+/// replies in one broker transaction.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[tokio::test]
-async fn a_paired_transactional_wiring_scopes_its_publishes() {
+async fn a_transactional_wiring_pairs_into_the_transactional_sink() {
     use futures::StreamExt;
 
     use crate::codec::JsonCodec;
@@ -579,13 +576,47 @@ async fn a_paired_transactional_wiring_scopes_its_publishes() {
     let mut subscriber = broker.subscribe("scoped");
     let connected = broker.clone().connect().await.expect("connect failed");
 
-    let live = TypedPublisher::with_codec(MemoryPublish, JsonCodec)
-        .transactional()
+    let live = ReplyWiring::new(MemoryPublish)
+        .name_codec(JsonCodec)
+        .into_transactional()
         .pair(&connected)
         .await
         .expect("pairing a transactional wiring failed");
 
-    let mut scope = live.begin().await.expect("begin failed");
+    let headers = HeaderMap::new();
+    let cx = PublishContext::new("in", &headers, &());
+    live.publish_batch("scoped", &[4_u32, 5], &PublishIdentity, &cx)
+        .await
+        .expect("the batch's replies must publish and commit");
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut sent = Vec::new();
+    for _ in 0..2 {
+        let msg = stream
+            .next()
+            .await
+            .expect("delivery missing")
+            .expect("memory subscriber never errors");
+        sent.push(msg.payload().to_vec());
+        msg.ack().await.expect("ack failed");
+    }
+    assert_eq!(sent, vec![b"4".to_vec(), b"5".to_vec()]);
+}
+
+/// The scope a bare publisher opens holds its publishes back until the commit.
+#[cfg(all(feature = "memory", feature = "json"))]
+#[tokio::test]
+async fn a_publisher_scope_holds_its_publishes_until_the_commit() {
+    use futures::StreamExt;
+
+    use crate::memory::MemoryBroker;
+    use crate::{IncomingMessage, Subscriber};
+
+    let broker = MemoryBroker::new();
+    let mut subscriber = broker.subscribe("scoped");
+    let publisher = broker.publisher();
+
+    let mut scope = publisher.begin().await.expect("begin failed");
     scope
         .publish("scoped", &4_u32)
         .await
@@ -621,14 +652,13 @@ async fn a_refused_begin_fails_the_batch_before_the_first_reply() {
 
     use crate::codec::JsonCodec;
 
-    let wiring = TypedPublisher::with_codec(
+    let wiring = Transactional::live(TypedPublisher::with_codec(
         Rigged {
             fail_begin: true,
             ..Rigged::default()
         },
         JsonCodec,
-    )
-    .transactional();
+    ));
     let headers = HeaderMap::new();
     let cx = PublishContext::new("in", &headers, &());
 
@@ -655,7 +685,7 @@ async fn a_failed_reply_aborts_the_whole_batch() {
 
     use crate::codec::JsonCodec;
 
-    let wiring = TypedPublisher::with_codec(Rigged::default(), JsonCodec).transactional();
+    let wiring = Transactional::live(TypedPublisher::with_codec(Rigged::default(), JsonCodec));
     let headers = HeaderMap::new();
     let cx = PublishContext::new("in", &headers, &());
 
@@ -693,14 +723,13 @@ async fn a_failed_abort_is_logged_rather_than_propagated() {
 
     let (events, guard) = capture_events();
 
-    let wiring = TypedPublisher::with_codec(
+    let wiring = Transactional::live(TypedPublisher::with_codec(
         Rigged {
             fail_abort: true,
             ..Rigged::default()
         },
         JsonCodec,
-    )
-    .transactional();
+    ));
     let headers = HeaderMap::new();
     let cx = PublishContext::new("in", &headers, &());
 
@@ -739,14 +768,13 @@ async fn a_refused_commit_fails_the_batch() {
 
     use crate::codec::JsonCodec;
 
-    let wiring = TypedPublisher::with_codec(
+    let wiring = Transactional::live(TypedPublisher::with_codec(
         Rigged {
             fail_commit: true,
             ..Rigged::default()
         },
         JsonCodec,
-    )
-    .transactional();
+    ));
     let headers = HeaderMap::new();
     let cx = PublishContext::new("in", &headers, &());
 
@@ -774,10 +802,8 @@ async fn a_refused_commit_fails_the_batch() {
 async fn a_scoped_publish_reports_an_encode_failure_without_settling() {
     use fixtures::{Rigged, unencodable};
 
-    use crate::codec::JsonCodec;
-
-    let wiring = TypedPublisher::with_codec(Rigged::default(), JsonCodec).transactional();
-    let mut scope = wiring.begin().await.expect("begin failed");
+    let publisher = Rigged::default();
+    let mut scope = publisher.begin().await.expect("begin failed");
 
     let err = scope
         .publish("out", &unencodable())
@@ -803,14 +829,13 @@ async fn an_owned_transaction_encodes_and_discards_on_abort() {
     use futures::StreamExt;
 
     use crate::Subscriber;
-    use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("owned");
-    let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
+    let publisher = broker.publisher();
 
-    let mut txn = publisher.transaction().await.expect("open failed");
+    let mut txn = publisher.owned_transaction().await.expect("open failed");
     assert_eq!(format!("{txn:?}"), "TypedTransaction { .. }");
     txn.publish("owned", &3_u32).await.expect("publish failed");
     txn.abort().await.expect("abort failed");
@@ -821,7 +846,7 @@ async fn an_owned_transaction_encodes_and_discards_on_abort() {
         "an aborted buffer never reaches the bus",
     );
 
-    let mut txn = publisher.transaction().await.expect("open failed");
+    let mut txn = publisher.owned_transaction().await.expect("open failed");
     let err = txn
         .publish("owned", &unencodable())
         .await
@@ -846,7 +871,8 @@ async fn a_refused_pairing_fails_the_whole_wiring() {
 
     let connected = MemoryBroker::new().connect().await.expect("connect failed");
 
-    let plain = TypedPublisher::with_codec(RefusePairing, JsonCodec)
+    let plain = ReplyWiring::new(RefusePairing)
+        .name_codec(JsonCodec)
         .pair(&connected)
         .await
         .expect_err("the policy refuses to pair");
@@ -855,8 +881,9 @@ async fn a_refused_pairing_fails_the_whole_wiring() {
         "the policy's reason must survive the stack: {plain}",
     );
 
-    let transactional = TypedPublisher::with_codec(RefusePairing, JsonCodec)
-        .transactional()
+    let transactional = ReplyWiring::new(RefusePairing)
+        .name_codec(JsonCodec)
+        .into_transactional()
         .pair(&connected)
         .await
         .expect_err("the policy refuses to pair");
@@ -873,21 +900,13 @@ async fn a_refused_pairing_fails_the_whole_wiring() {
 async fn a_refused_begin_reports_the_publisher_error() {
     use fixtures::Rigged;
 
-    use crate::codec::JsonCodec;
-
-    let wiring = TypedPublisher::with_codec(
-        Rigged {
-            fail_begin: true,
-            ..Rigged::default()
-        },
-        JsonCodec,
-    )
-    .transactional();
-
-    let err = wiring
-        .begin()
-        .await
-        .expect_err("the publisher refuses to begin");
+    let err = Rigged {
+        fail_begin: true,
+        ..Rigged::default()
+    }
+    .begin()
+    .await
+    .expect_err("the publisher refuses to begin");
     assert_eq!(err.to_string(), "the rigged publisher refused");
 }
 
@@ -898,12 +917,8 @@ async fn a_refused_begin_reports_the_publisher_error() {
 async fn a_refused_owned_transaction_reports_the_publisher_error() {
     use fixtures::Rigged;
 
-    use crate::codec::JsonCodec;
-
-    let publisher = TypedPublisher::with_codec(Rigged::default(), JsonCodec);
-
-    let err = publisher
-        .transaction()
+    let err = Rigged::default()
+        .owned_transaction()
         .await
         .expect_err("the publisher refuses to open a transaction");
     assert_eq!(err.to_string(), "the rigged publisher refused");

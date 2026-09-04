@@ -1,7 +1,7 @@
 //! The handler forms from the Subscribers guide, written without the `macros` feature.
 //!
 //! A handler is a named type with an `impl Handle`, and the input spelling picks the form: `&T`
-//! for one decoded message, `&[T]` for a page, `&[F<'_>]` for a page of raw payloads, where `F`
+//! for one decoded message, `&[T]` for a batch, `&[F<'_>]` for a batch of raw payloads, where `F`
 //! is a type of the service's own that constructs itself from the bytes (`Deserialized`). The
 //! one constructor - `subscriber` - binds the body to its subscription source, the declarative
 //! settings (`.name`, `.workers`, `.on_failure`, `.buffered`) chain on the result, `.build()`
@@ -14,11 +14,8 @@
 use std::convert::Infallible;
 use std::error::Error;
 use std::future::{Future, ready};
-use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemorySource};
-use ruststream::prelude::*;
-use ruststream::runtime::{Input, SoloDeserialized};
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -65,11 +62,11 @@ impl Handle<Order> for WithContext {
 // --8<-- [end:context]
 
 // --8<-- [start:batch]
-/// Settles a whole page of orders in one go: the slice input is what says so, and a single
-/// outcome settles every delivery behind the page.
-struct SettlePage;
+/// Settles a whole batch of orders in one go: the slice input is what says so, and a single
+/// outcome settles every delivery behind the batch.
+struct SettleBatch;
 
-impl Handle<[Order]> for SettlePage {
+impl Handle<[Order]> for SettleBatch {
     fn handle(
         &self,
         orders: &[Order],
@@ -83,7 +80,7 @@ impl Handle<[Order]> for SettlePage {
 // --8<-- [end:batch]
 
 // --8<-- [start:batch_selective]
-/// Retries only the entries that are not ready yet; the rest of the page settles. One outcome per
+/// Retries only the entries that are not ready yet; the rest of the batch settles. One outcome per
 /// element, in the order the slice was handed over.
 struct Reconcile;
 
@@ -109,20 +106,25 @@ impl Handle<[Order]> for Reconcile {
 // --8<-- [end:batch_selective]
 
 // --8<-- [start:batch_mount]
-/// Batches dispatch per page rather than per delivery, and the page input is the whole
+/// Batches dispatch per batch rather than per delivery, and the batch input is the whole
 /// declaration: the mount demands a batching subscriber of the source, exactly as a `&[T]`
-/// handler under `#[subscriber]` would.
+/// handler under `#[subscriber]` would. The batch size is the one parameter a batch mount owes the
+/// broker: at most 64 orders per call, whatever the broker builds its batches out of.
 fn batch_routes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
-        .include(subscriber("orders", SettlePage).build())
-        .include(subscriber("orders", Reconcile).build())
+        .include(
+            subscriber("orders", SettleBatch)
+                .batch(nonzero!(64))
+                .build(),
+        )
+        .include(subscriber("orders", Reconcile).batch(nonzero!(64)).build())
 }
 // --8<-- [end:batch_mount]
 
 // --8<-- [start:raw_batch]
 /// The raw element type. What `#[derive(Deserialized)]` would write is these two impls: the
 /// construction, which borrows the bytes straight out of the delivery, and the `Input`
-/// spelling that routes the type onto the self-deserializing lane - the page spelling
+/// spelling that routes the type onto the self-deserializing lane - the batch spelling
 /// (`&[Frame<'_>]`) comes with it. No codec takes part anywhere on this path.
 struct Frame<'a>(&'a [u8]);
 
@@ -241,8 +243,7 @@ impl Handle<Order> for Archive {
     }
 }
 
-/// Whether batches arrive at all is a property of the broker, so it is settled at the mount:
-/// this handler's subscription buffers client-side.
+/// How big a batch is, is the mount site's word, so the size lands there with the name.
 struct Drain;
 
 impl Handle<[Order]> for Drain {
@@ -291,16 +292,8 @@ fn app() -> RustStream {
                 .build(),
         );
         // --8<-- [end:named_kind]
-        b.include(subscriber("frames", Ingest).build());
-        // --8<-- [start:batch_buffered]
-        // Client-side batching for subscriptions without native batches: close a batch at 128
-        // deliveries, or 20 ms after its first one.
-        b.include(
-            subscriber("orders", Drain)
-                .buffered(nonzero!(128), Duration::from_millis(20))
-                .build(),
-        );
-        // --8<-- [end:batch_buffered]
+        b.include(subscriber("frames", Ingest).batch(nonzero!(32)).build());
+        b.include(subscriber("orders", Drain).batch(nonzero!(128)).build());
         // --8<-- [start:builder_settings]
         b.include(
             subscriber("orders", Bill)

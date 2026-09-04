@@ -8,7 +8,6 @@
 use std::future::{Future, ready};
 
 use ruststream::prelude::*;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +54,7 @@ impl Handle<Order, Confirmation> for Confirm {
 // --8<-- [end:handler]
 
 // --8<-- [start:test]
-use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -64,14 +63,13 @@ async fn confirms_valid_orders() {
     let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            let replies = TypedPublisher::new(MemoryPublish);
             b.include(
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(replies)
                     .build(),
-            );
+            )
+            .out(Reply, Publish);
         },
     );
 

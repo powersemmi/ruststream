@@ -1,51 +1,49 @@
 //! Integration tests for the `Router` include family (subscribe and batch forms), in both codec
 //! forms: the default codec and a chain codec set with `with_codec`. Also covers `merge`, the
 //! router's own `layer` stack, and `handlers()` metadata collection.
-#![cfg(feature = "macros")]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
-use common::{Order, wait_for};
+use common::Order;
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemorySource};
+use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySource};
 use ruststream::runtime::{
-    AppInfo, HandlerOutcome, PublishExt, Router, RustStream, layers::TracingLayer,
+    AppInfo, Context, Handler, HandlerOutcome, Layer, Router, RustStream, SubscriberSettings,
+    layers::TracingLayer,
 };
-use ruststream::{Publisher, subscriber};
+use ruststream::testing::TestApp;
+use ruststream::{nonzero, subscriber};
 
-/// Publishes an order once to each topic (the app is already started, so the subscriptions are
-/// open and every publish lands), then waits until every counter is non-zero.
-async fn publish_and_await_all(
-    publisher: &impl Publisher,
-    topics: &[&str],
-    counters: &[&AtomicUsize],
-) {
+/// Publishes one order to each topic and asserts every one of them reached its handler exactly
+/// once. Nothing else is recorded: the subject is which registrations mount, not what they do.
+async fn drive_all<S: Send + Sync + 'static>(tb: &TestApp<S>, topics: &[&str]) {
     for topic in topics {
-        publisher
-            .message(&Order { id: 1 })
+        tb.message(&Order { id: 1 })
             .to(*topic)
             .publish()
             .await
             .expect("publish");
     }
-    wait_for(
-        || counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1),
-        Duration::from_secs(5),
-    )
-    .await;
+    for topic in topics {
+        tb.broker::<MemoryBroker>()
+            .subscriber(topic)
+            .assert_called_once()
+            .with(&Order { id: 1 })
+            .settled(HandlerOutcome::ack());
+    }
 }
-
-static RI_PLAIN: AtomicUsize = AtomicUsize::new(0);
-static RI_ON: AtomicUsize = AtomicUsize::new(0);
-static RI_BATCH: AtomicUsize = AtomicUsize::new(0);
-static RI_BATCH_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("ri-plain")]
 async fn ri_plain(_o: &Order) -> HandlerOutcome {
-    RI_PLAIN.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
@@ -53,19 +51,18 @@ async fn ri_plain(_o: &Order) -> HandlerOutcome {
 // source belongs, and the attribute takes the broker's own source builder.
 #[subscriber(MemorySource::new("ri-on"))]
 async fn ri_on(_o: &Order) -> HandlerOutcome {
-    RI_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("ri-batch")]
 async fn ri_batch(orders: &[Order]) -> HandlerOutcome {
-    RI_BATCH.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
 #[subscriber(MemorySource::new("ri-batch-on"))]
 async fn ri_batch_on(orders: &[Order]) -> HandlerOutcome {
-    RI_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
@@ -73,99 +70,65 @@ async fn ri_batch_on(orders: &[Order]) -> HandlerOutcome {
 /// string or builds one with the broker's own source type.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_includes_dispatch() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
         .include(ri_plain)
         .include(ri_on)
-        .include(ri_batch)
-        .include(ri_batch_on);
+        .include(ri_batch.batch(nonzero!(64)))
+        .include(ri_batch_on.batch(nonzero!(64)));
 
     let app = RustStream::new(AppInfo::new("ri", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publish_and_await_all(
-        &publisher,
-        &["ri-plain", "ri-on", "ri-batch", "ri-batch-on"],
-        &[&RI_PLAIN, &RI_ON, &RI_BATCH, &RI_BATCH_ON],
-    )
-    .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    drive_all(&tb, &["ri-plain", "ri-on", "ri-batch", "ri-batch-on"]).await;
 }
-
-static RC_PLAIN: AtomicUsize = AtomicUsize::new(0);
-static RC_ON: AtomicUsize = AtomicUsize::new(0);
-static RC_BATCH: AtomicUsize = AtomicUsize::new(0);
-static RC_BATCH_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("rc-plain")]
 async fn rc_plain(_o: &Order) -> HandlerOutcome {
-    RC_PLAIN.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber(MemorySource::new("rc-on"))]
 async fn rc_on(_o: &Order) -> HandlerOutcome {
-    RC_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("rc-batch")]
 async fn rc_batch(orders: &[Order]) -> HandlerOutcome {
-    RC_BATCH.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
 #[subscriber(MemorySource::new("rc-batch-on"))]
 async fn rc_batch_on(orders: &[Order]) -> HandlerOutcome {
-    RC_BATCH_ON.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
 /// The same four registrations decode through a chain codec named once with `with_codec`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_includes_dispatch() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
         .include(rc_plain)
         .include(rc_on)
-        .include(rc_batch)
-        .include(rc_batch_on);
+        .include(rc_batch.batch(nonzero!(64)))
+        .include(rc_batch_on.batch(nonzero!(64)));
 
     let app = RustStream::new(AppInfo::new("rc", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publish_and_await_all(
-        &publisher,
-        &["rc-plain", "rc-on", "rc-batch", "rc-batch-on"],
-        &[&RC_PLAIN, &RC_ON, &RC_BATCH, &RC_BATCH_ON],
-    )
-    .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    drive_all(&tb, &["rc-plain", "rc-on", "rc-batch", "rc-batch-on"]).await;
 }
-
-static RM_A: AtomicUsize = AtomicUsize::new(0);
-static RM_B: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("rm-a")]
 async fn rm_a(_o: &Order) -> HandlerOutcome {
-    RM_A.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("rm-b")]
 async fn rm_b(_o: &Order) -> HandlerOutcome {
-    RM_B.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
@@ -173,9 +136,6 @@ async fn rm_b(_o: &Order) -> HandlerOutcome {
 /// after); a router-scope `layer` on the merged router still dispatches.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn merged_router_dispatches_and_collects_metadata() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let merged = Router::<MemoryBroker>::new().include(rm_a).merge(
         Router::<MemoryBroker>::new()
             .layer(TracingLayer::default())
@@ -186,11 +146,55 @@ async fn merged_router_dispatches_and_collects_metadata() {
     assert_eq!(names, ["rm-a", "rm-b"]);
 
     let app = RustStream::new(AppInfo::new("rm", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(merged));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(merged));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
+    drive_all(&tb, &["rm-a", "rm-b"]).await;
+}
 
-    publish_and_await_all(&publisher, &["rm-a", "rm-b"], &[&RM_A, &RM_B]).await;
+/// A layer fixed to one message type - the shape a runtime-composed
+/// [`DynStack`](ruststream::runtime::DynStack) has - has no blanket impl, so it rides one
+/// registration: `.layer(..)` after an `include` wraps that registration outside its decode step.
+/// The counter proves the wrapper ran, and that it saw only the handler it was named on.
+#[derive(Clone)]
+struct CountRaw(Arc<AtomicUsize>);
 
-    running.shutdown().await.expect("graceful shutdown failed");
+struct Counted<H>(Arc<AtomicUsize>, H);
+
+impl<H> Layer<H> for CountRaw {
+    type Handler = Counted<H>;
+
+    fn layer(&self, inner: H) -> Counted<H> {
+        Counted(Arc::clone(&self.0), inner)
+    }
+}
+
+// Fixed to the broker's own message type, exactly as a `DynStack<MemoryMessage>` is: this is
+// what cannot be written as a `BlanketLayer`.
+impl<H: Handler<MemoryMessage>> Handler<MemoryMessage> for Counted<H> {
+    async fn handle(&self, msg: &MemoryMessage, ctx: &mut Context<'_>) -> HandlerOutcome {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        self.1.handle(msg, ctx).await
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_registration_layer_wraps_only_the_registration_it_follows() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let routes = Router::<MemoryBroker>::new()
+        .include(rm_a)
+        .layer(CountRaw(Arc::clone(&hits)))
+        .include(rm_b);
+
+    let app = RustStream::new(AppInfo::new("registration-layer", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(routes));
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    drive_all(&tb, &["rm-a", "rm-b"]).await;
+
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "the layer rides the registration named before it, and no other",
+    );
 }

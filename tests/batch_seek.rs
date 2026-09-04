@@ -1,25 +1,24 @@
-//! Repositioning a subscription from a page body: the broker gives the batch forms a
+//! Repositioning a subscription from a batch body: the broker gives the batch forms a
 //! subscription-scoped context (the in-memory broker's [`MemoryBatchContext`] carries the
 //! subscription's seeker), and where to seek rides the elements themselves - a
-//! `&[Message<H, T>]` page reads the target off each element's typed header contract.
-#![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-
-mod common;
-
-use std::sync::Mutex;
-use std::time::Duration;
+//! `&[Message<H, T>]` batch reads the target off each element's typed header contract.
+#![cfg(all(
+    feature = "memory",
+    feature = "macros",
+    feature = "json",
+    feature = "testing"
+))]
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use ruststream::memory::{MemoryBatchContext, MemoryBroker, MemoryPosition, SeekHandle};
 use ruststream::prelude::*;
+use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, Publisher, Seeker};
 
-use common::wait_for;
-
 /// The producer's cursor contract: an element carrying `resume_at` asks the consumer to
-/// reposition the subscription there once the page is settled.
+/// reposition the subscription there once the batch is settled.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Cursor {
     resume_at: Option<u64>,
@@ -30,20 +29,14 @@ struct Entry {
     id: u64,
 }
 
-static PAGES: Mutex<Vec<Vec<u64>>> = Mutex::new(Vec::new());
-
-/// Settles the page, then repositions: the target comes from the elements' header contract and
+/// Settles the batch, then repositions: the target comes from the elements' header contract and
 /// the handle from the broker's subscription-scoped batch context.
 #[subscriber("replay.log")]
 async fn replay(
-    page: &[Message<Cursor, Entry>],
+    batch: &[Message<Cursor, Entry>],
     ctx: &mut Context<'_, MemoryBatchContext>,
 ) -> HandlerOutcome {
-    PAGES
-        .lock()
-        .unwrap()
-        .push(page.iter().map(|element| element.body.id).collect());
-    let target = page
+    let target = batch
         .iter()
         .find_map(|element| element.headers.resume_at)
         .map(|sequence| usize::try_from(sequence).expect("test positions are small"));
@@ -60,6 +53,9 @@ async fn replay(
 }
 
 /// Publishes `entry` with the cursor contract riding its headers.
+///
+/// This seeds the log BEFORE the subscription exists, which is the point of the test, so it goes
+/// through the broker's own publisher rather than the harness's injection.
 async fn publish_entry(broker: &MemoryBroker, id: u64, resume_at: Option<u64>) {
     let payload = serde_json::to_vec(&Entry { id }).expect("serializable");
     let msg = OutgoingMessage::new("replay.log", payload.as_slice())
@@ -69,31 +65,34 @@ async fn publish_entry(broker: &MemoryBroker, id: u64, resume_at: Option<u64>) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_reads_its_seek_target_from_element_headers() {
+async fn a_batch_reads_its_seek_target_from_element_headers() {
     let broker = MemoryBroker::new();
 
     // The whole run is in the log before the subscription opens, so the opening replay hands
-    // the body one full page: the entries land at log positions 0, 1 and 2, and the first
-    // element asks to resume from position 2 once the page is settled.
+    // the body one full batch: the entries land at log positions 0, 1 and 2, and the first
+    // element asks to resume from position 2 once the batch is settled.
     publish_entry(&broker, 0, Some(2)).await;
     publish_entry(&broker, 1, None).await;
     publish_entry(&broker, 2, None).await;
 
     let app = RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(broker, |b| {
-        b.include(replay.start_at(MemoryPosition::start()));
+        b.include(replay.batch(nonzero!(64)).start_at(MemoryPosition::start()));
     });
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
+    // Nothing is injected here: the reaction was started by the opening replay, so the harness
+    // only has to drive it to a standstill.
+    tb.settle().await.expect("the replay settles");
 
-    wait_for(
-        || PAGES.lock().unwrap().iter().map(Vec::len).sum::<usize>() >= 4,
-        Duration::from_secs(5),
-    )
-    .await;
-    let pages = PAGES.lock().unwrap().clone();
+    let batches: Vec<Vec<u64>> = tb
+        .broker::<MemoryBroker>()
+        .subscriber("replay.log")
+        .batches::<Entry>()
+        .iter()
+        .map(|batch| batch.iter().map(|entry| entry.id).collect())
+        .collect();
     assert_eq!(
-        pages,
+        batches,
         [vec![0, 1, 2], vec![2]],
-        "the page after the seek must open at the header-named position",
+        "the batch after the seek must open at the header-named position",
     );
-    running.shutdown().await.expect("shutdown failed");
 }

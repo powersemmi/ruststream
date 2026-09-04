@@ -9,18 +9,13 @@
 
 use std::convert::Infallible;
 use std::future::ready;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish, MemoryPublisher,
-};
-use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, Router, RustStream, State};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher};
 use ruststream::testing::TestApp;
-use ruststream::{
-    BuildContext, ContextField, Deserialized, FromRef, IncomingMessage, Outgoing, OutgoingMessage,
-    PairError, PublishPolicy, Publisher, Serialized, subscriber,
-};
+use ruststream::{BuildContext, ContextField, OutgoingMessage, PairError};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
@@ -50,12 +45,10 @@ impl Wire {
 
 // --- the plain form: the handler sees the exact published bytes ---
 
-static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
-
 // --8<-- [start:raw]
 #[subscriber("frames")]
 async fn on_frame(frame: &Frame<'_>) -> HandlerOutcome {
-    FRAMES.lock().expect("frame log").push(frame.0.to_vec());
+    let _ = frame.0;
     HandlerOutcome::ack()
 }
 // --8<-- [end:raw]
@@ -76,13 +69,10 @@ async fn raw_handler_receives_exact_bytes() {
     tb.broker::<MemoryBroker>()
         .subscriber("frames")
         .assert_called_once()
+        // The recorded payload is what the handler was called with, so this is the assertion
+        // that the bytes reached it untouched.
         .with_raw(FRAME)
         .settled(HandlerOutcome::ack());
-    assert_eq!(
-        FRAMES.lock().expect("frame log").as_slice(),
-        &[FRAME.to_vec()],
-        "the handler saw the published bytes untouched"
-    );
 }
 
 // --- the byte reply form: a Serialized reply republishes the returned bytes as-is ---
@@ -104,7 +94,7 @@ async fn relay_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_round_trips_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(relay).publisher(MemoryPublish);
+        b.include(relay).out(Reply, Publish);
         b.include(relay_capture);
     });
 
@@ -130,7 +120,7 @@ async fn raw_reply_round_trips_exact_bytes() {
         .settled(HandlerOutcome::ack());
 }
 
-// --- without .publisher(..) the reply commits with the broker's default publish policy ---
+// --- without .out(Reply, ..) the reply commits with the broker's default publish policy ---
 
 #[subscriber("relay-default-in", publish("relay-default-out"))]
 async fn relay_default(frame: &Frame<'_>) -> Export {
@@ -182,7 +172,7 @@ async fn relay_checked_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_result_form_controls_the_publish() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(relay_checked).publisher(MemoryPublish);
+        b.include(relay_checked).out(Reply, Publish);
         b.include(relay_checked_capture);
     });
 
@@ -274,7 +264,7 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
     let app =
         RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), move |b| {
             b.include(relay_flaky)
-                .publisher(FlakyPublish(publisher_flag));
+                .out(Reply, FlakyPublish(publisher_flag));
             b.include(relay_flaky_capture);
         });
 
@@ -310,7 +300,7 @@ mod typed_in {
     use serde::Deserialize;
 
     use super::{
-        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, MemoryPublish, RustStream,
+        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, Publish, Reply, RustStream,
         TestApp, Wire, subscriber,
     };
 
@@ -347,7 +337,7 @@ mod typed_in {
         let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(gateway).publisher(MemoryPublish);
+                b.include(gateway).out(Reply, Publish);
                 b.include(gateway_capture);
             },
         );
@@ -482,17 +472,34 @@ impl ContextField for FrameLen {
     }
 }
 
-static SEEN_LEN: AtomicUsize = AtomicUsize::new(0);
+/// Where the handler records the length its context field carried: a context value never leaves
+/// the handler, so it comes back through application state.
+#[derive(Clone)]
+struct SeenLen(Arc<AtomicUsize>);
+
+#[derive(FromRef)]
+struct MeasuredState {
+    seen: SeenLen,
+}
 
 #[subscriber("frames-meta")]
-async fn measured(_frame: &Frame<'_>, Ctx(len): Ctx<FrameLen>) -> HandlerOutcome {
-    SEEN_LEN.store(len, Ordering::Relaxed);
+async fn measured(
+    _frame: &Frame<'_>,
+    Ctx(len): Ctx<FrameLen>,
+    State(seen): State<SeenLen>,
+) -> HandlerOutcome {
+    seen.0.store(len, Ordering::Relaxed);
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ctx_extractor_projects_the_context_under_raw() {
+    let seen_len = Arc::new(AtomicUsize::new(0));
+    let state_seen = SeenLen(Arc::clone(&seen_len));
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
+        .on_startup(
+            move |()| async move { Ok::<_, Infallible>(MeasuredState { seen: state_seen }) },
+        )
         .with_broker(MemoryBroker::new(), |b| b.include(measured));
 
     let tb = TestApp::start(app).await.expect("start");
@@ -507,7 +514,7 @@ async fn ctx_extractor_projects_the_context_under_raw() {
         .subscriber("frames-meta")
         .assert_called_once()
         .settled(HandlerOutcome::ack());
-    assert_eq!(SEEN_LEN.load(Ordering::Relaxed), FRAME.len());
+    assert_eq!(seen_len.load(Ordering::Relaxed), FRAME.len());
 }
 
 // --- workers(..) and on_failure(panic = ..) keep working on the raw form ---
@@ -551,11 +558,9 @@ async fn workers_and_panic_policy_apply_to_raw() {
 
 // --- a Router mounts raw definitions through the form-dispatched include ---
 
-static ROUTED: AtomicUsize = AtomicUsize::new(0);
-
 #[subscriber("routed-raw")]
 async fn routed(frame: &Frame<'_>) -> HandlerOutcome {
-    ROUTED.fetch_add(frame.0.len(), Ordering::Relaxed);
+    let _ = frame.0;
     HandlerOutcome::ack()
 }
 
@@ -578,7 +583,6 @@ async fn router_mounts_raw_definitions() {
         .assert_called_once()
         .with_raw(FRAME)
         .settled(HandlerOutcome::ack());
-    assert_eq!(ROUTED.load(Ordering::Relaxed), FRAME.len());
 }
 
 #[subscriber("routed-relay-in", publish("routed-relay-out"))]
@@ -593,7 +597,8 @@ async fn routed_relay(frame: &Frame<'_>) -> Export {
 async fn router_mounts_a_byte_reply_definition() {
     let router = Router::<MemoryBroker>::new()
         .include(routed_relay)
-        .publisher(MemoryPublish);
+        .out(Reply, Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
 
@@ -626,18 +631,15 @@ mod scope_codec {
         id: u32,
     }
 
-    static RAW_BYTES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
-    static TYPED_ID: AtomicUsize = AtomicUsize::new(0);
-
     #[subscriber("mixed-raw")]
     async fn raw_side(frame: &Frame<'_>) -> HandlerOutcome {
-        RAW_BYTES.lock().expect("raw log").push(frame.0.to_vec());
+        let _ = frame.0;
         HandlerOutcome::ack()
     }
 
     #[subscriber("mixed-typed")]
     async fn typed_side(order: &Order) -> HandlerOutcome {
-        TYPED_ID.store(order.id as usize, Ordering::Relaxed);
+        let _ = order.id;
         HandlerOutcome::ack()
     }
 
@@ -665,10 +667,6 @@ mod scope_codec {
             .assert_called_once()
             .with_raw(FRAME)
             .settled(HandlerOutcome::ack());
-        assert_eq!(
-            RAW_BYTES.lock().expect("raw log").as_slice(),
-            &[FRAME.to_vec()]
-        );
 
         // ...while the typed neighbour still decodes with the scope codec.
         tb.broker::<MemoryBroker>()
@@ -682,7 +680,6 @@ mod scope_codec {
             .assert_called_once()
             .with(&Order { id: 9 })
             .settled(HandlerOutcome::ack());
-        assert_eq!(TYPED_ID.load(Ordering::Relaxed), 9);
     }
 }
 

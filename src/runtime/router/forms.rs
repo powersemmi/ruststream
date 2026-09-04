@@ -22,12 +22,12 @@ pub struct Publishing;
 /// A subscriber whose startup injections need publisher attachments.
 ///
 /// The signature carries `Out(out): Out<impl Publisher[, Marker]>` parameters, so the include
-/// site chains `.publisher(..)` (single slot) or `.out(marker, ..)` per named slot.
+/// site chains `.out(marker, ..)` per slot (the implicit `DefaultSlot` for a single unnamed one).
 #[derive(Debug, Clone, Copy)]
 pub struct Out;
 /// A reply-publishing subscriber whose handler also takes `Out` parameters, so the
 /// include site chains `.out(marker, ..)` per slot next to the (optional)
-/// `.publisher(..)`.
+/// `.out(Reply, ..)`.
 #[derive(Debug, Clone, Copy)]
 pub struct PublishingOut;
 /// A byte-reply subscriber whose handler also takes an `Out` parameter.
@@ -36,7 +36,7 @@ pub struct RawReplyOut;
 /// A batch subscriber (a handler taking `&[T]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
-/// A self-deserializing batch subscriber (a handler taking a page of
+/// A self-deserializing batch subscriber (a handler taking a batch of
 /// [`Deserialized`](crate::runtime::Deserialized) elements): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
@@ -49,6 +49,6 @@ pub struct BatchPublishing;
 pub struct BatchOut;
 /// A batch reply-publishing subscriber whose handler also takes `Out` parameters, so the
 /// include site chains `.out(marker, ..)` per slot next to the (optional)
-/// `.publisher(..)`.
+/// `.out(Reply, ..)`.
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishingOut;

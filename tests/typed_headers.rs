@@ -13,13 +13,9 @@
 ))]
 
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, Router, RustStream};
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{
-    Buffered, Deserialized, Name, OutMessages, OutSlot, Outgoing, Publisher, Serialized,
-    TransactionalPublisher, nonzero, subscriber,
-};
+use ruststream::{Buffered, OutMessages};
 use serde::{Deserialize, Serialize};
 
 /// The payload view the byte-level body below takes, next to its typed header contract. Its
@@ -135,7 +131,7 @@ async fn convert(
 async fn from_headers_extracts_and_declared_messages_publish() {
     let app =
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(convert).out(Events, MemoryPublish).build();
+            b.include(convert).out(Events, Publish).build();
         });
     let tb = TestApp::start(app).await.expect("start");
 
@@ -185,38 +181,40 @@ async fn from_headers_extracts_and_declared_messages_publish() {
 
 // --- capability composition: the first Out position stays the capability vocabulary. The
 // bound demands a transactional live publisher (statically checked against the policy at the
-// include site), the declared publishes (an inline tuple this time) ride inside the
-// transaction, and the whole capability surface stays reachable on the value, so a computed
-// destination keeps the byte-level escape hatch. ---
+// include site), the declared publishes (an inline tuple this time) ride inside the scope the
+// entry opens - under the same dictionary and declared set as the entry's own publishes - and
+// the plain builder stays reachable on the entry, so a computed destination keeps the
+// byte-level escape hatch. ---
 
 #[subscriber("txn.raw")]
 async fn transactional_convert(
     chunk: &Chunk,
     Out(events): Out<impl TransactionalPublisher, Events, (ChunkDone, Progress, Wire)>,
 ) -> HandlerOutcome {
-    if events.begin_transaction().await.is_err() {
+    let Ok(scope) = events.begin().await else {
         return HandlerOutcome::retry();
-    }
+    };
     let done = ChunkDone {
         output_key: format!("txn/{}", chunk.seq),
     };
     let done_meta = DoneMeta { task_id: chunk.seq };
-    if events
+    if scope
         .message(&Progress { percent: 50 })
         .publish()
         .await
         .is_err()
-        || events
+        || scope
             .message(&done)
             .with_headers(&done_meta)
             .publish()
             .await
             .is_err()
-        || events.commit().await.is_err()
+        || scope.commit().await.is_err()
     {
         return HandlerOutcome::retry();
     }
-    // The Publisher supertrait: a per-message computed destination stays available.
+    // The Publisher capability the bound implies: a per-message computed destination stays
+    // available on the entry itself.
     let audit = format!("audit.{}", chunk.seq);
     if events
         .message(&Wire(b"seen".to_vec()))
@@ -235,7 +233,7 @@ async fn typed_out_composes_with_transactional_capability() {
     let app =
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(transactional_convert)
-                .out(Events, MemoryPublish)
+                .out(Events, TransactionalPublish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("start");
@@ -260,6 +258,8 @@ async fn typed_out_composes_with_transactional_capability() {
         .published::<ChunkDone>("chunks.done")
         .assert_called_once();
     broker.published::<()>("audit.9").assert_called_once();
+    // The scope publishes through the entry's attributed publisher: all three land on the slot.
+    assert_eq!(tb.out::<Events>().messages().len(), 3);
 }
 
 // --- failure policy: a header contract violation follows on_failure(decode = ..) ---
@@ -378,7 +378,7 @@ async fn unrestricted(chunk: &Chunk, Out(events): Out<impl Publisher, Events>) -
 async fn unrestricted_slot_publishes_any_listed_type() {
     let app =
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(unrestricted).out(Events, MemoryPublish).build();
+            b.include(unrestricted).out(Events, Publish).build();
         });
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
@@ -439,10 +439,11 @@ type BatchShape = (Vec<u64>, Vec<(u64, u32)>);
 
 static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec::new());
 
-// A size-capped buffer, so a batch closes on the cap rather than on delivery timing and the
-// per-element alignment is actually exercised across more than one element. The wait bound stays
-// at its 10 ms default: a longer one would only make the suite wait for the tail batch.
-#[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")).max_size(nonzero!(2)))]
+// The client-side buffer, so a batch closes on the mount's size rather than on delivery timing
+// and the per-element alignment is actually exercised across more than one element. The wait
+// bound stays at its 10 ms default: a longer one would only make the suite wait for the tail
+// batch.
+#[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")))]
 async fn bulk(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
     let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
     seen.push((
@@ -461,7 +462,7 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
     let app = RustStream::new(AppInfo::new("typed-headers-batch", "1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(bulk);
+            b.include(bulk.batch(nonzero!(2)));
         },
     );
     let tb = TestApp::start(app).await.expect("start");
@@ -540,7 +541,7 @@ async fn the_router_path_carries_the_batch_header_contract() {
     // The chain codec form: `with_codec` and the default-codec entry point share one mount.
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include(routed);
+        .include(routed.batch(nonzero!(2)));
     let app = RustStream::new(AppInfo::new("typed-headers-router", "1.0")).with_broker(
         MemoryBroker::new(),
         |b| {

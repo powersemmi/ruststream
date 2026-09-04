@@ -57,7 +57,8 @@ impl<C> fmt::Debug for PublishContext<'_, C> {
 /// read access to the originating delivery through [`PublishContext`].
 ///
 /// The publish-side counterpart to the consume-side [`Layer`](crate::runtime::Layer): zero-cost composition,
-/// no `dyn` dispatch. Baked onto a [`TypedPublisher`](crate::runtime::TypedPublisher) with [`TypedPublisher::transform`](crate::runtime::TypedPublisher::transform). Use for
+/// no `dyn` dispatch. Composed onto a reply's wiring by the `.transform(..)` step of a mount
+/// site's chain. Use for
 /// per-destination transforms that belong to the publisher itself - a Confluent / Avro envelope, a
 /// fixed content-type header, or stamping the delivery's trace / correlation id onto the reply
 /// (read it from `cx`). The `C` parameter is the originating handler's context type; a transform
@@ -70,7 +71,7 @@ pub trait PublishTransform<C = ()>: Send + Sync {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>);
 }
 
-/// The no-op [`PublishTransform`]: the default for a [`TypedPublisher`](crate::runtime::TypedPublisher) with no static transforms.
+/// The no-op [`PublishTransform`]: the default for a reply wiring with no static transforms.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishTransformIdentity;
 
@@ -78,11 +79,11 @@ impl<C> PublishTransform<C> for PublishTransformIdentity {
     fn apply(&self, _out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {}
 }
 
-/// Composes two [`PublishTransform`]s: `inner` runs first, then `outer`. Built by
-/// [`TypedPublisher::transform`](crate::runtime::TypedPublisher::transform); you rarely name it directly.
+/// Composes two [`PublishTransform`]s: `inner` runs first, then `outer`. Built by a chain's
+/// `.transform(..)` step; you rarely name it directly.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishTransformStack<Inner, Outer> {
-    // The typed publisher builds the stack when a transform is layered on.
+    // The reply wiring builds the stack when a transform is layered on.
     pub(super) inner: Inner,
     pub(super) outer: Outer,
 }
@@ -101,8 +102,8 @@ impl<C, Inner: PublishTransform<C>, Outer: PublishTransform<C>> PublishTransform
 ///
 /// The batch counterpart of [`PublishTransform`], kept a distinct trait so a transform that belongs to
 /// the batch path only (a header marking a reply as batched, a per-batch sampling decision) cannot
-/// be added with [`TypedPublisher::transform`](crate::runtime::TypedPublisher::transform) by mistake; it is added with
-/// [`TypedPublisher::batch_transform`](crate::runtime::TypedPublisher::batch_transform), which the single-message mounts reject at compile time. The
+/// be added with a chain's `.transform(..)` step by mistake; it is added with
+/// `.batch_transform(..)`, which the single-message mounts reject at compile time. The
 /// per-message [`PublishTransform`] stack does not run for batched replies and this one does not run for
 /// single-message replies - the two paths are independent. To use the same transform on both, add
 /// it to each, reusing it on the batch side with [`for_batch`] (no second implementation). Each
@@ -113,7 +114,7 @@ pub trait BatchPublishTransform<C = ()>: Send + Sync {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>);
 }
 
-/// The no-op [`BatchPublishTransform`]: the default for a [`TypedPublisher`](crate::runtime::TypedPublisher) with no batch transforms.
+/// The no-op [`BatchPublishTransform`]: the default for a reply wiring with no batch transforms.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BatchTransformIdentity;
 
@@ -121,11 +122,11 @@ impl<C> BatchPublishTransform<C> for BatchTransformIdentity {
     fn apply(&self, _out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {}
 }
 
-/// Composes two [`BatchPublishTransform`]s: `inner` runs first, then `outer`. Built by
-/// [`TypedPublisher::batch_transform`](crate::runtime::TypedPublisher::batch_transform); you rarely name it directly.
+/// Composes two [`BatchPublishTransform`]s: `inner` runs first, then `outer`. Built by a chain's
+/// `.batch_transform(..)` step; you rarely name it directly.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BatchPublishTransformStack<Inner, Outer> {
-    // The typed publisher builds the stack when a batch transform is layered on.
+    // The reply wiring builds the stack when a batch transform is layered on.
     pub(super) inner: Inner,
     pub(super) outer: Outer,
 }
@@ -152,15 +153,23 @@ impl<C, L: PublishTransform<C>> BatchPublishTransform<C> for ForBatch<L> {
 
 /// Lifts a per-message [`PublishTransform`] onto the batch path.
 ///
-/// The same transform then goes on with
-/// [`TypedPublisher::batch_transform`](crate::runtime::TypedPublisher::batch_transform), with no
-/// second implementation to write.
+/// The same transform then goes on a reply chain's `.batch_transform(..)` step, with no second
+/// implementation to write.
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
-/// # {
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{for_batch, Outgoing, PublishContext, PublishTransform, TypedPublisher};
+/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use ruststream::runtime::{for_batch, Outgoing, PublishContext, PublishTransform};
+/// # use ruststream::subscriber;
+/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// # struct Order { id: u64 }
+/// # #[derive(serde::Serialize, schemars::JsonSchema)]
+/// # struct Confirmation { id: u64 }
+/// # #[subscriber("orders", publish("confirmations"))]
+/// # async fn confirm(orders: &[Order]) -> Vec<Confirmation> {
+/// #     orders.iter().map(|o| Confirmation { id: o.id }).collect()
+/// # }
 ///
 /// struct Stamp;
 /// impl<C> PublishTransform<C> for Stamp {
@@ -169,12 +178,14 @@ impl<C, L: PublishTransform<C>> BatchPublishTransform<C> for ForBatch<L> {
 ///     }
 /// }
 ///
-/// let broker = MemoryBroker::new();
-/// // The same `Stamp` on both paths: per message, and batched.
-/// let publisher = TypedPublisher::new(broker.publisher())
-///     .transform(Stamp)
-///     .batch_transform(for_batch(Stamp));
-/// # let _ = publisher;
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // `Stamp` on the batch path, without a second implementation.
+///         b.include(confirm.batch(nonzero!(8)))
+///             .out(Reply, Publish)
+///             .batch_transform(for_batch(Stamp));
+///     })
+/// }
 /// # }
 /// ```
 #[must_use]

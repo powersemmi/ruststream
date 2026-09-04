@@ -7,9 +7,12 @@
 //! handler.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use crate::{BatchSubscriber, Broker, BuildContext, Connected, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SubscriptionSource,
+};
 
 use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler};
 use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
@@ -53,13 +56,15 @@ pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra> {
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
+    /// The size the subscription opens its batches at, from the registration's `batch(n)`.
+    pub(super) batch_size: NonZeroUsize,
 }
 
 /// See the publishing routes: a deferred route holds no built handler, so its `Debug` and its
 /// metadata collection both go through the registration metadata.
 macro_rules! debug_by_metadata {
-    ($($route:ident),+ $(,)?) => {$(
-        impl<Source, Def, DecodeCodec, Extra> fmt::Debug for $route<Source, Def, DecodeCodec, Extra> {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> fmt::Debug for $route<$($param),+> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_struct(stringify!($route))
                     .field("meta", &self.meta)
@@ -67,7 +72,7 @@ macro_rules! debug_by_metadata {
             }
         }
 
-        impl<Source, Def, DecodeCodec, Extra> RouteMeta for $route<Source, Def, DecodeCodec, Extra> {
+        impl<$($param),+> RouteMeta for $route<$($param),+> {
             fn collect(&self, out: &mut Vec<HandlerMetadata>) {
                 out.push(self.meta.clone());
             }
@@ -75,7 +80,10 @@ macro_rules! debug_by_metadata {
     )+};
 }
 
-debug_by_metadata!(InjectRoute, BatchInjectRoute);
+debug_by_metadata!(
+    InjectRoute<Source, Def, DecodeCodec, Extra>,
+    BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
+);
 
 impl<B, Source, Def, DecodeCodec, Extra, State> MountRoute<B, State>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
@@ -161,6 +169,7 @@ where
     Def: BatchInjectCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
@@ -178,9 +187,9 @@ where
             meta,
             policies,
             workers,
+            batch_size,
         } = self;
-        // The injected batch forms keep the unit batch context for now; see `BatchDef::Context`.
-        sink.push_injected_batch::<_, _, _, _, ()>(
+        sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -197,6 +206,7 @@ where
             meta,
             policies,
             workers,
+            batch_size,
         );
     }
 }
@@ -232,6 +242,7 @@ mod tests {
             meta: HandlerMetadata::raw("bulk-jobs"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
+            batch_size: crate::nonzero!(8),
         };
         let rendered = format!("{batched:?}");
         assert!(rendered.contains("BatchInjectRoute"), "{rendered}");

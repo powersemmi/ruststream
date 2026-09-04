@@ -5,7 +5,7 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use opentelemetry::global;
@@ -17,9 +17,9 @@ use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{ConnectedBroker, subscriber};
+use ruststream::{ConnectedBroker, nonzero, subscriber};
 use tokio::sync::{Mutex, Notify};
 
 use common::{Order, Wire, connected};
@@ -333,6 +333,8 @@ async fn confirm_once(order: &Order) -> Result<Order, HandlerOutcome> {
     Ok(Order { id: order.id })
 }
 
+// The subject IS the running app: the bus has to die while the handler still holds its delivery,
+// which the harness's drive-to-quiescence publish leaves no window for.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failed_publish_keeps_error_type_low_cardinality() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
@@ -411,6 +413,8 @@ async fn shutdown_flushes_metrics_even_when_the_tracer_fails() {
     );
 }
 
+// The subject IS the running app: the health gauge is fed from `RunningApp::health`, which only
+// the started form hands out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
@@ -457,12 +461,9 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     );
 }
 
-/// Elements the batch handler has consumed so far, to wait on without sleeping.
-static BATCHED_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
-
 #[subscriber("otel.batches")]
 async fn absorb(orders: &[Order]) -> HandlerOutcome {
-    BATCHED_ELEMENTS.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders.len();
     HandlerOutcome::ack()
 }
 
@@ -475,27 +476,21 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
     // batch is dispatched, which is when the lazily-built instrument binds its provider.
     global::set_meter_provider(provider.clone());
 
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(absorb);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(absorb.batch(nonzero!(8)));
     });
-
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
     for id in 0..3u32 {
-        publisher
-            .message(&Order { id })
+        tb.message(&Order { id })
             .to("otel.batches")
             .publish()
             .await
             .expect("publish failed");
     }
-    common::wait_for(
-        || BATCHED_ELEMENTS.load(Ordering::SeqCst) >= 3,
-        Duration::from_secs(5),
-    )
-    .await;
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("otel.batches")
+        .assert_called(3);
+    tb.shutdown().await.expect("graceful shutdown failed");
 
     provider.force_flush().expect("flush failed");
     let points = u64_histogram_points(&exporter, "ruststream.batch.size");
@@ -506,7 +501,7 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
         batches >= 1,
         "at least one batch must be recorded: {points:?}",
     );
-    // The three publishes may buffer into one batch or split, but the sizes always add up.
+    // However the stream was cut into batches, the recorded sizes add up to every element.
     assert_eq!(
         elements, 3,
         "the recorded sizes must add up to every decoded element: {points:?}",

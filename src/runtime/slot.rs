@@ -21,6 +21,12 @@ use std::marker::PhantomData;
 use std::time::Duration;
 
 use crate::runtime::metadata::OutgoingMessageMetadata;
+use crate::runtime::publish::{
+    AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, LowerOutTransforms,
+    MapReplyPolicy, NameReplyCodec, OutTransformIdentity, OutTransformStack, PublishingDirectly,
+    TransactionalReply, UnnamedCodec,
+};
+use crate::runtime::router::{DefaultReply, ReplyAttachment};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
@@ -38,7 +44,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::OutSlot;
+/// use ruststream::prelude::*;
 ///
 /// #[derive(Clone, Copy, Debug)]
 /// struct Encoded;
@@ -65,14 +71,14 @@ pub trait OutSlot: 'static {
 
 /// The implicit marker of a single unnamed `Out<impl Publisher>` parameter.
 ///
-/// A handler with one `Out` parameter needs no marker: the parameter binds to this slot, and
-/// the include site attaches its policy with the plain
-/// [`publisher`](super::IncludeWith::publisher) call.
+/// A handler with one `Out` parameter needs no marker: the parameter binds to this slot, and the
+/// include site attaches its policy by naming the marker like any other, `.out(DefaultSlot,
+/// policy)`.
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{DefaultSlot, OutSlot};
+/// use ruststream::prelude::*;
 ///
 /// assert_eq!(<DefaultSlot as OutSlot>::NAME, "default");
 /// ```
@@ -82,6 +88,50 @@ pub struct DefaultSlot;
 impl OutSlot for DefaultSlot {
     const NAME: &'static str = "default";
 }
+
+/// The marker of a handler's reply position: `.out(Reply, policy)` names the publish policy the
+/// value a `publish("dest")` handler returns leaves through.
+///
+/// A mount site attaches every publish policy with one verb, and this is the marker of the one
+/// position that is not an [`Out`](super::Out) slot. It carries no dictionary: what a reply may be
+/// is the reply type's own [`ReplyShape`](crate::runtime::ReplyShape), while what leaves a slot is
+/// the slot marker's `#[publishes(..)]` list.
+///
+/// Without the call the reply takes the broker's own
+/// [`DefaultPublish`](crate::DefaultPublish) policy, so naming it is the exception, not the rule.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// # use ruststream::subscriber;
+/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// # struct Order { id: u64 }
+/// # #[derive(serde::Serialize, schemars::JsonSchema)]
+/// # struct Confirmation { id: u64 }
+///
+/// #[subscriber("orders", publish("confirmations"))]
+/// async fn confirm(order: &Order) -> Confirmation {
+///     Confirmation { id: order.id }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(confirm).out(Reply, Publish);
+///     })
+/// }
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Reply;
+
+/// The reply attachment of a registration whose handler declares no reply: there is no
+/// [`Reply`] position to bind, so `.out(Reply, ..)` on it does not compile.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoReply;
 
 /// Membership of a message type in a slot marker's `#[publishes(..)]` dictionary: the type may
 /// leave through a slot identified by `Slot`.
@@ -98,7 +148,7 @@ impl OutSlot for DefaultSlot {
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{OutSlot, PublishedThrough};
+/// use ruststream::prelude::*;
 ///
 /// struct Progress;
 ///
@@ -151,17 +201,18 @@ impl<P, M> SlotPublisher<P, M> {
         }
     }
 
-    /// The paired value the slot wraps: the extension point for broker-defined capabilities.
+    /// The paired value this wrapper delegates to.
     ///
-    /// The core capability vocabulary ([`Publisher`], [`TransactionalPublisher`],
-    /// [`OwnedTransactions`], [`RequestReply`]) is delegated by this wrapper directly. A broker
-    /// whose paired value offers more than that - or is not a publisher at all (a per-partition
-    /// producer cache, a shard router) - declares its own capability trait and grafts it onto
-    /// the wrapper with a blanket impl delegating through this accessor; handlers then bound
-    /// their slot with that trait (`Out<impl PartitionLanes>`). The wrapper type itself never
-    /// appears in handler code, so this accessor is reachable only from such generic impls.
+    /// This is the wrapper's own delegation seam, not the extension point for broker-defined
+    /// capabilities: a handler body holds the arena entry
+    /// ([`Slot`](crate::runtime::Slot)), never this wrapper, so a trait grafted here is
+    /// unreachable from one. A broker whose paired value offers more than the core capability
+    /// vocabulary ([`Publisher`], [`TransactionalPublisher`], [`OwnedTransactions`],
+    /// [`RequestReply`]) - or is not a publisher at all (a per-partition producer cache, a shard
+    /// router) - implements its capability trait for the live value and grafts it onto the entry
+    /// instead, as [`Slot`](crate::runtime::Slot) documents.
     ///
-    /// Publishes made through values obtained this way bypass the slot's test-capture
+    /// Publishes made through the value obtained here bypass the slot's test-capture
     /// attribution, like a settled owned transaction's buffer: assert on the broker's publish
     /// log for those.
     ///
@@ -175,7 +226,8 @@ impl<P, M> SlotPublisher<P, M> {
     ///     fn lane_id(&self, partition: i32) -> String;
     /// }
     ///
-    /// // The broker crate grafts it onto the slot wrapper once, for every marker:
+    /// // The wrapper's own delegation: a slot entry reaches the live value through it. The
+    /// // impl a handler body needs is the one on `Slot`, not this one.
     /// impl<P: PartitionLanes, M: OutSlot> PartitionLanes for SlotPublisher<P, M> {
     ///     fn lane_id(&self, partition: i32) -> String {
     ///         self.inner().lane_id(partition)
@@ -301,7 +353,7 @@ impl_contains_message! {
 /// ```
 /// # #[cfg(all(feature = "macros", feature = "json"))]
 /// # mod demo {
-/// use ruststream::{OutMessages, Outgoing};
+/// use ruststream::prelude::*;
 /// use serde::Serialize;
 ///
 /// #[derive(Outgoing, Serialize)]
@@ -361,6 +413,517 @@ impl<M> MissingSlot<M> {
     }
 }
 
+/// What one `.out(marker, policy)` call attaches: the slot's publish policy and the
+/// [`OutTransform`] stack the `.transform(..)` steps after it compose.
+///
+/// The stack is pure declaration, like the policy: it lowers onto the app's publish pipeline at
+/// the mount ([`LowerOutTransforms`]), and the composed pipeline is what the slot entry publishes
+/// through. Machinery; the chain builds it and the mount consumes it, so it is never named in
+/// service code.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct OutAttachment<Policy, Layers = OutTransformIdentity, Enc = UnnamedCodec> {
+    policy: Policy,
+    layers: Layers,
+    enc: Enc,
+}
+
+impl<Policy> OutAttachment<Policy> {
+    /// The attachment a bare `.out(marker, policy)` produces: the policy, no transforms, the
+    /// surface's own codec.
+    pub(crate) fn new(policy: Policy) -> Self {
+        Self {
+            policy,
+            layers: OutTransformIdentity,
+            enc: UnnamedCodec::new(),
+        }
+    }
+}
+
+impl<Policy, Layers, Enc> OutAttachment<Policy, Layers, Enc> {
+    /// Composes one more transform on top of the stack: the `.transform(..)` step.
+    pub(crate) fn add_transform<N>(
+        self,
+        transform: N,
+    ) -> OutAttachment<Policy, OutTransformStack<Layers, N>, Enc> {
+        OutAttachment {
+            policy: self.policy,
+            layers: OutTransformStack {
+                inner: self.layers,
+                outer: transform,
+            },
+            enc: self.enc,
+        }
+    }
+
+    /// Fills the slot's codec position: the `.codec(..)` step.
+    pub(crate) fn name_codec<C>(self, codec: C) -> OutAttachment<Policy, Layers, CallCodec<C>> {
+        OutAttachment {
+            policy: self.policy,
+            layers: self.layers,
+            enc: CallCodec(codec),
+        }
+    }
+
+    /// Replaces the policy, keeping everything the chain already named: the `.map_publisher(..)`
+    /// step a broker's own settings trait layers on.
+    pub(crate) fn map_policy(self, f: impl FnOnce(Policy) -> Policy) -> Self {
+        Self {
+            policy: f(self.policy),
+            layers: self.layers,
+            enc: self.enc,
+        }
+    }
+
+    /// Splits the attachment into what one slot resolves from at startup: the policy the runtime
+    /// pairs, the encode codec (this slot's own when it named one, the surface's otherwise), and
+    /// the pipeline the entry publishes through (this slot's transforms lowered onto the app's).
+    pub(crate) fn wire<Surface, Pipeline>(
+        self,
+        surface: Surface,
+        pipeline: Pipeline,
+    ) -> (Policy, Enc::Codec, Layers::Out)
+    where
+        Enc: SlotCodec<Surface>,
+        Layers: LowerOutTransforms<Pipeline>,
+    {
+        (
+            self.policy,
+            self.enc.resolve(surface),
+            self.layers.lower(pipeline),
+        )
+    }
+}
+
+/// Resolves one slot's encode codec: the codec the chain named for that slot, or the registration
+/// surface's own when it named none. The slot counterpart of a reply wiring's
+/// [`NameReplyCodec`] position.
+#[doc(hidden)]
+pub trait SlotCodec<Surface> {
+    /// The resolved codec the slot entry encodes with.
+    type Codec;
+
+    /// Resolves it against the surface's codec.
+    fn resolve(self, surface: Surface) -> Self::Codec;
+}
+
+impl<Surface> SlotCodec<Surface> for UnnamedCodec {
+    type Codec = Surface;
+
+    fn resolve(self, surface: Surface) -> Surface {
+        surface
+    }
+}
+
+impl<Surface, C> SlotCodec<Surface> for CallCodec<C> {
+    type Codec = C;
+
+    fn resolve(self, _surface: Surface) -> C {
+        self.0
+    }
+}
+
+/// The step a mount site's chain has named so far, before it has named any.
+///
+/// It is not a [`NamedStep`], so a `.transform(..)` here fails on that bound rather than on a
+/// missing method, and the call site reads the guidance.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoOutBound;
+
+/// A position a chain's steps can ride: what the chain named right before them.
+///
+/// The step traits below report it as an associated type ([`TransformLast::Step`] and its
+/// siblings) rather than refusing to apply, so the step's own bound is what fails and this note
+/// is what the call site reads.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this step has no publish position to apply to",
+    label = "no `.out(marker, policy)` call precedes it in this chain",
+    note = "a step rides the position named right before it: `.out(Reply, Policy).transform(..)` \
+            for a reply, `.out(Marker, Policy).transform(..)` for a slot"
+)]
+pub trait NamedStep {}
+
+impl<const POS: usize> NamedStep for SlotPos<POS> {}
+
+/// The position a step applies to when the chain last named the reply rather than a slot.
+///
+/// A mount chain's steps read as "on the position before them": after `.out(Reply, ..)` they grow
+/// the reply's wiring, after `.out(marker, ..)` that slot's own.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReplyLast;
+
+impl NamedStep for ReplyLast {}
+
+/// Binds one `.out(marker, policy)` call into a mount chain's attachment: the reply position for
+/// [`Reply`], one [`Out`](super::Out) slot for a slot marker.
+///
+/// `Index` is inferred per call - [`ReplyLast`] for the reply, [`SlotPos`] for a slot - which is
+/// what makes the calls order-independent and what the steps after the call ride. Machinery;
+/// never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this handler has no unbound publish position marked `{M}`",
+    label = "`.out({M}, ..)` has no position to bind here",
+    note = "`.out(marker, policy)` binds one position: `Reply` for the value a \
+            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot. Check the \
+            marker, that the handler declares it, and that it was not bound twice"
+)]
+pub trait BindAt<Mount, M, Policy, Index> {
+    /// The attachment with that position bound.
+    type Out;
+
+    /// Binds it.
+    fn bind_at(self, policy: Policy) -> Self::Out;
+}
+
+/// A reply position still open: what `.out(Reply, policy)` binds.
+///
+/// The bind step states this about the position rather than about the whole attachment, so a
+/// second `.out(Reply, ..)` - and an `.out(Reply, ..)` on a handler that declares no reply -
+/// fails on this bound and the call site reads the note instead of a bare "no method".
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this registration has no open reply position",
+    label = "`.out(Reply, ..)` has nothing to bind here",
+    note = "`.out(Reply, policy)` names the publish policy of a `publish(\"dest\")` handler's \
+            returned value, once: a handler that declares no reply has no `Reply` position at \
+            all, and one whose policy is already named has none left open"
+)]
+pub trait ReplyOpen {}
+
+impl ReplyOpen for DefaultReply {}
+
+// The reply position, open exactly while it still carries the broker's default: the impl matches
+// on any reply attachment so that a second `.out(Reply, ..)` fails on `ReplyOpen` and reads its
+// note, rather than finding no impl at all.
+impl<Mount, Policy, Rep, Slots> BindAt<Mount, Reply, Policy, ReplyLast> for (Rep, Slots)
+where
+    Rep: ReplyOpen,
+    Mount: ReplyAttachment<Policy>,
+{
+    type Out = (WithSource<Mount::Wiring>, Slots);
+
+    fn bind_at(self, policy: Policy) -> Self::Out {
+        (WithSource::new(Mount::wire(policy)), self.1)
+    }
+}
+
+// One slot position, placed by marker through the positional machinery.
+impl<Mount, M, Policy, const POS: usize, Rep, Slots> BindAt<Mount, M, Policy, SlotPos<POS>>
+    for (Rep, Slots)
+where
+    M: OutSlot,
+    Slots: BindSlot<M, OutAttachment<Policy>, SlotPos<POS>>,
+{
+    type Out = (Rep, Slots::Out);
+
+    fn bind_at(self, policy: Policy) -> Self::Out {
+        (self.0, self.1.bind(OutAttachment::new(policy)))
+    }
+}
+
+/// Grows the transform stack of the slot bound at `Index`: the `.transform(..)` step of a mount
+/// chain, applied to a slot. Machinery; never named directly.
+///
+/// The index is the position the preceding `.out(marker, policy)` bound, carried by the builder,
+/// so the step reads as "on the slot just named" rather than repeating the marker.
+#[doc(hidden)]
+pub trait TransformAt<N, Index> {
+    /// The attachment tuple with that slot's stack grown.
+    type Out;
+
+    /// Composes it.
+    fn transform_at(self, transform: N) -> Self::Out;
+}
+
+/// Fills the codec position of the slot bound at `Index`: the `.codec(..)` step applied to a
+/// slot. Machinery; never named directly.
+#[doc(hidden)]
+pub trait CodecAt<Cd, Index> {
+    /// The attachment tuple with that slot's codec named.
+    type Out;
+
+    /// Names it.
+    fn codec_at(self, codec: Cd) -> Self::Out;
+}
+
+/// Replaces the publish policy of the slot bound at `Index`: the `.map_publisher(..)` step
+/// applied to a slot. Machinery; never named directly.
+#[doc(hidden)]
+pub trait MapPolicyAt<Index>: Sized {
+    /// The policy the slot carries.
+    type Policy;
+
+    /// Replaces it.
+    #[must_use]
+    fn map_policy_at(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
+}
+
+/// Composes a transform onto whatever a mount chain named last: the reply's wiring
+/// ([`ReplyLast`]) or one bound slot ([`SlotPos`]). Machinery; never named directly.
+#[doc(hidden)]
+pub trait TransformLast<N, Last> {
+    /// The position the transform rides, or [`NoOutBound`] when the chain has named none.
+    type Step;
+
+    /// The attachment after the step.
+    type Out;
+
+    /// Composes it.
+    fn transform_last(self, transform: N) -> Self::Out;
+}
+
+impl<N, W, Slots> TransformLast<N, ReplyLast> for (WithSource<W>, Slots)
+where
+    W: AddReplyTransform<N>,
+{
+    type Step = ReplyLast;
+    type Out = (WithSource<W::Out>, Slots);
+
+    fn transform_last(self, transform: N) -> Self::Out {
+        let (reply, slots) = self;
+        (reply.map(|wiring| wiring.add_transform(transform)), slots)
+    }
+}
+
+impl<N, const POS: usize, Rep, Slots> TransformLast<N, SlotPos<POS>> for (Rep, Slots)
+where
+    Slots: TransformAt<N, SlotPos<POS>>,
+{
+    type Step = SlotPos<POS>;
+    type Out = (Rep, Slots::Out);
+
+    fn transform_last(self, transform: N) -> Self::Out {
+        let (reply, slots) = self;
+        (reply, slots.transform_at(transform))
+    }
+}
+
+// The "nothing named yet" arm: it exists so the step resolves as a method and fails on
+// `Step: NamedStep`, which is where the guidance lives. It never runs.
+impl<N, Rep, Slots> TransformLast<N, NoOutBound> for (Rep, Slots) {
+    type Step = NoOutBound;
+    type Out = Self;
+
+    fn transform_last(self, _transform: N) -> Self {
+        self
+    }
+}
+
+/// Names the codec of whatever a mount chain named last: the reply's encode codec after
+/// `.out(Reply, ..)`, one slot's after `.out(marker, ..)`. Machinery; never named directly.
+#[doc(hidden)]
+pub trait CodecLast<Cd, Last> {
+    /// See [`TransformLast::Step`].
+    type Step;
+
+    /// The attachment after the step.
+    type Out;
+
+    /// Names it.
+    fn codec_last(self, codec: Cd) -> Self::Out;
+}
+
+impl<Cd, W, Slots> CodecLast<Cd, ReplyLast> for (WithSource<W>, Slots)
+where
+    W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
+{
+    type Step = ReplyLast;
+    type Out = (WithSource<W::Out>, Slots);
+
+    fn codec_last(self, codec: Cd) -> Self::Out {
+        let (reply, slots) = self;
+        (reply.map(|wiring| wiring.name_codec(codec)), slots)
+    }
+}
+
+impl<Cd, const POS: usize, Rep, Slots> CodecLast<Cd, SlotPos<POS>> for (Rep, Slots)
+where
+    Slots: CodecAt<Cd, SlotPos<POS>>,
+{
+    type Step = SlotPos<POS>;
+    type Out = (Rep, Slots::Out);
+
+    fn codec_last(self, codec: Cd) -> Self::Out {
+        let (reply, slots) = self;
+        (reply, slots.codec_at(codec))
+    }
+}
+
+// See `TransformLast`'s own arm.
+impl<Cd, Rep, Slots> CodecLast<Cd, NoOutBound> for (Rep, Slots) {
+    type Step = NoOutBound;
+    type Out = Self;
+
+    fn codec_last(self, _codec: Cd) -> Self {
+        self
+    }
+}
+
+/// A position the batch-only steps can ride: the reply, and nothing else.
+///
+/// [`BatchTransformLast`] and [`TransactionalLast`] report the position as an associated type and
+/// state this about it, so the step fails on this bound and the call site reads the note rather
+/// than a bare "no method".
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`.batch_transform(..)` and `.transactional()` ride the reply position",
+    label = "the position this chain named before it is not `Reply`",
+    note = "name the reply's publish policy first (`.out(Reply, policy)`); a slot publish is one \
+            message with no batch, so a slot takes `.transform(..)` instead and a body opens its \
+            own slot transaction with `entry.begin()`"
+)]
+pub trait ReplyStep {}
+
+impl ReplyStep for ReplyLast {}
+
+/// Composes a batch transform onto the reply a mount chain named last. Reply-only: a slot
+/// publish is one message, so there is no batch for a batch transform to run over. Machinery;
+/// never named directly.
+#[doc(hidden)]
+pub trait BatchTransformLast<N, Last> {
+    /// See [`TransformLast::Step`].
+    type Step;
+
+    /// The attachment after the step.
+    type Out;
+
+    /// Composes it.
+    fn batch_transform_last(self, transform: N) -> Self::Out;
+}
+
+impl<N, W, Slots> BatchTransformLast<N, ReplyLast> for (WithSource<W>, Slots)
+where
+    W: AddBatchReplyTransform<N>,
+{
+    type Step = ReplyLast;
+    type Out = (WithSource<W::Out>, Slots);
+
+    fn batch_transform_last(self, transform: N) -> Self::Out {
+        let (reply, slots) = self;
+        (
+            reply.map(|wiring| wiring.add_batch_transform(transform)),
+            slots,
+        )
+    }
+}
+
+// The slot and the "nothing named yet" arms: present so the step resolves as a method and fails
+// on `Step: ReplyStep`, which is where the guidance lives. Neither ever runs.
+impl<N, const POS: usize, Rep, Slots> BatchTransformLast<N, SlotPos<POS>> for (Rep, Slots) {
+    type Step = SlotPos<POS>;
+    type Out = Self;
+
+    fn batch_transform_last(self, _transform: N) -> Self {
+        self
+    }
+}
+
+impl<N, Rep, Slots> BatchTransformLast<N, NoOutBound> for (Rep, Slots) {
+    type Step = NoOutBound;
+    type Out = Self;
+
+    fn batch_transform_last(self, _transform: N) -> Self {
+        self
+    }
+}
+
+/// Marks the reply a mount chain named last as publishing inside one broker transaction.
+/// Reply-only, for the same reason [`BatchTransformLast`] is. Machinery; never named directly.
+#[doc(hidden)]
+pub trait TransactionalLast<Last> {
+    /// See [`TransformLast::Step`].
+    type Step;
+
+    /// The attachment after the step.
+    type Out;
+
+    /// Marks it.
+    fn transactional_last(self) -> Self::Out;
+}
+
+impl<W, Slots> TransactionalLast<ReplyLast> for (WithSource<W>, Slots)
+where
+    W: TransactionalReply<State: PublishingDirectly>,
+{
+    type Step = ReplyLast;
+    type Out = (WithSource<W::Out>, Slots);
+
+    fn transactional_last(self) -> Self::Out {
+        let (reply, slots) = self;
+        (reply.map(TransactionalReply::into_transactional), slots)
+    }
+}
+
+// See `BatchTransformLast`'s own arms: present so the step fails on `Step: ReplyStep`.
+impl<const POS: usize, Rep, Slots> TransactionalLast<SlotPos<POS>> for (Rep, Slots) {
+    type Step = SlotPos<POS>;
+    type Out = Self;
+
+    fn transactional_last(self) -> Self {
+        self
+    }
+}
+
+impl<Rep, Slots> TransactionalLast<NoOutBound> for (Rep, Slots) {
+    type Step = NoOutBound;
+    type Out = Self;
+
+    fn transactional_last(self) -> Self {
+        self
+    }
+}
+
+/// Replaces the publish policy of whatever a mount chain named last: the hook a broker crate
+/// layers its own publisher settings on. Machinery; never named directly.
+#[doc(hidden)]
+pub trait MapPolicyLast<Last>: Sized {
+    /// See [`TransformLast::Step`].
+    type Step;
+
+    /// The policy that position carries.
+    type Policy;
+
+    /// Replaces it.
+    #[must_use]
+    fn map_policy_last(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
+}
+
+impl<W: MapReplyPolicy, Slots> MapPolicyLast<ReplyLast> for (WithSource<W>, Slots) {
+    type Step = ReplyLast;
+    type Policy = W::Policy;
+
+    fn map_policy_last(self, f: impl FnOnce(W::Policy) -> W::Policy) -> Self {
+        let (reply, slots) = self;
+        (reply.map(|wiring| wiring.map_policy(f)), slots)
+    }
+}
+
+impl<const POS: usize, Rep, Slots: MapPolicyAt<SlotPos<POS>>> MapPolicyLast<SlotPos<POS>>
+    for (Rep, Slots)
+{
+    type Step = SlotPos<POS>;
+    type Policy = Slots::Policy;
+
+    fn map_policy_last(self, f: impl FnOnce(Slots::Policy) -> Slots::Policy) -> Self {
+        let (reply, slots) = self;
+        (reply, slots.map_policy_at(f))
+    }
+}
+
+// See `TransformLast`'s own arm.
+impl<Rep, Slots> MapPolicyLast<NoOutBound> for (Rep, Slots) {
+    type Step = NoOutBound;
+    type Policy = ();
+
+    fn map_policy_last(self, _f: impl FnOnce(())) -> Self {
+        self
+    }
+}
+
 /// A user-attached publisher source, wrapped so the bound and unbound attachment states live on
 /// different type constructors (disjoint impls, no negative reasoning needed).
 #[doc(hidden)]
@@ -370,6 +933,15 @@ pub struct WithSource<Source>(Source);
 impl<Source> WithSource<Source> {
     pub(crate) fn new(source: Source) -> Self {
         Self(source)
+    }
+
+    /// Grows the wrapped source in place: how a mount site's reply chain adds one step to the
+    /// wiring it already attached.
+    pub(crate) fn map<NewSource>(
+        self,
+        f: impl FnOnce(Source) -> NewSource,
+    ) -> WithSource<NewSource> {
+        WithSource(f(self.0))
     }
 }
 
@@ -492,6 +1064,65 @@ macro_rules! impl_bind_slot {
 }
 
 impl_bind_slot! {
+    (@ 0)
+    (@ 0, A1)
+    (A0, @ 1)
+    (@ 0, A1, A2)
+    (A0, @ 1, A2)
+    (A0, A1, @ 2)
+}
+
+/// Implements [`TransformAt`] for each (arity, position) pair: the attachment at the position the
+/// last `.out(..)` bound (`@ <position>`) grows its stack, the surrounding elements pass through.
+macro_rules! impl_step_at {
+    ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
+        impl<N, Policy, Layers, Enc $(, $before)* $(, $after)*> TransformAt<N, SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<Policy, Layers, Enc>>, $($after,)*)
+        {
+            type Out = (
+                $($before,)*
+                WithSource<OutAttachment<Policy, OutTransformStack<Layers, N>, Enc>>,
+                $($after,)*
+            );
+
+            fn transform_at(self, transform: N) -> Self::Out {
+                #[allow(non_snake_case)]
+                let ($($before,)* bound, $($after,)*) = self;
+                ($($before,)* bound.map(|slot| slot.add_transform(transform)), $($after,)*)
+            }
+        }
+
+        impl<Cd, Policy, Layers $(, $before)* $(, $after)*> CodecAt<Cd, SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<Policy, Layers, UnnamedCodec>>, $($after,)*)
+        {
+            type Out = (
+                $($before,)*
+                WithSource<OutAttachment<Policy, Layers, CallCodec<Cd>>>,
+                $($after,)*
+            );
+
+            fn codec_at(self, codec: Cd) -> Self::Out {
+                #[allow(non_snake_case)]
+                let ($($before,)* bound, $($after,)*) = self;
+                ($($before,)* bound.map(|slot| slot.name_codec(codec)), $($after,)*)
+            }
+        }
+
+        impl<Policy, Layers, Enc $(, $before)* $(, $after)*> MapPolicyAt<SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<Policy, Layers, Enc>>, $($after,)*)
+        {
+            type Policy = Policy;
+
+            fn map_policy_at(self, f: impl FnOnce(Policy) -> Policy) -> Self {
+                #[allow(non_snake_case)]
+                let ($($before,)* bound, $($after,)*) = self;
+                ($($before,)* bound.map(|slot| slot.map_policy(f)), $($after,)*)
+            }
+        }
+    )+};
+}
+
+impl_step_at! {
     (@ 0)
     (@ 0, A1)
     (A0, @ 1)

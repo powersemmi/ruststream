@@ -148,13 +148,13 @@ async fn a_slot_entry_delegates_request_reply() {
 
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
-    use crate::runtime::Slot;
+    use crate::runtime::{PublishIdentity, Slot};
     use crate::{IncomingMessage, Subscriber};
 
     let broker = MemoryBroker::new();
     let mut service = broker.subscribe("slots.echo");
     let responder = broker.publisher();
-    let slot = Slot::<Events, _, _>::test_entry(broker.requester(), JsonCodec);
+    let slot = Slot::<Events, _, _>::test_entry(broker.requester(), JsonCodec, PublishIdentity);
 
     let respond = async {
         let mut stream = std::pin::pin!(service.stream());
@@ -197,11 +197,11 @@ async fn a_slot_entry_delegates_the_transaction_protocol() {
     use crate::Subscriber;
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
-    use crate::runtime::Slot;
+    use crate::runtime::{PublishIdentity, Slot};
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("slots.ledger");
-    let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec);
+    let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec, PublishIdentity);
 
     slot.begin_transaction().await.expect("begin failed");
     slot.publish(OutgoingMessage::new("slots.ledger", b"staged"))
@@ -226,11 +226,11 @@ async fn the_builder_separates_the_encode_and_the_headers_failure() {
     use crate::Subscriber;
     use crate::codec::JsonCodec;
     use crate::memory::MemoryBroker;
-    use crate::runtime::{PublishError, Slot};
+    use crate::runtime::{PublishError, PublishIdentity, Slot};
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("events.done");
-    let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec);
+    let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec, PublishIdentity);
 
     let encode = slot
         .message(&Progress::new())

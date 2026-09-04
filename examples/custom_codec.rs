@@ -7,9 +7,7 @@
 
 use bytes::BytesMut;
 use ruststream::codec::{CborCodec, Codec, CodecError, JsonCodec};
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Router, RustStream, TypedPublisher};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -119,12 +117,11 @@ fn app() -> RustStream {
                     .with_codec(Envelope::new(CborCodec))
                     .include(audit),
             );
-            // per publisher: the reply leaves under the envelope, the request still arrives
-            // under the scope codec
-            b.include(bill).publisher(TypedPublisher::with_codec(
-                MemoryPublish,
-                Envelope::new(JsonCodec),
-            ));
+            // per reply: the reply leaves under the envelope, the request still arrives under
+            // the scope codec
+            b.include(bill)
+                .out(Reply, Publish)
+                .codec(Envelope::new(JsonCodec));
         },
     )
     // --8<-- [end:mount]

@@ -4,7 +4,7 @@ error[E0277]: this subscriber's subscription is already named
 18 |     let _renamed = handle.name("other");
    |                           ^^^^ the name is fixed in the `#[subscriber(..)]` attribute
    |
-   = help: the trait `NameStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>`
+   = help: the trait `NameStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>`
    = note: a setting is named once: keep the name in the attribute, or leave the attribute's source open (`#[subscriber]`, `#[subscriber(Kind)]`) and name it here
 help: the trait `NameStep` is implemented for `SubscriberBuilder<Def, Unnamed<S>, State, DC>`
   --> src/runtime/settings.rs

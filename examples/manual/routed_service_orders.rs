@@ -17,8 +17,7 @@ use std::error::Error;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemorySource};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// An order placed by a customer, delivered on the `orders` channel.
@@ -123,18 +122,22 @@ impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
 
 /// The mount, and the whole declaration the attribute's clauses carried: the broker's own
 /// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
-/// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays a
-/// chain step on both paths: `TypedPublisher::new(MemoryPublish)` pairs the policy with the
-/// default codec at startup.
+/// the attribute lifts off the handler's doc comment. Who publishes the reply is wiring rather
+/// than declaration, so it lives on the mount chain on both paths: `.out(Reply, Publish)` names
+/// the position the returned value leaves through and the policy that carries it, which pairs with
+/// the connected broker at startup and encodes with the default codec. The definition says what it
+/// replies with and where; the chain says who sends it.
 fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
-    Router::<MemoryBroker>::new().include(
-        subscriber(MemorySource::new("orders"), Confirm)
-            .reply()
-            .to("confirmations")
-            .publisher(TypedPublisher::new(MemoryPublish))
-            .describe("Confirms an order and replies on `confirmations`.")
-            .build(),
-    )
+    Router::<MemoryBroker>::new()
+        .include(
+            subscriber(MemorySource::new("orders"), Confirm)
+                .reply()
+                .to("confirmations")
+                .describe("Confirms an order and replies on `confirmations`.")
+                .build(),
+        )
+        .out(Reply, Publish)
+        .build()
 }
 // --8<-- [end:descriptor]
 

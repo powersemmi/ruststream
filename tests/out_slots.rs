@@ -1,6 +1,6 @@
 //! Marker-identified Out slots: multi-slot binding by marker, capability-refined bounds, the
-//! harness's per-slot capture, and the broker-defined capability extension through
-//! [`SlotPublisher::inner`].
+//! harness's per-slot capture, and the broker-defined capability extension grafted onto the
+//! arena entry.
 #![cfg(all(
     feature = "memory",
     feature = "macros",
@@ -12,15 +12,10 @@ mod common;
 
 use common::{Event, Wire};
 
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{
-    AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream, SlotPublisher,
-};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::testing::TestApp;
-use ruststream::{
-    Broker, Deserialized, HeaderMap, OutSlot, OutgoingMessage, OwnedTransactions, PairError,
-    PublishPolicy, Publisher, Transaction, subscriber,
-};
+use ruststream::{OutgoingMessage, PairError};
 
 /// The payload view the slot-publishing body takes: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -75,8 +70,8 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
     let app =
         RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(transcode)
-                .out(Audit, MemoryPublish)
-                .out(Encoded, MemoryPublish)
+                .out(Audit, Publish)
+                .out(Encoded, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -113,13 +108,13 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
 async fn a_slot_binds_a_foreign_broker_through_a_token() {
     let ingress = MemoryBroker::new();
     let other = MemoryBroker::new().bindable();
-    let to_other = other.bind(MemoryPublish);
+    let to_other = other.bind(Publish);
 
     let app = RustStream::new(AppInfo::new("slots-cross", "0.1.0"))
         .with_broker_labeled("other", other, |_b| {})
         .with_broker_labeled("ingress", ingress, |b| {
             b.include(transcode)
-                .out(Encoded, MemoryPublish)
+                .out(Encoded, Publish)
                 .out(Audit, to_other)
                 .build();
         });
@@ -139,8 +134,9 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
         .with_raw(2u64.to_be_bytes().as_slice());
 }
 
-/// A capability-refined slot: the handler settles a ledger through owned transactions without
-/// naming a broker type; the memory publisher provides the capability.
+/// A capability-refined slot: the handler settles a ledger through an owned transaction without
+/// naming a broker type; the memory publisher provides the capability, and the transaction's
+/// typed entry admits what the slot's dictionary admits.
 #[subscriber("slots.ledger")]
 async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) -> HandlerOutcome {
     let Ok(mut txn) = tx.transaction().await else {
@@ -148,7 +144,9 @@ async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) ->
     };
     let payload = serde_json::to_vec(event).expect("serializable");
     if txn
-        .publish(OutgoingMessage::new("slots.settled", payload.as_slice()))
+        .message(&Wire::of(payload))
+        .to("slots.settled")
+        .publish()
         .await
         .is_err()
         || txn.commit().await.is_err()
@@ -162,7 +160,7 @@ async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) ->
 async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
     let app =
         RustStream::new(AppInfo::new("slots-txn", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle).out(Encoded, MemoryPublish).build();
+            b.include(settle).out(Encoded, TransactionalPublish).build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -178,6 +176,160 @@ async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
         .published::<Event>("slots.settled")
         .assert_called_once()
         .with(&Event { id: 4 });
+}
+
+/// The same settling, driven through the raw capability methods instead of the typed openers:
+/// the entry delegates each of them, so a body that drives `begin_transaction` / `commit` by
+/// hand keeps the slot attribution on what it publishes in between.
+#[subscriber("slots.by-hand")]
+async fn settle_by_hand(
+    event: &Event,
+    Out(journal): Out<impl TransactionalPublisher, Encoded>,
+) -> HandlerOutcome {
+    if TransactionalPublisher::begin_transaction(journal)
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    let payload = serde_json::to_vec(event).expect("serializable");
+    if journal
+        .message(&Wire::of(payload))
+        .to("slots.by-hand.settled")
+        .publish()
+        .await
+        .is_err()
+    {
+        // The handle carries the open transaction, so a body driving it by hand closes it before
+        // it hands the delivery back: the next one begins on a free handle.
+        let _ = TransactionalPublisher::abort(journal).await;
+        return HandlerOutcome::retry();
+    }
+    if TransactionalPublisher::commit(journal).await.is_err() {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_raw_capability_calls_keep_the_slot_attribution() {
+    let app = RustStream::new(AppInfo::new("slots-by-hand", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(settle_by_hand)
+                .out(Encoded, TransactionalPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Event { id: 6 })
+        .to("slots.by-hand")
+        .publish()
+        .await
+        .expect("publish");
+
+    // The publish went through the entry, so the slot view has it; the commit released it to the
+    // broker, so the publish log has it too.
+    tb.out::<Encoded>()
+        .assert_called_once()
+        .decoded_as::<Event>()
+        .with(&Event { id: 6 });
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("slots.by-hand.settled")
+        .assert_called_once()
+        .with(&Event { id: 6 });
+}
+
+/// A broker refusing a raw capability call reports it in the entry's own error type, so the body
+/// settles on the refusal instead of unwinding. The body commits with nothing open, the refusal
+/// the in-memory broker gives on demand.
+#[subscriber("slots.refused")]
+async fn commit_without_begin(
+    _event: &Event,
+    Out(journal): Out<impl TransactionalPublisher, Encoded>,
+) -> HandlerOutcome {
+    if TransactionalPublisher::commit(journal).await.is_err() {
+        return HandlerOutcome::drop();
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_capability_call_comes_back_as_the_entrys_error() {
+    let app = RustStream::new(AppInfo::new("slots-refused", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(commit_without_begin)
+                .out(Encoded, TransactionalPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Event { id: 8 })
+        .to("slots.refused")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("slots.refused")
+        .assert_called_once()
+        .settled(HandlerOutcome::drop());
+    tb.out::<Encoded>().assert_not_called();
+}
+
+/// The typed opener and the raw one share the name `transaction`, and the inherent typed one
+/// wins; the raw capability method stays reachable through the trait path. What it hands back is
+/// the broker's own transaction value, so the body publishes into it at the byte level - and
+/// what that buffer settles leaves outside the slot, in the broker's publish log alone.
+#[subscriber("slots.raw-owned")]
+async fn settle_raw(
+    event: &Event,
+    Out(ledger): Out<impl OwnedTransactions, Encoded>,
+) -> HandlerOutcome {
+    let Ok(mut txn) = OwnedTransactions::transaction(ledger).await else {
+        return HandlerOutcome::retry();
+    };
+    let payload = serde_json::to_vec(event).expect("serializable");
+    if txn
+        .publish(OutgoingMessage::new("slots.raw-owned.settled", &payload))
+        .await
+        .is_err()
+    {
+        let _ = txn.abort().await;
+        return HandlerOutcome::retry();
+    }
+    if txn.commit().await.is_err() {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_raw_owned_transaction_settles_outside_the_slot() {
+    let app = RustStream::new(AppInfo::new("slots-raw-owned", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(settle_raw)
+                .out(Encoded, TransactionalPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Event { id: 5 })
+        .to("slots.raw-owned")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("slots.raw-owned.settled")
+        .assert_called_once()
+        .with(&Event { id: 5 });
+    tb.out::<Encoded>().assert_not_called();
 }
 
 // A slot left unbound is a compile error, not a runtime one: `.build()` does not exist until
@@ -209,12 +361,21 @@ impl ShardLanes for LaneRouter {
     }
 }
 
-// Grafted onto the slot wrapper once, for every marker: this is what `SlotPublisher::inner`
-// exists for, and how a broker crate extends the slot vocabulary with its own traits.
-impl<P: ShardLanes, M: OutSlot> ShardLanes for SlotPublisher<P, M> {
+// Grafted onto the arena entry once, for every marker, delegating through the entry's
+// transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own
+// traits. A handler body holds the entry, so without this impl the capability is reachable by
+// autoderef for a method call but never satisfies a trait bound.
+impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-        self.inner().lane(shard)
+        (**self).lane(shard)
     }
+}
+
+/// The bound the graft buys: a helper generic over the capability, not over the concrete live
+/// type, takes the entry a handler body holds.
+async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
+    let (publisher, dest) = lanes.lane(event.id);
+    publisher.message(event).to(dest).publish().await.is_ok()
 }
 
 /// The policy half: pure declaration pairing into the router, like a broker's
@@ -226,7 +387,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(LaneRouter {
-            publisher: MemoryPublish.pair(connected).await?,
+            publisher: Publish.pair(connected).await?,
         })
     }
 }
@@ -234,11 +395,11 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 /// The handler bounds its slot with the broker-defined capability, not a core one.
 #[subscriber("slots.sharded")]
 async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerOutcome {
-    let (publisher, dest) = lanes.lane(event.id);
-    if publisher.message(event).to(dest).publish().await.is_err() {
-        return HandlerOutcome::retry();
+    if sent(lanes, event).await {
+        HandlerOutcome::ack()
+    } else {
+        HandlerOutcome::retry()
     }
-    HandlerOutcome::ack()
 }
 // --8<-- [end:extension]
 
@@ -250,7 +411,7 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
     let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(route_shard).publisher(LanePolicy);
+            b.include(route_shard).out(DefaultSlot, LanePolicy).build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

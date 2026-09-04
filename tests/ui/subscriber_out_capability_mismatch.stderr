@@ -1,27 +1,26 @@
 error[E0277]: `MemoryPublisher` does not support request / reply messaging
-  --> tests/ui/subscriber_out_capability_mismatch.rs:22:38
+  --> tests/ui/subscriber_out_capability_mismatch.rs:22:60
    |
-22 |         b.include(forward).publisher(MemoryPublish);
-   |                            --------- ^^^^^^^^^^^^^ the trait `RequestReply` is not implemented for `MemoryPublisher`
-   |                            |
-   |                            required by a bound introduced by this call
+22 |         b.include(forward).out(DefaultSlot, MemoryPublish).build();
+   |                                                            ^^^^^ the trait `RequestReply` is not implemented for `MemoryPublisher`
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
   --> src/runtime/slot.rs
    |
-   | impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
   ::: src/runtime/handle/outs.rs
    |
-   | impl<M: OutSlot, W: RequestReply, E: Send + Sync, Body> RequestReply for Slot<M, W, E, Body> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Slot<M, W, E, Body>`
+   | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline, Body> RequestReply
+   | |     for Slot<M, W, E, Pipe, Body>
+   | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
   ::: src/memory/capability.rs
    |
-   | impl RequestReply for MemoryRequester {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
+   |   impl RequestReply for MemoryRequester {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
 note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>>`
   --> tests/ui/subscriber_out_capability_mismatch.rs:14:1
    |
@@ -31,14 +30,18 @@ note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<DefaultS
    |          ^^^^^^^                                    ------------ unsatisfied trait bound introduced here
    = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
    = note: 1 redundant requirement hidden
-   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`
-   = note: required for `(ruststream::runtime::WithSource<MemoryPublish>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open)>>`
-note: required by a bound in `IncludeSlots::<'_, Mount, B, Layers, C, State, Pipeline, Def, (ruststream::runtime::MissingSlot<M>,)>::publisher`
-  --> src/runtime/app/include/slot_builder.rs
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`
+   = note: required for `runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>` to implement `runtime::router::routes::MountRoute<MemoryBroker, ()>`
+   = note: required for `(runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: 1 redundant requirement hidden
+   = note: required for `RouterWith<runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<forward, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<MemoryPublish>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+note: required by a bound in `Mounting::<'_, B, Layers, C, State, Pipeline, Chain, ruststream::runtime::OnBuild>::build`
+  --> src/runtime/app/include/guard.rs
    |
-   |     pub fn publisher<NewSource>(self, source: NewSource)
-   |            --------- required by a bound in this associated function
+   |     pub fn build(self)
+   |            ----- required by a bound in this associated function
    |     where
-   |         (WithSource<NewSource>,): SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
-   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'_, Mount, B, Layers, C, State, Pipeline, Def, (MissingSlot<M>,)>::publisher`
+   |         Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'_, B, Layers, C, State, Pipeline, Chain, OnBuild>::build`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

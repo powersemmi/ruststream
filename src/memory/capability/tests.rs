@@ -6,7 +6,7 @@ use super::*;
 use crate::Subscribe;
 #[cfg(feature = "testing")]
 use crate::testing::{TestableBroker, coordinator::Coordinator};
-use crate::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource};
+use crate::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource, nonzero};
 
 #[tokio::test]
 async fn batches_drain_buffered_deliveries() {
@@ -20,7 +20,7 @@ async fn batches_drain_buffered_deliveries() {
             .unwrap();
     }
 
-    let mut stream = std::pin::pin!(sub.batches());
+    let mut stream = std::pin::pin!(sub.batches(nonzero!(64)));
     let batch = stream.next().await.unwrap().unwrap();
     let payloads: Vec<u8> = batch.iter().map(|m| m.payload()[0]).collect();
     assert_eq!(payloads, [0, 1, 2, 3, 4]);
@@ -29,11 +29,11 @@ async fn batches_drain_buffered_deliveries() {
     }
 }
 
+/// The size the stream is opened at is the batch cap: the broker has no size of its own.
 #[tokio::test]
-async fn batch_limit_caps_each_batch() {
+async fn the_batch_size_caps_each_batch() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("batch.capped");
-    sub.set_batch_limit(2);
     let publisher = broker.publisher();
     for i in 0..3u8 {
         publisher
@@ -42,7 +42,7 @@ async fn batch_limit_caps_each_batch() {
             .unwrap();
     }
 
-    let mut stream = std::pin::pin!(sub.batches());
+    let mut stream = std::pin::pin!(sub.batches(nonzero!(2)));
     let first = stream.next().await.unwrap().unwrap();
     assert_eq!(first.len(), 2);
     let second = stream.next().await.unwrap().unwrap();
@@ -511,7 +511,7 @@ async fn batches_replay_after_a_seek() {
             .unwrap();
     }
 
-    let mut stream = std::pin::pin!(sub.batches());
+    let mut stream = std::pin::pin!(sub.batches(nonzero!(64)));
     let batch = stream.next().await.unwrap().unwrap();
     assert_eq!(batch.len(), 3);
     for msg in batch {
@@ -600,7 +600,6 @@ async fn seek_wakes_a_parked_stream() {
 async fn batches_drop_stale_requeues_after_a_seek() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("seek.batch.stale");
-    sub.set_batch_limit(2);
     let seeker = sub.seeker();
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
@@ -610,7 +609,7 @@ async fn batches_drop_stale_requeues_after_a_seek() {
             .unwrap();
     }
 
-    let mut stream = std::pin::pin!(sub.batches());
+    let mut stream = std::pin::pin!(sub.batches(nonzero!(2)));
     let mut batch = stream.next().await.unwrap().unwrap();
     assert_eq!(batch.len(), 2);
     let held_b = batch.pop().unwrap();

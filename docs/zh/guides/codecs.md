@@ -18,7 +18,7 @@
 ## 默认编解码器 { #the-default-codec }
 
 `DefaultCodec` 是一个由 feature 选出的别名：启用了 `json` 就是它，否则是 `cbor`，再否则是
-`msgpack`。当没有任何地方指定编解码器时，`include(def)` 和 `TypedPublisher::new(publisher)` 用的
+`msgpack`。当没有任何地方指定编解码器时，`include(def)` 和停在 `.out(Reply, policy)` 的回复链用的
 就是它；这两者都不接收编解码器参数。
 
 一个编解码器 feature 都不启用时，没有任何东西能编码或解码，于是凡是会用到默认编解码器的写法都是
@@ -83,10 +83,11 @@ feature 都不开也照样运行，什么都不会少。
 
 ## 发布一侧 { #the-publish-side }
 
-发布者遵循同样的规则：`TypedPublisher::new(policy)` 用默认编解码器编码回复，
-`TypedPublisher::with_codec(policy, codec)` 则显式指定一个。传入请求的解码遵循所在作用域（用
+发布者遵循同样的规则：`.out(Reply, policy)` 用默认编解码器编码回复，
+`.out(Reply, policy).codec(codec)` 则显式指定一个 - 单个 `Out` 槽位的
+`.out(marker, policy).codec(codec)` 同理。传入请求的解码遵循所在作用域（用
 `with_broker_codec` 设置的作用域编解码器，或路由器链上的 `Router::with_codec`，再否则是默认值）。
-回复用的编解码器则随着 `.publisher(..)` 附上的那一层传递，因此请求和回复的格式可以自由地不同。
+回复用的编解码器则随着这条链搭好的接线传递，因此请求和回复的格式可以自由地不同。
 
 编解码器是挂载的属性，而不是消息类型的属性：同一个类型可以在这个订阅上按 JSON 解码，在另一个订阅上
 按 CBOR 解码，而挂载点是唯一说明用哪一个的地方。

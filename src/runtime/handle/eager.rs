@@ -16,7 +16,7 @@ use crate::{Name, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Deserialized, Input, Message, Page, PageDeserialized, PagePair, PagedAxis,
+    Axis, AxisDocs, Batch, BatchDeserialized, BatchPair, BatchedAxis, Deserialized, Input, Message,
     Solo, SoloAxis, SoloDeserialized, SoloPair,
 };
 use super::value::{HandleValue, Sealed};
@@ -186,95 +186,83 @@ where
     }
 }
 
-/// The dispatch adapter of a page body.
+/// The dispatch adapter of a batch body.
 ///
-/// Awaits the verdict, checks the per-element contract, and settles the page by it. Carries
-/// the [`batch`](crate::runtime::SubscriberBuilder::batch) cap, feeding an oversized page to
-/// the body in chunks.
-pub struct PageBody<A, H> {
+/// Awaits the verdict, checks the per-element contract, and settles the batch by it. The
+/// batch's size was named by [`batch`](crate::runtime::SubscriberSettings::batch) and applied by
+/// the broker, so nothing here resizes it.
+pub struct BatchBody<A, H> {
     body: H,
-    cap: Option<std::num::NonZeroUsize>,
     _axes: PhantomData<fn() -> A>,
 }
 
-impl<A, H> std::fmt::Debug for PageBody<A, H> {
+impl<A, H> std::fmt::Debug for BatchBody<A, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PageBody").finish_non_exhaustive()
+        f.debug_struct("BatchBody").finish_non_exhaustive()
     }
 }
 
-/// Applies the page contract to one verdict: `Ok` acks the chunk, an `Err` vector must be
-/// exactly chunk-length (a mismatch is a bug in the handler and panics under the subscriber's
+/// Applies the batch contract to one verdict: `Ok` acks the batch, an `Err` vector must be
+/// exactly batch-length (a mismatch is a bug in the handler and panics under the subscriber's
 /// panic policy).
-pub(super) fn settle_page(
+pub(super) fn settle_batch(
     verdict: Result<(), Vec<HandlerOutcome>>,
-    chunk_len: usize,
+    batch_len: usize,
     subscription: &str,
 ) -> BatchResult {
     match verdict {
         Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
         Err(outcomes) => {
             assert!(
-                outcomes.len() == chunk_len,
-                "subscriber '{subscription}' returned {} per-element outcomes for a page of {}",
+                outcomes.len() == batch_len,
+                "subscriber '{subscription}' returned {} per-element outcomes for a batch of {}",
                 outcomes.len(),
-                chunk_len,
+                batch_len,
             );
             BatchResult::PerElement(outcomes)
         }
     }
 }
 
-/// Extends `settles` with one chunk's outcomes, one per element.
+/// Runs a batch body over one delivered batch and settles by its verdict.
 ///
-/// A uniform chunk outcome fans its status out per element; its one continuation rides the
-/// chunk's last element, so it still runs after the whole chunk is settled.
-fn extend_settles(settles: &mut Vec<HandlerOutcome>, outcome: BatchResult, chunk_len: usize) {
-    match outcome {
-        BatchResult::Uniform(uniform) => {
-            if chunk_len == 0 {
-                return;
-            }
-            let status = uniform.outcome();
-            settles.extend(
-                std::iter::repeat_with(|| HandlerOutcome::from(status)).take(chunk_len - 1),
-            );
-            settles.push(uniform);
-        }
-        BatchResult::PerElement(chunk) => settles.extend(chunk),
-    }
+/// The batch arrives at the size the registration asked the broker for, and reaches the body
+/// exactly as it arrived: the settling batch forms all run through here - plain and
+/// slot-carrying alike - and none of them splits it.
+pub(super) async fn run_batch<T, O, C, S, H>(
+    body: &H,
+    outs: &O,
+    batch: &[T],
+    ctx: &mut Context<'_, C, S>,
+) -> BatchResult
+where
+    [T]: Input<Axis: BatchedAxis>,
+    H: Handle<[T], (), O, C, S>,
+    T: Send + Sync,
+    O: Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+{
+    let verdict = body.handle(batch, outs, ctx).await;
+    settle_batch(verdict, batch.len(), ctx.name())
 }
 
-impl<T, C, S, H> SliceHandler<T, C, S> for PageBody<Page<T>, H>
+impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<Batch<T>, H>
 where
-    [T]: Input<Axis = Page<T>>,
+    [T]: Input<Axis = Batch<T>>,
     T: Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_batch(&self.body, &(), batch, ctx).await
     }
 }
 
-impl<Hd, P, C, S, H> SliceHandler<Message<Hd, P>, C, S> for PageBody<PagePair<Hd, P>, H>
+impl<Hd, P, C, S, H> SliceHandler<Message<Hd, P>, C, S> for BatchBody<BatchPair<Hd, P>, H>
 where
-    [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
+    [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
     C: Send + Sync,
@@ -286,65 +274,37 @@ where
         batch: &[Message<Hd, P>],
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_batch(&self.body, &(), batch, ctx).await
     }
 }
 
 // The elements were already constructed by the dispatch adapter, borrowing the deliveries'
-// payloads, so this cell only chunks and settles like the decoded one. The element is a fresh
+// payloads, so this cell only runs and settles like the decoded one. The element is a fresh
 // parameter (`T`, one lifetime instantiation of the family's output) because a projection with
 // a free lifetime cannot head an impl; the pinned-axis bound is what ties it back to `F` and
 // normalizes the verdict family.
-impl<T, F, C, S, H> SliceHandler<T, C, S> for PageBody<PageDeserialized<F>, H>
+impl<T, F, C, S, H> SliceHandler<T, C, S> for BatchBody<BatchDeserialized<F>, H>
 where
     T: Send + Sync,
     F: Deserialized + Send + Sync + 'static,
-    [T]: Input<Axis = PageDeserialized<F>>,
+    [T]: Input<Axis = BatchDeserialized<F>>,
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_batch(&self.body, &(), batch, ctx).await
     }
 }
 
 impl<A, C, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), C, H, Doc>>
 where
-    A: PagedAxis,
+    A: BatchedAxis,
     Doc: AxisDocs<A>,
 {
     type Input = A::Kind;
     type Context = C;
-    type Handler = PageBody<A, H>;
+    type Handler = BatchBody<A, H>;
     // See `SubscriberDef::Source` above: the builder carries the real source.
     type Source = Unnamed<Name>;
 
@@ -380,53 +340,10 @@ where
         self.0.docs.message_description
     }
 
-    fn into_handler(self) -> PageBody<A, H> {
-        PageBody {
+    fn into_handler(self) -> BatchBody<A, H> {
+        BatchBody {
             body: self.0.body,
-            cap: self.0.page_cap,
             _axes: PhantomData,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BatchResult, HandlerOutcome, extend_settles};
-
-    /// A uniform chunk outcome fans its status out per element, and the one continuation rides
-    /// the last of them.
-    #[test]
-    fn a_uniform_chunk_outcome_fans_out_per_element() {
-        let mut settles = Vec::new();
-        extend_settles(&mut settles, BatchResult::Uniform(HandlerOutcome::ack()), 3);
-        assert_eq!(settles.len(), 3);
-        assert!(settles.iter().all(HandlerOutcome::is_ack));
-    }
-
-    /// A chunk with nothing in it settles nothing: `chunks` never yields one, so this is the
-    /// guard that keeps the fan-out arithmetic from underflowing if it ever did.
-    #[test]
-    fn an_empty_chunk_settles_nothing() {
-        let mut settles = vec![HandlerOutcome::ack()];
-        extend_settles(
-            &mut settles,
-            BatchResult::Uniform(HandlerOutcome::drop()),
-            0,
-        );
-        assert_eq!(settles.len(), 1);
-        assert!(settles[0].is_ack());
-    }
-
-    /// A per-element chunk outcome extends by its own outcomes, unchanged.
-    #[test]
-    fn a_per_element_chunk_outcome_extends_by_its_own_outcomes() {
-        let mut settles = Vec::new();
-        extend_settles(
-            &mut settles,
-            BatchResult::PerElement(vec![HandlerOutcome::drop(), HandlerOutcome::retry()]),
-            2,
-        );
-        assert!(settles[0].is_drop());
-        assert!(settles[1].is_retry());
     }
 }

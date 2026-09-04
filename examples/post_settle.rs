@@ -6,9 +6,7 @@
 //! cargo run --example post_settle --features macros,memory,json -- run
 //! ```
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -33,7 +31,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 /// its own follow-up. The continuation rides with the element, so a batch settles each message and
 /// its side effect independently.
 #[subscriber("orders")]
-async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
+async fn handle_batch(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()
         .map(|order| {
@@ -54,6 +52,6 @@ async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("post_settle", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(handle);
-        b.include(handle_page);
+        b.include(handle_batch.batch(nonzero!(64)));
     })
 }

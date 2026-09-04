@@ -1,0 +1,47 @@
+error[E0277]: `MemoryRequester` does not open caller-owned transactions
+  --> tests/ui/subscriber_out_owned_mismatch.rs:22:59
+   |
+22 |         b.include(settle).out(DefaultSlot, MemoryRequest).build();
+   |                                                           ^^^^^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
+   |
+   = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
+help: the following other types implement trait `OwnedTransactions`
+  --> src/runtime/slot.rs
+   |
+   |   impl<P: OwnedTransactions, M: OutSlot> OwnedTransactions for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |
+  ::: src/runtime/handle/outs.rs
+   |
+   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline, Body> OwnedTransactions
+   | |     for Slot<M, W, E, Pipe, Body>
+   | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: src/memory/capability.rs
+   |
+   |   impl OwnedTransactions for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+note: required for `settle` to implement `Handle<Order, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>>`
+  --> tests/ui/subscriber_out_owned_mismatch.rs:14:1
+   |
+14 | #[subscriber("orders")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
+   |          ^^^^^^                                   ----------------- unsatisfied trait bound introduced here
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
+   = note: 1 redundant requirement hidden
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`
+   = note: required for `runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>` to implement `runtime::router::routes::MountRoute<MemoryBroker, ()>`
+   = note: required for `(runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: 1 redundant requirement hidden
+   = note: required for `RouterWith<runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<settle, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<MemoryRequest>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+note: required by a bound in `Mounting::<'_, B, Layers, C, State, Pipeline, Chain, ruststream::runtime::OnBuild>::build`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn build(self)
+   |            ----- required by a bound in this associated function
+   |     where
+   |         Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'_, B, Layers, C, State, Pipeline, Chain, OnBuild>::build`
+   = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

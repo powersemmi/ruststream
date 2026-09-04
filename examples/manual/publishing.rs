@@ -3,7 +3,7 @@
 //! declaration they mint is written out here: the reply bodies, the slot markers and their
 //! dictionaries, and what a message type says about being sent. Everything a body does is an axis
 //! of its own `impl Handle`, and the mount site then reads exactly as it does with the attribute -
-//! `include`, `.publisher(..)`, `.out(marker, ..)`, `.build()`.
+//! `include`, `.out(Reply, ..)`, `.out(marker, ..)`, `.build()`.
 //!
 //! ```text
 //! cargo run --example manual_publishing --no-default-features --features memory,json
@@ -13,22 +13,15 @@ use std::error::Error;
 use std::fmt::Display;
 use std::future::{Future, ready};
 
-use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    BoundSegment, MissingSegment, OutMessages, OutgoingMessageMetadata, PublishAt, PublishContext,
-    PublishError, PublishLayer, PublishNext, PublishPipeline, PublishTransform, PublishedThrough,
-    TemplateAddress, Transactional,
+    BoundSegment, MissingSegment, OutTransform, PublishAt, PublishContext, PublishError,
+    PublishLayer, PublishNext, PublishPipeline, PublishTransform, TemplateAddress,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::Outgoing;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NameTemplate, NoHeaders, OutgoingDestination,
-    TransactionalPublisher,
-};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -105,20 +98,21 @@ impl Handle<Request, Response> for Validate {
 // --8<-- [start:forward]
 // The publisher arrives as an injection: the policy is attached at the include site, the runtime
 // pairs it with the connected broker at startup, and the body always holds a live publisher - no
-// registry, no erased lookup, no state plumbing. The publisher type is not named: the body is
-// generic over it (and over the scope codec the slot carries), stating just the capability it
-// needs, so the same body mounts on a production broker and its in-process test transport
-// unchanged. `Event` declares no destination of its own, so the call site names one.
+// registry, no erased lookup, no state plumbing. Nothing the mount site chose is named here: one
+// parameter stands for the slot's entry, `OutEntry` ties it to the marker, and the body states
+// only the capability it needs of the wired publisher - so the same body mounts on a production
+// broker and its in-process test transport unchanged, and under a slot transform or an app-wide
+// publish layer alike. `Event` declares no destination of its own, so the call site names one.
 struct Forward;
 
-impl<P, Enc> Handle<Event, (), Outs<(Slot<DefaultSlot, P, Enc>,)>> for Forward
+impl<Egress> Handle<Event, (), Outs<(Egress,)>> for Forward
 where
-    Slot<DefaultSlot, P, Enc>: Publish,
+    Egress: OutEntry<DefaultSlot, Wire: Publisher>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<DefaultSlot, P, Enc>,)>,
+        outs: &Outs<(Egress,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -166,16 +160,15 @@ impl PublishedThrough<Shadow> for Event {}
 
 struct Mirror;
 
-impl<PA, EncA, PB, EncB> Handle<Event, (), Outs<(Slot<Primary, PA, EncA>, Slot<Shadow, PB, EncB>)>>
-    for Mirror
+impl<P, S> Handle<Event, (), Outs<(P, S)>> for Mirror
 where
-    Slot<Primary, PA, EncA>: Publish,
-    Slot<Shadow, PB, EncB>: Publish,
+    P: OutEntry<Primary, Wire: Publisher>,
+    S: OutEntry<Shadow, Wire: Publisher>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<Primary, PA, EncA>, Slot<Shadow, PB, EncB>)>,
+        outs: &Outs<(P, S)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -206,14 +199,14 @@ where
 // and the arena - and the mount site fills both.
 struct Gateway;
 
-impl<P, Enc> Handle<Request, Response, Outs<(Slot<DefaultSlot, P, Enc>,)>> for Gateway
+impl<Audit> Handle<Request, Response, Outs<(Audit,)>> for Gateway
 where
-    Slot<DefaultSlot, P, Enc>: Publish,
+    Audit: OutEntry<DefaultSlot, Wire: Publisher>,
 {
     async fn handle(
         &self,
         req: &Request,
-        outs: &Outs<(Slot<DefaultSlot, P, Enc>,)>,
+        outs: &Outs<(Audit,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<Response, HandlerOutcome> {
         if outs
@@ -354,14 +347,14 @@ impl PublishedThrough<Orders> for OrderPlaced {}
 
 struct Route;
 
-impl<P, Enc> Handle<Event, (), Outs<(Slot<Orders, P, Enc>,)>> for Route
+impl<O> Handle<Event, (), Outs<(O,)>> for Route
 where
-    Slot<Orders, P, Enc>: Publish,
+    O: OutEntry<Orders, Wire: Publisher>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<Orders, P, Enc>,)>,
+        outs: &Outs<(O,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let orders = outs.get(Orders);
@@ -402,6 +395,19 @@ impl<C> PublishTransform<C> for EnvelopeTransform {
 }
 // --8<-- [end:static_transform]
 
+// --8<-- [start:slot_transform]
+/// A static, per-slot transform: it stamps what leaves one `Out` slot. There is no
+/// `PublishContext` here - the body issues a slot publish itself, so the delivery is the body's
+/// own to read and put on the message.
+struct OutboxEnvelope;
+
+impl OutTransform for OutboxEnvelope {
+    fn apply(&self, out: &mut Outgoing<'_>) {
+        out.headers_mut().insert("x-outbox", b"1".to_vec());
+    }
+}
+// --8<-- [end:slot_transform]
+
 // --8<-- [start:app_layer]
 /// A static, app-wide publish layer: observes every publish, then passes it on.
 #[derive(Clone)]
@@ -420,9 +426,9 @@ impl PublishLayer for AuditPublish {
 // --8<-- [end:app_layer]
 
 // --8<-- [start:batch_publishing]
-/// Confirms a whole page of orders; the replies become visible atomically on commit. The page
+/// Confirms a whole batch of orders; the replies become visible atomically on commit. The batch
 /// input and the reply type are two axes of the one trait: one `Vec` of replies per batch, each
-/// published to the destination the chain names, and an `Err` settles the page element-wise
+/// published to the destination the chain names, and an `Err` settles the batch element-wise
 /// (one outcome per element) without publishing anything.
 struct Confirm;
 
@@ -434,7 +440,7 @@ impl Handle<[Event], Vec<Event>> for Confirm {
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Event>, Vec<HandlerOutcome>>> {
         if orders.iter().any(|o| o.id == 0) {
-            // nothing published, every element of the page settled on its own
+            // nothing published, every element of the batch settled on its own
             return ready(Err(orders.iter().map(|_| HandlerOutcome::drop()).collect()));
         }
         ready(Ok(orders.iter().map(|o| Event { id: o.id }).collect()))
@@ -445,12 +451,10 @@ impl Handle<[Event], Vec<Event>> for Confirm {
 // --8<-- [start:manual_transaction]
 /// Seeds the reference events inside one broker transaction: both records become visible
 /// together on commit, or not at all. The scope owns the transaction, so a commit without a
-/// begin, a second commit, or a publish after settling do not compile. The wiring arrives
+/// begin, a second commit, or a publish after settling do not compile. The publisher arrives
 /// already paired (the scope's `after_startup` hands it over live), so seeding cannot race the
-/// broker connect.
-async fn seed_events<P>(
-    seeder: Transactional<P, JsonCodec>,
-) -> Result<(), Box<dyn Error + Send + Sync>>
+/// broker connect; the bound names the capability the seeding needs, not the broker's publisher.
+async fn seed_events<P>(seeder: P) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     P: TransactionalPublisher,
 {
@@ -476,25 +480,25 @@ fn app() -> impl App {
     let broker = MemoryBroker::new();
     // --8<-- [start:pipeline]
     RustStream::new(AppInfo::new("publishing", "0.1.0"))
-        // app-wide layer: wraps every published reply
+        // app-wide layer: wraps every publish a handler makes, replies and Out slots alike
         .publish_layer(AuditPublish)
         .with_broker(broker, |b| {
             // the first publish: runs once connected and subscribed, with the transactional
             // wiring already paired
-            b.after_startup(
-                TypedPublisher::with_codec(MemoryPublish, JsonCodec).transactional(),
-                async move |seeder| seed_events(seeder).await.map_err(std::io::Error::other),
-            );
+            b.after_startup(TransactionalPublish, async move |seeder| {
+                seed_events(seeder).await.map_err(std::io::Error::other)
+            });
             // --8<-- [start:reply_mount]
-            // static, per-publisher: a policy stack, composed at compile time and paired with
-            // the connected broker at startup
+            // static, per-reply: the chain names the policy and composes the transform at
+            // compile time; the runtime pairs it with the connected broker at startup
             b.include(
                 subscriber("requests", Respond)
                     .reply()
                     .to("responses")
-                    .publisher(TypedPublisher::new(MemoryPublish).transform(EnvelopeTransform))
                     .build(),
-            );
+            )
+            .out(Reply, Publish)
+            .transform(EnvelopeTransform);
             // the default reply wiring: the broker's default policy under the default codec
             b.include(
                 subscriber("validated-requests", Validate)
@@ -505,44 +509,50 @@ fn app() -> impl App {
             // --8<-- [end:reply_mount]
             // --8<-- [start:forward_mount]
             b.include(subscriber("ingress", Forward).build())
-                .publisher(MemoryPublish);
+                .out(DefaultSlot, Publish)
+                .build();
             // --8<-- [end:forward_mount]
             // --8<-- [start:slots_mount]
-            // each named slot binds by marker; the call order does not matter
+            // each named slot binds by marker; the call order does not matter, and a
+            // .transform(..) rides the slot the .out(..) before it bound
             b.include(subscriber("mirror", Mirror).build())
-                .out(Shadow, MemoryPublish)
-                .out(Primary, MemoryPublish)
+                .out(Shadow, Publish)
+                .transform(OutboxEnvelope)
+                .out(Primary, Publish)
                 .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
-            // the reply keeps .publisher(..) (or its default); the Out slot attaches
-            // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
+            // one verb for both positions: .out(Reply, ..) names who publishes the returned
+            // value (or leave it out for the default), and .out(<marker>, ..) binds an Out
+            // slot - DefaultSlot for a single unnamed slot
             b.include(
                 subscriber("gateway-requests", Gateway)
                     .reply()
                     .to("gateway-responses")
                     .build(),
             )
-            .out(DefaultSlot, MemoryPublish)
+            .out(DefaultSlot, Publish)
             .build();
             // --8<-- [end:publish_out_mount]
             // --8<-- [start:declared_mount]
             // the slot lists what it may publish; where each message goes is its own declaration
             b.include(subscriber("orders.incoming", Route).build())
-                .out(Orders, MemoryPublish)
+                .out(Orders, Publish)
                 .build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
-            // .transactional() marks the wiring; the pairing checks that the policy's live
-            // publisher implements TransactionalPublisher. Without it, each reply publishes
-            // independently.
+            // .batch(n) is the batch size the subscription opens with, which every batch mount
+            // owes. .transactional() marks the wiring; the pairing checks that the policy's live
+            // publisher is transactional. Without it, each reply publishes independently.
             b.include(
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(TypedPublisher::new(MemoryPublish).transactional())
+                    .batch(nonzero!(64))
                     .build(),
-            );
+            )
+            .out(Reply, TransactionalPublish)
+            .transactional();
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

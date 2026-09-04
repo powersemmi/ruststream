@@ -26,10 +26,10 @@ use super::coordinator::{Coordinator, Delivered, Outcome, Record};
 /// Assertions over the deliveries one subscriber received, recorded by the harness.
 ///
 /// The unit these count is the handler CALL, not the message: a single-message handler is called
-/// once per delivery, and a batch handler once per page. So `assert_called_once` on a batch
-/// subscription means one page arrived, whatever its size, while
+/// once per delivery, and a batch handler once per batch. So `assert_called_once` on a batch
+/// subscription means one batch arrived, whatever its size, while
 /// [`received_raw`](Self::received_raw) still lists every element of it. An element the decode
-/// policy rejected before the body ran is settled by that policy and is not part of the page the
+/// policy rejected before the body ran is settled by that policy and is not part of the batch the
 /// handler was called with, so it does not appear here.
 #[derive(Debug)]
 pub struct SubscriberAssertions<'a> {
@@ -66,21 +66,21 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Runs `f` over the sole delivery of the most recent call. The assertions that name one
-    /// expected payload go through here, so a page of several reports what it was instead of
+    /// expected payload go through here, so a batch of several reports what it was instead of
     /// silently checking one element of it.
     fn with_sole_delivery<R>(&self, what: &str, f: impl FnOnce(&Delivered) -> R) -> R {
         self.with_last(what, |record| match record.deliveries.as_slice() {
             [only] => f(only),
-            page => panic!(
-                "subscriber {:?} last received a page of {} deliveries, so it has no single \
-                 {what}; read the page with received_raw()",
+            batch => panic!(
+                "subscriber {:?} last received a batch of {} deliveries, so it has no single \
+                 {what}; read the batch with received_raw()",
                 self.name,
-                page.len(),
+                batch.len(),
             ),
         })
     }
 
-    /// Asserts this subscriber was called exactly once (one delivery, or one page).
+    /// Asserts this subscriber was called exactly once (one delivery, or one batch).
     ///
     /// # Panics
     ///
@@ -111,7 +111,7 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Every raw payload this subscriber received, in delivery order, for custom inspection beyond
-    /// the built-in assertions. A page contributes its elements, so the list is flat whether the
+    /// the built-in assertions. A batch contributes its elements, so the list is flat whether the
     /// handler takes one message or a slice.
     #[must_use]
     pub fn received_raw(&self) -> Vec<Bytes> {
@@ -121,6 +121,86 @@ impl<'a> SubscriberAssertions<'a> {
                 .flat_map(|record| record.deliveries.iter().map(|one| one.raw.clone()))
                 .collect()
         })
+    }
+
+    /// The raw payloads this subscriber received grouped by handler CALL, in call order: one inner
+    /// vector per call, holding what that call carried.
+    ///
+    /// This is [`received_raw`](Self::received_raw) with the batch boundaries kept. A
+    /// single-message handler yields one-element vectors; a batch handler yields one vector per
+    /// batch, which is what a test pinning how a stream was cut into batches reads.
+    #[must_use]
+    pub fn batches_raw(&self) -> Vec<Vec<Bytes>> {
+        self.with_records(|records| {
+            records
+                .iter()
+                .map(|record| {
+                    record
+                        .deliveries
+                        .iter()
+                        .map(|one| one.raw.clone())
+                        .collect()
+                })
+                .collect()
+        })
+    }
+
+    /// Decodes [`batches_raw`](Self::batches_raw) with
+    /// [`DefaultCodec`](crate::codec::DefaultCodec). Use
+    /// [`batches_with`](Self::batches_with) for a non-default codec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any received payload fails to decode as `T`.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    #[must_use]
+    pub fn batches<T: DeserializeOwned>(&self) -> Vec<Vec<T>> {
+        self.batches_with(&DefaultCodec::default())
+    }
+
+    /// Like [`batches`](Self::batches), but decodes with `codec` - use it when the handler was
+    /// mounted with a non-default codec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any received payload fails to decode as `T`.
+    #[must_use]
+    pub fn batches_with<T, C>(&self, codec: &C) -> Vec<Vec<T>>
+    where
+        T: DeserializeOwned,
+        C: Codec,
+    {
+        self.with_records(|records| {
+            records
+                .iter()
+                .map(|record| {
+                    record
+                        .deliveries
+                        .iter()
+                        .map(|one| {
+                            codec.decode(&one.raw).unwrap_or_else(|err| {
+                                panic!(
+                                    "subscriber {:?} received a payload that did not decode as \
+                                     {}: {err}",
+                                    self.name,
+                                    std::any::type_name::<T>(),
+                                )
+                            })
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+    }
+
+    /// The classified [`Outcome`] of every call, in call order.
+    ///
+    /// [`assert_outcome`](Self::assert_outcome) and [`settled`](Self::settled) read the most recent
+    /// call only; this is what a test pinning a SEQUENCE (a nack followed by the redelivery's ack)
+    /// compares against.
+    #[must_use]
+    pub fn outcomes(&self) -> Vec<Outcome> {
+        self.with_records(|records| records.iter().map(|record| record.outcome()).collect())
     }
 
     /// Decodes every payload this subscriber received (with
@@ -230,7 +310,7 @@ impl<'a> SubscriberAssertions<'a> {
     /// # Panics
     ///
     /// Panics if the subscriber was not called, the raw payload differs, or the most recent call
-    /// was a page of several deliveries (which has no single payload - read it with
+    /// was a batch of several deliveries (which has no single payload - read it with
     /// [`received_raw`](Self::received_raw)).
     pub fn with_raw(self, bytes: &[u8]) -> Self {
         self.with_sole_delivery("raw payload", |one| {
@@ -247,9 +327,9 @@ impl<'a> SubscriberAssertions<'a> {
     /// Asserts the most recent call settled with `outcome`'s status (any continuation on the
     /// expected value is ignored: the harness compares how the broker settled).
     ///
-    /// A page settles per element, so this asserts EVERY element of the most recent page settled
+    /// A batch settles per element, so this asserts EVERY element of the most recent batch settled
     /// that way - which is what a uniform answer (`HandlerOutcome::ack()` for the whole slice)
-    /// produces. A page that answered element by element with differing outcomes matches none.
+    /// produces. A batch that answered element by element with differing outcomes matches none.
     ///
     /// # Panics
     ///
@@ -273,6 +353,31 @@ impl<'a> SubscriberAssertions<'a> {
                  than expected",
                 self.name,
                 record.deliveries.len(),
+            );
+        });
+        self
+    }
+
+    /// Asserts the body was handed batches of exactly `sizes`, in the order they arrived.
+    ///
+    /// The batch the body sees is the batch the broker delivered: the mount site names the size
+    /// with [`batch`](crate::runtime::SubscriberSettings::batch) and the broker builds the batches
+    /// to it, so this is where a test reads back that it did. One call is one batch, which is
+    /// what [`assert_called`](Self::assert_called) counts, while
+    /// [`received_raw`](Self::received_raw) still lists the elements flat. A single-message
+    /// handler is called per delivery, so a run of three reports `[1, 1, 1]`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the batches differ from `sizes`.
+    pub fn assert_batch_sizes(self, sizes: &[usize]) -> Self {
+        self.with_records(|records| {
+            let batches: Vec<usize> = records.iter().map(|r| r.deliveries.len()).collect();
+            assert_eq!(
+                batches.as_slice(),
+                sizes,
+                "subscriber {:?} was handed batches of {batches:?}",
+                self.name,
             );
         });
         self
@@ -361,6 +466,21 @@ impl<T> PublishedAssertions<T> {
         self
     }
 
+    /// Asserts exactly `times` messages were published to this channel.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the published count differs from `times`.
+    pub fn assert_called(self, times: usize) -> Self {
+        let count = self.messages.len();
+        assert_eq!(
+            count, times,
+            "channel {:?} was published to {count} times, expected {times}",
+            self.name,
+        );
+        self
+    }
+
     /// Asserts nothing was published to this channel.
     ///
     /// # Panics
@@ -410,6 +530,33 @@ impl<T> PublishedAssertions<T> {
             self.last("the raw payload").payload(),
             bytes,
             "channel {:?} published unexpected raw bytes",
+            self.name,
+        );
+        self
+    }
+
+    /// Asserts the most recent published message carries the header `name` with `value`.
+    ///
+    /// What a publish transform or an app-wide
+    /// [`publish_layer`](crate::runtime::RustStream::publish_layer) put on the message is read
+    /// here: the assertion sees the message as it left, so a stamp added on the way out shows up
+    /// on the reply channel and on `tb.out::<Marker>()` alike.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing was published, the header is absent, or its value differs.
+    pub fn with_header(self, name: &str, value: impl AsRef<[u8]>) -> Self {
+        let message = self.last("the published headers");
+        let actual = message.headers().get(name).unwrap_or_else(|| {
+            panic!(
+                "channel {:?} published a message without the {name:?} header",
+                self.name,
+            )
+        });
+        assert_eq!(
+            actual,
+            value.as_ref(),
+            "channel {:?} published an unexpected {name:?} header",
             self.name,
         );
         self
@@ -511,6 +658,12 @@ mod tests {
         id: u64,
     }
 
+    fn headers(name: &str, value: &'static [u8]) -> crate::HeaderMap {
+        let mut headers = crate::HeaderMap::new();
+        headers.insert(name.to_owned(), value);
+        headers
+    }
+
     fn undecodable() -> PublishedAssertions<Order> {
         PublishedAssertions::new(
             "orders".to_owned(),
@@ -550,6 +703,40 @@ mod tests {
     #[should_panic(expected = "did not decode as")]
     fn decoding_every_published_payload_reports_the_first_failure() {
         let _ = undecodable().decoded_with(&JsonCodec);
+    }
+
+    #[test]
+    fn a_published_header_is_read_back_by_name() {
+        let stamped = PublishedAssertions::<Order>::new(
+            "orders".to_owned(),
+            vec![
+                RawMessage::new("orders", br#"{"id":7}"#.as_slice())
+                    .with_headers(headers("x-app", b"1")),
+            ],
+        );
+        stamped.assert_called(1).with_header("x-app", b"1");
+    }
+
+    // A header assertion that fails has to name the header, or a stamping middleware's absence
+    // reads as "some header differs".
+    #[test]
+    #[should_panic(expected = "without the \"x-app\" header")]
+    fn a_missing_published_header_names_itself() {
+        let bare = PublishedAssertions::<Order>::new(
+            "orders".to_owned(),
+            vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+        );
+        bare.with_header("x-app", b"1");
+    }
+
+    #[test]
+    #[should_panic(expected = "was published to 1 times, expected 2")]
+    fn a_wrong_published_count_reports_both_numbers() {
+        let one = PublishedAssertions::<Order>::new(
+            "orders".to_owned(),
+            vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+        );
+        one.assert_called(2);
     }
 
     #[test]

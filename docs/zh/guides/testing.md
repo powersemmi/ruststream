@@ -88,22 +88,44 @@ Broker，它就报告 `TestError::Ambiguous`。
 | `with(&value)` | 最近一次调用的那唯一一条投递解码（用默认编解码器）之后等于 `value` |
 | `with_raw(bytes)` | 最近一次调用的那唯一一份原始载荷 |
 | `settled(HandlerOutcome::ack())` | 最近一次调用所承载的一切是怎样结算的 |
+| `assert_batch_sizes(&[2, 1])` | 交到函数体手里的那几个批次，按到达顺序 |
 | `assert_outcome(Outcome::Drop)` | 归类之后的结算结果（ack / nack / drop / 解码失败 / panic） |
 | `panicked()` | 处理器在最后一次调用上发生了 panic |
 | `assert_last_failed_to_decode()` | 载荷解码失败 |
 
 这些方法数的是处理器的调用，不是消息。单条消息的处理器每来一次投递就被调用一次，两者因此重合；
-批处理器每来一页被调用一次，所以 `assert_called_once()` 表示到达了一页，不论它有多大，
-`settled(..)` 覆盖这一页的每个元素，而 `received_raw()` 仍然逐个列出这些元素。指名一份期望载荷的
-那两个断言（`with`、`with_raw`）会报出页的大小，而不是默默去检查其中某一个元素。在处理器主体运行
-之前就被解码策略拒掉的元素，由该策略结算，因此不在处理器看到的那一页里。
+批处理器每来一个批次被调用一次，所以 `assert_called_once()` 表示到达了一个批次，不论它有多大，
+`settled(..)` 覆盖这个批次的每个元素，而 `received_raw()` 仍然逐个列出这些元素。指名一份期望载荷的
+那两个断言（`with`、`with_raw`）会报出批次的大小，而不是默默去检查其中某一个元素。在处理器主体运行
+之前就被解码策略拒掉的元素，由该策略结算，因此不在处理器看到的那个批次里。
+
+一个批次是整块交到函数体手里的，一个批次因此就是一次调用。批次的边界落在哪里，由 Broker 回应挂载点
+写下的 [`batch(n)`](subscribers.md#batch-subscribers) 来决定，而 `assert_batch_sizes` 正是看这件事
+的地方：三条记录的日志在 `batch(2)` 之下回放，到达函数体时是 `[2, 1]` - 两次调用，因为 Broker 攒出
+了两个批次。
+单条消息的处理器每来一次投递就被调用一次，所以同一轮报出来是 `[1, 1, 1]`。
+
+!!! note "怎样凑出多于一个元素的批次"
+    `tb.message(&value).publish()` 在返回之前会把整个反应推到静止，而一个静止下来的反应会关闭那些
+    在客户端攒批次的 Broker 的当前批次。因此一次注入一条消息，无论挂载点写下多大的尺寸，得到的都是
+    每条消息一个批次，每个批次只有一个元素。要凑出一个批次，就在应用组装之前从 Broker 取一个生产者
+    句柄，用它把整串消息发完（这一路上什么都不会静止），最后用 `tb.settle()` 把反应推到静止一次。
+    原生支持批次投递的 Broker 不受影响：那里由 Broker 决定一个批次在哪里结束。
 
 `tb.broker::<B>().published::<T>(name)` 断言处理器向下游发布了什么，数据取自 Broker 的发布日志：
-`.assert_called_once().with(&Receipt { id: 1 })`。
+`.assert_called_once()` / `.assert_called(n)` / `.assert_not_called()` 固定发布次数，
+`.with(&Receipt { id: 1 })` / `.with_raw(bytes)` 固定最近一条载荷，`.with_header("x-app", b"1")`
+固定发布中间件或 [`PublishTransform`](publishing.md) 在出站时盖上的消息头。
 
 除了这些断言，消息本身也可以取出来做自定义检查：`subscriber(name).received::<T>()` /
 `.received_raw()` 返回处理器收到的内容，`published::<T>(name).decoded()` / `.messages()` 返回发布到
 该通道的每一条消息，两者都保持原有顺序。
+
+还有两个视图保留了扁平列表丢掉的信息。`subscriber(name).batches::<T>()` / `.batches_raw()` 按调用把
+投递分组，每次调用一个内层向量，因此测试可以固定这个流是怎样切成批次的，而 `received::<T>()` 会把这
+条边界
+抹平。`subscriber(name).outcomes()` 按顺序返回每次调用归类之后的结算结果，重投递的序列（先 nack，
+重投递再 ack）就是与它比对的；`settled(..)` 和 `assert_outcome(..)` 只读最近一次调用。
 
 解码用的辅助方法（`with`、`received`、`decoded`）使用默认编解码器。如果某个处理器或发布者是用别的
 编解码器挂载的（`with_broker_codec`、`Router::with_codec`），就用 `_with` / `with_codec` 变体把它显式传入：

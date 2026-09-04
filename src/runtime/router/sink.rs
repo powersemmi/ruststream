@@ -1,6 +1,6 @@
 //! The runtime collector routers and scopes mount into: type-erased starters plus metadata.
 
-use std::{fmt, future::Future, sync::Arc};
+use std::{fmt, future::Future, num::NonZeroUsize, sync::Arc};
 
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -100,6 +100,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
+        batch_size: NonZeroUsize,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
@@ -121,6 +122,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                     // the pushed definition's own context names it.
                     Ok(spawn_batch_dispatch::<_, _, Cx, _>(
                         subscriber, handler, token, name, state, delivery, failure, workers,
+                        batch_size,
                     ))
                 })
             },
@@ -182,6 +184,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
+        batch_size: NonZeroUsize,
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
@@ -211,58 +214,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         delivery,
                         failure,
                         workers,
-                    ))
-                })
-            },
-        ));
-        self.handlers.push(meta);
-    }
-
-    /// Erases a source plus an async handler factory over the connected broker and the opened
-    /// subscriber into a starter under the `workers` policy.
-    ///
-    /// For mounts whose handler can only exist at startup (pairing a publisher source,
-    /// resolving startup injections): the subscription opens first, then the factory resolves
-    /// the injections (pairing publishers, minting seekers) and builds the handler, so every
-    /// injected handle is live by construction - a "not ready" state is never representable
-    /// inside it. The subscriber travels through the factory by value (and comes back next to
-    /// the handler) so the factory future borrows nothing and stays a plain `Send` future.
-    pub(crate) fn push_injected_workers<Source, MakeHandler, HandlerFut, NewHandler, HandlerCx>(
-        &mut self,
-        source: Source,
-        make_handler: MakeHandler,
-        meta: HandlerMetadata,
-        policies: FailurePolicies,
-        workers: Workers,
-    ) where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
-        SourceMessage<B, Source>: Send + Sync + 'static,
-        MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
-        HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
-        HandlerCx: crate::BuildContext<SourceMessage<B, Source>> + Send + 'static,
-        NewHandler: Handler<SourceMessage<B, Source>, HandlerCx, State> + 'static,
-    {
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
-                Box::pin(async move {
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
-                    let (subscriber, handler) =
-                        make_handler(Arc::clone(&connected), subscriber).await?;
-                    let failure = DispatchFailure::new(policies, shutdown);
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        token,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
+                        batch_size,
                     ))
                 })
             },

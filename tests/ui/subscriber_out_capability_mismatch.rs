@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
+use ruststream::runtime::{AppInfo, DefaultSlot, HandlerOutcome, Out, RustStream};
 use ruststream::{RequestReply, subscriber};
 use serde::Deserialize;
 
@@ -19,6 +19,6 @@ async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerOut
 
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(forward).publisher(MemoryPublish);
+        b.include(forward).out(DefaultSlot, MemoryPublish).build();
     });
 }

@@ -9,11 +9,8 @@
 //! cargo run --example middleware_router_scope --features macros,memory,json -- run
 //! ```
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, BlanketLayer, Context, Handler, HandlerOutcome, Layer, Router, RouterDef, RustStream,
-};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{BlanketLayer, Handler, Layer};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

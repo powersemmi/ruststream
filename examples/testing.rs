@@ -9,10 +9,9 @@
 //! cargo run --example testing --features testing,macros,memory,json
 //! ```
 
-use ruststream::memory::{MemoryBroker, MemoryPublisher};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
+use ruststream::memory::MemoryPublisher;
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
 // --8<-- [start:app]

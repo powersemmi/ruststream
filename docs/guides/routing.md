@@ -40,10 +40,11 @@ RustStream::new(info).with_broker(broker, |b| {
 Handlers that need an attachment - a reply publisher, an
 [`Out`](publishing.md#publishing-from-inside-a-handler) slot - register on the router the same way
 as on the scope, except that the registration commits
-through an explicit terminal: `.publisher(policy)` names the wiring, `.build()` takes the broker's
-own default publish policy, and `.out(marker, policy)` binds one named slot before `.build()`. A
-forgotten terminal never becomes a router, so the chain fails to compile. The policies stay pure
-declaration, so the router still needs no broker:
+through an explicit terminal: `.out(marker, policy)` names one position's publish policy - `Reply`
+for the reply, an `Out` slot's marker for a slot - and `.build()` commits, taking the broker's own
+default publish policy for a reply no `.out(Reply, ..)` named. A forgotten terminal never becomes
+a router, so the chain fails to compile. The policies stay pure declaration, so the router still
+needs no broker:
 
 === "Macros"
 

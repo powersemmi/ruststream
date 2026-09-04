@@ -9,6 +9,7 @@
 use std::{
     fmt,
     future::{Future, ready},
+    num::NonZeroUsize,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -27,6 +28,8 @@ use super::{
     Bus, MemoryDelivery, MemoryError, MemoryMessage, MemoryOutbound, MemoryPublisher, MemoryState,
     MemorySubscriber,
 };
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::Coordinator;
 use crate::{
     BatchSubscriber, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned, Positioned,
     Publisher, RequestReply, Seekable, Seeker, Subscriber, Transaction, TransactionalPublisher,
@@ -190,19 +193,20 @@ impl RequestReply for MemoryRequester {
     }
 }
 
-/// Greedy batching: a batch is the first awaited delivery plus everything already buffered, up
-/// to the [`set_batch_limit`](MemorySubscriber::set_batch_limit) cap. Partial batches ship
-/// immediately, so no deadline timer is needed.
+/// Greedy batching: a batch is the first awaited delivery plus everything already buffered, up to
+/// the size the registration asked for. Partial batches ship immediately, so no deadline timer is
+/// needed - the in-memory transport has nothing to wait for.
 impl BatchSubscriber for MemorySubscriber {
     type Batch = Vec<MemoryMessage>;
 
     fn batches(
         &mut self,
+        size: NonZeroUsize,
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
-        let limit = self.batch_limit.max(1);
+        let limit = size.get();
         let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
-        let coordinator = self.coordinator.clone();
+        let coordinator = self.coordinator();
         let seeker = Arc::new(Seekable::seeker(self));
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
@@ -565,6 +569,10 @@ impl Seeker for MemorySeeker {
     /// Records the reposition and wakes the subscription; the stream applies it at the top of
     /// its next poll, so once this resolves the next delivery reflects the new position.
     ///
+    /// Under a [`TestApp`](crate::testing::TestApp) the reposition counts as in-flight work
+    /// until the subscription applies it, so driving the service to a standstill waits for the
+    /// replay instead of racing the poll that produces it.
+    ///
     /// # Errors
     ///
     /// Returns [`MemoryError::ShutDown`] through a handle aliasing a shut-down bus.
@@ -591,12 +599,26 @@ impl Seeker for MemorySeeker {
         // Watermark first (Release, paired with the Acquire load in the delivery filter), then
         // the pending target: a poll that takes the target must see its watermark.
         self.control.watermark.store(clamped, Ordering::Release);
-        *self
+        let replaced = self
             .control
             .pending
             .lock()
-            .expect("memory broker mutex poisoned") = Some(clamped);
+            .expect("memory broker mutex poisoned")
+            .replace(clamped);
         drop(bus);
+        // Under the harness, hold the reaction open from the moment the reposition is recorded
+        // until the stream applies it: the replay it will enqueue is not counted yet, and a
+        // quiescence wait landing in that window would return on an empty in-flight count.
+        // One token per pending reposition, released when the subscription applies it: a second
+        // seek before the first is applied replaces the target and owes nothing more.
+        #[cfg(feature = "testing")]
+        if replaced.is_none()
+            && let Some(coordinator) = self.state.coordinator()
+        {
+            coordinator.enqueued();
+        }
+        #[cfg(not(feature = "testing"))]
+        let _ = replaced;
         self.control.waker.wake();
         ready(Ok(()))
     }
@@ -620,6 +642,13 @@ impl MemorySubscriber {
             .expect("memory broker mutex poisoned")
             .take();
         let Some(target) = pending else { return };
+        #[cfg(feature = "testing")]
+        let coordinator = self.coordinator();
+        // The seek counted itself in flight when it recorded this target; the token goes back
+        // however this returns, so a quiescence wait cannot observe the gap between the request
+        // and the replay, and a seek that raced shutdown still drains the in-flight count.
+        #[cfg(feature = "testing")]
+        let seek_token = SeekToken(coordinator.clone());
 
         let bus = self
             .state
@@ -646,7 +675,7 @@ impl MemorySubscriber {
         // concurrent quiescence wait (`TestApp::settle`) could observe that instant and return
         // before the replayed deliveries were processed.
         #[cfg(feature = "testing")]
-        if let Some(coordinator) = &self.coordinator {
+        if let Some(coordinator) = &coordinator {
             for _ in target..entries.len() {
                 coordinator.enqueued();
             }
@@ -655,7 +684,7 @@ impl MemorySubscriber {
         while self.rx.try_recv().is_ok() {
             // Every drained delivery was counted in flight when it was enqueued.
             #[cfg(feature = "testing")]
-            if let Some(coordinator) = &self.coordinator {
+            if let Some(coordinator) = &coordinator {
                 coordinator.consumed();
             }
         }
@@ -672,6 +701,22 @@ impl MemorySubscriber {
         }
         drop(log);
         drop(bus);
+        #[cfg(feature = "testing")]
+        drop(seek_token);
+    }
+}
+
+/// The in-flight token one pending reposition holds, released when the subscription has applied
+/// it (whichever way [`apply_pending_seek`](MemorySubscriber::apply_pending_seek) returns).
+#[cfg(feature = "testing")]
+struct SeekToken(Option<Coordinator>);
+
+#[cfg(feature = "testing")]
+impl Drop for SeekToken {
+    fn drop(&mut self) {
+        if let Some(coordinator) = &self.0 {
+            coordinator.consumed();
+        }
     }
 }
 
@@ -747,15 +792,15 @@ impl crate::BuildContext<MemoryMessage> for MemoryContext {
     }
 }
 
-/// The in-memory broker's subscription-scoped page context: the subscription's own seeker,
-/// shared by every delivery of the page.
+/// The in-memory broker's subscription-scoped batch context: the subscription's own seeker,
+/// shared by every delivery of the batch.
 ///
-/// The runtime builds one per dispatched page from the page's first delivery (see
-/// [`BuildBatchContext`](crate::BuildBatchContext)), and a page body reads it by key -
+/// The runtime builds one per dispatched batch from the batch's first delivery (see
+/// [`BuildBatchContext`](crate::BuildBatchContext)), and a batch body reads it by key -
 /// [`SeekHandle`] - through `ctx.context(..)`. Per-delivery data (a [`Position`]) has no place
-/// here: a page spans many deliveries, so the position a body reacts to rides the elements
-/// themselves (a `&[Message<H, T>]` page reads it off each element's header contract), and
-/// keeping this a separate type from [`MemoryContext`] is what rejects a page body asking for
+/// here: a batch spans many deliveries, so the position a body reacts to rides the elements
+/// themselves (a `&[Message<H, T>]` batch reads it off each element's header contract), and
+/// keeping this a separate type from [`MemoryContext`] is what rejects a batch body asking for
 /// per-delivery fields at compile time.
 ///
 /// # Examples
@@ -774,20 +819,20 @@ impl crate::BuildContext<MemoryMessage> for MemoryContext {
 /// impl Handle<[Job], (), (), MemoryBatchContext> for Replayer {
 ///     async fn handle(
 ///         &self,
-///         page: &[Job],
+///         batch: &[Job],
 ///         _outs: &(),
 ///         ctx: &mut Context<'_, MemoryBatchContext>,
 ///     ) -> Result<(), Vec<HandlerOutcome>> {
-///         // A page that saw the rewind marker repositions the whole subscription once it is
-///         // settled; the next page opens at the target.
-///         if page.iter().any(|job| job.id == u64::MAX)
+///         // A batch that saw the rewind marker repositions the whole subscription once it is
+///         // settled; the next batch opens at the target.
+///         if batch.iter().any(|job| job.id == u64::MAX)
 ///             && ctx
 ///                 .context(SeekHandle)
 ///                 .seek(MemoryPosition::start())
 ///                 .await
 ///                 .is_err()
 ///         {
-///             return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+///             return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
 ///         }
 ///         Ok(())
 ///     }
@@ -803,15 +848,15 @@ impl crate::BuildBatchContext<MemoryMessage> for MemoryBatchContext {
     /// # Panics
     ///
     /// Panics on a request-reply inbox message, which is not a subscription delivery; no
-    /// dispatch loop (and therefore no page context) ever builds off one.
+    /// dispatch loop (and therefore no batch context) ever builds off one.
     fn build(first: &MemoryMessage) -> Self {
         Self {
             // A clone of the subscription's pre-minted handle: reference-count bumps only,
-            // nothing allocated per page.
+            // nothing allocated per batch.
             seeker: first
                 .seek
                 .as_deref()
-                .expect("a page context builds only off subscription deliveries")
+                .expect("a batch context builds only off subscription deliveries")
                 .clone(),
         }
     }

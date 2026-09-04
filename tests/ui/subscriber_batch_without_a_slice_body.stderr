@@ -1,0 +1,21 @@
+error[E0277]: this subscriber has no batches to size
+  --> tests/ui/subscriber_batch_without_a_slice_body.rs:19:26
+   |
+19 |     let _capped = handle.batch(nonzero!(64));
+   |                          ^^^^^ `batch(..)` sizes the batches a batch body is handed
+   |
+   = help: the trait `ruststream::runtime::CapsBatches` is not implemented for `HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>`
+   = note: the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`), with or without a reply and `Out` slots; a single-message body takes no batch, and how many of those are in flight at once is `workers(n)` instead
+help: the following other types implement trait `ruststream::runtime::CapsBatches`
+  --> src/runtime/handle/value.rs
+   |
+   | impl<T, R, O, C, H, Doc> CapsBatches for HandleValue<Batch<T>, R, O, C, H, Doc> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<ruststream::runtime::Batch<T>, R, O, C, H, Doc>`
+   |
+   | impl<F, R, O, C, H, Doc> CapsBatches for HandleValue<BatchDeserialized<F>, R, O, C, H, Doc> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<BatchDeserialized<F>, R, O, C, H, Doc>`
+   |
+   | impl<Hd, P, R, O, C, H, Doc> CapsBatches for HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc>`
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>` to implement `ruststream::runtime::CapsBatches`
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `BatchStep`

@@ -8,8 +8,7 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 // --8<-- [start:handler]

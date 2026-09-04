@@ -1,0 +1,21 @@
+error[E0308]: mismatched types
+  --> tests/ui/manual_slot_marker_mismatch.rs:45:18
+   |
+45 |             .out(Journal, MemoryPublish)
+   |              --- ^^^^^^^ expected `Audit`, found `Journal`
+   |              |
+   |              arguments to this method are incorrect
+   |
+help: the return type of this call is `Journal` due to the type of the argument passed
+  --> tests/ui/manual_slot_marker_mismatch.rs:44:9
+   |
+44 | /         b.include(subscriber("orders", Record).build())
+45 | |             .out(Journal, MemoryPublish)
+   | |__________________-------_______________^
+   |                    |
+   |                    this argument influences the return type of `out`
+note: method defined here
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn out<M, Policy, Index>(
+   |            ^^^

@@ -103,45 +103,45 @@ impl IntoBatchResult for Vec<HandlerOutcome> {
     }
 }
 
-/// Lowers one accepted batch return shape to the canonical page verdict of the unified body
-/// contract: `Ok(())` acks the page, a page-length `Err` vector settles element-wise. The
+/// Lowers one accepted batch return shape to the canonical batch verdict of the unified body
+/// contract: `Ok(())` acks the batch, a batch-length `Err` vector settles element-wise. The
 /// `#[subscriber]` expansion converts through here, so a batch body keeps its whole return
 /// vocabulary while the emitted `Handle` impl returns the fixed verdict. Machinery; not part of
 /// the public API.
 ///
-/// A uniform non-ack outcome fans out per element - the failure path, the one place the page
+/// A uniform non-ack outcome fans out per element - the failure path, the one place the batch
 /// vector exists - and its continuation rides the last element, keeping the at-most-once
 /// post-settle contract.
 #[doc(hidden)]
-pub fn page_verdict<O: IntoBatchResult>(
+pub fn batch_verdict<O: IntoBatchResult>(
     outcome: O,
-    page_len: usize,
+    batch_len: usize,
 ) -> Result<(), Vec<HandlerOutcome>> {
     match outcome.into_batch_result() {
         BatchResult::Uniform(one) => {
             if one.is_ack() && !one.has_after() {
                 Ok(())
             } else {
-                Err(uniform_page(one, page_len))
+                Err(uniform_batch(one, batch_len))
             }
         }
         BatchResult::PerElement(outcomes) => Err(outcomes),
     }
 }
 
-/// Fans one uniform outcome out to a page-length settlement vector: the status repeats per
-/// element and the continuation rides the last one. The failure-path half of [`page_verdict`],
+/// Fans one uniform outcome out to a batch-length settlement vector: the status repeats per
+/// element and the continuation rides the last one. The failure-path half of [`batch_verdict`],
 /// also how the `#[subscriber]` expansion lowers a batch reply body's uniform `Err`. Machinery;
 /// not part of the public API.
 #[doc(hidden)]
 #[must_use]
-pub fn uniform_page(outcome: HandlerOutcome, page_len: usize) -> Vec<HandlerOutcome> {
-    if page_len == 0 {
+pub fn uniform_batch(outcome: HandlerOutcome, batch_len: usize) -> Vec<HandlerOutcome> {
+    if batch_len == 0 {
         return Vec::new();
     }
     let status = outcome.outcome();
     let mut settles: Vec<HandlerOutcome> = std::iter::repeat_with(|| HandlerOutcome::from(status))
-        .take(page_len - 1)
+        .take(batch_len - 1)
         .collect();
     settles.push(outcome);
     settles
@@ -158,8 +158,8 @@ pub fn uniform_page(outcome: HandlerOutcome, page_len: usize) -> Vec<HandlerOutc
     note = "a batch handler takes (&[T], &mut Context) and returns an IntoBatchResult value; \
             per-element header contracts ride a `&[Message<H, T>]` body instead"
 )]
-pub trait SliceHandler<T, C = (), S = ()>: Send + Sync {
-    /// Handles one decoded batch, with the per-page [`Context`] carrying the broker's
+pub(crate) trait SliceHandler<T, C = (), S = ()>: Send + Sync {
+    /// Handles one decoded batch, with the per-batch [`Context`] carrying the broker's
     /// subscription-scoped context `C` and the typed app state `S`.
     fn handle_slice(
         &self,
@@ -199,9 +199,9 @@ pub trait BatchDef: Sized {
     /// elements, `&[T]`.
     type Input: InputKind;
 
-    /// The broker's typed subscription-scoped context the page's handler reads by key (`()`
-    /// when the handler names none). Built once per page from its first delivery (see
-    /// [`BuildBatchContext`](crate::BuildBatchContext)): a page spans many deliveries, so only
+    /// The broker's typed subscription-scoped context the batch's handler reads by key (`()`
+    /// when the handler names none). Built once per batch from its first delivery (see
+    /// [`BuildBatchContext`](crate::BuildBatchContext)): a batch spans many deliveries, so only
     /// data every delivery of the subscription shares belongs here.
     type Context;
 
@@ -382,12 +382,12 @@ where
 }
 
 /// The batch adapter of the self-deserializing input kind: no codec runs; each element of the
-/// page constructs itself from its delivery's payload
+/// batch constructs itself from its delivery's payload
 /// ([`Deserialized`](crate::runtime::Deserialized)), borrowing it.
 ///
 /// An element whose construction fails is settled by the `decode` [`FailurePolicy`] and never
 /// reaches the handler, exactly as a codec decode failure on the typed path; the rest reach the
-/// body as one page, and the returned [`BatchResult`] settles the deliveries behind it.
+/// body as one batch, and the returned [`BatchResult`] settles the deliveries behind it.
 pub struct DeserializedBatch<M, F, Inner> {
     inner: Inner,
     decode: FailurePolicy,
@@ -437,7 +437,7 @@ where
         let tasks = ctx.tasks().clone();
         // The constructed values borrow the deliveries' payloads, so the deliveries stay owned
         // by `batch` and the values are dropped before anything settles. Rejections are settled
-        // after the page runs, which keeps the accepted values contiguous with no second pass.
+        // after the batch runs, which keeps the accepted values contiguous with no second pass.
         let mut values = Vec::with_capacity(batch.len());
         // (index into `batch`, its settlement); empty on the happy path, so nothing allocates.
         let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
@@ -472,7 +472,7 @@ where
     }
 }
 
-/// Settles a page whose rejected elements were deferred past the handler call: each rejected
+/// Settles a batch whose rejected elements were deferred past the handler call: each rejected
 /// index settles by its recorded outcome, and the accepted remainder settles by the handler's
 /// [`BatchResult`] in order, exactly as [`settle_batch`] applies it.
 async fn settle_split_batch<M: IncomingMessage>(
@@ -489,7 +489,7 @@ async fn settle_split_batch<M: IncomingMessage>(
     let per_element = match result {
         // Fan the uniform outcome out over the accepted elements only; the rejects keep their
         // own settlements.
-        BatchResult::Uniform(outcome) => uniform_page(outcome, accepted_len),
+        BatchResult::Uniform(outcome) => uniform_batch(outcome, accepted_len),
         BatchResult::PerElement(results) => {
             if results.len() != accepted_len {
                 error!(
@@ -531,17 +531,17 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
     subscription: &str,
     tasks: &TaskTracker,
 ) {
-    // Every batch form funnels its page through here, which is the one place that knows both the
-    // deliveries and the settlements they got; the harness reads the page off it.
+    // Every batch form funnels its batch through here, which is the one place that knows both
+    // the deliveries and the settlements they got; the harness reads the batch off it.
     #[cfg(feature = "testing")]
-    let mut page = PageLog::of(&accepted);
+    let mut batch = BatchLog::of(&accepted);
     match result {
         BatchResult::Uniform(mut outcome) => {
             let after = outcome.take_after();
             let status = outcome.outcome();
             for msg in accepted {
                 #[cfg(feature = "testing")]
-                page.settled(status);
+                batch.settled(status);
                 settle(msg, status, subscription).await;
             }
             // The one uniform continuation runs after the whole batch is settled, on the
@@ -568,7 +568,7 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
                 let mut result = results.next().unwrap_or_else(HandlerOutcome::retry);
                 let after = result.take_after();
                 #[cfg(feature = "testing")]
-                page.settled(result.outcome());
+                batch.settled(result.outcome());
                 settle(msg, result.outcome(), subscription).await;
                 // The continuation runs after this element is settled, on the tracked set so a
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
@@ -580,19 +580,24 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
         }
     }
     #[cfg(feature = "testing")]
-    page.record(subscription);
+    batch.record(subscription);
 }
 
-/// The page a batch settle is applying, captured for the harness: the payloads before the
+/// The batch a settle is applying, captured for the harness: the payloads before the
 /// deliveries are consumed, then one settlement per element as it is applied.
+///
+/// The settlements are what release the harness's in-flight count, and the record is only
+/// complete once the last of them is applied - so the log holds a count of its own for as long
+/// as it lives, and a quiescence wait cannot return between the final settle and the record.
 #[cfg(feature = "testing")]
-struct PageLog {
+struct BatchLog {
     deliveries: Vec<crate::testing::coordinator::Delivered>,
     settled: usize,
+    _pending: crate::testing::coordinator::PendingRecord,
 }
 
 #[cfg(feature = "testing")]
-impl PageLog {
+impl BatchLog {
     fn of<M: IncomingMessage>(accepted: &[M]) -> Self {
         Self {
             deliveries: accepted
@@ -603,6 +608,7 @@ impl PageLog {
                 })
                 .collect(),
             settled: 0,
+            _pending: crate::testing::coordinator::PendingRecord::new(),
         }
     }
 
@@ -614,7 +620,7 @@ impl PageLog {
     }
 
     fn record(self, subscription: &str) {
-        crate::testing::coordinator::record_page(subscription, self.deliveries);
+        crate::testing::coordinator::record_batch(subscription, self.deliveries);
     }
 }
 

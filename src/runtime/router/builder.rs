@@ -14,9 +14,10 @@ use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
-use crate::runtime::publish::PublishPipeline;
+use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
+use crate::runtime::publish::{PublishIdentity, PublishPipeline};
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
+use crate::runtime::settings::BatchSized;
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
@@ -79,25 +80,36 @@ use super::{
 /// // later: app.with_broker(broker, |b| b.include_router(routes()));
 /// # }
 /// ```
-pub struct Router<B, Routes = (), C = (), Layers = Identity> {
+pub struct Router<B, Routes = (), C = (), Layers = Identity, Pipe = PublishIdentity> {
     pub(super) routes: Routes,
     pub(super) codec: C,
     pub(super) layers: Layers,
+    /// The publish pipeline this chain's [`Out`](crate::runtime::Out) slots send through, under
+    /// each slot's own `.transform(..)` steps.
+    ///
+    /// A slot's pipeline is part of the instantiated definition's type, so it is fixed when the
+    /// slot binds - which is at `include`, before an app exists. A router built on its own
+    /// therefore carries [`PublishIdentity`] here and its slots publish with nothing in the way;
+    /// the chain a [`BrokerScope`](crate::runtime::BrokerScope) drives carries the app's own
+    /// pipeline, because there the app is already known. Replies are not affected either way:
+    /// their publisher pairs at startup, so they travel the app's pipeline on both surfaces.
+    pub(super) pipeline: Pipe,
     pub(super) _broker: PhantomData<fn() -> B>,
 }
 
-impl<B: Broker + 'static> Default for Router<B, (), (), Identity> {
+impl<B: Broker + 'static> Default for Router<B> {
     fn default() -> Self {
         Self {
             routes: (),
             codec: (),
             layers: Identity,
+            pipeline: PublishIdentity,
             _broker: PhantomData,
         }
     }
 }
 
-impl<B, Routes, C, Layers> fmt::Debug for Router<B, Routes, C, Layers> {
+impl<B, Routes, C, Layers, Pipe> fmt::Debug for Router<B, Routes, C, Layers, Pipe> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Router").finish_non_exhaustive()
     }
@@ -111,36 +123,59 @@ impl<B: Broker + 'static> Router<B, ()> {
     }
 }
 
-impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
-    Router<B, Routes, RouteCodec, RouteLayers>
+impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (), RouteCodec, RouteLayers, RoutePipe>
+{
+    /// Adds a router-scope middleware layer, wrapping every handler in this router when the
+    /// router is mounted. The first layer added runs outermost within the router; the app's
+    /// global [`layer`](crate::runtime::RustStream::layer) stack wraps outside it.
+    ///
+    /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
+    /// router hides), like the app-global stack, and it is declared before the router's first
+    /// registration: after one, `.layer(..)` rides that registration instead
+    /// ([`Router::layer`](Router::layer) on a registration), exactly as the other steps of the
+    /// chain ride the position named before them.
+    #[must_use]
+    pub fn layer<N>(self, layer: N) -> Router<B, (), RouteCodec, Stack<N, RouteLayers>, RoutePipe> {
+        Router {
+            routes: self.routes,
+            codec: self.codec,
+            layers: Stack::new(layer, self.layers),
+            pipeline: self.pipeline,
+            _broker: PhantomData,
+        }
+    }
+}
+
+impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Identity, RoutePipe> {
+    /// The empty chain a [`BrokerScope`](crate::runtime::BrokerScope) drives one registration
+    /// through: the scope's codec and its publish pipeline, with no router-scope layers of its
+    /// own (the app's stack wraps at the drain, as it does for any router).
+    pub(crate) fn for_scope(codec: RouteCodec, pipeline: RoutePipe) -> Self {
+        Self {
+            routes: (),
+            codec,
+            layers: Identity,
+            pipeline,
+            _broker: PhantomData,
+        }
+    }
+}
+
+impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Sets the codec that subsequent `include` calls decode with, replacing the default.
     ///
     /// Registrations already in the chain keep the codec they were mounted with, so the codec can
     /// change mid-chain.
     #[must_use]
-    pub fn with_codec<C>(self, codec: C) -> Router<B, Routes, C, RouteLayers> {
+    pub fn with_codec<C>(self, codec: C) -> Router<B, Routes, C, RouteLayers, RoutePipe> {
         Router {
             routes: self.routes,
             codec,
             layers: self.layers,
-            _broker: PhantomData,
-        }
-    }
-
-    /// Adds a router-scope middleware layer, wrapping every handler in this router (regardless of
-    /// registration order) when the router is mounted. The first layer added runs outermost within
-    /// the router; the app's global [`layer`](crate::runtime::RustStream::layer) stack wraps
-    /// outside it.
-    ///
-    /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
-    /// router hides), like the app-global stack.
-    #[must_use]
-    pub fn layer<N>(self, layer: N) -> Router<B, Routes, RouteCodec, Stack<N, RouteLayers>> {
-        Router {
-            routes: self.routes,
-            codec: self.codec,
-            layers: Stack::new(layer, self.layers),
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -151,10 +186,10 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// The merged router's handlers stay wrapped by its own layers; this router's layers wrap
     /// around them as well once mounted (scopes nest).
     #[must_use]
-    pub fn merge<R2, C2, L2>(
+    pub fn merge<R2, C2, L2, P2>(
         self,
-        other: Router<B, R2, C2, L2>,
-    ) -> MergedRouter<B, R2, C2, L2, RouteCodec, RouteLayers, Routes>
+        other: Router<B, R2, C2, L2, P2>,
+    ) -> MergedRouter<B, R2, C2, L2, P2, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         L2: BlanketLayer,
     {
@@ -162,6 +197,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
             routes: (other, self.routes),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -174,12 +210,13 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// decode adapter included, see [`typed`](crate::runtime::typed)), and the metadata is the
     /// caller's to assemble. That is the shape the runtime's own dispatch tests and a broker
     /// author holding a hand-built subscriber need, and nothing above it.
+    #[allow(clippy::type_complexity)] // the grown chain's own type; an alias would hide the route
     pub fn handle<S, H>(
         self,
         subscriber: S,
         handler: H,
         meta: HandlerMetadata,
-    ) -> Router<B, (HandleRoute<S, H>, Routes), RouteCodec, RouteLayers>
+    ) -> Router<B, (HandleRoute<S, H>, Routes), RouteCodec, RouteLayers, RoutePipe>
     where
         S: Subscriber + Send + 'static,
         H: Handler<S::Message> + 'static,
@@ -196,6 +233,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -207,7 +245,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         source: Source,
         def: Def,
         codec: DecodeCodec,
-    ) -> IncludedRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
@@ -234,6 +272,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -245,11 +284,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         source: Source,
         def: Def,
         codec: DecodeCodec,
-    ) -> IncludedBatchRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedBatchRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef,
+        Def: BatchDef + BatchSized,
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Handler: 'static,
         DecodeCodec: Send + Sync + 'static,
@@ -257,6 +296,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let batch_size = def.batch_size();
         // The handler bound alone cannot pin the kind, so the adapter names the def's input
         // kind explicitly.
         let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
@@ -269,12 +309,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    batch_size,
                     _context: PhantomData,
                 },
                 self.routes,
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -285,16 +327,17 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         self,
         source: Source,
         def: Def,
-    ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, Routes>
+    ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef<Input = Provided<F>>,
+        Def: BatchDef<Input = Provided<F>> + BatchSized,
         Def::Handler: 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let batch_size = def.batch_size();
         let handler =
             DeserializedBatch::<_, F, _>::over(def.into_handler()).with_decode(policies.decode);
         Router {
@@ -305,12 +348,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    batch_size,
                     _context: PhantomData,
                 },
                 self.routes,
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -324,7 +369,17 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         def: Def,
         codec: DecodeCodec,
         extra: Extra,
-    ) -> InjectedRouter<B, Source, Def, DecodeCodec, Extra, RouteCodec, RouteLayers, Routes>
+    ) -> InjectedRouter<
+        B,
+        Source,
+        Def,
+        DecodeCodec,
+        Extra,
+        RouteCodec,
+        RouteLayers,
+        RoutePipe,
+        Routes,
+    >
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
@@ -350,6 +405,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -362,17 +418,28 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         def: Def,
         codec: DecodeCodec,
         extra: Extra,
-    ) -> BatchInjectedRouter<B, Source, Def, DecodeCodec, Extra, RouteCodec, RouteLayers, Routes>
+    ) -> BatchInjectedRouter<
+        B,
+        Source,
+        Def,
+        DecodeCodec,
+        Extra,
+        RouteCodec,
+        RouteLayers,
+        RoutePipe,
+        Routes,
+    >
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchInjectDef + 'static,
+        Def: BatchInjectDef + BatchSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = batch_inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let batch_size = def.batch_size();
         Router {
             routes: (
                 BatchInjectRoute {
@@ -383,11 +450,13 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    batch_size,
                 },
                 self.routes,
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -411,12 +480,13 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Extra,
         RouteCodec,
         RouteLayers,
+        RoutePipe,
         Routes,
     >
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchPublishingDef + 'static,
+        Def: BatchPublishingDef + BatchSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
         DecodeCodec: Send + Sync + 'static,
         ReplySource: 'static,
@@ -424,6 +494,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let batch_size = def.batch_size();
         // Defer building the handler: the app's publish pipeline is only known at mount time and
         // the live reply publisher only exists once the broker connects, so mounting captures the
         // pieces in a starter that pairs and builds at startup (see `BatchPublishingRoute`),
@@ -440,11 +511,13 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
                     meta,
                     policies,
                     workers,
+                    batch_size,
                 },
                 self.routes,
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -469,6 +542,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Extra,
         RouteCodec,
         RouteLayers,
+        RoutePipe,
         Routes,
     >
     where
@@ -500,6 +574,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
@@ -523,6 +598,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
         Extra,
         RouteCodec,
         RouteLayers,
+        RoutePipe,
         Routes,
     >
     where
@@ -554,13 +630,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
             ),
             codec: self.codec,
             layers: self.layers,
+            pipeline: self.pipeline,
             _broker: PhantomData,
         }
     }
 }
 
-impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers>
-    Router<B, (SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers>
+impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Sets the concurrency policy of the registration just added (the preceding `include`
     /// call), replacing its default.
@@ -599,10 +676,86 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers>
         self.routes.0.workers = workers;
         self
     }
+
+    /// Wraps the registration just added (the preceding `include` call) with `layer`, outside its
+    /// decode step, so the layer sees the raw delivery.
+    ///
+    /// The per-registration counterpart of the app-wide
+    /// [`RustStream::layer`](crate::runtime::RustStream::layer) and the router-wide
+    /// [`layer`](Router::layer) on a fresh router: those two wrap every handler in their scope, so
+    /// they take a [`BlanketLayer`], which cannot be written for a layer fixed to one message
+    /// type. This one wraps exactly one registration, whose handler type is still concrete here,
+    /// so it takes an ordinary [`Layer`] - which is what a [`DynStack`](crate::runtime::DynStack)
+    /// over the broker's own message type is.
+    ///
+    /// Which of the two a `.layer(..)` call is follows what the chain named before it, like every
+    /// other step: on a router with no registrations yet it is the router's own, and after an
+    /// `include` it is that registration's. It repeats: each call wraps what the calls before it
+    /// produced, the last one outermost.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # fn build() {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{HandlerOutcome, Router, layers::TracingLayer};
+    /// use ruststream::subscriber;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Job { id: u64 }
+    ///
+    /// #[subscriber("jobs")]
+    /// async fn work(job: &Job) -> HandlerOutcome {
+    ///     let _ = job.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// let router = Router::<MemoryBroker>::new()
+    ///     .include(work)
+    ///     .layer(TracingLayer::default());
+    /// # }
+    /// ```
+    #[must_use]
+    // The call site reads `.layer(TracingLayer::default())`, so the layer travels by value like
+    // every other builder argument; `Layer::layer` only borrows it.
+    #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+    pub fn layer<N>(
+        self,
+        layer: N,
+    ) -> Router<B, (SubscribeRoute<S, N::Handler, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>
+    where
+        N: Layer<H>,
+    {
+        let SubscribeRoute {
+            source,
+            handler,
+            meta,
+            policies,
+            workers,
+            _context: context,
+        } = self.routes.0;
+        Router {
+            routes: (
+                SubscribeRoute {
+                    source,
+                    handler: layer.layer(handler),
+                    meta,
+                    policies,
+                    workers,
+                    _context: context,
+                },
+                self.routes.1,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            pipeline: self.pipeline,
+            _broker: PhantomData,
+        }
+    }
 }
 
-impl<B, S, H, Routes, RouteCodec, RouteLayers>
-    Router<B, (BatchRoute<S, H>, Routes), RouteCodec, RouteLayers>
+impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (BatchRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Sets the concurrency policy of the batch registration just added (the preceding batch
     /// `include` call), replacing its default.
@@ -617,7 +770,9 @@ impl<B, S, H, Routes, RouteCodec, RouteLayers>
     }
 }
 
-impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers> Router<B, Routes, C, Layers> {
+impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers, Pipe>
+    Router<B, Routes, C, Layers, Pipe>
+{
     /// Returns metadata for every registered handler, in registration order.
     #[must_use]
     pub fn handlers(&self) -> Vec<HandlerMetadata> {
@@ -648,7 +803,7 @@ impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<
     }
 }
 
-impl<B, Routes, C, Layers, State> RouterDef<B, State> for Router<B, Routes, C, Layers>
+impl<B, Routes, C, Layers, Pipe, State> RouterDef<B, State> for Router<B, Routes, C, Layers, Pipe>
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State>,
@@ -667,7 +822,7 @@ where
     }
 }
 
-impl<B, Routes, C, Layers> RouterHandlers for Router<B, Routes, C, Layers>
+impl<B, Routes, C, Layers, Pipe> RouterHandlers for Router<B, Routes, C, Layers, Pipe>
 where
     Routes: RouterHandlers,
 {
@@ -677,7 +832,7 @@ where
 }
 
 // Lets a whole router be a single registration inside another router's list (`Router::merge`).
-impl<B, Routes, C, Layers, State> MountRoute<B, State> for Router<B, Routes, C, Layers>
+impl<B, Routes, C, Layers, Pipe, State> MountRoute<B, State> for Router<B, Routes, C, Layers, Pipe>
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State>,
@@ -693,7 +848,7 @@ where
 }
 
 // Lets a merged router contribute its registrations' metadata to the outer router's `handlers()`.
-impl<B, Routes, C, Layers> RouteMeta for Router<B, Routes, C, Layers>
+impl<B, Routes, C, Layers, Pipe> RouteMeta for Router<B, Routes, C, Layers, Pipe>
 where
     Routes: RouterHandlers,
 {

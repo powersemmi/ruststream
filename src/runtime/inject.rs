@@ -2,8 +2,8 @@
 //!
 //! `#[subscriber("in")] async fn f(msg: &T, Out(out): Out<impl Publisher>)` declares parameters
 //! the runtime prepares before the first delivery: an injected publisher pairs against the
-//! connected broker from the source attached at the include site (`b.include(f).publisher(..)`,
-//! or `.out(marker, ..)` per named slot). Every such parameter implements [`FromStartup`], the
+//! connected broker from the policy attached at the include site
+//! (`b.include(f).out(marker, policy).build()`). Every such parameter implements [`FromStartup`], the
 //! definition carries them as one tuple ([`InjectDef::Injections`]) resolved
 //! element-by-element against a matching extra tuple, and a single handler adapter serves
 //! every combination - fully monomorphized, nothing to check on the hot path.
@@ -27,13 +27,14 @@ use super::slot::DefaultSlot;
 /// The marker a handler signature uses to receive an injected publisher:
 /// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
 ///
-/// The publisher type is not named in the signature: the handler states the capability it needs
-/// (`impl Publisher`, `impl OwnedTransactions`, ...) and the concrete type is inferred from the
-/// policy attached at the include site (`b.include(f).publisher(..)`), so the same handler
-/// mounts on a production broker and on its in-process test transport unchanged. A handler
-/// taking several publishers names a slot marker per parameter
-/// (`Out<impl Publisher, MySlot>`, see [`OutSlot`](super::OutSlot)) and the include site binds
-/// each with `.out(marker, policy)`, in any order.
+/// The publisher type is not named in the signature: the handler states the broker capability it
+/// needs (`impl Publisher`, `impl TransactionalPublisher`, `impl OwnedTransactions`,
+/// `impl RequestReply`, or a broker-defined trait) and the concrete type is inferred from the
+/// policy attached at the include site (`b.include(f).out(marker, policy)`), so the same handler mounts
+/// on a production broker and on its in-process test transport unchanged. A handler taking
+/// several publishers names a slot marker per parameter (`Out<impl Publisher, MySlot>`, see
+/// [`OutSlot`](super::OutSlot)) and the include site binds each with `.out(marker, policy)`,
+/// in any order.
 ///
 /// An optional third position declares the message set the handler publishes, which the publish
 /// builder ([`message`](super::Slot::message), destinations from each type's
@@ -92,7 +93,7 @@ type OutVocabulary<P, M, Body> = PhantomData<fn() -> (P, M, Body)>;
 /// each slot pairs with its own attachment. The runtime resolves the whole
 /// [`InjectDef::Injections`] tuple after the subscription opens and before the first delivery,
 /// so injected values are live by construction.
-pub trait FromStartup<B: Broker, Sub, Extra>: Sized {
+pub(crate) trait FromStartup<B: Broker, Sub, Extra>: Sized {
     /// Resolves the injected value against the connected broker and the opened subscriber.
     ///
     /// Runs once per subscription, so the attachment arrives by value: a publish policy is
@@ -222,7 +223,7 @@ pub trait InjectDef: Send + Sync {
 /// Runs an [`InjectDef`]'s handler body over an app state of type `S` (the same state-generic
 /// shape as [`Handler`](super::Handler); see
 /// [`PublishingCall`](super::PublishingCall) for the rationale).
-pub trait InjectCall<S>: InjectDef {
+pub(crate) trait InjectCall<S>: InjectDef {
     /// Runs the handler body with the resolved injections.
     fn call(
         &self,
@@ -249,7 +250,7 @@ pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMet
 
 /// The [`Handler`] built from an [`InjectDef`] once its injections resolved: decode, then run
 /// the body with them.
-pub struct InjectHandler<Def: InjectDef, DecodeCodec> {
+pub(crate) struct InjectHandler<Def: InjectDef, DecodeCodec> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
     pub(crate) injections: Def::Injections,

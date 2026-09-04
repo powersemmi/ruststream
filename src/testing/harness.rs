@@ -20,8 +20,7 @@ use crate::OutgoingMessage;
 use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::{
     ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
-    PublishIdentity, PublishSink, RegisteredBroker, RustStream, RustStreamError, Starter,
-    TestParts,
+    PublishSink, RegisteredBroker, RustStream, RustStreamError, Starter, TestParts,
 };
 use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 
@@ -235,8 +234,11 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// Returns [`TestError::Startup`] if a lifecycle hook fails, [`TestError::Connect`] if a
     /// broker fails to connect, or [`TestError::Subscribe`] if a subscription fails to open.
-    pub async fn start<Layers, Phase>(
-        app: RustStream<Layers, State, PublishIdentity, Phase>,
+    /// The app's publish pipeline is whatever it was built with: an app-wide
+    /// [`publish_layer`](RustStream::publish_layer) is already baked into the mounted routes, so
+    /// the harness drives the same stack production would.
+    pub async fn start<Layers, Pipeline, Phase>(
+        app: RustStream<Layers, State, Pipeline, Phase>,
     ) -> Result<Self, TestError> {
         let (coordinator, entries, parts) = Self::setup(app).await?;
         let TestParts {
@@ -270,8 +272,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// Returns [`TestError::Connect`] if a broker fails to connect, or [`TestError::Subscribe`]
     /// if a subscription fails to open.
-    pub async fn with_state<Layers, F, Phase>(
-        app: RustStream<Layers, State, PublishIdentity, Phase>,
+    pub async fn with_state<Layers, Pipeline, F, Phase>(
+        app: RustStream<Layers, State, Pipeline, Phase>,
         build: F,
     ) -> Result<Self, TestError>
     where
@@ -302,8 +304,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// `connect`, and recovers the per-broker transports from the connected forms. Returns the
     /// coordinator, the broker entries, and the remaining parts (the brokers field is now
     /// consumed and empty).
-    async fn setup<Layers, Phase>(
-        app: RustStream<Layers, State, PublishIdentity, Phase>,
+    async fn setup<Layers, Pipeline, Phase>(
+        app: RustStream<Layers, State, Pipeline, Phase>,
     ) -> Result<(Coordinator, Vec<BrokerEntry>, TestParts<State>), TestError> {
         let mut parts = app.into_test_parts();
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
@@ -598,9 +600,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         self.coordinator.drive().await
     }
 
-    /// Waits (best-effort) for post-settle `and_after` continuations spawned so far to finish, for
-    /// tests that assert on their side effects. Synchronous handler effects need only
+    /// Waits for the post-settle continuations of everything settled so far to finish, for tests
+    /// that assert on their side effects. Synchronous handler effects need only
     /// [`settle`](Self::settle).
+    ///
+    /// A settlement registers its continuations - the outcome's `and_after` and the context's
+    /// `after(..)` / `after_settle(..)` hooks alike - before it releases the delivery, so an
+    /// injection that has returned has already put its continuations here for this to find.
     pub async fn drain(&self) {
         while !self.continuations.is_empty() {
             tokio::task::yield_now().await;

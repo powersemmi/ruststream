@@ -9,8 +9,7 @@
 mod orders;
 mod routes;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{App, AppInfo, RustStream};
+use ruststream::memory::prelude::*;
 
 /// Builds the service: one in-memory broker with the orders router mounted.
 #[ruststream::app]

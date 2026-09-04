@@ -390,7 +390,8 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
     if n < 2 {
         return Err(Error::new_spanned(
             path,
-            "expected `Type::new(..)`: the path must name a type and an associated constructor",
+            "expected `Type::new(..)`: the path must name a type and an associated constructor - \
+             a free function does not expose its type to the macro",
         ));
     }
     let segments = path.segments.iter().take(n - 1).cloned().collect();

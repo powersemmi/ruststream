@@ -42,7 +42,7 @@ use super::handler::HandlerOutcome;
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{Context, FromContext, HandlerOutcome};
+/// use ruststream::prelude::*;
 ///
 /// // A custom extractor: reject the delivery unless a header is present.
 /// struct RequireToken(Vec<u8>);
@@ -86,7 +86,7 @@ pub trait FromContext<C = (), S = ()>: Sized {
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::FromRef;
+/// use ruststream::prelude::*;
 ///
 /// #[derive(Clone)]
 /// struct Db;
@@ -186,7 +186,7 @@ where
 ///     }
 /// }
 ///
-/// // In a handler: `async fn handle(msg: &M, Ctx(offset): Ctx<Offset>) -> HandlerResult`.
+/// // In a handler: `async fn handle(msg: &M, Ctx(offset): Ctx<Offset>) -> HandlerOutcome`.
 /// let extracted = Ctx::<Offset>(42);
 /// assert_eq!(extracted.0, 42);
 /// ```

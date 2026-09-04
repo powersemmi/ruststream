@@ -4,42 +4,33 @@
     feature = "otel",
     feature = "macros",
     feature = "memory",
-    feature = "json"
+    feature = "json",
+    feature = "testing"
 ))]
 
 mod common;
-
-use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
 
 use common::{Req, Resp};
 use opentelemetry::Context as OtelContext;
 use opentelemetry::propagation::{Extractor, TextMapPropagator};
 use opentelemetry::trace::{SpanContext, TraceContextExt};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::memory::prelude::*;
 use ruststream::otel::OpenTelemetry;
-use ruststream::runtime::{AppInfo, PublishExt, RustStream, TypedPublisher};
-use ruststream::{HeaderMap, subscriber};
-use tokio::sync::Notify;
+use ruststream::testing::TestApp;
 
 #[subscriber("in", publish("out"))]
 async fn echo(req: &Req) -> Resp {
     Resp { n: req.n }
 }
 
-static CAPTURED: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
-static GOT: LazyLock<Notify> = LazyLock::new(Notify::new);
-
+/// The far end of the reply channel: it proves the stamped reply is deliverable, while the
+/// header itself is read off the broker's publish log.
 #[subscriber("out")]
-async fn capture(_resp: &Resp, ctx: &mut Context<'_>) {
-    *CAPTURED.lock().expect("poisoned") = ctx.headers().get_str("traceparent").map(str::to_owned);
-    GOT.notify_one();
+async fn capture(resp: &Resp) -> HandlerOutcome {
+    let _ = resp.n;
+    HandlerOutcome::ack()
 }
-
-/// Serializes the two tests: they share the `CAPTURED` slot and the `in` / `out` channels, so they
-/// must not run concurrently (cargo runs a file's tests in parallel by default).
-static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 /// Parses a `traceparent` header value through the SDK propagator, the way a downstream service
 /// would, and returns the span context it names.
@@ -63,48 +54,46 @@ fn parse_traceparent(header: &str) -> SpanContext {
 /// Drives one request through the app (`start()` resolves with subscriptions already open, so a
 /// single publish lands) and returns the captured reply `traceparent`, parsed.
 async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
-    let _serial = SERIAL.lock().await;
-    *CAPTURED.lock().expect("poisoned") = None;
     // --8<-- [start:wiring]
     let otel = OpenTelemetry::new();
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    // The reply wiring propagates the delivery's trace context onto each reply.
-    let reply_pub = TypedPublisher::new(MemoryPublish).transform(otel.propagation());
-
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         // The consume layer opens a span per delivery and records the consumer's trace context.
         .layer(otel.consume_layer())
-        .with_broker(broker, |b| {
-            b.include(echo).publisher(reply_pub);
+        .with_broker(MemoryBroker::new(), |b| {
+            // The reply wiring propagates the delivery's trace context onto each reply.
+            b.include(echo)
+                .out(Reply, Publish)
+                .transform(otel.propagation());
             b.include(capture);
         });
     // --8<-- [end:wiring]
 
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     let mut headers = HeaderMap::new();
     if let Some(tp) = incoming {
         headers.insert("traceparent", tp);
     }
-    ingress
-        .message(&Req { n: 1 })
+    tb.message(&Req { n: 1 })
         .with_headers(headers)
         .to("in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), GOT.notified())
-        .await
-        .expect("reply never captured");
+    tb.broker::<MemoryBroker>()
+        .subscriber("out")
+        .assert_called_once()
+        .with(&Resp { n: 1 });
 
-    running.shutdown().await.expect("graceful shutdown failed");
-
-    let header = CAPTURED
-        .lock()
-        .expect("poisoned")
-        .clone()
-        .expect("reply carried a traceparent");
+    let published = tb.broker::<MemoryBroker>().published::<Resp>("out");
+    let header = published
+        .messages()
+        .first()
+        .expect("the reply was published")
+        .headers()
+        .get_str("traceparent")
+        .expect("reply carried a traceparent")
+        .to_owned();
     let reply = parse_traceparent(&header);
     assert!(reply.is_valid(), "reply traceparent is valid");
     reply

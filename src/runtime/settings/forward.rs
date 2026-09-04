@@ -193,6 +193,7 @@ where
     type Input = <Def as BatchInjectDef>::Input;
     type Source = Src;
     type Injections = <Def as BatchInjectDef>::Injections;
+    type Context = <Def as BatchInjectDef>::Context;
 
     forward_common!(BatchInjectDef);
     forward_outgoing!(BatchInjectDef);
@@ -209,7 +210,7 @@ where
         &self,
         batch: &[<<Def as BatchInjectDef>::Input as InputKind>::Owned],
         injections: &<Def as BatchInjectDef>::Injections,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, <Def as BatchInjectDef>::Context, S>,
     ) -> impl Future<Output = BatchResult> + Send {
         self.def.call(batch, injections, ctx)
     }
@@ -224,6 +225,7 @@ where
 {
     type Input = <Def as BatchPublishingDef>::Input;
     type Injections = <Def as BatchPublishingDef>::Injections;
+    type Context = <Def as BatchPublishingDef>::Context;
     type Reply = <Def as BatchPublishingDef>::Reply;
     type Source = Src;
 
@@ -246,7 +248,7 @@ where
         &self,
         batch: &[<<Def as BatchPublishingDef>::Input as InputKind>::Owned],
         injections: &<Def as BatchPublishingDef>::Injections,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, <Def as BatchPublishingDef>::Context, S>,
     ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, BatchResult>> + Send
     {
         self.def.call(batch, injections, ctx)
@@ -269,7 +271,7 @@ where
     type Extra = Def::Extra;
 
     fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra) {
-        let (def, source, workers, failures, codec) = self.into_parts();
+        let (def, source, (workers, failures, batch_size, codec)) = self.into_parts();
         let (bound, extra) = def.bind(sources);
         (
             SubscriberBuilder {
@@ -277,6 +279,7 @@ where
                 source,
                 workers,
                 failures,
+                batch_size,
                 codec,
                 _state: PhantomData,
             },

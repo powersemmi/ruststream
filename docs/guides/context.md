@@ -145,14 +145,14 @@ downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value
 serializing it into the headers. The context is built fresh per delivery, so one delivery's values
 never leak into the next.
 
-A [batch handler](subscribers.md#batch-subscribers) gets one context per page, and it carries the
-broker's *subscription-scoped* fields only - a seek handle, a stream name - which a page body
+A [batch handler](subscribers.md#batch-subscribers) gets one context per batch, and it carries the
+broker's *subscription-scoped* fields only - a seek handle, a stream name - which a batch body
 names as its context type
 (`ctx: &mut Context<'_, MemoryBatchContext>` on the in-memory broker) and reads with
-`ctx.context(..)`. Per-delivery data stays out: a page spans many deliveries, so a position or a
-header rides the elements instead. The per-delivery and page context types are distinct, so a
-page body asking for the per-delivery one does not compile, and a broker with nothing
-subscription-scoped leaves pages on the `()` default.
+`ctx.context(..)`. Per-delivery data stays out: a batch spans many deliveries, so a position or a
+header rides the elements instead. The per-delivery and batch context types are distinct, so a
+batch body asking for the per-delivery one does not compile, and a broker with nothing
+subscription-scoped leaves batches on the `()` default.
 
 ## Context fields as parameters
 
@@ -226,7 +226,10 @@ To publish from inside a handler (beyond the `publish(..)` reply form), do not p
 in the state: take it as a handler parameter with `Out` - the pattern
 `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body. The policy is
 attached where the handler is included, the concrete publisher type is inferred from it, and
-the runtime pairs it after the broker connects. The full pattern and its snippet live in
+the runtime pairs it after the broker connects. What leaves through the slot travels the same
+[publish pipeline](publishing.md#the-publish-pipeline) a reply does: the app-wide `publish_layer`
+chain, under the slot's own `.out(marker, policy).transform(..)` steps. The full pattern and its
+snippet live in
 [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ## Post-settle hooks

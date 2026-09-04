@@ -10,8 +10,7 @@ use std::error::Error;
 use std::future::{Future, ready};
 
 use ruststream::codec::{CborCodec, JsonCodec};
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

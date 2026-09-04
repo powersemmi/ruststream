@@ -10,13 +10,11 @@
 
 use std::convert::Infallible;
 
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::prelude::*;
-use ruststream::runtime::{Input, MessageWire, PublishedThrough, SerializedWire, SoloDeserialized};
+use ruststream::PairError;
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::runtime::{OutTransform, Outgoing};
 use ruststream::testing::TestApp;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, PairError,
-};
 use serde::{Deserialize, Serialize};
 
 // `#[derive(Deserialized)]` by hand: the payload view the slot-publishing body takes, and the
@@ -102,19 +100,15 @@ impl PublishedThrough<Audit> for Wire {}
 /// Two slots in one handler; no broker publisher type appears anywhere in the body.
 struct Transcode;
 
-type TranscodeSlots<EncodedPub, AuditPub, EncA, EncB> =
-    Outs<(Slot<Encoded, EncodedPub, EncA>, Slot<Audit, AuditPub, EncB>)>;
-
-impl<'p, EncodedPub, AuditPub, EncA, EncB>
-    Handle<Frame<'p>, (), TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>> for Transcode
+impl<'p, E, A> Handle<Frame<'p>, (), Outs<(E, A)>> for Transcode
 where
-    Slot<Encoded, EncodedPub, EncA>: Publish,
-    Slot<Audit, AuditPub, EncB>: Publish,
+    E: OutEntry<Encoded, Wire: Publisher>,
+    A: OutEntry<Audit, Wire: Publisher>,
 {
     async fn handle(
         &self,
         chunk: &Frame<'p>,
-        outs: &TranscodeSlots<EncodedPub, AuditPub, EncA, EncB>,
+        outs: &Outs<(E, A)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let mut headers = HeaderMap::new();
@@ -152,8 +146,8 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
     let app =
         RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("slots.in", Transcode).build())
-                .out(Audit, MemoryPublish)
-                .out(Encoded, MemoryPublish)
+                .out(Audit, Publish)
+                .out(Encoded, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -222,14 +216,14 @@ impl PublishedThrough<Exports> for WireExport {}
 /// the bytes as they are - no codec anywhere - to the destination the declaration names.
 struct ExportChunks;
 
-impl<'p, Wired, Enc> Handle<Frame<'p>, (), Outs<(Slot<Exports, Wired, Enc>,)>> for ExportChunks
+impl<'p, E> Handle<Frame<'p>, (), Outs<(E,)>> for ExportChunks
 where
-    Slot<Exports, Wired, Enc>: Publish,
+    E: OutEntry<Exports, Wire: Publisher>,
 {
     async fn handle(
         &self,
         frame: &Frame<'p>,
-        outs: &Outs<(Slot<Exports, Wired, Enc>,)>,
+        outs: &Outs<(E,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let wire = WireExport(frame.0.to_vec());
@@ -249,7 +243,7 @@ async fn a_serialized_member_publishes_through_the_typed_entry() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("slots.chunks", ExportChunks).build())
-                .out(Exports, MemoryPublish)
+                .out(Exports, Publish)
                 .build();
         },
     );
@@ -295,6 +289,23 @@ impl ShardLanes for LaneRouter {
     }
 }
 
+// Grafted onto the arena entry once, for every marker, delegating through the entry's
+// transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own
+// traits. A body holds the entry, so without this impl the capability is reachable by autoderef
+// for a method call but never satisfies a trait bound.
+impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
+    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+        (**self).lane(shard)
+    }
+}
+
+/// The bound the graft buys: a helper generic over the capability, not over the concrete live
+/// type, takes the entry a body holds.
+async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
+    let (publisher, dest) = lanes.lane(event.id);
+    publisher.message(event).to(dest).publish().await.is_ok()
+}
+
 /// The policy half: pure declaration pairing into the router, like a broker's
 /// `per_partition()` policy pairs into its producer cache. No `Clone`: resolution consumes it.
 struct LanePolicy;
@@ -304,13 +315,13 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(LaneRouter {
-            publisher: MemoryPublish.pair(connected).await?,
+            publisher: Publish.pair(connected).await?,
         })
     }
 }
 
-/// The body names the wired live type directly - the arena entry is a transparent window onto
-/// it, so the broker-defined capability is called with no grafting machinery in between.
+/// The body leaves the wired live value generic and bounds it with the broker-defined
+/// capability, exactly as the attribute's `Out<impl ShardLanes>` does.
 struct RouteShard;
 
 struct Lanes;
@@ -319,21 +330,21 @@ impl OutSlot for Lanes {
     const NAME: &'static str = "Lanes";
 }
 
-impl<Enc> Handle<Event, (), Outs<(Slot<Lanes, LaneRouter, Enc>,)>> for RouteShard
+impl<L> Handle<Event, (), Outs<(L,)>> for RouteShard
 where
-    Enc: Send + Sync,
+    L: OutEntry<Lanes, Wire: ShardLanes>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<Lanes, LaneRouter, Enc>,)>,
+        outs: &Outs<(L,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        let (publisher, dest) = outs.get(Lanes).lane(event.id);
-        if publisher.message(event).to(dest).publish().await.is_err() {
-            return Err(HandlerOutcome::retry());
+        if sent(outs.get(Lanes), event).await {
+            Ok(())
+        } else {
+            Err(HandlerOutcome::retry())
         }
-        Ok(())
     }
 }
 // --8<-- [end:extension]
@@ -371,4 +382,91 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
         .with(&Event { id: 3 });
     // The live value's publishes are not attributed to the slot: the capture boundary.
     tb.out::<Lanes>().assert_not_called();
+}
+
+/// The slot transform the mount below composes on top of the entry's publish path.
+struct Envelope;
+
+impl OutTransform for Envelope {
+    fn apply(&self, out: &mut Outgoing<'_>) {
+        out.headers_mut().insert("x-outbox", b"1".to_vec());
+    }
+}
+
+/// What the entry bound buys: this body's `where` clause says nothing about the publish path the
+/// mount composes, so the one body below is mounted both bare and under `.transform(Envelope)`.
+struct Receipt;
+
+impl<A> Handle<Event, (), Outs<(A,)>> for Receipt
+where
+    A: OutEntry<Audit, Wire: Publisher>,
+{
+    async fn handle(
+        &self,
+        event: &Event,
+        outs: &Outs<(A,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        if outs
+            .get(Audit)
+            .message(&Wire::of(event.id.to_be_bytes()))
+            .to("slots.receipts")
+            .publish()
+            .await
+            .is_err()
+        {
+            return Err(HandlerOutcome::retry());
+        }
+        Ok(())
+    }
+}
+
+/// Mounts the one `Receipt` body under both publish paths: the bare slot sends what the body
+/// built, the transformed slot sends it stamped. Neither mount is visible in the body, which is
+/// the point - the pipeline is a projection of the entry, not a parameter of the signature.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_body_mounts_bare_and_under_a_slot_transform() {
+    let bare = RustStream::new(AppInfo::new("slots-bare", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(subscriber("slots.receipt", Receipt).build())
+                .out(Audit, Publish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(bare).await.expect("harness start");
+    tb.message(&Event { id: 7 })
+        .to("slots.receipt")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+    let bare_receipt = tb
+        .out::<Audit>()
+        .assert_called_once()
+        .with_raw(7u64.to_be_bytes().as_slice());
+    assert_eq!(bare_receipt.messages()[0].headers().get("x-outbox"), None);
+    tb.shutdown().await.expect("graceful shutdown");
+
+    let stamped = RustStream::new(AppInfo::new("slots-stamped", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(subscriber("slots.receipt", Receipt).build())
+                .out(Audit, Publish)
+                .transform(Envelope)
+                .build();
+        },
+    );
+    let tb = TestApp::start(stamped).await.expect("harness start");
+    tb.message(&Event { id: 7 })
+        .to("slots.receipt")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+    tb.out::<Audit>()
+        .assert_called_once()
+        .with_raw(7u64.to_be_bytes().as_slice())
+        .with_header("x-outbox", b"1");
+    tb.shutdown().await.expect("graceful shutdown");
 }

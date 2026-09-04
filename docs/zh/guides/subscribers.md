@@ -61,8 +61,8 @@
 [把上下文字段作为参数](context.md#context-fields-as-parameters)。
 
 还有一种参数形态不是提取器，而是**注入**：`Out(out): Out<impl Publisher>` 接收一个活的发布者。
-运行时依据挂载点附加的策略（`b.include(handler).publisher(..)`，或者按具名槽位使用
-`.out(marker, ..)`）配对出该发布者；具体的发布者类型永远不会出现在签名里。可选的第三个位置声明该
+运行时依据挂载点附加的策略（`b.include(handler).out(marker, policy).build()`）配对出该发布者；
+具体的发布者类型永远不会出现在签名里。可选的第三个位置声明该
 处理器会发布的消息集合，即 `Out<impl Publisher, Marker, (A, B)>`，用于启用字典驱动的类型化发布路径
 （[类型化消息头](headers.md)）。参见
 [在处理器内部发布](publishing.md#publishing-from-inside-a-handler)。
@@ -107,7 +107,7 @@
 后续任务遵循统一的结算后语义（至多一次；只有在 ack 或 nack 结算之后才运行；优雅关闭时会排空），
 参见[结算后钩子](context.md#post-settle-hooks)。
 
-在一批消息中，每个元素各自结算，因此后续任务是逐元素携带的，这是按消息的上下文钩子给不了的能力：
+在一个批次中，每个元素各自结算，因此后续任务是逐元素携带的，这是按消息的上下文钩子给不了的能力：
 
 === "宏"
 
@@ -156,7 +156,7 @@
   内，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本就丢了。
 
 `batch_retry_after` 这种写法可以和[选择性的批量结果](#selective-acknowledgement)组合：一个
-`Vec<HandlerOutcome>` 携带逐元素的延迟，于是尚未就绪的条目各自退避，而不拖住这一批里的其余消息：
+`Vec<HandlerOutcome>` 携带逐元素的延迟，于是尚未就绪的条目各自退避，而不拖住这个批次里的其余消息：
 
 === "宏"
 
@@ -304,7 +304,7 @@ RustStream::new(info).with_broker(broker, |b| {
 
 ## 批量订阅者 { #batch-subscribers }
 
-接收切片的处理器消费的是整批消息：Broker 每投递一批，它就运行一次，对应一次数据库往返、一次批量
+接收切片的处理器消费的是整个批次：Broker 每投递一个批次，它就运行一次，对应一次数据库往返、一次批量
 API 调用。该形态从签名里读出，属性宏里什么都不用写。
 
 === "宏"
@@ -319,7 +319,8 @@ API 调用。该形态从签名里读出，属性宏里什么都不用写。
     --8<-- "examples/manual/subscribers.rs:batch"
     ```
 
-和其他写法一样，用 `include` 挂载即可，批量形态由定义自己携带：
+和其他写法一样，用 `include` 挂载即可。批量形态由定义自己携带，而挂载点要给出一个数字，也就是
+批次大小：
 
 === "宏"
 
@@ -333,27 +334,29 @@ API 调用。该形态从签名里读出，属性宏里什么都不用写。
     --8<-- "examples/manual/subscribers.rs:batch_mount"
     ```
 
-签名说的是处理器想一次拿到多条消息；它们是否真的成批到达，则是 Broker 的性质，因此这件事在挂载
-定义的地方才敲定。这条订阅的订阅者必须实现 `BatchSubscriber` 能力：客户端原生成批的 Broker
-（Kafka 的 poll、JetStream 的 pull consumer）直接提供它，批量大小则在它们的订阅选项里；内存
-Broker 同样原生成批。如果订阅本身不成批，编译器就会要求给出框架自带的缓冲，并由挂载点提供，它按
-大小、或者按首次投递之后的一个截止时间来封批：
+`batch(n)` 是框架唯一携带的批次参数，而且是必填的：批量处理器不写它就无法通过编译，因为框架没有
+任何依据替你编出一个大小来。这个数字直接传给 Broker，由它照着攒批次 - `XREADGROUP COUNT`、
+JetStream 的 pull 批次、Kafka 的 poll 上限 - 处理器看到的正是 Broker 投递过来的那个批次，绝不是它
+的一个切片。Broker 手上只有更少的消息时，这个批次也可以短于 `n`。
 
-=== "宏"
+一个批次是怎么攒出来的，其余部分 - 阻塞超时、消费者组、预取窗口 - 都属于 Broker 自己的词汇，写在
+批次大小之后，挂在它的订阅源上：
 
-    ```rust
-    --8<-- "examples/subscribers.rs:batch_buffered"
-    ```
+<!-- inline-rust: 这一步属于 Broker crate，而本仓库不能依赖它 -->
+```rust
+// 在 Redis Broker 上：大小是核心的词，`.block(..)` 是 Broker 的词
+b.include(reconcile.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)));
+```
 
-=== "手写"
+不管签名里还有什么，批次大小对任何形态的批次都适用：会回复的批次、通过 `Out` 槽发布的批次，写法和
+普通的批次完全一样。单条消息的处理器没有批次，因此在它身上写出来同样无法通过编译 - 这类处理器一次
+处理多少条投递，由 `workers(n)` 决定。
 
-    ```rust
-    --8<-- "examples/manual/subscribers.rs:batch_buffered"
-    ```
-
-批要么来自 Broker（由 Broker 自己的设置配置），要么来自这层包装；这项设置以适配器命名，正是为了把
-两者分开。这层包装改变了订阅的类型，所以它排在最后 - 绑定在未包装类型上的 Broker 设置，过了这一步
-就不再适用。
+任何 Broker 都提供批次。客户端原生成批的 Broker 直接提供 `BatchSubscriber` 能力（Kafka 的 poll、
+JetStream 的 pull consumer、Redis 的 `XREADGROUP`，内存 Broker 也一样）；传输一次只投递一条消息
+的 Broker，则在自己的 crate 里用核心的 `Buffered` 适配器在客户端攒批次。挂载点看不出走的是哪一条
+路。Broker 具体怎么做，见 Broker 作者指南的
+[批次](../broker-authors/index.md#batches-batchsubscriber)一节。
 
 它的语义和单条消息的处理器有几处不同：
 
@@ -365,14 +368,14 @@ Broker 同样原生成批。如果订阅本身不成批，编译器就会要求�
 - 上下文每批一个，其中来自 Broker 的字段是*订阅级*的那些：批量函数体写出 Broker 的批量上下文类型
   （内存 Broker 上是 `ctx: &mut Context<'_, MemoryBatchContext>`），再用 `ctx.context(..)` 读它的
   键。订阅级上没有东西可交的 Broker，会让批停在 `()` 这个默认值上。
-- 逐次投递的数据不放在那里，因为一批横跨多次投递：位置或消息头改为随元素走，由
+- 逐次投递的数据不放在那里，因为一个批次横跨多次投递：位置或消息头改为随元素走，由
   `&[Message<H, T>]` 这样的批逐个元素读取。两者是不同的类型，所以批量函数体去要 Broker 的逐次
   投递上下文是编译不过的。
 - 应用全局的中间件和路由器上的中间件包裹的是按消息的处理器，对批量注册不生效。
 
 ### 选择性确认 { #selective-acknowledgement }
 
-常见的情形是部分就绪：这一批里有些消息已经处理完，另一些还没就绪，应重新投递，同时不去重试那些
+常见的情形是部分就绪：这个批次里有些消息已经处理完，另一些还没就绪，应重新投递，同时不去重试那些
 已经成功的。返回 `Vec<HandlerOutcome>`，切片中的第 `i` 个元素就按第 `i` 个结果结算：
 
 === "宏"
@@ -394,10 +397,44 @@ Broker 侧的语义和逐条消息的 `nack(requeue = true)` 完全一致：支�
 
 ## 定位（seek） { #seeking }
 
-传输层是可重放日志的 Broker（Kafka、Redis stream、内存 Broker 的发布日志）实现了 `Seekable`
-能力：一条活着的订阅可以移到另一个位置，比如修好处理器的 bug 之后重放一段流、从某个已知的点重新
-处理，或者向前跳过一段毒消息，而不必丢弃这条订阅。这样的 Broker 会在自己的投递上下文里发布定位
-键；没有可重放日志的 Broker 不发布这些键，下面这种挂载对它们来说编译不过，而不是到运行时才失败。
+修好处理器的 bug 之后重放一段流、从某个已知的点重新处理、向前跳过一段毒消息：这些情形都要在流里
+指定一个位置，或者是订阅打开的位置，或者是一条活着的订阅在不被丢弃的前提下移到的位置。传输层是
+可重放日志的 Broker（Kafka、Redis stream、内存 Broker 的发布日志）实现了 `Seekable` 能力，拥有
+自己的位置类型，并在自己的投递上下文里发布定位键；没有可重放日志的 Broker 两者都不提供，下面两
+种挂载对它们来说编译不过，而不是到运行时才失败。
+
+### 在选定的位置打开订阅
+
+一条新订阅在哪里打开由 Broker 决定：普通消费者从末尾开始，持久消费者从存下的游标开始。在那之前
+发布的一切对服务都不可见，而对必须看到完整历史的审计流来说，这是错的答案；对绝不该去趟积压的监
+控来说同样是错的答案。订阅在哪里打开是挂载点的属性，不是处理器的属性，所以它写在挂载点上：属性
+里写 `start_at(<position>)` 子句，设置链上写 `.start_at(..)`：
+
+=== "宏"
+
+    ```rust
+    --8<-- "examples/seek.rs:start_at"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/seek.rs:start_at"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/seek.rs:start_at_mount"
+    ```
+
+位置是 Broker 自己的位置类型的值，因此能写出来的正是这个 Broker 能表达的东西：内存日志提供
+`MemoryPosition::start()` 表示全部历史，`MemoryPosition::end()` 表示从下一次发布开始，
+`MemoryPosition::sequence(n)` 表示某一条日志记录。
+
+该子句在每次启动时都强制使用给定位置；没有它时，订阅就在 Broker 的默认位置打开。有条件的默认值
+（只在 Broker 没有为该组存下游标时才生效，比如 Kafka 的 offset reset、JetStream 的 deliver
+policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
+
+### 在处理器里重新定位
 
 处理器通过 Broker 的上下文键给自己的订阅重新定位：投递上下文携带位置和一个活的定位句柄（订阅
 打开时 Broker 解析一次），处理器按键读取它们：宏路径用 `Ctx` 提取器，手动路径对着 Broker 的
@@ -423,12 +460,8 @@ Broker 侧的语义和逐条消息的 `nack(requeue = true)` 完全一致：支�
     --8<-- "examples/manual/seek.rs:mount"
     ```
 
-该子句在每次启动时都强制使用给定位置；没有它时，订阅就在 Broker 的默认位置打开。有条件的默认值
-（只在 Broker 没有为该组存下游标时才生效，比如 Kafka 的 offset reset、JetStream 的 deliver
-policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
-
 批量函数体重新定位自己的订阅是同样的做法，只是高了一层：seek 句柄属于整条订阅，因此随 Broker 的
-批量上下文走，而目标（生产者请求消费者从哪里继续的那个位置）随这一批自己的元素走。
+批量上下文走，而目标（生产者请求消费者从哪里继续的那个位置）随这个批次自己的元素走。
 
 一次 seek 的影响范围因 Broker 而异：给一个 consumer 实例重新定位（Kafka）只移动该实例，而移动共享
 的组游标（Redis stream）会移动整个组；此外，重新定位会让 Broker 为这条订阅保存的 ack 记账失效。
@@ -468,8 +501,8 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 该用的写法。“手写”标签页展示的正是 derive 会写的那一对 impl - 一个负责构造，一个负责把类型接到这条
 路径上。
 
-形态规则不随路径改变：`&T` 是一条消息，`&[T]` 是一批。于是一批帧就是 `&[Frame<'_>]`，而批量的写法
-随 derive 一起到手，批量函数体不需要第二个 impl。它的元素在调用期间从这批消息自身借用，所以这里
+形态规则不随路径改变：`&T` 是一条消息，`&[T]` 是一个批次。于是一个批次的帧就是 `&[Frame<'_>]`，而
+批量的写法随 derive 一起到手，批量函数体不需要第二个 impl。它的元素在调用期间从这批消息自身借用，所以这里
 同样不发生拷贝，结算规则也沿用批量路径的那一套。
 
 === "宏"
@@ -487,7 +520,7 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 会做校验的构造（flatbuffers 的根、capnp 的 reader、一次长度检查）通过 `from_payload` 返回 `Err`
 来报告坏载荷，这次投递由 `on_failure(decode = ..)` 结算：和编解码器解码失败、以及类型化的 `Headers`
 违约落在同一级。其余部分照常组合：提取器、`&mut Context`、`workers(..)`、`on_failure(panic = ..)`
-以及注入的 `Out` 参数，在单次投递的形态上都原样可用（一批帧不接受 `Out` 参数）；这样的订阅者也和
+以及注入的 `Out` 参数，在单次投递的形态上都原样可用（帧的批次不接受 `Out` 参数）；这样的订阅者也和
 其他任何定义一样，用同一个 `include` 挂载。作用域上的编解码器对它不生效 - 这条路径根本不会去调用
 编解码器 - 这也让它成为在一个编解码器 feature 都没启用时仍然可用的订阅者写法。如果某种自定义的
 序列化格式仍然希望用*类型化*的处理器来写，就实现 [`Codec`](codecs.md)，继续走类型化路径。
@@ -497,9 +530,10 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 带 `#[derive(Serialized)]` 的 newtype 自带字节，按字节原样发出，和处理器返回时一模一样。直接返回
 这个回复，或者写成 `Result<Export, HandlerOutcome>`，后者提供与编码写法相同的显式 ack 控制。
 
-发布者来自挂载点：`Serialized` 回复附加一个普通的发布策略（`b.include(relay).publisher(MemoryPublish)`），
-编码的回复则把同一个策略包进 `TypedPublisher::new(..)`；一次调用都不写时，回复就由 Broker 的默认
-发布策略送出。回复发布失败会让这次投递 nack 并重新入队，和编码路径上完全一样：
+发布者来自挂载点：两种传输方式都用同一种写法指定策略（`b.include(relay).out(Reply, Publish)`），
+一次调用都不写时，回复就由 Broker 的默认发布策略送出。区别在于其后能链什么：编码的回复接受
+`.codec(..)`、`.transform(..)` 和 `.transactional()`，而 `Serialized` 的字节原样发出，因此那些步骤
+在这里并不存在。回复发布失败会让这次投递 nack 并重新入队，和编码路径上完全一样：
 
 === "宏"
 
@@ -586,7 +620,7 @@ Broker 消息的 `partition_key()`（消息实现了 `Partitioned` 能力的 Bro
 | `retry()` / `retry_after` × `workers(n)` | 重试的投递会重新进入该池，并像其他投递一样走完。 |
 | `retry()` / `retry_after` × `workers(n, by_key)` | 重试能走完，但跨越一次重试之后，同一个键内部的顺序**不**保证：重新入队的消息会从队尾重新进入流。如果某个键的消息即使遇到失败也必须保持顺序，处理器就必须自己消化这次失败，而不是 nack。 |
 | `.transactional()` × `workers(n)` | 每批一个事务，和顺序循环时完全一样。并发的批跑的是并发且互相独立的事务；每个事务各自保持原子性（每批先提交再 ack）。 |
-| `Buffered` × `workers(n)` | 批仍然只按 `max_size` / `max_wait` 封口；池只限制同时处理多少个已封好的批，永远不影响批的边界。 |
+| 批次大小 × `workers(n)` | 批次仍然按 `batch(n)` 封口，Broker 在客户端攒批次时则按它的截止时间封口；池只限制同时处理多少个已封好的批次，永远不影响批次的边界。 |
 | `publish(..)` × `workers(n)` | 回复是并发产生的，因此跨投递的回复顺序没有保证。回复发布失败只会重试它自己那一次投递。 |
 | 中间件 × 批量处理器 | 应用全局的层和路由器上的层包裹的是按消息的处理器，对批量注册不生效（按消息的层没法包裹一个整批的处理器）。 |
 
@@ -619,7 +653,7 @@ Broker 消息的 `partition_key()`（消息实现了 `Partitioned` 能力的 Bro
 手写的函数体返回一个 `Result`：`Ok` 那一侧承载处理器产出的东西（回复，或者什么都没有），`Err` 那一侧
 承载结算，于是 `Ok(())` 就是 ack，`Err(HandlerOutcome::retry())` 就是重新入队；批量函数体用
 `Err(Vec<HandlerOutcome>)` 逐个元素结算。在 `subscriber(..)` 和 `.build()` 之间，这条链可以接受属性
-宏的子句能给的同一批设置（`.name`、`.workers`、`.on_failure`、`.buffered`），外加文档方面的开关：
+宏的子句能给的同一批设置（`.name`、`.workers`、`.on_failure`、`.batch`），外加文档方面的开关：
 在 `asyncapi` feature 下，一条注册默认就会进文档，`.describe(..)` 设置它的描述，`.undocumented()`
 把它排除在外（参见 [AsyncAPI](asyncapi.md#payload-schemas)）。
 

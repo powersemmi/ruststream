@@ -1,15 +1,15 @@
 error[E0277]: `OneAtATime` does not deliver messages in batches
-  --> tests/ui/subscriber_batch_without_batching.rs:53:15
+  --> tests/ui/subscriber_batch_without_batching.rs:52:15
    |
-53 |             b.include(handle);
+52 |             b.include(handle.batch(nonzero!(64)));
    |               ^^^^^^^ this subscription has no batching of its own
    |
 help: the trait `BatchSubscriber` is not implemented for `OneAtATime`
-  --> tests/ui/subscriber_batch_without_batching.rs:14:1
+  --> tests/ui/subscriber_batch_without_batching.rs:13:1
    |
-14 | struct OneAtATime(MemorySubscriber);
+13 | struct OneAtATime(MemorySubscriber);
    | ^^^^^^^^^^^^^^^^^
-   = note: a handler taking `&[T]` needs batches: add the framework's buffer at the mount site, `b.include(handle.buffered(nonzero!(64), Duration::from_millis(10)))`, or mount the definition on a subscription kind that batches on the wire
+   = note: a handler taking `&[T]` is handed whole batches: mount it on a subscription kind that batches. A broker whose transport has no native batches gives its subscriber this capability through the `Buffered` adapter (see the broker-authors guide)
 help: the following other types implement trait `BatchSubscriber`
   --> src/memory/capability.rs
    |
@@ -20,4 +20,5 @@ help: the following other types implement trait `BatchSubscriber`
    |
    | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
-   = note: required for `Batch` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open)>>`
+   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
+   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`

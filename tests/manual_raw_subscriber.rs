@@ -1,8 +1,9 @@
 //! The macro-free counterpart of `tests/raw_subscriber.rs`: the raw handler forms written out as
 //! named types, including the lane traits the derives would have written. The plain form is a
 //! body over a `Deserialized` payload view; the byte-reply form declares a `Serialized` type as
-//! its reply and wires it with `.reply().to(..).publisher(..)` - the wire is read off the two
-//! message types either way, on this path exactly as on the attribute's.
+//! its reply with `.reply().to(..)` and names the policy at the mount with `.out(Reply, ..)` -
+//! the wire is read off the two message types either way, on this path exactly as on the
+//! attribute's.
 //!
 //! The codec-free path is what the plain and the byte-reply sections pin: bytes on the input
 //! side mean no `Codec` bound reaches the mount, so this file also builds with every codec
@@ -11,13 +12,9 @@
 
 use std::convert::Infallible;
 use std::future::{Future, ready};
-use std::sync::Mutex;
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
-use ruststream::runtime::{Input, MessageWire, SerializedReply, SerializedWire, SoloDeserialized};
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
@@ -55,8 +52,6 @@ impl Wire {
 
 // --- the plain form: the handler sees the exact published bytes ---
 
-static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
-
 // --8<-- [start:raw]
 /// The payload view the raw bodies below take, with the pair of impls `#[derive(Deserialized)]`
 /// writes: the construction that borrows the delivery's bytes, and the input spelling that
@@ -88,7 +83,7 @@ impl<'p> Handle<Frame<'p>> for OnFrame {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        FRAMES.lock().expect("frame log").push(frame.0.to_vec());
+        let _ = frame.0;
         ready(Ok(()))
     }
 }
@@ -111,13 +106,10 @@ async fn raw_handler_receives_exact_bytes() {
     tb.broker::<MemoryBroker>()
         .subscriber("frames")
         .assert_called_once()
+        // The recorded payload is what the handler was called with, so this is the assertion
+        // that the bytes reached it untouched.
         .with_raw(FRAME)
         .settled(HandlerOutcome::ack());
-    assert_eq!(
-        FRAMES.lock().expect("frame log").as_slice(),
-        &[FRAME.to_vec()],
-        "the handler saw the published bytes untouched"
-    );
 }
 
 // --- the reply form: the returned bytes are republished as-is ---
@@ -181,9 +173,9 @@ async fn raw_reply_round_trips_exact_bytes() {
             subscriber("relay-in", Relay)
                 .reply()
                 .to("relay-out")
-                .publisher(MemoryPublish)
                 .build(),
-        );
+        )
+        .out(Reply, Publish);
         b.include(subscriber("relay-out", RelayCapture).build());
     });
 
@@ -215,8 +207,7 @@ async fn raw_reply_round_trips_exact_bytes() {
 mod typed_in {
     use std::future::{Future, ready};
 
-    use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::prelude::*;
+    use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
     use serde::Deserialize;
 
@@ -272,9 +263,9 @@ mod typed_in {
                     subscriber("gateway-in", Gateway)
                         .reply()
                         .to("gateway-out")
-                        .publisher(MemoryPublish)
                         .build(),
-                );
+                )
+                .out(Reply, Publish);
                 b.include(subscriber("gateway-out", GatewayCapture).build());
             },
         );

@@ -35,10 +35,14 @@ message(&export)  ->          bytes -> broker    （Serialized 的值本身就�
     ```
 
 用普通的 `include` 挂载它。如果不再多说什么，回复就会以默认编解码器、经由 Broker 的默认发布策略发出；
-要指定回复的编解码器或者加上变换，就用 `.publisher(..)` 链上一个架在 Broker 发布策略之上的
-[`TypedPublisher`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.TypedPublisher.html)
-栈（`TypedPublisher::new` 用默认编解码器，`TypedPublisher::with_codec` 则可以指定一个）。该栈是一份
-声明：运行时会在启动时把它与已连接的 Broker 配对。
+`.out(Reply, Publish)` 指定 Broker 前奏导出的发布策略，其后的步骤把回复接线补齐：`.codec(..)`
+指定回复的编解码器，`.transform(..)` 加上静态发布变换，`.transactional()` 让一个批次的回复走同一个 Broker
+事务。每个步骤各占一个槽位、只填一次，因此写第二个 `.codec(..)` 是编译错误，而不是被悄悄覆盖。这套
+接线是一份声明：运行时会在启动时把它与已连接的 Broker 配对。
+
+定义永远不指定发布者。它声明处理器回复什么、发往哪里；发布策略属于 Broker，所以要在点名 Broker
+的地方指定 - 也就是挂载点，用绑定 `Out` 槽位的同一个 `.out(marker, policy)` 调用。`Reply` 就是处理
+器返回值离开时所走的那个位置的标记。
 
 === "宏"
 
@@ -53,12 +57,12 @@ message(&export)  ->          bytes -> broker    （Serialized 的值本身就�
     ```
 
 入站请求的解码遵循作用域（用 `with_broker_codec` 设定的作用域编解码器，没有设定则用默认编解码器）；
-回复的编解码器则随着附加上去的栈一起走。参见[编解码器](codecs.md#the-publish-side)。
+回复的编解码器则随着这条链搭好的接线一起走。参见[编解码器](codecs.md#the-publish-side)。
 
 一个子句服务于两种传输方式，因为这个选择属于回复的类型，而不属于子句。实现了 `serde::Serialize`
-的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此附加的是一个
-普通的发布策略：这种传输方式没有编解码器可命名，也就没有 `TypedPublisher` 要把它包进去。参见
-[原始字节订阅者](subscribers.md#raw-subscribers)。
+的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此它的
+`.out(Reply, ..)` 只接一个策略、别的都不接：这种传输方式没有编解码器可命名，其后写 `.codec(..)`
+不会通过编译。参见[原始字节订阅者](subscribers.md#raw-subscribers)。
 
 ## 控制确认行为
 
@@ -138,8 +142,11 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
 收尾的 `.build()` 提交这次注册。这些调用是按标记绑定的，所以先后顺序无关紧要；把同一个槽位绑定两次
 （或者绑定一个处理器没有声明的标记）无法通过编译，而 `.build()` 只有在每个槽位都绑定之后才存在，漏掉
 一次绑定就是编译错误，其附着类型会点名是哪个槽位（`MissingSlot<Audit>`）。如果只有一个无名的
-`Out<impl Publisher>` 参数，它绑定的是隐含的 `DefaultSlot`，用普通的 `.publisher(policy)` 调用即可，
-绑定和提交一步完成。
+`Out<impl Publisher>` 参数，它绑定的是隐含的 `DefaultSlot`（`.out(DefaultSlot, Publish).build()`）。
+
+`.out(..)` 之后的 `.transform(..)` 跟着那次调用点名的位置走（见[发布管线](#the-publish-pipeline)），
+所以既回复又扇出的注册会在每个位置各加一个：
+`.out(Reply, Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`。
 
 === "宏"
 
@@ -165,8 +172,13 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
     --8<-- "examples/manual/publishing.rs:slots_mount"
     ```
 
-trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 只有在策略的活发布者支持 owned
-事务时才能编译，这一点在挂载点检查，并给出点名缺失能力的诊断信息。槽位标记同时也是[测试套件](testing.md#asserting-on-out-slots)
+trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 只有在策略的活发布者支持
+owned 事务时才能编译，这一点在挂载点检查，并给出点名缺失能力的诊断信息。约束里写的是 Broker 的能力
+trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`，或者你的 Broker
+crate 自己定义的那一个），而不是任何 Broker 类型，所以主体与 Broker 无关；在手动路径上，同一个约束
+写在条目的活值上：`where L: OutEntry<Ledger, Wire: OwnedTransactions>`。在每一个这样的约束之下，条目
+还会在挂载点的编解码器和标记的列表之上给出该能力的类型化形态（发布构建器、事务作用域、拥有式事务）。
+槽位标记同时也是[测试套件](testing.md#asserting-on-out-slots)
 记录发布时所用的身份标识。
 
 `Out` 参数可选的第三个位置声明该处理器会发送什么（`Out<impl Publisher, Marker, (A, B)>`，可以是单个
@@ -245,9 +257,8 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
     ```
 
 该参数可以和每一种订阅者写法组合：与 `Ctx` 提取器并列、用在输入自己完成反序列化的处理器上、也用在
-批量处理器上（`b.include(f).publisher(..)`，进来的是一整页，出去的是逐元素的目的地）。在回复写法上，
-也就是 `publish(..)` 以及它的批量对应形式，`.publisher(..)` 仍然是回复自己的附加项，
-注入的发布者则用 `.out(marker, ..)` 加上收尾的 `.build()` 来附加（单个无名槽位用 `DefaultSlot`），
+批量处理器上（`b.include(f).out(marker, policy).build()`，进来的是一整个批次，出去的是逐元素的目的地）。
+在回复写法上，也就是 `publish(..)` 以及它的批量对应形式，回复只是同一条链上的又一个位置，
 于是一个网关可以在固定的目的地上作答，同时通过注入把副本扇出出去：
 
 === "宏"
@@ -292,7 +303,7 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 令牌与铸出它的 `Bindable` 包装器共享同一个槽位，所以要注册同一个包装器（`with_broker(bindable, ..)`），
 启动过程才会把已连接的 Broker 填进该槽位；如果某个令牌的 Broker 从未注册，配对时就会带着清晰的错误
 快速失败。回复发布（在 `publish("dest")` 处理器上写
-`.publisher(token)`）和批量写法用的是同一套形态。在注册之外，令牌会在启动连接了它的 Broker 之后自行
+`.out(Reply, token)`）和批量写法用的是同一套形态。在注册之外，令牌会在启动连接了它的 Broker 之后自行
 完成配对：`running.publisher(token)` 会把活的发布者交给同级的任务，参见
 [与其他服务器并行运行](http.md)。而对于启动时的第一次发布，根本不需要令牌：作用域级别的
 `b.after_startup(policy, hook)` 会在订阅打开之后，用一个已经配对好的发布者运行该钩子（参见
@@ -318,11 +329,15 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 
 ## 发布管线 { #the-publish-pipeline }
 
-消息离开进程之前会跑过两类变换，而且它们可以组合：
+消息离开进程之前会跑过三类变换，而且它们可以组合：
 
-- **`TypedPublisher` 上的静态 `PublishTransform`**，用 `.transform(..)` 添加。这是零成本、按目的地
-  生效的变换（一层信封、一个固定的 content type，或者把这次投递的链路追踪 / 关联 id 盖到回复上）。
-  它们最先运行，离值最近。
+- **回复接线上的静态 `PublishTransform`**，在 `.out(Reply, ..)` 之后用 `.transform(..)` 添加。这是
+  零成本、按目的地生效的变换（一层信封、一个固定的 content type，或者把这次投递的链路追踪 /
+  关联 id 盖到回复上）。它们最先运行，离值最近。
+- **某一个 `Out` 槽位上的静态 `OutTransform`**，在 `.out(marker, policy)` 之后用 `.transform(..)`
+  添加。它在顺序里的位置相同，管的是从这个槽位出去的消息：一层 outbox 信封、一个固定的 content
+  type、一个租户标记。它不接受 `PublishContext`：槽位上的发布是处理器体自己发出的，那次投递也就
+  由它自己读取、自己盖到消息上。
 - **应用上的静态 `PublishLayer`**，用 `.publish_layer(..)` 添加。这是横切关注点（发布指标、死信包装），
   作用于每一条发布出去的消息，包在发送外面，因此能观察到发送的结果。整条链会组合成一个具体类型，
   于是它成为应用类型的一部分。构建器通常返回 `impl App`，从不把它写出来；
@@ -341,6 +356,12 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 
 批量处理器的回复会跳过按消息生效的 `.transform(..)` 栈；要在那里加变换，用 `.batch_transform(..)`，
 并可以通过 `for_batch(transform)` 复用一个按消息的 `PublishTransform`。
+
+`OutTransform` 实现的是 `apply(&mut Outgoing<'_>)`，只跟着一个槽位走：
+
+```rust
+--8<-- "examples/publishing.rs:slot_transform"
+```
 
 `PublishLayer` 实现的是 around/next 形式的签名，因此它可以短路、重试，或者只做观察：
 
@@ -362,13 +383,21 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
     --8<-- "examples/manual/publishing.rs:pipeline"
     ```
 
-这条管线跑在回复路径上（`publish(..)` 那种写法）。注入的 `Out` 发布者是所附策略的活形态，直接使用，
-因此按发布者生效的变换要在挂载点用 `TypedPublisher::transform` 组合进策略里。完整的程序见
+应用级的这层包住处理器发出的每一次发布：既包括 `publish(..)` 那种写法的回复，也包括从注入的 `Out`
+槽位出去的每一条消息。挂载点上的变换只留在它被指名的那一侧：`.out(Reply, Publish).transform(StampSource)`
+长的是回复的栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 长的是这个槽位的栈，所以两侧都有的
+注册就把两个调用都写上，而 `.transform(..)` 读起来就是“作用在它前面那个位置上”。两侧在线路上的顺序一样：
+先是挂载点的变换（离编码后的值最近），然后是应用级的中间件，最后才是发送。
+
+有两种发布不走这条管线，而且都是处理器体自己驱动的：在槽位上开启的事务（`begin()`、`transaction()`）
+发往 Broker 的事务里，而一次 request / reply 往返（`request(..)`）等的是答复，并不以一次发送收尾。
+路由器里的槽位只带自己的变换，不带应用级的那条链：`include_router` 挂载的路由，其类型在应用之前就已
+定型，因此槽位发布需要这条链的处理器要用 `b.include(..)` 挂在 Broker 作用域上。完整的程序见
 [`examples/publishing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/publishing.rs)。
 
 ## 批量回复与事务
 
-一个接受 `&[T]` 的 `#[subscriber("in", publish("out"))]` 处理器会消费整个解码后的批量，并返回这一批的
+一个接受 `&[T]` 的 `#[subscriber("in", publish("out"))]` 处理器会消费整个解码后的批量，并返回这个批次的
 回复，也就是 consume-transform-produce 模式。`Ok(replies)` 把每一条回复发布到回复名下，并 ack 整批；
 `Err(outcome)` 什么都不发布，并用 `outcome` 结算整批（全有或全无：逐元素挑选结果与事务无法组合）：
 
@@ -384,7 +413,7 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
     --8<-- "examples/manual/publishing.rs:batch_publishing"
     ```
 
-用 `include` 挂载它，并用 `.publisher(..)` 链上回复的接线：
+用 `include` 挂载它，并用 `.out(Reply, ..)` 链上回复的接线：
 
 === "宏"
 
@@ -398,16 +427,16 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
     --8<-- "examples/manual/publishing.rs:batch_publishing_mount"
     ```
 
-用普通的 `TypedPublisher` 时，每条回复各自独立发布；批量中途失败会重试整批，因此先前那些回复可能在
-重新投递时再发一次（至少一次）。在 `TypedPublisher` 上调用 `.transactional()`，会把这套接线切换成
-每批一个 Broker 事务：运行时开启事务，发布每一条回复，提交，然后才 ack 入站的这一批；任何失败都会中止
-事务，所以回复绝不会只露出一半。事务性这项要求在消费接线的地方强制执行：挂载它要求策略的活发布者
-实现 `TransactionalPublisher` 能力，因此没有事务的 Broker 依然无法通过编译。单条消息的回复写法仍然
-接受普通的 `TypedPublisher` 栈。
+不写 `.transactional()` 时，每条回复各自独立发布；批量中途失败会重试整批，因此先前那些回复可能在
+重新投递时再发一次（至少一次）。在 `.out(Reply, ..)` 之后链上 `.transactional()`，会把这套接线切换成
+每个批次一个 Broker 事务：运行时开启事务，发布每一条回复，提交，然后才 ack 入站的这个批次；任何失败
+都会中止事务，所以回复绝不会只露出一半。事务性这项要求在消费接线的地方强制执行：挂载它要求策略的活发布者
+是事务性的，因此没有事务的 Broker 依然无法通过编译。单条消息的回复没有一个批次的内容可做成原子的，
+因此 `.transactional()` 只挂得上批次的写法。
 
 ## 手动事务
 
-在批量回复这条路径之外，可以手动驱动事务：在事务性接线上调用 `begin()`，会开启一个拥有该事务的
+在批量回复这条路径之外，可以手动驱动事务：在任何事务性发布者上调用 `begin()`，会开启一个拥有该事务的
 `TransactionScope`。发布都经由该作用域进行，而 `commit()` / `abort()` 会消费它，于是没有 begin 就
 commit、第二次 commit、结算之后再发布，都是编译错误，而不是运行时的意外：
 
@@ -421,19 +450,28 @@ commit、第二次 commit、结算之后再发布，都是编译错误，而不�
 （它们要读取产生回复的那次投递），在这里不会运行。丢弃一个尚未结算的作用域会记录一条警告，并让该句柄
 上的 Broker 事务保持打开状态，所以务必显式结算。
 
+`Out` 槽位打开的是同一种作用域：用 `Out<impl TransactionalPublisher, Journal>` 约束该槽位（手动路径
+上则是 `where W: TransactionalPublisher`），在条目上调用 `begin()` 就得到这个作用域，驱动方式与上面
+完全一样。在槽位上打开的作用域只接纳该槽位自己的 `message` 所接纳的东西，也就是标记的列表再按
+参数声明的集合收窄，因此事务不可能发布生成文档从未声明过的消息，而它的发布在测试套件里仍记在该
+槽位名下。
+
 该作用域属于借用式的事务：它借用句柄上唯一的 Broker 侧事务，因此每个句柄同一时刻只有一个作用域
 处于打开状态。如果某个 Broker 的事务是客户端缓冲区而不是 producer 状态，它还会实现拥有式的那种，即
-`OwnedTransactions`：每次调用 `transaction()` 都会开启一个独立的事务，其缓冲区就存放在返回的
-`Transaction` 值里，因此同一个句柄上可以并发打开任意多个，结算其中一个也绝不会碰到另一个。`publish`
-把内容缓冲进该值，`commit()` / `abort()` 消费它，这与作用域一样是“结算即消费”的纪律；而丢弃一个
-这样的事务只是丢掉它的缓冲区（并记录一条警告），不会留下一个打开着的 Broker 事务。像 Kafka 那样客户端
-每个 producer 恰好持有一个事务的 Broker，只实现借用式的那种。
+`OwnedTransactions`：每次调用都会开启一个独立的事务，其缓冲区就存放在返回的
+`TypedTransaction` 里，因此同一个句柄上可以并发打开任意多个，结算其中一个也绝不会碰到另一个。
+`message(..).publish()` 把内容缓冲进该值，`commit()` / `abort()` 消费它，这与作用域一样是“结算即消费”
+的纪律；而丢弃一个这样的事务只是丢掉它的缓冲区（并记录一条警告），不会留下一个打开着的 Broker 事务。
+像 Kafka 那样客户端每个 producer 恰好持有一个事务的 Broker，只实现借用式的那种。
 
-拥有式的那种也有类型化的语法糖：在发布者实现了 `OwnedTransactions` 的 `TypedPublisher` 上，
-`transaction()` 会开启一个 `TypedTransaction`，它拥有该 Broker 事务，并用发布者的编解码器编码，写作
-`let mut txn = typed.transaction().await?;`，然后是 `txn.message(&value).publish().await?;` 和
-`txn.commit().await?;`。`.transactional()` 加 `begin()` 给出的是借用式作用域（每个句柄一个），而在同
-一个 `TypedPublisher` 上，同一时刻可以打开任意多个 `TypedTransaction`。
+拥有式的那种在两种表面上的写法也一样：在客户端缓冲事务的发布者提供 `owned_transaction()`，带
+`Out<impl OwnedTransactions, Ledger>` 约束的槽位提供 `transaction()`。两者都会开启一个
+`TypedTransaction`，它拥有该 Broker 事务，并用该表面的编解码器编码，写作
+`let mut txn = publisher.owned_transaction().await?;`，然后是 `txn.message(&value).publish().await?;`
+和 `txn.commit().await?;`。`begin()` 给出的是借用式作用域（每个句柄一个），而在同一个发布者上，同一
+时刻可以打开任意多个 `TypedTransaction`。（名字里写出 *owned*，是因为 Broker 自己的
+`OwnedTransactions::transaction` 总在同一处可见。）拥有式事务的缓冲区在槽位之外结算，因此它的发布
+会落在 Broker 的发布日志里，而不是槽位自己的记录里。
 
 ## 批量发布
 

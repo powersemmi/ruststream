@@ -16,28 +16,16 @@ use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
+    Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
     SoloDeserialized, SoloPair,
 };
 use super::eager::construct;
 use super::outs::{EntryMarkers, Outs, Slot};
-use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs, page_reply_verdict};
+use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs, batch_reply_verdict};
 use super::value::{HandleValue, ReplyValue, Sealed};
 
-/// The mount token of a sealed single-message reply definition carrying slots.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedPublishingOut;
-
-/// The mount token of a sealed serialized-reply definition carrying slots.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedRawReplyOut;
-
-/// The mount token of a sealed page reply definition carrying slots.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedBatchPublishingOut;
-
-impl<A, R, E, C, H, Doc, Dest, Attach> IncludeDef
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
     A: Axis,
     R: ReplyRoute<A::Family>,
@@ -45,8 +33,8 @@ where
     type Form = R::SlotForm;
 }
 
-impl<A, R, E, C, H, Doc, Dest, Attach> HasSlots
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> HasSlots
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
     E: EntryMarkers,
 {
@@ -56,21 +44,20 @@ where
 /// See the plain arena's `BindSlots`: the declared entries unify with their markers' paired
 /// live values, so the definition is its own bound form.
 macro_rules! impl_reply_bind_slots {
-    ($(($($m:ident / $p:ident: $e:ident),+))+) => {$(
-        impl<Conn, A, R, C, H, Doc, Dest, Attach, $($m, $p, $e),+>
-            BindSlots<Conn, ($(($p, $e),)+)>
+    ($(($($m:ident / $p:ident: $e:ident / $pipe:ident),+))+) => {$(
+        impl<Conn, A, R, C, H, Doc, Dest, $($m, $p, $e, $pipe),+>
+            BindSlots<Conn, ($(($p, $e, $pipe),)+)>
             for Sealed<
                 ReplyValue<
                     HandleValue<
                         A,
                         R,
-                        Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e>,)+)>,
+                        Outs<($(Slot<$m, <$p as PublishPolicy<Conn>>::Live, $e, $pipe>,)+)>,
                         C,
                         H,
                         Doc,
                     >,
                     Dest,
-                    Attach,
                 >,
             >
         where
@@ -81,9 +68,9 @@ macro_rules! impl_reply_bind_slots {
             )+
         {
             type Bound = Self;
-            type Extra = ($(($p, $e),)+);
+            type Extra = ($(($p, $e, $pipe),)+);
 
-            fn bind(self, sources: ($(($p, $e),)+)) -> (Self, Self::Extra) {
+            fn bind(self, sources: ($(($p, $e, $pipe),)+)) -> (Self, Self::Extra) {
                 (self, sources)
             }
         }
@@ -91,15 +78,12 @@ macro_rules! impl_reply_bind_slots {
 }
 
 impl_reply_bind_slots! {
-    (M0 / P0: E0)
-    (M0 / P0: E0, M1 / P1: E1)
-    (M0 / P0: E0, M1 / P1: E1, M2 / P2: E2)
+    (M0 / P0: E0 / Pipe0)
+    (M0 / P0: E0 / Pipe0, M1 / P1: E1 / Pipe1)
+    (M0 / P0: E0 / Pipe0, M1 / P1: E1 / Pipe1, M2 / P2: E2 / Pipe2)
 }
-
-// ------------------------------------------------------------------------- the solo reply def
-
-impl<A, R, E, C, H, Doc, Dest, Attach> PublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> PublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
     A: SoloAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
@@ -108,7 +92,6 @@ where
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Attach: Send + Sync,
 {
     type Input = A::Kind;
     type Injections = Outs<E>;
@@ -170,8 +153,8 @@ where
     }
 }
 
-impl<T, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<T, R, E, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = Outs<E>, Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -191,8 +174,8 @@ where
     }
 }
 
-impl<F, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<F, R, E, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
             Input = <SoloDeserialized<F> as Axis>::Kind,
@@ -219,8 +202,8 @@ where
     }
 }
 
-impl<Hd, P, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<Hd, P, R, E, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
             Input = <SoloPair<Hd, P> as Axis>::Kind,
@@ -246,22 +229,20 @@ where
         self.0.value.body.handle(input, injections, ctx).await
     }
 }
-
-// ------------------------------------------------------------------------- the page reply def
-
-impl<A, R, E, H, Doc, Dest, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, (), H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
-    A: PagedAxis,
+    A: BatchedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
     E: EntryMarkers + Send + Sync,
+    C: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Attach: Send + Sync,
 {
     type Input = A::Kind;
     type Injections = Outs<E>;
+    type Context = C;
     type Reply = R;
     type Source = Unnamed<Name>;
 
@@ -318,47 +299,59 @@ where
     }
 }
 
-impl<T, R, E, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, Outs<E>, (), H, Doc>, Dest, Attach>>
+impl<T, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Batch<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
-    Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
-    [T]: Input<Axis = Page<T>>,
+    Self: BatchPublishingDef<
+            Input = <Batch<T> as Axis>::Kind,
+            Injections = Outs<E>,
+            Context = C,
+            Reply = R,
+        >,
+    [T]: Input<Axis = Batch<T>>,
     T: Send + Sync + 'static,
     R: ReplyShape,
     E: Send + Sync,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[T], Vec<R>, Outs<E>, (), S>,
+    H: Handle<[T], Vec<R>, Outs<E>, C, S>,
 {
     async fn call(
         &self,
         batch: &[T],
         injections: &Outs<E>,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, injections, ctx).await;
-        page_reply_verdict(verdict, batch.len(), ctx.name())
+        batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
-impl<Hd, P, R, E, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, Outs<E>, (), H, Doc>, Dest, Attach>>
+impl<Hd, P, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
-    Self: BatchPublishingDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>, Reply = R>,
-    [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
+    Self: BatchPublishingDef<
+            Input = <BatchPair<Hd, P> as Axis>::Kind,
+            Injections = Outs<E>,
+            Context = C,
+            Reply = R,
+        >,
+    [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
     R: ReplyShape,
     E: Send + Sync,
+    C: Send + Sync,
     S: Send + Sync,
-    H: Handle<[Message<Hd, P>], Vec<R>, Outs<E>, (), S>,
+    H: Handle<[Message<Hd, P>], Vec<R>, Outs<E>, C, S>,
 {
     async fn call(
         &self,
         batch: &[Message<Hd, P>],
         injections: &Outs<E>,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, injections, ctx).await;
-        page_reply_verdict(verdict, batch.len(), ctx.name())
+        batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }

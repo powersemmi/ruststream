@@ -9,7 +9,7 @@
 ))]
 
 // --8<-- [start:handler]
-use ruststream::{Outgoing, subscriber};
+use ruststream::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
@@ -34,8 +34,7 @@ async fn confirm(order: &Order) -> Confirmation {
 // --8<-- [end:handler]
 
 // --8<-- [start:test]
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, TypedPublisher};
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -44,8 +43,7 @@ async fn confirms_valid_orders() {
     let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            let replies = TypedPublisher::new(MemoryPublish);
-            b.include(confirm).publisher(replies);
+            b.include(confirm).out(Reply, Publish);
         },
     );
 

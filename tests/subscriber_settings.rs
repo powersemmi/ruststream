@@ -3,7 +3,12 @@
 //!
 //! Apps come up through `start()`, which resolves only after subscriptions are open, so each
 //! message is published exactly once; the tests wait on the handlers' recorded state.
-#![cfg(feature = "macros")]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
@@ -11,15 +16,16 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Order, Wire, wait_for};
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
+use common::{Event, Order, Wire, wait_for};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource};
 use ruststream::runtime::{
-    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, PublishExt, Router, RustStream,
-    SubscriberSettings,
+    AppInfo, DefaultSlot, FailurePolicies, FailurePolicy, HandlerOutcome, Out, PublishExt, Router,
+    RustStream, SubscriberSettings,
 };
-use ruststream::{Deserialized, nonzero, subscriber};
+use ruststream::testing::TestApp;
+use ruststream::{Buffered, Deserialized, Name, Publisher, nonzero, subscriber};
 
-/// The payload view the raw batch body below takes, one element per delivery in the page.
+/// The payload view the raw batch body below takes, one element per delivery in the batch.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
@@ -201,48 +207,203 @@ async fn the_builder_supplies_the_start_position() {
     running.shutdown().await.expect("shutdown failed");
 }
 
-static BUFFERED: Mutex<Vec<Vec<u32>>> = Mutex::new(Vec::new());
-
-/// A batch shape read off the signature; where the batches come from is settled at the mount.
+/// The batch shape read off the signature; the mount site names how big a batch is and the broker
+/// builds its batches to it. The body records nothing; the harness reports the batches it was
+/// handed.
 #[subscriber]
-async fn correlate(orders: &[Order]) -> HandlerOutcome {
-    BUFFERED
-        .lock()
-        .unwrap()
-        .push(orders.iter().map(|o| o.id).collect());
+async fn paginate(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders.len();
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_builder_supplies_the_buffer() {
+async fn the_builder_supplies_the_batch_size() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(
-            correlate
-                .name("correlate")
-                .buffered(nonzero!(8), Duration::from_millis(5)),
-        );
-    });
-    let running = app.start().await.expect("startup failed");
-
+    // The whole run is in the log before the subscription opens, so the opening replay has three
+    // entries to hand over and the size is what shapes them into batches. The harness injects
+    // after startup and settles per message, so the entries are published here.
     for id in 0..3u32 {
         publisher
             .message(&Order { id })
-            .to("correlate")
+            .to("paginate")
             .publish()
             .await
             .expect("publish failed");
     }
-    wait_for(
-        || BUFFERED.lock().unwrap().iter().map(Vec::len).sum::<usize>() >= 3,
-        Duration::from_secs(5),
-    )
-    .await;
-    let flattened: Vec<u32> = BUFFERED.lock().unwrap().iter().flatten().copied().collect();
-    assert_eq!(flattened, vec![0, 1, 2]);
-    running.shutdown().await.expect("shutdown failed");
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            paginate
+                .name("paginate")
+                .start_at(MemoryPosition::start())
+                .batch(nonzero!(2)),
+        );
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed batch settles");
+
+    let subscriber = tb.broker::<MemoryBroker>();
+    let subscriber = subscriber.subscriber("paginate");
+    assert_eq!(
+        subscriber.received::<Order>(),
+        [Order { id: 0 }, Order { id: 1 }, Order { id: 2 }],
+    );
+    subscriber
+        // The broker built the batches to the size the mount named: two, then the remainder.
+        .assert_batch_sizes(&[2, 1])
+        .settled(HandlerOutcome::ack());
+    tb.shutdown().await.expect("shutdown failed");
+}
+
+/// A batch that answers: one call per delivered batch, with that batch's own reply vector.
+#[subscriber(publish("batch-cap-confirmed"))]
+async fn confirm_batches(orders: &[Order]) -> Vec<Event> {
+    orders
+        .iter()
+        .map(|order| Event {
+            id: u64::from(order.id),
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_batch_size_reaches_a_replying_batch() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("batch-cap-reply")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            confirm_batches
+                .name("batch-cap-reply")
+                .start_at(MemoryPosition::start())
+                .batch(nonzero!(2)),
+        );
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed batch settles");
+
+    let handle = tb.broker::<MemoryBroker>();
+    handle
+        .subscriber("batch-cap-reply")
+        .assert_batch_sizes(&[2, 1])
+        .settled(HandlerOutcome::ack());
+    // Each batch answered for its own elements, and the replies leave in batch order.
+    assert_eq!(
+        handle.published::<Event>("batch-cap-confirmed").decoded(),
+        [Event { id: 0 }, Event { id: 1 }, Event { id: 2 }],
+    );
+    tb.shutdown().await.expect("shutdown failed");
+}
+
+/// A batch that fans out through a slot: the arena rides every batch the broker delivers.
+#[subscriber]
+async fn fan_out_batches(orders: &[Order], Out(out): Out<impl Publisher>) -> HandlerOutcome {
+    for order in orders {
+        if out
+            .message(&Event {
+                id: u64::from(order.id),
+            })
+            .to("batch-cap-fanned")
+            .publish()
+            .await
+            .is_err()
+        {
+            return HandlerOutcome::retry();
+        }
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_batch_size_reaches_a_slot_carrying_batch() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("batch-cap-slots")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            fan_out_batches
+                .name("batch-cap-slots")
+                .start_at(MemoryPosition::start())
+                .batch(nonzero!(2)),
+        )
+        .out(DefaultSlot, MemoryPublish)
+        .build();
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed batch settles");
+
+    let handle = tb.broker::<MemoryBroker>();
+    handle
+        .subscriber("batch-cap-slots")
+        .assert_batch_sizes(&[2, 1])
+        .settled(HandlerOutcome::ack());
+    assert_eq!(
+        handle.published::<Event>("batch-cap-fanned").decoded(),
+        [Event { id: 0 }, Event { id: 1 }, Event { id: 2 }],
+    );
+    tb.shutdown().await.expect("shutdown failed");
+}
+
+/// The client-side buffer composes with a start position: a batch subscription assembled out of
+/// single deliveries still opens where the mount site says. The adapter is what a broker crate
+/// gives a transport with no native batches, named here by hand to pin the composition.
+#[subscriber(Buffered::<Name>::new(Name::new("buffered-replay")).max_wait(Duration::from_millis(5)))]
+async fn replay_batches(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders.len();
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_buffer_composes_with_a_start_position() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    for id in 0..3u32 {
+        publisher
+            .message(&Order { id })
+            .to("buffered-replay")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            replay_batches
+                .batch(nonzero!(8))
+                .start_at(MemoryPosition::start()),
+        );
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed batches settle");
+
+    let handle = tb.broker::<MemoryBroker>();
+    let subscriber = handle.subscriber("buffered-replay");
+    // Everything published before the subscription opened is replayed, through the buffer.
+    assert_eq!(
+        subscriber.received::<Order>(),
+        [Order { id: 0 }, Order { id: 1 }, Order { id: 2 }],
+    );
+    subscriber
+        .assert_batch_sizes(&[3])
+        .settled(HandlerOutcome::ack());
+    tb.shutdown().await.expect("shutdown failed");
 }
 
 static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
@@ -263,8 +424,8 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(ingest));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(broker, |b| b.include(ingest.batch(nonzero!(8))));
     let running = app.start().await.expect("startup failed");
 
     for frame in [b"one".as_slice(), b"two".as_slice()] {

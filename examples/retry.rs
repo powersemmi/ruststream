@@ -7,9 +7,7 @@
 
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-use ruststream::subscriber;
+use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -33,9 +31,9 @@ async fn reconcile(payment: &Payment) -> HandlerOutcome {
 
 // --8<-- [start:batch_retry_after]
 /// Selective outcomes carry per-element delays: settled payments ack immediately, pending ones
-/// come back in thirty seconds without holding up the rest of the page.
+/// come back in thirty seconds without holding up the rest of the batch.
 #[subscriber("payments")]
-async fn reconcile_page(payments: &[Payment]) -> Vec<HandlerOutcome> {
+async fn reconcile_batch(payments: &[Payment]) -> Vec<HandlerOutcome> {
     payments
         .iter()
         .map(|payment| {
@@ -53,6 +51,6 @@ async fn reconcile_page(payments: &[Payment]) -> Vec<HandlerOutcome> {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(reconcile);
-        b.include(reconcile_page);
+        b.include(reconcile_batch.batch(nonzero!(64)));
     })
 }

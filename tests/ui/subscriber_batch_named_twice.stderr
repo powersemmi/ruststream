@@ -1,0 +1,15 @@
+error[E0277]: this subscriber's batch size is already named
+  --> tests/ui/subscriber_batch_named_twice.rs:21:46
+   |
+21 |     let _twice = handle.batch(nonzero!(128)).batch(nonzero!(64));
+   |                                              ^^^^^ the batch size is named once
+   |
+   = help: the trait `BatchStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Fixed)>`
+   = note: `batch(n)` is the one batching parameter the framework carries; the broker's own batching options ride its subscription source
+help: the trait `BatchStep` is implemented for `SubscriberBuilder<Def, Src, (W, F, P, Open), DC>`
+  --> src/runtime/settings.rs
+   |
+   | / impl<Def, Src, W, F, P, DC> BatchStep for SubscriberBuilder<Def, Src, (W, F, P, Open), DC>
+   | | where
+   | |     Def: CapsBatches,
+   | |_____________________^

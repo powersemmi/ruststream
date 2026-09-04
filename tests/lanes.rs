@@ -8,10 +8,8 @@
     feature = "testing"
 ))]
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
 /// A self-deserializing view over the payload: the framework's codec never runs on this lane.
 #[derive(Deserialized)]
@@ -54,7 +52,7 @@ async fn encode(report: &Report) -> Export {
     Export(report.len.to_be_bytes().to_vec())
 }
 
-/// A page of self-deserializing views.
+/// A batch of self-deserializing views.
 #[subscriber("lanes.frames")]
 async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
     let _ = frames.iter().map(|frame| frame.0.len()).sum::<usize>();
@@ -70,7 +68,7 @@ async fn the_lanes_compose_end_to_end() {
         b.include(mirror);
         b.include(measure);
         b.include(encode);
-        b.include(ingest);
+        b.include(ingest.batch(nonzero!(64)));
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -93,7 +91,7 @@ async fn the_lanes_compose_end_to_end() {
         .await
         .expect("publish");
     ingress
-        .message(&Wire(b"page".to_vec()))
+        .message(&Wire(b"batch".to_vec()))
         .to("lanes.frames")
         .publish()
         .await
@@ -115,6 +113,17 @@ async fn the_lanes_compose_end_to_end() {
         .published::<Vec<u8>>("lanes.encode.out")
         .assert_called_once()
         .with_raw(&7usize.to_be_bytes());
+    // A batch of self-deserializing views carries no model to decode back into, so what the body
+    // was handed is read at the byte level: one batch, holding the frame as it was published.
+    let batches = tb
+        .broker::<MemoryBroker>()
+        .subscriber("lanes.frames")
+        .batches_raw();
+    let seen: Vec<Vec<&[u8]>> = batches
+        .iter()
+        .map(|batch| batch.iter().map(AsRef::as_ref).collect())
+        .collect();
+    assert_eq!(seen, vec![vec![b"batch".as_slice()]]);
 
     tb.shutdown().await.expect("graceful shutdown");
 }
@@ -149,7 +158,7 @@ async fn a_serialized_out_type_is_a_dictionary_member() {
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(broker, |b| {
-        b.include(export).publisher(MemoryPublish);
+        b.include(export).out(Exports, Publish).build();
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -213,7 +222,7 @@ fn the_typed_form_keeps_the_serialized_metadata() {
 
     let app =
         RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(export).publisher(MemoryPublish);
+            b.include(export).out(Exports, Publish).build();
         });
     let spec = build_spec(&app);
 

@@ -50,12 +50,12 @@ impl ReplyPlan<'_> {
     }
 
     /// The `R` axis of the emitted `Handle` impl: the reply type one-by-one, a `Vec` of it per
-    /// page, `()` without a reply.
-    fn r_tokens(&self, paged: bool) -> TokenStream2 {
+    /// batch, `()` without a reply.
+    fn r_tokens(&self, batched: bool) -> TokenStream2 {
         match self {
             Self::None => quote!(()),
             Self::Publish { ty, .. } => {
-                if paged {
+                if batched {
                     quote!(::std::vec::Vec<#ty>)
                 } else {
                     quote!(#ty)
@@ -85,9 +85,8 @@ pub(super) fn expand(
         ..
     } = parts;
     let shape = *shape;
-    let paged = shape == Shape::Batch;
+    let batched = shape == Shape::Batch;
 
-    // ------------------------------------------------------------------------- the input axis
     let InputAxis {
         in_ty,
         axis,
@@ -96,13 +95,11 @@ pub(super) fn expand(
         input_binding,
     } = input_axis(shape, input_ty, pat);
 
-    // ------------------------------------------------------------------------- the reply plan
-    let reply = reply_plan(args, func, block, paged)?;
-    let r_tokens = reply.r_tokens(paged);
+    let reply = reply_plan(args, func, block, batched)?;
+    let r_tokens = reply.r_tokens(batched);
 
-    // -------------------------------------------------------------- the context and state axes
-    // The handler's named or `Ctx`-projected context type, on the solo and page forms alike: a
-    // page context is subscription-scoped data (see `BuildBatchContext` in the core crate).
+    // The handler's named or `Ctx`-projected context type, on the solo and batch forms alike: a
+    // batch context is subscription-scoped data (see `BuildBatchContext` in the core crate).
     let ctx_ty = parts.ctx_ty.clone();
     let (state_param, state_in_ctx, state_bound) = match state_ty {
         Some(state_ty) => (quote!(), quote!(#state_ty), None),
@@ -113,7 +110,6 @@ pub(super) fn expand(
         ),
     };
 
-    // ------------------------------------------------------------------ the injections arena
     let arena = ArenaPieces::of(outs, name);
     let o_ty = &arena.o_ty;
     let outs_param = if outs.is_empty() {
@@ -122,18 +118,16 @@ pub(super) fn expand(
         quote!(__rs_outs: &#o_ty)
     };
 
-    // ------------------------------------------------------------------- the computed verdict
     let VerdictPieces {
         verdict_ty,
-        page_len,
+        batch_len,
         reject,
         glue,
-    } = verdict_pieces(func, block, &reply, paged);
+    } = verdict_pieces(func, block, &reply, batched);
 
     let prelude = extractor_prelude(extractors, ctx_param, &ctx_ty, &state_in_ctx, &reject);
     let slot_bindings = &arena.bindings;
 
-    // ------------------------------------------------------------------------ the Handle impl
     let mut preds = extractor_preds(extractors, &ctx_ty, &state_in_ctx);
     preds.extend(arena.bounds.iter().cloned());
     preds.extend(state_bound);
@@ -152,7 +146,7 @@ pub(super) fn expand(
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> #verdict_ty {
                 #input_binding
-                #page_len
+                #batch_len
                 #prelude
                 #(#slot_bindings)*
                 #glue
@@ -160,10 +154,8 @@ pub(super) fn expand(
         }
     };
 
-    // -------------------------------------------------------------------- the captured docs
     let docs_expr = probed_docs_expr(parts, &reply);
 
-    // ------------------------------------------------------- the definition and its mounting
     let wiring = definition_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty);
 
     Ok(quote! {
@@ -220,7 +212,7 @@ fn input_axis(shape: Shape, input_ty: &syn::Type, pat: &Pat) -> InputAxis {
                 quote!()
             },
         },
-        // The page rebinds off a named parameter so the page length stays reachable whatever
+        // The batch rebinds off a named parameter so the batch length stays reachable whatever
         // the user's pattern is.
         Shape::Batch => InputAxis {
             in_ty: quote!([#in_elem]),
@@ -241,12 +233,12 @@ fn reply_plan<'a>(
     args: &'a SubscriberArgs,
     func: &ItemFn,
     block: &syn::Block,
-    paged: bool,
+    batched: bool,
 ) -> syn::Result<ReplyPlan<'a>> {
     let Some(topic) = &args.publish else {
         return Ok(ReplyPlan::None);
     };
-    Ok(if paged {
+    Ok(if batched {
         let (elem, body) = batch_reply_body(func, block)?;
         ReplyPlan::Publish {
             topic,
@@ -296,7 +288,6 @@ fn definition_wiring(
                 ::ruststream::runtime::Sealed<::ruststream::runtime::ReplyValue<
                     #plain,
                     ::ruststream::runtime::NamedDest,
-                    ::ruststream::runtime::DefaultReply,
                 >>
             },
         }
@@ -336,7 +327,13 @@ fn definition_wiring(
     if outs.is_empty() {
         return declared;
     }
-    let binding_impls = slot_binding_impls(name, outs, &sealed_ty, &def_expr);
+    let binding_impls = slot_binding_impls(
+        name,
+        outs,
+        &sealed_ty,
+        &def_expr,
+        parts.shape == Shape::Batch,
+    );
     quote! {
         #declared
 
@@ -352,7 +349,17 @@ fn slot_binding_impls(
     outs: &[OutParam<'_>],
     sealed_ty: &dyn Fn(&TokenStream2) -> TokenStream2,
     def_expr: &TokenStream2,
+    batched: bool,
 ) -> TokenStream2 {
+    // The include-site value is the unit struct until the slots bind, so the batch-size step is
+    // declared on it directly; the size itself rides the settings builder either way. Only a
+    // batch handler declares it, which is what keeps `.batch(..)` a compile error on a
+    // single-message body with slots.
+    let caps_batches = batched.then(|| {
+        quote! {
+            impl ::ruststream::runtime::CapsBatches for #name {}
+        }
+    });
     let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();
     let policies: Vec<Ident> = (0..outs.len())
         .map(|index| Ident::new(&format!("__RsPolicy{index}"), name.span()))
@@ -360,10 +367,16 @@ fn slot_binding_impls(
     let codecs: Vec<Ident> = (0..outs.len())
         .map(|index| Ident::new(&format!("__RsCodec{index}"), name.span()))
         .collect();
+    // The slot's publish pipeline: what the mount site composed from its `.transform(..)` steps
+    // and the app's own middleware. The definition stays generic over it, so one handler mounts
+    // under any of them.
+    let pipelines: Vec<Ident> = (0..outs.len())
+        .map(|index| Ident::new(&format!("__RsPipeline{index}"), name.span()))
+        .collect();
     let bound_entries: Vec<TokenStream2> = outs
         .iter()
-        .zip(policies.iter().zip(&codecs))
-        .map(|(out, (policy, codec))| {
+        .zip(policies.iter().zip(codecs.iter().zip(&pipelines)))
+        .map(|(out, (policy, (codec, pipeline)))| {
             let marker = &out.marker;
             let body = body_ty(out.bodies.as_ref());
             quote! {
@@ -371,6 +384,7 @@ fn slot_binding_impls(
                     #marker,
                     <#policy as ::ruststream::PublishPolicy<__RsConn>>::Live,
                     #codec,
+                    #pipeline,
                     #body,
                 >
             }
@@ -379,23 +393,28 @@ fn slot_binding_impls(
     let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#bound_entries,)*)>));
     let witness_tys: Vec<&syn::Type> = outs.iter().map(|out| out.ty).collect();
     quote! {
+        #caps_batches
+
         impl ::ruststream::runtime::HasSlots for #name {
             type Markers = (#(#markers,)*);
         }
 
-        impl<__RsConn, #(#policies,)* #(#codecs,)*>
-            ::ruststream::runtime::BindSlots<__RsConn, (#((#policies, #codecs),)*)>
+        impl<__RsConn, #(#policies,)* #(#codecs,)* #(#pipelines,)*>
+            ::ruststream::runtime::BindSlots<
+                __RsConn,
+                (#((#policies, #codecs, #pipelines),)*),
+            >
             for #name
         where
             __RsConn: ::ruststream::ConnectedBroker,
             #(#policies: ::ruststream::PublishPolicy<__RsConn>,)*
         {
             type Bound = #bound_ty;
-            type Extra = (#((#policies, #codecs),)*);
+            type Extra = (#((#policies, #codecs, #pipelines),)*);
 
             fn bind(
                 self,
-                sources: (#((#policies, #codecs),)*),
+                sources: (#((#policies, #codecs, #pipelines),)*),
             ) -> (Self::Bound, Self::Extra) {
                 (#def_expr, sources)
             }
@@ -411,11 +430,11 @@ fn slot_binding_impls(
 }
 
 /// The pieces of one handler's computed verdict: the emitted `handle` method's return type, the
-/// page-length capture, the extractor-rejection return, and the tail lowering the user's return
+/// batch-length capture, the extractor-rejection return, and the tail lowering the user's return
 /// vocabulary into the fixed shape.
 struct VerdictPieces {
     verdict_ty: TokenStream2,
-    page_len: TokenStream2,
+    batch_len: TokenStream2,
     reject: TokenStream2,
     glue: TokenStream2,
 }
@@ -430,12 +449,12 @@ fn declared_output(func: &ItemFn) -> TokenStream2 {
 
 /// Computes the verdict conversion of one handler: the fixed `Result` spelling per input family
 /// and reply, with the user's whole return vocabulary lowered through the `IntoOutcome` /
-/// page-verdict seams.
+/// batch-verdict seams.
 fn verdict_pieces(
     func: &ItemFn,
     block: &syn::Block,
     reply: &ReplyPlan<'_>,
-    paged: bool,
+    batched: bool,
 ) -> VerdictPieces {
     let outcome = quote!(::ruststream::runtime::HandlerOutcome);
     // Pin the body's type to the declared return type before the `IntoOutcome` conversion: the
@@ -443,39 +462,39 @@ fn verdict_pieces(
     // `Ok(())` (whose error type only the signature names) can infer through the conversion
     // alone. Ascribing it makes the body infer exactly as it does in a plain function.
     let outcome_ty = declared_output(func);
-    if paged {
-        let page_len = quote!(let __rs_page_len = __rs_input.len(););
+    if batched {
+        let batch_len = quote!(let __rs_batch_len = __rs_input.len(););
         match reply {
             ReplyPlan::None => VerdictPieces {
                 verdict_ty: quote!(::core::result::Result<(), ::std::vec::Vec<#outcome>>),
-                page_len,
+                batch_len,
                 reject: quote! {
-                    return ::ruststream::runtime::page_verdict(
+                    return ::ruststream::runtime::batch_verdict(
                         ::core::convert::Into::<#outcome>::into(__rs_err),
-                        __rs_page_len,
+                        __rs_batch_len,
                     )
                 },
                 glue: quote! {
                     let __rs_outcome: #outcome_ty = (async move #block).await;
-                    ::ruststream::runtime::page_verdict(__rs_outcome, __rs_page_len)
+                    ::ruststream::runtime::batch_verdict(__rs_outcome, __rs_batch_len)
                 },
             },
             ReplyPlan::Publish { ty, body, .. } => VerdictPieces {
                 verdict_ty: quote! {
                     ::core::result::Result<::std::vec::Vec<#ty>, ::std::vec::Vec<#outcome>>
                 },
-                page_len,
+                batch_len,
                 reject: quote! {
-                    return ::core::result::Result::Err(::ruststream::runtime::uniform_page(
+                    return ::core::result::Result::Err(::ruststream::runtime::uniform_batch(
                         ::core::convert::Into::<#outcome>::into(__rs_err),
-                        __rs_page_len,
+                        __rs_batch_len,
                     ))
                 },
                 glue: quote! {
                     let __rs_replies: ::core::result::Result<::std::vec::Vec<#ty>, #outcome> =
                         { #body };
                     __rs_replies.map_err(|__rs_uniform| {
-                        ::ruststream::runtime::uniform_page(__rs_uniform, __rs_page_len)
+                        ::ruststream::runtime::uniform_batch(__rs_uniform, __rs_batch_len)
                     })
                 },
             },
@@ -489,7 +508,7 @@ fn verdict_pieces(
         match reply {
             ReplyPlan::None => VerdictPieces {
                 verdict_ty: quote!(::core::result::Result<(), #outcome>),
-                page_len: quote!(),
+                batch_len: quote!(),
                 reject,
                 // `Err` carries the settlement whatever its status: an ack settles as an ack,
                 // and the `Ok` arm stays the manual path's spelling.
@@ -502,7 +521,7 @@ fn verdict_pieces(
             },
             ReplyPlan::Publish { ty, body, .. } => VerdictPieces {
                 verdict_ty: quote!(::core::result::Result<#ty, #outcome>),
-                page_len: quote!(),
+                batch_len: quote!(),
                 reject,
                 glue: body.clone(),
             },
@@ -513,7 +532,7 @@ fn verdict_pieces(
 /// The mount form token of one unified handler, projected off the types: the input's axis
 /// carries the eager and slot forms, and a reply routes by its own type's wire - so the
 /// emission never decides a lane. The vocabulary is the same the include-site chains
-/// (`.publisher(..)`, `.out(marker, ..)`, `.build()`) always dispatched on.
+/// (`.out(marker, policy)`, `.build()`) always dispatched on.
 fn form_token(
     axis: &TokenStream2,
     r_tokens: &TokenStream2,
@@ -528,8 +547,8 @@ fn form_token(
     match (reply, has_outs) {
         (ReplyPlan::None, false) => quote!(<#axis as ::ruststream::runtime::Axis>::EagerForm),
         (ReplyPlan::None, true) => quote!(<#axis as ::ruststream::runtime::Axis>::SlotForm),
-        (ReplyPlan::Publish { .. }, false) => quote!(#route::DeclaredForm),
-        (ReplyPlan::Publish { .. }, true) => quote!(#route::DeclaredSlotForm),
+        (ReplyPlan::Publish { .. }, false) => quote!(#route::Form),
+        (ReplyPlan::Publish { .. }, true) => quote!(#route::SlotForm),
     }
 }
 
@@ -538,9 +557,10 @@ fn form_token(
 struct ArenaPieces {
     /// The `O` axis of the `Handle` impl: `()` without slots, `Outs<(Slot<..>,)>` with them.
     o_ty: TokenStream2,
-    /// The per-slot `W` / `E` generic parameters, in declaration order.
+    /// The per-slot `W` / `E` / pipeline generic parameters, in declaration order.
     we_params: Vec<Ident>,
-    /// The bounds of those generics: the user's capability bounds on `W`, the codec's on `E`.
+    /// The bounds of those generics: the user's capability bounds on `W`, the codec's on `E`,
+    /// and the publish path's on the pipeline.
     bounds: Vec<TokenStream2>,
     /// The body bindings: `let out = __rs_outs.get(Marker);` per parameter.
     bindings: Vec<TokenStream2>,
@@ -563,12 +583,16 @@ impl ArenaPieces {
         for (index, out) in outs.iter().enumerate() {
             let wired = Ident::new(&format!("__RsOutW{index}"), name.span());
             let codec = Ident::new(&format!("__RsOutE{index}"), name.span());
+            let pipeline = Ident::new(&format!("__RsOutP{index}"), name.span());
             let marker = &out.marker;
             let capability = out.bounds;
             let body = body_ty(out.bodies.as_ref());
-            entries.push(quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #body>));
+            entries.push(
+                quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #pipeline, #body>),
+            );
             // The dispatch machinery shares the arena across worker tasks, so Send + Sync are
-            // structural; the codec bound is what the entry's typed publishes encode with.
+            // structural; the codec bound is what the entry's typed publishes encode with, and
+            // the pipeline bound is the publish path the mount site composed for the slot.
             bounds.push(quote! {
                 #wired: #capability + ::core::marker::Send + ::core::marker::Sync + 'static
             });
@@ -578,9 +602,13 @@ impl ArenaPieces {
                     + ::core::marker::Sync
                     + 'static
             });
+            bounds.push(quote! {
+                #pipeline: ::ruststream::runtime::OutPipeline + 'static
+            });
             bindings.push(arena_binding(out.pat, marker));
             we_params.push(wired);
             we_params.push(codec);
+            we_params.push(pipeline);
         }
         Self {
             o_ty: quote!(::ruststream::runtime::Outs<(#(#entries,)*)>),

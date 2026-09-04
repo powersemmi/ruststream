@@ -122,10 +122,10 @@ pub trait Publisher: Send + Sync {
 /// [`ConnectedBroker`] witness to produce the live [`Publisher`], so "not connected" is not
 /// representable on this path: a publisher exists only after the connection does.
 ///
-/// This is the publish-side mirror of [`SubscriptionSource`](crate::SubscriptionSource). Core
-/// combinators ([`TypedPublisher`](crate::runtime::TypedPublisher), transform stacks) compose
-/// over a policy leaf exactly as they compose over a live one, and implement `PublishPolicy`
-/// functorially: pairing resolves the leaf and keeps the stack, fully monomorphized.
+/// This is the publish-side mirror of [`SubscriptionSource`](crate::SubscriptionSource). The
+/// reply wiring a mount site's chain builds over a policy is itself a `PublishPolicy`, resolved
+/// functorially: pairing swaps the leaf for its live publisher and keeps the codec and transform
+/// stacks the chain named, fully monomorphized.
 ///
 /// `pair` is async and fallible because some brokers do real work when a publisher comes alive
 /// (a transactional producer initializing its transactions); for most it is a cheap constructor

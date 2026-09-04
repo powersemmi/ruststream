@@ -1,18 +1,16 @@
 //! The macro-free counterpart of `tests/out_injection.rs`: a handler that receives a live
 //! publisher as an injected parameter, written out as a definition.
 //!
-//! An injected publisher reaches the body through the arena: the `Handle` impl names one `Slot`
-//! per marker, and the publisher type stays generic, so the attachment at the include site decides
-//! it with nothing erased.
+//! An injected publisher reaches the body through the arena: the `Handle` impl names one entry
+//! per marker, and the publisher type stays generic behind `OutEntry`, so the attachment at the
+//! include site decides it with nothing erased.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 mod common;
 
 use common::{connected, expect_id};
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
+use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// What crosses the two brokers. Declared here rather than taken from `common`, whose own
@@ -36,14 +34,14 @@ impl MessageHeaders for Event {
 /// impl, so the definition stays a zero-sized value the mount site builds for free.
 struct Crossing;
 
-impl<Egress, Enc> Handle<Event, (), Outs<(Slot<DefaultSlot, Egress, Enc>,)>> for Crossing
+impl<Egress> Handle<Event, (), Outs<(Egress,)>> for Crossing
 where
-    Slot<DefaultSlot, Egress, Enc>: Publish,
+    Egress: OutEntry<DefaultSlot, Wire: Publisher>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<DefaultSlot, Egress, Enc>,)>,
+        outs: &Outs<(Egress,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -70,14 +68,15 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let observer = connected(other.broker()).await;
 
     // --8<-- [start:cross_broker]
-    let to_other = other.bind(MemoryPublish);
+    let to_other = other.bind(Publish);
     let app = RustStream::new(AppInfo::new("cross", "0.1.0"))
         .with_broker(other, |b| {
             let _ = b; // the target broker may mount its own handlers here
         })
         .with_broker(ingress_broker, |b| {
             b.include(subscriber("out.crossing", Crossing).build())
-                .publisher(to_other);
+                .out(DefaultSlot, to_other)
+                .build();
         });
     // --8<-- [end:cross_broker]
     let running = app.start().await.expect("startup failed");

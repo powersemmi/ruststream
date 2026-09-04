@@ -262,13 +262,22 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
         }
     }
 
-    /// Adds an outgoing publish middleware, run on every published reply before it reaches the
-    /// broker (a Confluent / Avro envelope, publish metrics, dead-letter). It composes into the
+    /// Adds an outgoing publish middleware, run on every publish a handler makes before it
+    /// reaches the broker (a Confluent / Avro envelope, publish metrics, dead-letter): a
+    /// `publish(..)` form's reply and every message that leaves through an injected
+    /// [`Out`](crate::runtime::Out) slot alike, each under the transforms its own mount site
+    /// named. It composes into the
     /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the
     /// consume-side [`layer`](Self::layer), where the first added is outermost); the middleware must
-    /// be [`Clone`] (the pipeline is cloned into each publishing handler). Only available before
+    /// be [`Clone`] (the pipeline is cloned into each publishing handler and each slot). Only
+    /// available before
     /// the first [`with_broker`](Self::with_broker): a middleware added later could not wrap the
     /// publishers already handed out, so that ordering does not compile.
+    ///
+    /// A handler mounted through [`include_router`](BrokerScope::include_router) is the one
+    /// exception on the slot side: a router's routes are typed before the app that mounts them,
+    /// so its slots carry their own `.out(marker, policy).transform(..)` steps and not this
+    /// chain (its replies still travel it).
     #[must_use]
     pub fn publish_layer<M>(
         self,

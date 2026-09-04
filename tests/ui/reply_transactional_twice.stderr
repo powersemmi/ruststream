@@ -1,0 +1,18 @@
+error[E0599]: the method `transactional` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::BatchPublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Fixed)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>, ()), ruststream::runtime::ReplyLast>, ruststream::runtime::OnDrop>`, but its trait bounds were not satisfied
+  --> tests/ui/reply_transactional_twice.rs:28:14
+   |
+25 | /         b.include(confirm.batch(nonzero!(8)))
+26 | |             .out(Reply, MemoryPublish)
+27 | |             .transactional()
+28 | |             .transactional();
+   | |             -^^^^^^^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   | |_____________|
+   |
+   |
+  ::: src/runtime/publish/wiring.rs
+   |
+   |   pub struct InTransaction;
+   |   ------------------------ doesn't satisfy `_: PublishingDirectly`
+   |
+   = note: the following trait bounds were not satisfied:
+           `InTransaction: ruststream::runtime::PublishingDirectly`

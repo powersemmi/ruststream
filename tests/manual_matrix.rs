@@ -1,6 +1,6 @@
 //! The pair cells of the manual matrix, end to end: a `Message<H, P>` input reaching a body that
 //! fans out through an injections arena, one that answers with a reply, and one that does both -
-//! at the single-message shape and the page shape.
+//! at the single-message shape and the batch shape.
 //!
 //! The header contract is decoded in the same stage as the payload, so what proves it arrived is
 //! what leaves the handler: every message the bodies below publish carries the tenant read off
@@ -9,11 +9,8 @@
 
 use std::future::{Future, ready};
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
-use ruststream::runtime::PublishedThrough;
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -72,24 +69,20 @@ fn confirmation_of(msg: &Message<Meta, Order>) -> Confirmation {
     }
 }
 
-/// The arena a single-slot body declares.
-type AnalyticsArena<W, E> = Outs<(Slot<Analytics, W, E>,)>;
-
-// ------------------------------------------------------------------- the single-message bodies
-
+/// The arena a single-slot body declares: one entry, described by its marker and the capability
+/// the bodies need, never by the mount site's wiring.
+type AnalyticsArena<A> = Outs<(A,)>;
 /// A pair input fanned out through a slot.
 struct MirrorPair;
 
-impl<W, E> Handle<Message<Meta, Order>, (), AnalyticsArena<W, E>> for MirrorPair
+impl<A> Handle<Message<Meta, Order>, (), AnalyticsArena<A>> for MirrorPair
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         msg: &Message<Meta, Order>,
-        outs: &AnalyticsArena<W, E>,
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -123,16 +116,14 @@ impl Handle<Message<Meta, Order>, Confirmation> for ConfirmPair {
 /// A pair input answering with a reply and fanning out through a slot in the same signature.
 struct GatewayPair;
 
-impl<W, E> Handle<Message<Meta, Order>, Confirmation, AnalyticsArena<W, E>> for GatewayPair
+impl<A> Handle<Message<Meta, Order>, Confirmation, AnalyticsArena<A>> for GatewayPair
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         msg: &Message<Meta, Order>,
-        outs: &AnalyticsArena<W, E>,
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<Confirmation, HandlerOutcome> {
         if outs
@@ -148,88 +139,77 @@ where
         Ok(confirmation_of(msg))
     }
 }
+/// A batch of pairs fanned out through a slot.
+struct MirrorPairBatch;
 
-// ------------------------------------------------------------------------------- the page bodies
-
-/// A page of pairs fanned out through a slot.
-struct MirrorPairPage;
-
-impl<W, E> Handle<[Message<Meta, Order>], (), AnalyticsArena<W, E>> for MirrorPairPage
+impl<A> Handle<[Message<Meta, Order>], (), AnalyticsArena<A>> for MirrorPairBatch
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
-        page: &[Message<Meta, Order>],
-        outs: &AnalyticsArena<W, E>,
+        batch: &[Message<Meta, Order>],
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), Vec<HandlerOutcome>> {
-        for msg in page {
+        for msg in batch {
             if outs
                 .get(Analytics)
                 .message(&event_of(msg))
-                .to("matrix.page-events")
+                .to("matrix.batch-events")
                 .publish()
                 .await
                 .is_err()
             {
-                return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+                return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
             }
         }
         Ok(())
     }
 }
 
-/// A page of pairs answering with one reply per element.
-struct ConfirmPairPage;
+/// A batch of pairs answering with one reply per element.
+struct ConfirmPairBatch;
 
-impl Handle<[Message<Meta, Order>], Vec<Confirmation>> for ConfirmPairPage {
+impl Handle<[Message<Meta, Order>], Vec<Confirmation>> for ConfirmPairBatch {
     fn handle(
         &self,
-        page: &[Message<Meta, Order>],
+        batch: &[Message<Meta, Order>],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
-        ready(Ok(page.iter().map(confirmation_of).collect()))
+        ready(Ok(batch.iter().map(confirmation_of).collect()))
     }
 }
 
-/// A page of pairs answering with one reply per element and fanning out through a slot.
-struct GatewayPairPage;
+/// A batch of pairs answering with one reply per element and fanning out through a slot.
+struct GatewayPairBatch;
 
-impl<W, E> Handle<[Message<Meta, Order>], Vec<Confirmation>, AnalyticsArena<W, E>>
-    for GatewayPairPage
+impl<A> Handle<[Message<Meta, Order>], Vec<Confirmation>, AnalyticsArena<A>> for GatewayPairBatch
 where
-    Slot<Analytics, W, E>: Publish,
-    W: Send + Sync,
-    E: Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
-        page: &[Message<Meta, Order>],
-        outs: &AnalyticsArena<W, E>,
+        batch: &[Message<Meta, Order>],
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<Vec<Confirmation>, Vec<HandlerOutcome>> {
-        for msg in page {
+        for msg in batch {
             if outs
                 .get(Analytics)
                 .message(&event_of(msg))
-                .to("matrix.gateway-page-events")
+                .to("matrix.gateway-batch-events")
                 .publish()
                 .await
                 .is_err()
             {
-                return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+                return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
             }
         }
-        Ok(page.iter().map(confirmation_of).collect())
+        Ok(batch.iter().map(confirmation_of).collect())
     }
 }
-
-// ------------------------------------------------------------------------------------ the tests
-
 /// The single-message pair cells: the arena, the reply, and both at once. Each publishes what it
 /// read off the delivery's headers, so the assertions prove the contract arrived.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -237,7 +217,7 @@ async fn a_pair_input_reaches_every_single_message_cell() {
     let app =
         RustStream::new(AppInfo::new("matrix", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("matrix.mirror", MirrorPair).build())
-                .out(Analytics, MemoryPublish)
+                .out(Analytics, Publish)
                 .build();
             b.include(
                 subscriber("matrix.confirm", ConfirmPair)
@@ -251,7 +231,7 @@ async fn a_pair_input_reaches_every_single_message_cell() {
                     .to("matrix.gateway-confirmations")
                     .build(),
             )
-            .out(Analytics, MemoryPublish)
+            .out(Analytics, Publish)
             .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -296,28 +276,34 @@ async fn a_pair_input_reaches_every_single_message_cell() {
     assert_eq!(tb.out::<Analytics>().messages().len(), 2);
 }
 
-/// The page pair cells: one header contract per element, all the way to the replies.
+/// The batch pair cells: one header contract per element, all the way to the replies.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_pair_input_reaches_every_page_cell() {
-    let app = RustStream::new(AppInfo::new("matrix-page", "0.1.0")).with_broker(
+async fn a_pair_input_reaches_every_batch_cell() {
+    let app = RustStream::new(AppInfo::new("matrix-batch", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(subscriber("matrix.mirror-page", MirrorPairPage).build())
-                .out(Analytics, MemoryPublish)
-                .build();
             b.include(
-                subscriber("matrix.confirm-page", ConfirmPairPage)
+                subscriber("matrix.mirror-batch", MirrorPairBatch)
+                    .batch(nonzero!(8))
+                    .build(),
+            )
+            .out(Analytics, Publish)
+            .build();
+            b.include(
+                subscriber("matrix.confirm-batch", ConfirmPairBatch)
                     .reply()
-                    .to("matrix.page-confirmations")
+                    .to("matrix.batch-confirmations")
+                    .batch(nonzero!(8))
                     .build(),
             );
             b.include(
-                subscriber("matrix.gateway-page", GatewayPairPage)
+                subscriber("matrix.gateway-batch", GatewayPairBatch)
                     .reply()
-                    .to("matrix.gateway-page-confirmations")
+                    .to("matrix.gateway-batch-confirmations")
+                    .batch(nonzero!(8))
                     .build(),
             )
-            .out(Analytics, MemoryPublish)
+            .out(Analytics, Publish)
             .build();
         },
     );
@@ -327,9 +313,9 @@ async fn a_pair_input_reaches_every_page_cell() {
         tenant: "acme".to_owned(),
     };
     for subject in [
-        "matrix.mirror-page",
-        "matrix.confirm-page",
-        "matrix.gateway-page",
+        "matrix.mirror-batch",
+        "matrix.confirm-batch",
+        "matrix.gateway-batch",
     ] {
         tb.broker::<MemoryBroker>()
             .publish_with_headers(subject, &Order { id: 9 }, &meta)
@@ -348,19 +334,19 @@ async fn a_pair_input_reaches_every_page_cell() {
     };
     let broker = tb.broker::<MemoryBroker>();
     broker
-        .published::<Event>("matrix.page-events")
+        .published::<Event>("matrix.batch-events")
         .assert_called_once()
         .with(&expected_event);
     broker
-        .published::<Confirmation>("matrix.page-confirmations")
+        .published::<Confirmation>("matrix.batch-confirmations")
         .assert_called_once()
         .with(&expected_reply);
     broker
-        .published::<Event>("matrix.gateway-page-events")
+        .published::<Event>("matrix.gateway-batch-events")
         .assert_called_once()
         .with(&expected_event);
     broker
-        .published::<Confirmation>("matrix.gateway-page-confirmations")
+        .published::<Confirmation>("matrix.gateway-batch-confirmations")
         .assert_called_once()
         .with(&expected_reply);
 }

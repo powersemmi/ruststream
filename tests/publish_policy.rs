@@ -11,12 +11,10 @@ mod common;
 
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher, MemoryRequest};
-use ruststream::runtime::{
-    AppInfo, Outgoing, PublishContext, PublishExt, PublishTransform, RustStream, TypedPublisher,
-};
+use ruststream::OutgoingMessage;
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{Outgoing, PublishContext, PublishTransform};
 use ruststream::testing::expect_published;
-use ruststream::{Broker, OutgoingMessage, PublishPolicy, RequestReply, subscriber};
 
 use common::{Order, Receipt, Wire, connected};
 
@@ -35,7 +33,7 @@ async fn a_bare_policy_pairs_into_a_live_publisher() {
         .connect()
         .await
         .expect("memory connect is infallible");
-    let publisher = MemoryPublish
+    let publisher = Publish
         .pair(&connected)
         .await
         .expect("memory pairing is infallible");
@@ -58,7 +56,7 @@ async fn a_request_policy_pairs_into_a_requester() {
         .connect()
         .await
         .expect("memory connect is infallible");
-    let requester = MemoryRequest
+    let requester = Request
         .pair(&connected)
         .await
         .expect("memory pairing is infallible");
@@ -78,27 +76,17 @@ async fn respond(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
 
-/// Pairing a typed stack keeps the codec and the transform: the paired form is the same wiring
-/// type over the live leaf, accepted by the reply mounts as before.
+/// The reply wiring the chain builds keeps the codec and the transform through the pairing: the
+/// live leaf publishes with what the mount site named.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_typed_policy_stack_pairs_functorially() {
+async fn a_reply_wiring_keeps_its_transform_through_the_pairing() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-
-    // The stack itself is a policy: pairing it manually against a connected clone yields the
-    // same wiring type over the live leaf (the functorial half of the seam)...
     let live = connected(&broker).await;
-    let paired = TypedPublisher::new(MemoryPublish)
-        .transform(Envelope)
-        .pair(&live)
-        .await
-        .expect("memory pairing is infallible");
-    let _type_check: TypedPublisher<MemoryPublisher, _, _> = paired;
 
-    // ...while the registration takes the unpaired stack and the runtime pairs it at startup.
-    let replies = TypedPublisher::new(MemoryPublish).transform(Envelope);
+    // The registration carries the wiring the chain built, and the runtime pairs it at startup.
     let app = RustStream::new(AppInfo::new("policy", "0.1.0")).with_broker(broker, |b| {
-        b.include(respond).publisher(replies);
+        b.include(respond).out(Reply, Publish).transform(Envelope);
     });
     let running = app.start().await.expect("startup failed");
 

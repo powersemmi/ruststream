@@ -9,9 +9,8 @@
 //! cargo run --example manual_ctx_extractor --no-default-features --features testing,memory,json
 //! ```
 
-use ruststream::memory::{MemoryBroker, MemoryMessage};
-use ruststream::prelude::*;
-use ruststream::runtime::FromContext;
+use ruststream::memory::MemoryMessage;
+use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, ContextField};
 use serde::{Deserialize, Serialize};

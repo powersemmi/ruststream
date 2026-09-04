@@ -2,6 +2,9 @@
 //! consumed app handle, and a fail-fast teardown flips the probe with no `shutdown` call - the
 //! process may keep running a sibling HTTP task, which is exactly when the probe matters.
 //!
+//! The subject IS the started app's probe handle, so every suite here keeps `start()` and its
+//! `RunningApp`; the harness hands out no health probe.
+//!
 //! [`RunningApp`]: ruststream::runtime::RunningApp
 #![cfg(feature = "macros")]
 

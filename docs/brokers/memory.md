@@ -16,6 +16,31 @@ use ruststream::memory::MemoryBroker;
 let broker = MemoryBroker::new();
 ```
 
+## The prelude a mount site imports { #prelude }
+
+`ruststream::memory::prelude` is this broker's glob, shaped like every broker crate's: it
+re-exports the core prelude, then the broker's own surface (`MemoryBroker`, `MemorySource`,
+`MemoryError`, the context keys `MemoryContext` / `MemoryBatchContext` / `Position` /
+`SeekHandle` and `MemoryPosition`), then the publish policies under the uniform names a mount
+site writes - `Publish`, `TransactionalPublish` and `Request`, all three aliases of
+`MemoryPublish` / `MemoryRequest`. Because the in-memory publisher carries both transaction
+kinds, `TransactionalPublish` is the same policy as `Publish` here; a broker with a separate
+transactional configuration aliases a different one.
+
+<!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
+```rust
+use ruststream::memory::prelude::*;
+```
+
+The glob also brings the capability traits this broker implements on its live values
+(`TransactionalPublisher`, `OwnedTransactions`, `Transaction`, `RequestReply`, `Positioned`,
+`Seeker`), so the operations they carry are in scope wherever the policies are. `Partitioned` is
+left out on purpose: in scope it makes `msg.partition_key()` ambiguous with the defaulted
+`IncomingMessage` method, so a service reading partition keys imports it explicitly. A handler
+body keeps `use ruststream::prelude::*;` - it names capabilities, never policies, so it does not
+know which broker runs it - and a file holding both a body and its mount site is served by the
+broker glob alone.
+
 ## Semantics
 
 - **Exact name matching.** A subscription to `orders` receives messages published to `orders`; no
@@ -41,16 +66,20 @@ a simulation of another broker's:
 
 - **Request / reply.** `broker.requester()` returns a `MemoryRequester` whose `request` publishes
   with a unique in-process inbox in the `reply-to` header and resolves on the first message
-  delivered there. A responder reads `reply-to` from the request and publishes its reply to that
-  name. Requests nobody answers fail with `RequestError::Timeout`.
-- **Batches.** `MemorySubscriber` implements `BatchSubscriber`: a batch is the first awaited
-  delivery plus everything already buffered, capped by `set_batch_limit` (default 64). Partial
-  batches ship immediately, so no deadline timer is involved.
-- **Transactions.** `MemoryPublisher` implements `TransactionalPublisher`: publishes between
-  `begin_transaction` and `commit` are buffered and fan out together in publish order; `abort`
-  discards them. Misuse errors with `MemoryError` per the trait contract: a second
-  `begin_transaction` returns `TransactionBusy` (the open transaction is untouched), and
-  `commit` / `abort` without one return `NoTransaction`. Clones of a publisher handle do not
+  delivered there; the `MemoryRequest` policy pairs into it, so a slot bound with
+  `Out<impl RequestReply, ..>` binds to `MemoryRequest`. A responder reads `reply-to` from the
+  request and publishes its reply to that name. Requests nobody answers fail with
+  `RequestError::Timeout`.
+- **Batches.** `MemorySubscriber` implements `BatchSubscriber` natively: a batch is the first
+  awaited delivery plus everything already buffered, capped at the size the registration named
+  with `batch(n)`. Partial batches ship immediately, so no deadline timer is involved.
+- **Transactions.** `MemoryPublisher`, what the `MemoryPublish` policy pairs into, carries both
+  transaction kinds, so a slot or wiring bound with `TransactionalPublisher` or
+  `OwnedTransactions` binds to `MemoryPublish`. Publishes inside a scope are buffered and
+  fan out together in publish order on commit; an abort discards them; every owned transaction
+  buffers on its own. Misuse on the raw handle errors with `MemoryError` per the broker contract:
+  a second begin while one is open returns `TransactionBusy` (the open transaction is untouched),
+  and a commit or abort without one returns `NoTransaction`. Clones of a publisher handle do not
   share its transaction.
 - **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
   well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).
@@ -62,9 +91,9 @@ a simulation of another broker's:
   so far. The scope is one subscriber instance, and a seek through a handle aliasing a shut-down
   bus errors with `MemoryError::ShutDown`. Inside an application, the delivery context
   (`MemoryContext`) carries the position and the seeker, read by the `Position` / `SeekHandle`
-  keys (see [Seeking](../guides/subscribers.md#seeking)). A page body names `MemoryBatchContext`
+  keys (see [Seeking](../guides/subscribers.md#seeking)). A batch body names `MemoryBatchContext`
   instead: it carries the subscription's seeker under that same `SeekHandle` key and no position,
-  because a page spans many deliveries.
+  because a batch spans many deliveries.
 - **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
   `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
   reporting how many subscriber registrations the teardown dropped. Aliased handles used after the
@@ -84,7 +113,7 @@ example:
 === "Macros"
 
     ```rust
-    use ruststream::memory::MemorySource;
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/routed_service/orders.rs:descriptor"
     ```
@@ -92,7 +121,7 @@ example:
 === "Manual"
 
     ```rust
-    use ruststream::memory::{MemoryPublish, MemorySource};
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```

@@ -13,17 +13,10 @@ use std::any::type_name;
 use std::convert::Infallible;
 use std::future::{Future, ready};
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::prelude::*;
-use ruststream::runtime::{
-    ContainsMessage, Input, MessageWire, OutMessages, OutgoingMessageMetadata, PublishedThrough,
-    SerializedWire, SlotPos, SoloDeserialized,
-};
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{ContainsMessage, SlotPos};
 use ruststream::schemars::{JsonSchema, schema_for};
 use ruststream::testing::TestApp;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeaders,
-};
 use serde::{Deserialize, Serialize};
 
 /// The schema a declaration contributes to the document. The derives reach it through an autoref
@@ -195,14 +188,14 @@ impl Input for Chunk<'_> {
 #[derive(Clone, Copy)]
 struct Convert;
 
-impl<'p, P, Enc> Handle<Chunk<'p>, (), Outs<(Slot<Events, P, Enc>,)>> for Convert
+impl<'p, E> Handle<Chunk<'p>, (), Outs<(E,)>> for Convert
 where
-    Slot<Events, P, Enc>: Publish,
+    E: OutEntry<Events, Wire: Publisher>,
 {
     async fn handle(
         &self,
         chunk: &Chunk<'p>,
-        outs: &Outs<(Slot<Events, P, Enc>,)>,
+        outs: &Outs<(E,)>,
         ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         // Read the policy before the extraction takes the mutable borrow.
@@ -287,7 +280,7 @@ impl Handle<StatusRequest, StatusReply> for Status {
 }
 // --8<-- [end:reply]
 
-// Headers stay per-delivery on a batch too, so the contracts arrive as one per element: a page of
+// Headers stay per-delivery on a batch too, so the contracts arrive as one per element: a batch of
 // `Message<ChunkMeta, Progress>` pairs each payload with its own contract, and an element failing
 // either the payload decode or the contract is settled by the decode policy instead of reaching the
 // handler. The input spelling is the whole declaration - nothing else names the batch.
@@ -323,7 +316,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("chunks.raw", Convert).build())
-                .out(Events, MemoryPublish)
+                .out(Events, Publish)
                 .build();
             b.include(
                 subscriber("jobs.status-requests", Status)
@@ -331,7 +324,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .to("jobs.status")
                     .build(),
             );
-            b.include(subscriber("chunks.bulk", Bulk).build());
+            b.include(subscriber("chunks.bulk", Bulk).batch(nonzero!(2)).build());
         },
     );
     // --8<-- [end:mounts]

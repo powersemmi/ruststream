@@ -43,10 +43,10 @@ async fn settle_ok(ticket: &Ticket) -> Result<(), HandlerOutcome> {
     Ok(())
 }
 
-/// The page twin of the same form: a page is one call, so its body infers against the declared
+/// The batch twin of the same form: a batch is one call, so its body infers against the declared
 /// return type exactly as the single-message one does.
-#[subscriber("returns.page")]
-async fn settle_page(tickets: &[Ticket]) -> Result<(), HandlerOutcome> {
+#[subscriber("returns.batch")]
+async fn settle_batch(tickets: &[Ticket]) -> Result<(), HandlerOutcome> {
     let _ = tickets.len();
     Ok(())
 }
@@ -99,32 +99,32 @@ async fn every_settling_return_form_acks_a_finished_body() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
-/// The page shape of the bare `Ok(())` body. The harness counts handler calls, so one page is
+/// The batch shape of the bare `Ok(())` body. The harness counts handler calls, so one batch is
 /// one call however many elements it carried, and the settlement covers all of them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_body_settles_its_whole_page() {
+async fn a_batch_body_settles_its_whole_batch() {
     let app =
         RustStream::new(AppInfo::new("returns", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle_page);
+            b.include(settle_batch.batch(nonzero!(8)));
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
     for label in ["1", "2"] {
         tb.message(&ticket(label))
-            .to("returns.page")
+            .to("returns.batch")
             .publish()
             .await
             .expect("inject");
     }
 
     tb.broker::<MemoryBroker>()
-        .subscriber("returns.page")
+        .subscriber("returns.batch")
         .settled(HandlerOutcome::ack());
     let seen = tb
         .broker::<MemoryBroker>()
-        .subscriber("returns.page")
+        .subscriber("returns.batch")
         .received_raw();
-    assert_eq!(seen.len(), 2, "both elements are recorded, page or not");
+    assert_eq!(seen.len(), 2, "both elements are recorded, batch or not");
 
     tb.shutdown().await.expect("graceful shutdown");
 }

@@ -69,18 +69,19 @@ use ruststream::runtime::{Context, Handler, HandlerOutcome, Layer};
 `ctx` 就是处理器收到的同一个按投递创建的 [`Context`](context.md)，因此一个层可以在处理器读取之前，先
 丰富[消息头工作副本](context.md#the-headers-working-copy)。
 
-## 单个处理器的中间件
+## 单次注册的中间件
 
-如果只想包裹某一个处理器，而不是整个应用，就用 `HandlerExt::with`：
+如果只想包裹某一次注册，而不是整个应用：路由器上 `include` 之后的 `.layer(..)` 就跟着那次注册走 -
+和链上其他步骤跟着它前面那个位置走完全一样。
 
-<!-- inline-rust: HandlerExt::with API-shape fragment with placeholder handler and layer; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above -->
+<!-- inline-rust: the call shape; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above -->
 ```rust
-use ruststream::runtime::HandlerExt;
-
-let handler = base_handler.with(LogLayer);
+let router = Router::<MemoryBroker>::new().include(handle).layer(LogLayer);
 ```
 
-只有部分处理器需要某个层时，这才是合适的工具。它可以和全局栈组合使用。
+只有部分处理器需要某个层时，这才是合适的工具；而且这是唯一能放下非 `BlanketLayer` 的层的位置：这里
+注册的处理器类型还是具体的，所以普通的 `Layer<H>` 就够了。它位于解码步骤之外，因此能看到原始投递，
+并且可以和应用栈、路由器栈组合使用。
 
 ## 一个层的代价
 
@@ -104,8 +105,8 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerOutcome, Next};
 ```
 
 动态的只有那份*列表*。在运行时把它构建出来，冻结成一个 `DynStack`，得到的就是一个普通的静态
-`Layer`，可以像手写的层那样用 `layer` 组合进应用栈。分发链的其余部分仍然是静态的；只有该栈自身
-付出代价：
+`Layer` - 只不过它绑定在单一输入类型上，所以要用 `.layer(..)` 跟在一次注册后面，而不是放进只接受
+blanket 层的应用栈。分发链的其余部分仍然是静态的；只有该栈自身付出代价：
 
 === "宏"
 
@@ -133,11 +134,10 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerOutcome, Next};
 完整的程序（其中链条由一个环境变量开关控制）见
 [`examples/middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware.rs)。
 
-`DynStack<I>` 对它所包裹的输入是泛型的。在应用栈里，它包裹的是整个负责解码的处理器，因此它构建在
-Broker 的原始消息类型之上（上面的 `DynStack<MemoryMessage>`），并且运行在解码之前；像 `Audit` 这样
-对 `I` 泛型的中间件在两个层次上都能工作。若想让它作用在解码后的值上，就构建一个 `DynStack<Order>`，
-再用 `with` 把它套到内层的类型化处理器上（手工注册的写法）。同一个 `DynStack` 里的中间件按列表顺序
-执行，最外层的先跑。把静态链条当作默认选择，只在运行时组合确实值回票价的地方才动用 `DynStack`。
+`DynStack<I>` 对它所包裹的输入是泛型的。跟在一次注册后面时，它包裹的是整个负责解码的处理器，因此它
+构建在 Broker 的原始消息类型之上（上面的 `DynStack<MemoryMessage>`），并且运行在解码之前；像 `Audit`
+这样对 `I` 泛型的中间件在两个层次上都能工作。同一个 `DynStack` 里的中间件按列表顺序执行，最外层的
+先跑。把静态链条当作默认选择，只在运行时组合确实值回票价的地方才动用 `DynStack`。
 
 ## 发布侧的中间件 { #publish-side-middleware }
 

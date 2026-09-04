@@ -1,9 +1,12 @@
 //! The publish builder's entry points on a bare [`Publisher`].
 
-use crate::{OutgoingDestination, Publisher};
+use std::future::Future;
+
+use crate::{OutgoingDestination, OwnedTransactions, Publisher, TransactionalPublisher};
 
 use super::builder::{HeadersUnset, MessageBody, PublishBuilder, message_of};
 use super::sink::UnnamedCodec;
+use super::transaction::{AnyDeclared, TransactionScope, TypedTransaction};
 
 /// The publish builder on any [`Publisher`]: `message(..)`, the one entry point of a publish.
 ///
@@ -11,9 +14,8 @@ use super::sink::UnnamedCodec;
 /// publishes through the same builder as an [`Out`](crate::runtime::Out) slot. The difference is
 /// the codec ladder: a bare publisher carries no codec of its own, so `message(..)` encodes with
 /// the crate's [`DefaultCodec`](crate::codec::DefaultCodec) unless the call names one with
-/// `with_codec(..)`. A surface that has a codec (an `Out` slot, a
-/// [`TypedPublisher`](super::TypedPublisher), a transaction scope) shadows this entry point with
-/// its own and uses that codec instead.
+/// `with_codec(..)`. A surface that has a codec (an `Out` slot, a transaction scope opened on
+/// one) shadows this entry point with its own and uses that codec instead.
 ///
 /// One entry point covers both wires. A `serde::Serialize` value takes the resolved codec; a
 /// [`Serialized`](super::Serialized) value carries its own bytes and no codec runs on them, which
@@ -69,6 +71,105 @@ pub trait PublishExt: Publisher {
         // A bare publisher has no codec of its own, so the position stays unnamed and resolves to
         // the crate default - the bottom of the ladder, and the only rung this surface has.
         message_of(self, value, UnnamedCodec::new())
+    }
+
+    /// Opens a broker transaction on this publisher and returns the [`TransactionScope`] that
+    /// owns it.
+    ///
+    /// The scope is the only handle on the transaction: publishes go through it, and it is
+    /// consumed by [`commit`](TransactionScope::commit) or [`abort`](TransactionScope::abort).
+    /// A second `begin` on this handle, a commit without a begin, or a publish after the commit
+    /// are not expressible - the methods do not exist on the types those states leave behind.
+    ///
+    /// This is the typed sugar over the borrowed transaction kind
+    /// ([`TransactionalPublisher`]): the scope claims the handle's single broker-side
+    /// transaction, so one scope per handle is open at a time. Brokers whose transactions are
+    /// client buffers additionally offer the owned kind through
+    /// [`owned_transaction`](Self::owned_transaction), where every call opens an independent
+    /// buffer-owning [`TypedTransaction`].
+    ///
+    /// The scope inherits this surface's codec position, so it encodes with the crate default;
+    /// name another one per publish with `with_codec(..)`.
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::PublishExt;
+    ///
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let publisher = MemoryBroker::new().publisher();
+    ///
+    /// let mut scope = publisher.begin().await?;
+    /// scope.publish("orders.settled", &42_u32).await?;
+    /// scope.commit().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to start a transaction.
+    fn begin(
+        &self,
+    ) -> impl Future<
+        Output = Result<TransactionScope<'_, Self, UnnamedCodec, AnyDeclared>, Self::Error>,
+    > + Send
+    where
+        Self: TransactionalPublisher + Sized,
+    {
+        TransactionScope::open(self, UnnamedCodec::new())
+    }
+
+    /// Opens an owned broker transaction and returns the [`TypedTransaction`] that owns it.
+    ///
+    /// The typed sugar over the owned transaction kind ([`OwnedTransactions`]), the counterpart
+    /// of the borrowed [`begin`](Self::begin): every call opens its own independent transaction
+    /// and the returned value owns its buffer, so any number can be open on one publisher at a
+    /// time - settling one never touches another. Kafka-like brokers, whose client holds exactly
+    /// one transaction per producer, offer only the borrowed kind.
+    ///
+    /// The name spells out *owned* because [`OwnedTransactions::transaction`] - the raw
+    /// capability this wraps - is in scope wherever this is, and two same-named trait methods on
+    /// one publisher would be ambiguous at the call.
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::PublishExt;
+    ///
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let publisher = MemoryBroker::new().publisher();
+    ///
+    /// let mut orders = publisher.owned_transaction().await?;
+    /// let mut audit = publisher.owned_transaction().await?; // concurrent with `orders`
+    /// orders.publish("orders.settled", &42_u32).await?;
+    /// audit.publish("audit.trail", &7_u32).await?;
+    /// orders.commit().await?;
+    /// audit.commit().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the publisher's error when the broker refuses to open a transaction; pure
+    /// client-buffer implementations are infallible in practice.
+    fn owned_transaction(
+        &self,
+    ) -> impl Future<
+        Output = Result<
+            TypedTransaction<<Self as OwnedTransactions>::Transaction, UnnamedCodec, AnyDeclared>,
+            Self::Error,
+        >,
+    > + Send
+    where
+        Self: OwnedTransactions + Sized,
+    {
+        TypedTransaction::open(self, UnnamedCodec::new())
     }
 }
 

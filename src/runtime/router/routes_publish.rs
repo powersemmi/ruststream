@@ -8,13 +8,15 @@
 //! [`publish_layer`](crate::runtime::RustStream::publish_layer) chain.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::codec::Codec;
 use crate::{
-    BatchSubscriber, Broker, BuildContext, Connected, PublishPolicy, Publisher, SubscriptionSource,
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, PublishPolicy, Publisher,
+    SubscriptionSource,
 };
 
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingHandler};
@@ -32,8 +34,8 @@ use super::SourceMessage;
 use super::routes::{MountRoute, RouteMeta};
 use super::sink::RouterSink;
 
-/// One reply-publishing registration whose reply travels the encoded wiring: a
-/// [`TypedPublisher`] stack naming the reply codec and transforms. An implementation detail of
+/// One reply-publishing registration whose reply travels the encoded wiring: the stack naming
+/// the reply codec and transforms. An implementation detail of
 /// [`Router`](crate::runtime::Router)'s registration list.
 ///
 /// `Extra` is the include-site attachment the definition's startup injections resolve against:
@@ -79,15 +81,15 @@ pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
+    /// The size the subscription opens its batches at, from the registration's `batch(n)`.
+    pub(super) batch_size: NonZeroUsize,
 }
 
 /// Renders the deferred routes by the registration they carry: they hold no built handler to
 /// print, so without the metadata a router's registration list would be anonymous.
 macro_rules! debug_by_metadata {
-    ($($route:ident),+ $(,)?) => {$(
-        impl<Source, Def, DecodeCodec, ReplySource, Extra> fmt::Debug
-            for $route<Source, Def, DecodeCodec, ReplySource, Extra>
-        {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> fmt::Debug for $route<$($param),+> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_struct(stringify!($route))
                     .field("meta", &self.meta)
@@ -95,9 +97,7 @@ macro_rules! debug_by_metadata {
             }
         }
 
-        impl<Source, Def, DecodeCodec, ReplySource, Extra> RouteMeta
-            for $route<Source, Def, DecodeCodec, ReplySource, Extra>
-        {
+        impl<$($param),+> RouteMeta for $route<$($param),+> {
             fn collect(&self, out: &mut Vec<HandlerMetadata>) {
                 out.push(self.meta.clone());
             }
@@ -105,7 +105,11 @@ macro_rules! debug_by_metadata {
     )+};
 }
 
-debug_by_metadata!(PublishingRoute, RawReplyRoute, BatchPublishingRoute);
+debug_by_metadata!(
+    PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+);
 
 impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Leaf, ReplyCodec, Transforms>
     MountRoute<B, State> for PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
@@ -297,12 +301,13 @@ where
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
-    // transactional).
+    // transactional) that reads the batch's context while publishing each reply.
     ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
-    BatchReply: ReplyPublisher + 'static,
+    BatchReply: ReplyPublisher<Def::Context> + 'static,
 {
     fn mount_one<G, PP>(self, _global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
     where
@@ -322,10 +327,9 @@ where
             meta,
             policies,
             workers,
+            batch_size,
         } = self;
-        // The batch publishing forms keep the unit batch context for now; see
-        // `BatchDef::Context`.
-        sink.push_injected_batch::<_, _, _, _, ()>(
+        sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = publisher
@@ -348,6 +352,7 @@ where
             meta,
             policies,
             workers,
+            batch_size,
         );
     }
 }
@@ -400,6 +405,7 @@ mod tests {
             meta: HandlerMetadata::raw("bulk-orders"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
+            batch_size: crate::nonzero!(8),
         };
         let rendered = format!("{batch_publishing:?}");
         assert!(rendered.contains("BatchPublishingRoute"), "{rendered}");

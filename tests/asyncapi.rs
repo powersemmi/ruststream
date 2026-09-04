@@ -4,10 +4,8 @@
 use std::future::ready;
 
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerOutcome, OutgoingMessageMetadata, RustStream,
-};
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{HandlerMetadata, OutgoingMessageMetadata};
 use ruststream::{SecurityScheme, ServerSpec};
 
 #[test]
@@ -139,7 +137,7 @@ impl DescribingBroker {
     }
 }
 
-impl ruststream::Broker for DescribingBroker {
+impl Broker for DescribingBroker {
     type Error = std::convert::Infallible;
     type Connected = ConnectedDescribingBroker;
 
@@ -283,7 +281,7 @@ struct RenamedOrder {
     id: u32,
 }
 
-impl ruststream::MessageInfo for RenamedOrder {
+impl MessageInfo for RenamedOrder {
     const NAME: &'static str = "CustomOrder";
     const DESCRIPTION: Option<&'static str> = Some("An order, renamed for the wire.");
 }
@@ -428,10 +426,8 @@ fn server_security_lands_in_components_and_refs() {
 /// become `send` operations with payload and headers schemas.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod typed_headers_spec {
-    use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
+    use ruststream::memory::prelude::*;
     use ruststream::schemars::JsonSchema;
-    use ruststream::{MessageInfo, OutSlot, Outgoing, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
 
     use super::build_spec;
@@ -513,9 +509,9 @@ mod typed_headers_spec {
         let app = RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(convert).out(Events, MemoryPublish).build();
+                b.include(convert).out(Events, Publish).build();
                 b.include(respond);
-                b.include(bulk);
+                b.include(bulk.batch(nonzero!(8)));
             },
         );
         let spec = build_spec(&app);
@@ -529,7 +525,7 @@ mod typed_headers_spec {
             "got: {headers}"
         );
 
-        // The batch pair input does the same for the page's element: its contract half is the
+        // The batch pair input does the same for the batch's element: its contract half is the
         // receive message's headers schema, its payload half the payload schema.
         let report = &spec.components.messages["Report"];
         assert!(report.payload.is_some());
@@ -574,10 +570,8 @@ mod typed_headers_spec {
 /// nothing contributes no channel at all.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod declared_destinations {
-    use ruststream::memory::{MemoryBroker, MemoryPublish};
-    use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
+    use ruststream::memory::prelude::*;
     use ruststream::schemars::JsonSchema;
-    use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
     use serde::{Deserialize, Serialize};
 
     use super::build_spec;
@@ -626,7 +620,7 @@ mod declared_destinations {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(route).out(Events, MemoryPublish).build();
+                b.include(route).out(Events, Publish).build();
             },
         );
         let spec = build_spec(&app);
@@ -665,7 +659,7 @@ mod declared_destinations {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(route).out(Events, MemoryPublish).build();
+                b.include(route).out(Events, Publish).build();
             },
         );
         let json = serde_json::to_value(build_spec(&app)).expect("the spec serializes");

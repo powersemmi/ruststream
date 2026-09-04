@@ -26,14 +26,27 @@ alwaysApply: false
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
-  compiles with no `.publisher(..)`). Make mode selection a policy type transition, not a runtime
+  compiles with no `.out(Reply, ..)`). Make mode selection a policy type transition, not a runtime
   flag: only the transactional policy's live form implements `TransactionalPublisher`.
 - Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
   the broker natively supports - never emulate.
 - Expose the per-delivery context as a `#[non_exhaustive]` typed struct plus `ContextField` key
   types (unit structs with an associated `Context` and owned `Value`), so handlers can take
-  `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path.
+  `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path. A position that is
+  not `Copy` borrows on the read side (`Field::Value<'a>` is generic over the source's lifetime);
+  only the `ContextField::Value` behind `Ctx<K>` has to be owned and `'static`, so that key clones.
+- Your prelude has four layers in this order: `pub use ruststream::prelude::*;`, the crate surface
+  your examples name, your publish policies aliased to the uniform mount-site names
+  (`NatsPublish as Publish`, `KafkaTransactionalPublish as TransactionalPublish`,
+  `LapinRequest as Request`), and the capability manifest (the core capability traits you actually
+  implement). A handler body imports only the core prelude and bounds a slot with the broker
+  capability trait (`Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
+  `Out<impl OwnedTransactions>`, `Out<impl RequestReply>`); a routes file imports yours. The core
+  exports no trait under the policy names, so the aliases collide with nothing - but your prelude
+  must never shadow a core name with anything of yours, because an explicit re-export beats the
+  core glob silently and the error lands in the service's file. Pin both halves behind your own
+  glob: `fn _p<T: Publisher>() {}` and `let _: Publish = Publish::default();`.
 - `ack` consumes `self`; for transports without acks return `AckError::Unsupported`. A handle that
   carries an argument for a run of messages (a tenant, a partition hint, a delivery option your
   broker expresses as a header) returns it from `base_headers` rather than writing it inside
@@ -180,12 +193,37 @@ pub trait MySubscriber {
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-impl<Def, W, F, P> MySubscriber for SubscriberBuilder<Def, MySubscribeOptions, (W, F, P)> {
+// The four state slots are (workers, failure policies, start position, batch size); `Codec` is
+// the registration's own decode override, `()` until one is named.
+impl<Def: Declared, W, F, P, Pg, Codec> MySubscriber
+    for SubscriberBuilder<Def, MySubscribeOptions, (W, F, P, Pg), Codec>
+{
     fn durable(self, name: impl Into<String>) -> Self {
         self.map_source(|source| source.durable(name))
     }
 }
 ```
+
+The publish side mirrors it. A mount site names a publish policy with `.out(marker, policy)` -
+`Reply` for what a `publish("dest")` handler returns, an `Out` slot's marker for a slot - and
+`MapPublisher` is the hook over the policy that position carries. Bind the extension trait to the
+policy, not to the chain, so one impl covers the reply, every slot, a router and a broker scope:
+
+```rust
+pub trait MyPublishSettings {
+    fn stream(self, name: impl Into<String>) -> Self;
+}
+
+impl<T: MapPublisher<Policy = MyPublish>> MyPublishSettings for T {
+    fn stream(self, name: impl Into<String>) -> Self {
+        self.map_publisher(|policy| policy.stream(name))
+    }
+}
+```
+
+`map_publisher` replaces the policy with one of the same type, which is what a publisher's own
+settings produce; a different policy type is a different publish mode and belongs in the
+`.out(marker, policy)` call itself.
 
 ## Typed context and `Ctx` keys
 
@@ -216,11 +254,11 @@ impl ContextField for Partition {
 ```
 
 Batch subscriptions take a second, separate struct: what the whole *subscription* shares (a seek
-handle, a stream name), with `BuildBatchContext` on it - the runtime builds one per page from the
-page's first delivery - plus `Field` keys a page body reads with `ctx.context(..)`. Per-delivery
-fields stay off it (a page spans many deliveries, so a position rides the elements instead), and
+handle, a stream name), with `BuildBatchContext` on it - the runtime builds one per batch from the
+batch's first delivery - plus `Field` keys a batch body reads with `ctx.context(..)`. Per-delivery
+fields stay off it (a batch spans many deliveries, so a position rides the elements instead), and
 keeping the two structs apart is what enforces that: a per-delivery context does not implement
-`BuildBatchContext`, so a page body cannot name it. Nothing subscription-scoped to offer means no
+`BuildBatchContext`, so a batch body cannot name it. Nothing subscription-scoped to offer means no
 impl at all - `()` is the default.
 
 ## Conformance

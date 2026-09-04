@@ -13,10 +13,8 @@ use std::time::Duration;
 
 use common::{Event, Wire, connected, expect_id, observed_memory};
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream};
+use ruststream::memory::prelude::*;
 use ruststream::testing::{Outcome, TestApp, expect_published};
-use ruststream::{Broker, Publisher, subscriber};
 
 /// The destination is computed per message: exactly the case reply publishing cannot cover and
 /// the injected publisher exists for.
@@ -38,7 +36,7 @@ async fn an_injected_publisher_reaches_the_handler_live() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward).publisher(MemoryPublish);
+        b.include(forward).out(DefaultSlot, Publish).build();
     });
     let running = app.start().await.expect("startup failed");
 
@@ -68,7 +66,7 @@ async fn crossing(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcom
 async fn decode_failures_are_recorded_for_out_handlers() {
     let app =
         RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(forward).publisher(MemoryPublish);
+            b.include(forward).out(DefaultSlot, Publish).build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -98,13 +96,13 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let observer = connected(other.broker()).await;
 
     // --8<-- [start:cross_broker]
-    let to_other = other.bind(MemoryPublish);
+    let to_other = other.bind(Publish);
     let app = RustStream::new(AppInfo::new("cross", "0.1.0"))
         .with_broker(other, |b| {
             let _ = b; // the target broker may mount its own handlers here
         })
         .with_broker(ingress_broker, |b| {
-            b.include(crossing).publisher(to_other);
+            b.include(crossing).out(DefaultSlot, to_other).build();
         });
     // --8<-- [end:cross_broker]
     let running = app.start().await.expect("startup failed");
@@ -120,12 +118,18 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// The destination is computed per element, off the whole page: exactly what a reply form
+/// The destination is computed per element, off the whole batch: exactly what a reply form
 /// cannot express and the injected publisher can - batch and Out compose.
-#[subscriber("out.page")]
-async fn forward_page(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerOutcome {
+#[subscriber("out.batch")]
+async fn forward_batch(events: &[Event], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for event in events {
-        if out.message(event).to("out.paged").publish().await.is_err() {
+        if out
+            .message(event)
+            .to("out.batched")
+            .publish()
+            .await
+            .is_err()
+        {
             return HandlerOutcome::retry();
         }
     }
@@ -137,19 +141,21 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward_page).publisher(MemoryPublish);
+        b.include(forward_batch.batch(nonzero!(8)))
+            .out(DefaultSlot, Publish)
+            .build();
     });
     let running = app.start().await.expect("startup failed");
 
     for id in [4u64, 5u64] {
         ingress
             .message(&Event { id })
-            .to("out.page")
+            .to("out.batch")
             .publish()
             .await
             .expect("publish");
     }
-    let seen = expect_published(&observer, "out.paged", 2, Duration::from_secs(2)).await;
+    let seen = expect_published(&observer, "out.batched", 2, Duration::from_secs(2)).await;
     let ids: Vec<u64> = seen
         .iter()
         .map(|m| {
@@ -184,7 +190,7 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(broker, |b| {
-        b.include(gate).out(DefaultSlot, MemoryPublish).build();
+        b.include(gate).out(DefaultSlot, Publish).build();
     });
     let running = app.start().await.expect("startup failed");
 
@@ -200,19 +206,19 @@ async fn a_publishing_handler_composes_with_an_out_parameter() {
     running.shutdown().await.expect("graceful shutdown failed");
 }
 
-/// The batch replies leave through the fixed destination while a per-page audit copy leaves
+/// The batch replies leave through the fixed destination while a per-batch audit copy leaves
 /// through the injected publisher: the batch publishing form composes with Out.
 #[subscriber("out.ledger", publish("out.ledger.receipts"))]
-async fn settle_page(
+async fn settle_batch(
     events: &[Event],
     Out(out): Out<impl Publisher>,
 ) -> Result<Vec<Event>, HandlerOutcome> {
-    let page = Event {
-        id: u64::try_from(events.len()).expect("a page fits in u64"),
+    let batch = Event {
+        id: u64::try_from(events.len()).expect("a batch fits in u64"),
     };
     if out
-        .message(&page)
-        .to("out.ledger.pages")
+        .message(&batch)
+        .to("out.ledger.batches")
         .publish()
         .await
         .is_err()
@@ -230,13 +236,13 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
-        b.include(settle_page)
-            .out(DefaultSlot, MemoryPublish)
+        b.include(settle_batch.batch(nonzero!(8)))
+            .out(DefaultSlot, Publish)
             .build();
     });
     let running = app.start().await.expect("startup failed");
 
-    // One publish, one page: the audit copy and the receipt are both deterministic.
+    // One publish, one batch: the audit copy and the receipt are both deterministic.
     ingress
         .message(&Event { id: 7 })
         .to("out.ledger")
@@ -244,7 +250,7 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
         .await
         .expect("publish");
     expect_id(&observer, "out.ledger.receipts", 107).await;
-    expect_id(&observer, "out.ledger.pages", 1).await;
+    expect_id(&observer, "out.ledger.batches", 1).await;
 
     running.shutdown().await.expect("graceful shutdown failed");
 }

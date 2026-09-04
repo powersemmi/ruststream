@@ -1,0 +1,5 @@
+error: a batch of payloads takes a named element type: #[derive(Deserialized)] on a newtype over the payload view (struct Frame<'a>(&'a [u8]);) and take `&[Frame<'_>]`
+ --> tests/ui/subscriber_bare_slice_batch.rs:6:28
+  |
+6 | async fn batches(frames: &[&[u8]]) {
+  |                            ^^^^^

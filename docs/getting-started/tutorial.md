@@ -126,9 +126,10 @@ As handlers grow, keep them in their own module and collect them into a
     --8<-- "examples/manual/tutorial/routes.rs:routes"
     ```
 
-A registration on a router ends in an explicit terminal. `.publisher(..)` names the reply wiring -
-a publish policy is pure declaration, so the router still needs no broker - and `.build()` takes
-the broker's own default publish policy, the explicit spelling of what step 4 got by default.
+A registration on a router ends in an explicit terminal. `.out(Reply, ..)` names the reply's
+publish policy - a policy is pure declaration, so the router still needs no broker - and
+`.build()` commits, taking the broker's own default policy when nothing named one: the explicit
+spelling of what step 4 got by default.
 [Routing](../guides/routing.md) covers the rest of the router surface.
 
 === "Macros"

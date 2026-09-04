@@ -23,12 +23,10 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::routing::{get, post};
-use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
+use ruststream::memory::MemoryPublisher;
+use ruststream::memory::prelude::*;
 use ruststream::metrics::Metrics;
-use ruststream::runtime::{
-    AppInfo, Context, Handle, HandlerOutcome, MessageWire, PublishExt, RustStream, Serialized,
-    SerializedWire, TypedPublisher, subscriber,
-};
+use ruststream::runtime::{MessageWire, SerializedWire};
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use serde::{Deserialize, Serialize};
 
@@ -125,9 +123,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(TypedPublisher::new(MemoryPublish))
                     .build(),
-            );
+            )
+            .out(Reply, Publish);
         });
     // --8<-- [end:wiring]
 

@@ -22,7 +22,7 @@ use parse::{SubscriberArgs, doc_description};
 /// Turns an `async fn` handler into a mountable subscriber definition.
 ///
 /// The attribute carries the declarative settings of the subscription; the *shape* of the
-/// handler - one message (`&T`) or a whole page of them (`&[T]`) - is read off the signature,
+/// handler - one message (`&T`) or a whole batch of them (`&[T]`) - is read off the signature,
 /// which is the only place it was ever really written. Which lane a type rides is the type's
 /// own business: a `serde` type decodes through the scope codec, a `#[derive(Deserialized)]`
 /// type constructs itself from the payload bytes, and a reply encodes through the reply codec
@@ -59,7 +59,7 @@ use parse::{SubscriberArgs, doc_description};
 /// #[subscriber("frames")]
 /// async fn on_frame(frame: &Frame<'_>) -> HandlerOutcome { /* parse it yourself */ }
 ///
-/// // raw batch: the page shape on the same lane; the views borrow the batch's own messages
+/// // raw batch: the batch shape on the same lane; the views borrow the batch's own messages
 /// // for the duration of the call.
 /// #[subscriber("frames")]
 /// async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome { /* parse them yourself */ }
@@ -114,8 +114,9 @@ use parse::{SubscriberArgs, doc_description};
 /// returns `Vec<Reply>` (or
 /// `Result<Vec<Reply>, HandlerOutcome>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
-/// the whole batch is acked after. Hand the mount a `TypedPublisher` for independent reply
-/// publishes, or `.transactional()` for one transaction per batch.
+/// the whole batch is acked after. Name the reply's policy with `.out(Reply, ..)` at the mount
+/// site for independent reply publishes, and chain `.transactional()` for one transaction per
+/// batch.
 ///
 /// A `workers(n)` clause processes up to `n` deliveries (or batches) of this subscriber
 /// concurrently, each in its own task; global processing order is lost by design, and
@@ -130,15 +131,15 @@ use parse::{SubscriberArgs, doc_description};
 /// to the keyword vocabulary.
 ///
 /// An `Out(out): Out<P>` parameter injects a live publisher, paired at startup from the
-/// source attached at the include site (`b.include(f).publisher(..)`); its optional third
+/// policy attached at the include site (`b.include(f).out(marker, policy).build()`); its optional third
 /// position declares the message set the handler publishes (`Out<impl Publisher, Marker,
 /// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), narrowing what
 /// the publish builder accepts on it, and the generated document reports that narrowed list as
 /// the handler's send operations. `Out` parameters combine freely in one handler: with each
 /// other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
 /// `publish_raw(..)`, and the batch publishing form). An `Out` parameter's attachment is
-/// required at the include site: `.publisher(..)` on the plain and batch forms, `.out(..)` on
-/// the reply forms (where `.publisher(..)` stays the reply's own attachment). Repositioning a
+/// required at the include site: one `.out(marker, policy)` per slot, next to the reply's own
+/// optional `.out(Reply, policy)`, and a `.build()` to commit. Repositioning a
 /// subscription from inside the body is not a parameter but a broker context field: the broker
 /// publishes its position and seek-handle keys, and the handler reads them with the `Ctx`
 /// extractor like any other broker field.

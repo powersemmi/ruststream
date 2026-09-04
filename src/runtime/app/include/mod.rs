@@ -1,43 +1,139 @@
-//! The `include` family on [`BrokerScope`]: mounting macro-generated definitions.
+//! `include` on [`BrokerScope`]: the scope's window onto the one mount chain.
 //!
-//! `include` is the one entry point for every definition form, single-message and batch alike;
-//! which machinery runs is picked by the definition's form token ([`IncludeDef::Form`]), so
-//! `b.include(handle)`, `b.include(bulk)`, `b.include(respond).publisher(..)` and
-//! `b.include(forward).publisher(..)` all read the same. Publisher-producing forms return a
-//! registration builder that commits when the statement ends; `.publisher(..)` attaches the
-//! publish policy (or a [`Bound`](crate::runtime::Bound) token for a cross-broker target).
+//! Both registration surfaces run the same builder. A [`Router`] is a consuming builder, so its
+//! chain ends in an explicit `.build()`; a scope is a `&mut` borrow inside the `with_broker`
+//! closure, so `include` hands back a [`Mounting`] guard that owns a router chain of its own and
+//! drains it into the scope's sink when the statement ends. The guard is an adapter and nothing
+//! more: every step, every typestate slot and every diagnostic comes from
+//! [`RouterWith`](crate::runtime::RouterWith).
 //!
-//! The vocabulary itself (the form tokens, the mount tokens, the codec resolution) belongs to
-//! the router and is imported from there, so both surfaces dispatch on one set of tokens.
+//! Which terminal a registration uses follows its form, exactly as before. A plain or batch
+//! handler attaches nothing, so `b.include(handle);` is the whole registration and the call
+//! commits on the spot. A reply-publishing one may still name a policy, so it commits when the
+//! guard drops at the end of the statement (`b.include(respond).out(Reply, Publish);`). One
+//! carrying [`Out`](crate::runtime::Out) slots commits with `.build()`: a chain that still has an
+//! unbound slot has nothing to commit, so its terminal has to be a call.
+
+mod guard;
 
 use crate::Broker;
+use crate::runtime::middleware::Identity;
+use crate::runtime::router::{Router, RouterMount, forms};
 
 use super::scope::BrokerScope;
+pub use guard::{Mounting, OnBuild, OnDrop, ScopeCommit, ScopeTerminal};
 
-// The form vocabulary lives in the router: routing is its responsibility, and the scope mounts
-// through the same tokens.
-pub(crate) use crate::runtime::router::{
-    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, DefaultReply, InjectMount,
-    MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, forms,
-};
+/// The empty chain a scope drives one registration through: its codec and publish pipeline, no
+/// router-scope layers of its own.
+pub(crate) type ScopeRouter<B, C, Pipeline> = Router<B, (), C, Identity, Pipeline>;
+
+/// The chain a form produces on a scope, before the guard wraps it.
+type ScopeChain<Form, B, C, Pipeline, Def> =
+    <Form as RouterMount<ScopeRouter<B, C, Pipeline>, Def>>::Out;
 
 /// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in
-/// [`forms`](crate::runtime::forms), generic over the definition and the scope. Machinery; you
-/// never implement or name it.
+/// [`forms`](crate::runtime::forms), it picks the chain the form opens and the terminal its guard
+/// commits through. Machinery; you never implement or name it.
 #[doc(hidden)]
 pub trait IncludeMount<'s, B: Broker, Layers, C, State, Pipeline, Def> {
-    /// What `include` hands back: `()` for eager forms, a registration builder for the
-    /// publisher-producing ones.
+    /// What `include` hands back: a guard over the form's own mount chain.
     type Out;
 
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out;
 }
 
+/// Implements [`IncludeMount`] for one form: open the router chain over a scope-shaped router,
+/// then wrap it in the guard whose terminal that form uses.
+macro_rules! scope_mount {
+    ($($form:ty => $terminal:ty),+ $(,)?) => {$(
+        impl<'s, B, Layers, C, State, Pipeline, Def>
+            IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
+        where
+            B: Broker + 'static,
+            C: Clone + 's,
+            Layers: 's,
+            State: 's,
+            Pipeline: Clone + 's,
+            Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
+            $terminal: ScopeTerminal<
+                B,
+                Layers,
+                C,
+                State,
+                Pipeline,
+                ScopeChain<Self, B, C, Pipeline, Def>,
+            >,
+        {
+            type Out = Mounting<
+                's,
+                B,
+                Layers,
+                C,
+                State,
+                Pipeline,
+                ScopeChain<Self, B, C, Pipeline, Def>,
+                $terminal,
+            >;
+
+            fn begin(
+                def: Def,
+                scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
+            ) -> Self::Out {
+                let router = Router::for_scope(scope.codec.clone(), scope.pipeline.clone());
+                Mounting::new(<Self as RouterMount<_, Def>>::begin(def, router), scope)
+            }
+        }
+    )+};
+}
+
+scope_mount! {
+    forms::Publishing => OnDrop,
+    forms::RawReply => OnDrop,
+    forms::BatchPublishing => OnDrop,
+    forms::Out => OnBuild,
+    forms::BatchOut => OnBuild,
+    forms::PublishingOut => OnBuild,
+    forms::RawReplyOut => OnBuild,
+    forms::BatchPublishingOut => OnBuild,
+}
+
+/// Implements [`IncludeMount`] for a form that attaches nothing: the chain is already a finished
+/// router, so it drains on the spot and the call is the whole registration.
+macro_rules! eager_mount {
+    ($($form:ty),+ $(,)?) => {$(
+        impl<'s, B, Layers, C, State, Pipeline, Def>
+            IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
+        where
+            B: Broker + 'static,
+            C: Clone,
+            Pipeline: Clone,
+            Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
+            ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
+        {
+            type Out = ();
+
+            fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+                let router = Router::for_scope(scope.codec.clone(), scope.pipeline.clone());
+                <Self as RouterMount<_, Def>>::begin(def, router).commit_into(scope);
+            }
+        }
+    )+};
+}
+
+eager_mount! {
+    forms::Subscribing,
+    forms::RawSubscribing,
+    forms::Batch,
+    forms::RawBatch,
+}
+
 impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
-    /// Mounts a `#[subscriber]` definition of any form: a plain or batch handler mounts eagerly,
-    /// a `publish("dest")` or `Out`-taking one returns a registration builder that commits at
-    /// the end of the statement; chain [`publisher`](IncludePublishing::publisher) on it to
-    /// attach the publish policy.
+    /// Mounts a definition of any form on this broker.
+    ///
+    /// A plain or batch handler and a `publish("dest")` one register when the statement ends, so
+    /// `b.include(handle);` and `b.include(respond).out(Reply, Publish);` are both complete; a
+    /// handler carrying [`Out`](crate::runtime::Out) slots binds each with `.out(marker, policy)`
+    /// and finishes with `.build()`.
     ///
     /// Decoding uses the scope codec when one was set
     /// ([`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)), else the
@@ -56,25 +152,3 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         )
     }
 }
-
-mod builder;
-mod commit;
-mod forms_batch;
-mod forms_eager;
-mod forms_handle;
-mod forms_out;
-mod forms_publish;
-mod slot_builder;
-mod slot_reply_builder;
-
-pub use builder::{
-    IncludeBatchOut, IncludeBatchPublishing, IncludeOut, IncludePublishing, IncludeRawReply,
-    IncludeWith,
-};
-// The mount tokens and the commit trait are machinery: reachable across the include
-// modules, never re-exported from the crate root.
-pub(crate) use commit::CommitVia;
-pub use slot_builder::{IncludeSlots, SlotCommit};
-pub use slot_reply_builder::{
-    IncludeBatchPublishingOut, IncludePublishingOut, IncludeRawReplyOut, IncludeSlotsWithReply,
-};

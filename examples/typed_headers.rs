@@ -8,11 +8,9 @@
 //! cargo run --example typed_headers --features testing,macros,memory,json,asyncapi
 //! ```
 
-use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Headers, Message, Out, RustStream};
+use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
 
 // The header contracts: flat structs whose fields name headers. On the wire every value is a
@@ -137,7 +135,7 @@ async fn status(req: &StatusRequest) -> StatusReply {
 }
 // --8<-- [end:reply]
 
-// Headers stay per-delivery on a batch too, so the page pairs each element with its own
+// Headers stay per-delivery on a batch too, so the batch pairs each element with its own
 // contract: a `Message<ChunkMeta, Progress>` element carries its decoded headers next to its
 // payload, and an element failing either the payload decode or the contract is settled by the
 // decode policy instead of reaching the handler.
@@ -161,9 +159,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(convert).out(Events, MemoryPublish).build();
+            b.include(convert).out(Events, Publish).build();
             b.include(status);
-            b.include(bulk);
+            b.include(bulk.batch(nonzero!(2)));
         },
     );
     // --8<-- [end:mounts]

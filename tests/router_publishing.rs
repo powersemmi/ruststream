@@ -1,53 +1,22 @@
 //! Integration tests for the `Router` publishing include family (single-message and batch),
 //! in both codec forms: the default codec and a chain codec set with `with_codec`. Replies are
 //! verified end to end by plain subscribers on the reply topics.
-#![cfg(feature = "macros")]
+#![cfg(all(
+    feature = "macros",
+    feature = "testing",
+    feature = "memory",
+    feature = "json"
+))]
 
 mod common;
 
-use std::{
-    sync::{
-        LazyLock,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
-
-use common::{Order, Receipt, wait_for};
+use common::{Order, Receipt};
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
-use ruststream::runtime::{
-    AppInfo, HandlerOutcome, Outgoing, PublishContext, PublishExt, PublishTransform, Router,
-    RustStream, TypedPublisher,
-};
-use ruststream::{BuildContext, Field, HeaderMap, IncomingMessage, Publisher, subscriber};
-use tokio::sync::Notify;
-
-/// Publishes an order once to each ingress topic (the app is already started, so the
-/// subscriptions are open and every publish lands), then waits until every reply counter is
-/// non-zero.
-async fn publish_and_await_replies(
-    publisher: &impl Publisher,
-    topics: &[&str],
-    counters: &[&AtomicUsize],
-) {
-    for topic in topics {
-        publisher
-            .message(&Order { id: 1 })
-            .to(*topic)
-            .publish()
-            .await
-            .expect("publish");
-    }
-    wait_for(
-        || counters.iter().all(|c| c.load(Ordering::SeqCst) >= 1),
-        Duration::from_secs(5),
-    )
-    .await;
-}
-
-static RP_OUT: AtomicUsize = AtomicUsize::new(0);
-static RP_OUT_ON: AtomicUsize = AtomicUsize::new(0);
+use ruststream::memory::MemoryMessage;
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{Outgoing, PublishContext, PublishTransform};
+use ruststream::testing::TestApp;
+use ruststream::{BuildContext, Field};
 
 #[subscriber("rp-in", publish("rp-out"))]
 async fn rp_relay(o: &Order) -> Receipt {
@@ -61,43 +30,48 @@ async fn rp_relay_on(o: &Order) -> Receipt {
 
 #[subscriber("rp-out")]
 async fn rp_check(_r: &Receipt) -> HandlerOutcome {
-    RP_OUT.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("rp-out-on")]
 async fn rp_check_on(_r: &Receipt) -> HandlerOutcome {
-    RP_OUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 /// Default-codec `include` on the publishing form, twice over: replies reach the reply topics.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_publishing_replies() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
         .include(rp_relay)
-        .publisher(TypedPublisher::new(MemoryPublish))
+        .out(Reply, Publish)
+        .build()
         .include(rp_relay_on)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .out(Reply, Publish)
+        .build();
 
-    let app = RustStream::new(AppInfo::new("rp", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("rp", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
         b.include(rp_check);
         b.include(rp_check_on);
     });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
+    for topic in ["rp-in", "rp-in-on"] {
+        tb.message(&Order { id: 1 })
+            .to(topic)
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    publish_and_await_replies(&publisher, &["rp-in", "rp-in-on"], &[&RP_OUT, &RP_OUT_ON]).await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    for reply in ["rp-out", "rp-out-on"] {
+        tb.broker::<MemoryBroker>()
+            .subscriber(reply)
+            .assert_called_once()
+            .with(&Receipt { id: 1 })
+            .settled(HandlerOutcome::ack());
+    }
 }
-
-static RPC_OUT: AtomicUsize = AtomicUsize::new(0);
-static RPC_OUT_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("rpc-in", publish("rpc-out"))]
 async fn rpc_relay(o: &Order) -> Receipt {
@@ -111,13 +85,11 @@ async fn rpc_relay_on(o: &Order) -> Receipt {
 
 #[subscriber("rpc-out")]
 async fn rpc_check(_r: &Receipt) -> HandlerOutcome {
-    RPC_OUT.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("rpc-out-on")]
 async fn rpc_check_on(_r: &Receipt) -> HandlerOutcome {
-    RPC_OUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
@@ -125,36 +97,38 @@ async fn rpc_check_on(_r: &Receipt) -> HandlerOutcome {
 /// the reply goes through the publisher's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_publishing_replies() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
         .include(rpc_relay)
-        .publisher(TypedPublisher::new(MemoryPublish))
+        .out(Reply, Publish)
+        .build()
         .include(rpc_relay_on)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .out(Reply, Publish)
+        .build();
 
-    let app = RustStream::new(AppInfo::new("rpc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("rpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
         b.include(rpc_check);
         b.include(rpc_check_on);
     });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
+    for topic in ["rpc-in", "rpc-in-on"] {
+        tb.message(&Order { id: 1 })
+            .to(topic)
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    publish_and_await_replies(
-        &publisher,
-        &["rpc-in", "rpc-in-on"],
-        &[&RPC_OUT, &RPC_OUT_ON],
-    )
-    .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    for reply in ["rpc-out", "rpc-out-on"] {
+        tb.broker::<MemoryBroker>()
+            .subscriber(reply)
+            .assert_called_once()
+            .with(&Receipt { id: 1 })
+            .settled(HandlerOutcome::ack());
+    }
 }
-
-static BP_OUT: AtomicUsize = AtomicUsize::new(0);
-static BP_OUT_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("bp-in", publish("bp-out"))]
 async fn bp_relay(orders: &[Order]) -> Vec<Receipt> {
@@ -168,13 +142,11 @@ async fn bp_relay_on(orders: &[Order]) -> Vec<Receipt> {
 
 #[subscriber("bp-out")]
 async fn bp_check(_r: &Receipt) -> HandlerOutcome {
-    BP_OUT.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("bp-out-on")]
 async fn bp_check_on(_r: &Receipt) -> HandlerOutcome {
-    BP_OUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
@@ -182,30 +154,37 @@ async fn bp_check_on(_r: &Receipt) -> HandlerOutcome {
 /// the reply topic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_batch_publishing_replies() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
-        .include(bp_relay)
-        .publisher(TypedPublisher::new(MemoryPublish))
-        .include(bp_relay_on)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .include(bp_relay.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build()
+        .include(bp_relay_on.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build();
 
-    let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
         b.include(bp_check);
         b.include(bp_check_on);
     });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
+    for topic in ["bp-in", "bp-in-on"] {
+        tb.message(&Order { id: 1 })
+            .to(topic)
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    publish_and_await_replies(&publisher, &["bp-in", "bp-in-on"], &[&BP_OUT, &BP_OUT_ON]).await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    for reply in ["bp-out", "bp-out-on"] {
+        tb.broker::<MemoryBroker>()
+            .subscriber(reply)
+            .assert_called_once()
+            .with(&Receipt { id: 1 })
+            .settled(HandlerOutcome::ack());
+    }
 }
-
-static BPC_OUT: AtomicUsize = AtomicUsize::new(0);
-static BPC_OUT_ON: AtomicUsize = AtomicUsize::new(0);
 
 #[subscriber("bpc-in", publish("bpc-out"))]
 async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
@@ -219,13 +198,11 @@ async fn bpc_relay_on(orders: &[Order]) -> Vec<Receipt> {
 
 #[subscriber("bpc-out")]
 async fn bpc_check(_r: &Receipt) -> HandlerOutcome {
-    BPC_OUT.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
 #[subscriber("bpc-out-on")]
 async fn bpc_check_on(_r: &Receipt) -> HandlerOutcome {
-    BPC_OUT_ON.fetch_add(1, Ordering::SeqCst);
     HandlerOutcome::ack()
 }
 
@@ -233,32 +210,37 @@ async fn bpc_check_on(_r: &Receipt) -> HandlerOutcome {
 /// codec, replies go through the publisher's own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chain_codec_router_batch_publishing_replies() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include(bpc_relay)
-        .publisher(TypedPublisher::new(MemoryPublish))
-        .include(bpc_relay_on)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .include(bpc_relay.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build()
+        .include(bpc_relay_on.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build();
 
-    let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
         b.include(bpc_check);
         b.include(bpc_check_on);
     });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
+    for topic in ["bpc-in", "bpc-in-on"] {
+        tb.message(&Order { id: 1 })
+            .to(topic)
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    publish_and_await_replies(
-        &publisher,
-        &["bpc-in", "bpc-in-on"],
-        &[&BPC_OUT, &BPC_OUT_ON],
-    )
-    .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    for reply in ["bpc-out", "bpc-out-on"] {
+        tb.broker::<MemoryBroker>()
+            .subscriber(reply)
+            .assert_called_once()
+            .with(&Receipt { id: 1 })
+            .settled(HandlerOutcome::ack());
+    }
 }
 
 // A static, app-wide publish middleware that stamps a header onto every reply. Used to prove the
@@ -283,52 +265,43 @@ async fn rl_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-static RL_STAMPED: LazyLock<std::sync::Mutex<Option<bool>>> =
-    LazyLock::new(|| std::sync::Mutex::new(None));
-static RL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
-
 #[subscriber("rl-out")]
-async fn rl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
-    *RL_STAMPED.lock().unwrap() = Some(ctx.headers().get("x-app").is_some());
-    RL_NOTIFY.notify_one();
+async fn rl_check(_r: &Receipt) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_publish_layer_reaches_router_publishing_handlers() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
         .include(rl_relay)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .out(Reply, Publish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("rl", "0.1.0"))
         .publish_layer(StampApp)
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             b.include_router(router);
             b.include(rl_check);
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 1 })
+    tb.message(&Order { id: 1 })
         .to("rl-in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), RL_NOTIFY.notified())
-        .await
-        .expect("router publishing handler never replied");
 
-    assert_eq!(
-        *RL_STAMPED.lock().unwrap(),
-        Some(true),
-        "the app-wide publish_layer must reach a router-mounted publishing handler"
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // The app-wide publish_layer must reach a router-mounted publishing handler, so the reply it
+    // sent carries the stamp - and still arrives at the consumer.
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("rl-out")
+        .assert_called_once()
+        .with(&Receipt { id: 1 })
+        .with_header("x-app", b"1");
+    tb.broker::<MemoryBroker>()
+        .subscriber("rl-out")
+        .assert_called_once()
+        .with(&Receipt { id: 1 });
 }
 
 // The same on the BATCH router-publishing path: the app's publish_layer must reach a
@@ -338,52 +311,41 @@ async fn bl_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-static BL_STAMPED: LazyLock<std::sync::Mutex<Option<bool>>> =
-    LazyLock::new(|| std::sync::Mutex::new(None));
-static BL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
-
 #[subscriber("bl-out")]
-async fn bl_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
-    *BL_STAMPED.lock().unwrap() = Some(ctx.headers().get("x-app").is_some());
-    BL_NOTIFY.notify_one();
+async fn bl_check(_r: &Receipt) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
-        .include(bl_relay)
-        .publisher(TypedPublisher::new(MemoryPublish));
+        .include(bl_relay.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("bl", "0.1.0"))
         .publish_layer(StampApp)
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             b.include_router(router);
             b.include(bl_check);
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 1 })
+    tb.message(&Order { id: 1 })
         .to("bl-in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), BL_NOTIFY.notified())
-        .await
-        .expect("router batch publishing handler never replied");
 
-    assert_eq!(
-        *BL_STAMPED.lock().unwrap(),
-        Some(true),
-        "the app-wide publish_layer must reach a router-mounted batch publishing handler"
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("bl-out")
+        .assert_called_once()
+        .with(&Receipt { id: 1 })
+        .with_header("x-app", b"1");
+    tb.broker::<MemoryBroker>()
+        .subscriber("bl-out")
+        .assert_called_once()
+        .with(&Receipt { id: 1 });
 }
 
 // A typed delivery context on a ROUTER-mounted publishing handler: the route threads
@@ -427,51 +389,42 @@ async fn tc_relay(o: &Order, _ctx: &mut ruststream::runtime::Context<'_, TraceCt
     Receipt { id: o.id }
 }
 
-static TC_CORR: LazyLock<std::sync::Mutex<Option<String>>> =
-    LazyLock::new(|| std::sync::Mutex::new(None));
-static TC_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
-
 #[subscriber("tc-out")]
-async fn tc_check(_r: &Receipt, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
-    *TC_CORR.lock().unwrap() = ctx.headers().correlation_id().map(str::to_owned);
-    TC_NOTIFY.notify_one();
+async fn tc_check(_r: &Receipt) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn router_publishing_threads_typed_delivery_context() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let router = Router::<MemoryBroker>::new()
         .include(tc_relay)
-        .publisher(TypedPublisher::new(MemoryPublish).transform(PropagateCorrelation));
+        .out(Reply, Publish)
+        .transform(PropagateCorrelation)
+        .build();
 
-    let app = RustStream::new(AppInfo::new("tc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("tc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
         b.include(tc_check);
     });
-
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     let mut headers = HeaderMap::new();
     headers.insert("correlation-id", "trace-xyz");
-    publisher
-        .message(&Order { id: 1 })
+    tb.message(&Order { id: 1 })
         .with_headers(headers)
         .to("tc-in")
         .publish()
         .await
         .expect("publish");
-    tokio::time::timeout(Duration::from_secs(5), TC_NOTIFY.notified())
-        .await
-        .expect("typed-context router relay never replied");
 
-    assert_eq!(
-        TC_CORR.lock().unwrap().as_deref(),
-        Some("trace-xyz"),
-        "a router publishing handler must thread its typed delivery context to the publish layer"
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // A router publishing handler must thread its typed delivery context to the publish layer,
+    // which is what lets the transform copy the correlation id onto the reply.
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("tc-out")
+        .assert_called_once()
+        .with_header("correlation-id", b"trace-xyz");
+    tb.broker::<MemoryBroker>()
+        .subscriber("tc-out")
+        .assert_called_once()
+        .with(&Receipt { id: 1 });
 }

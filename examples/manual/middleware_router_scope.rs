@@ -16,8 +16,7 @@
 use std::error::Error;
 use std::future::{Future, ready};
 
-use ruststream::memory::MemoryBroker;
-use ruststream::prelude::*;
+use ruststream::memory::prelude::*;
 use ruststream::runtime::{BlanketLayer, Handler, Layer};
 use serde::Deserialize;
 

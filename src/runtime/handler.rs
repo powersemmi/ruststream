@@ -58,7 +58,7 @@ impl HandlerResult {
 /// optional post-settle continuation.
 ///
 /// A handler's `Err` side carries one (`Result<(), HandlerOutcome>`, or per element
-/// `Vec<HandlerOutcome>` on a page); `Ok` acks. Build one with the short constructors -
+/// `Vec<HandlerOutcome>` on a batch); `Ok` acks. Build one with the short constructors -
 /// [`ack`](Self::ack), [`retry`](Self::retry), [`retry_after`](Self::retry_after),
 /// [`drop`](Self::drop) - and attach follow-up work with [`and_after`](Self::and_after).
 ///

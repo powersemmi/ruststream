@@ -1,4 +1,4 @@
-error: headers are per-delivery: a batch pairs each element with its contract - take the page as `&[Message<H, T>]` and read `element.headers` (`Headers<..>` extraction stays on the single-message forms)
+error: headers are per-delivery: a batch pairs each element with its contract - take the batch as `&[Message<H, T>]` and read `element.headers` (`Headers<..>` extraction stays on the single-message forms)
   --> tests/ui/subscriber_headers_batch.rs:18:50
    |
 18 | async fn bill(_orders: &[Order], Headers(_meta): Headers<Meta>) -> HandlerOutcome {

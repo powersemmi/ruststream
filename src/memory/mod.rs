@@ -15,8 +15,12 @@
 //! [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
 //! [`MemoryPublisher`], partition keys on [`MemoryMessage`], and log repositioning through
 //! [`MemorySeeker`] over the per-name publish log.
+//!
+//! A service mounting on this broker globs [`prelude`], which carries the core prelude plus this
+//! broker's surface and its publish policies under the uniform names a mount site writes.
 
 mod capability;
+pub mod prelude;
 
 use capability::SeekControl;
 pub use capability::{
@@ -252,11 +256,8 @@ impl MemoryBroker {
             name,
             rx,
             requeue: tx,
-            batch_limit: DEFAULT_BATCH_LIMIT,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
-            #[cfg(feature = "testing")]
-            coordinator: self.state.coordinator(),
         }
     }
 
@@ -516,11 +517,8 @@ impl Subscribe for ConnectedMemoryBroker {
             name,
             rx,
             requeue: tx,
-            batch_limit: DEFAULT_BATCH_LIMIT,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
-            #[cfg(feature = "testing")]
-            coordinator: self.state.coordinator(),
         }))
     }
 }
@@ -567,40 +565,34 @@ impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
     }
 }
 
-/// Default cap on how many buffered deliveries one batch drains.
-const DEFAULT_BATCH_LIMIT: usize = 64;
-
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
 ///
-/// Also consumable in batches through the
-/// [`BatchSubscriber`](crate::BatchSubscriber) capability; see
-/// [`set_batch_limit`](Self::set_batch_limit) for the batch size cap. Repositionable over the
-/// publish log through the [`Seekable`](crate::Seekable) capability: mint a [`MemorySeeker`]
-/// with [`seeker`](crate::Seekable::seeker) before opening the stream.
+/// Also consumable in batches through the [`BatchSubscriber`](crate::BatchSubscriber) capability,
+/// which caps each batch at the size it is asked for. Repositionable over the publish log through
+/// the [`Seekable`](crate::Seekable) capability: mint a [`MemorySeeker`] with
+/// [`seeker`](crate::Seekable::seeker) before opening the stream.
 pub struct MemorySubscriber {
     name: String,
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
-    batch_limit: usize,
     /// Bus state, kept so a seek can read the publish log and check liveness.
     state: Arc<MemoryState>,
     /// Shared with every [`MemorySeeker`] minted off this subscriber: the pending reposition,
     /// the stale-delivery watermark, and the waker that rouses a parked stream.
     seek: Arc<SeekControl>,
-    /// A clone of the broker's harness coordinator, threaded into each yielded message so a requeue
-    /// re-counts and a consumed delivery decrements. `None` outside a harness run.
-    #[cfg(feature = "testing")]
-    coordinator: Option<Coordinator>,
 }
 
 impl MemorySubscriber {
-    /// Caps how many buffered deliveries one batch yielded by
-    /// [`BatchSubscriber::batches`](crate::BatchSubscriber::batches) may carry (default 64).
+    /// A clone of the broker's harness coordinator, threaded into each yielded message so a
+    /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
     ///
-    /// A batch always carries at least one delivery, so a limit of zero behaves like one.
-    pub fn set_batch_limit(&mut self, limit: usize) {
-        self.batch_limit = limit;
+    /// Read off the bus at stream time rather than captured at subscribe time: a subscriber built
+    /// before the app was handed to the harness would otherwise carry `None` forever and never
+    /// decrement what the bus counted in, hanging the quiescence wait.
+    #[cfg(feature = "testing")]
+    pub(crate) fn coordinator(&self) -> Option<Coordinator> {
+        self.state.coordinator()
     }
 }
 
@@ -618,9 +610,9 @@ impl Subscriber for MemorySubscriber {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         let requeue = self.requeue.clone();
-        let seeker = Arc::new(crate::Seekable::seeker(self));
         #[cfg(feature = "testing")]
-        let coordinator = self.coordinator.clone();
+        let coordinator = self.coordinator();
+        let seeker = Arc::new(crate::Seekable::seeker(self));
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| {

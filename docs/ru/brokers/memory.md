@@ -16,6 +16,31 @@ use ruststream::memory::MemoryBroker;
 let broker = MemoryBroker::new();
 ```
 
+## Прелюдия, которую импортирует точка монтирования { #prelude }
+
+`ruststream::memory::prelude` - это glob этого брокера, устроенный как у любого брокерного крейта:
+он реэкспортирует прелюдию ядра, затем собственную поверхность брокера (`MemoryBroker`,
+`MemorySource`, `MemoryError`, ключи контекста `MemoryContext` / `MemoryBatchContext` / `Position` /
+`SeekHandle` и `MemoryPosition`), а затем политики публикации под теми едиными именами, которые
+пишет точка монтирования, - `Publish`, `TransactionalPublish` и `Request`, все три псевдонимы
+`MemoryPublish` / `MemoryRequest`. Поскольку in-memory издатель несёт обе разновидности транзакций,
+`TransactionalPublish` здесь - это та же политика, что и `Publish`; брокер с отдельной
+транзакционной конфигурацией назначает псевдоним другой.
+
+<!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
+```rust
+use ruststream::memory::prelude::*;
+```
+
+Этот glob приносит и трейты совместимостей, которые брокер реализует на своих живых значениях
+(`TransactionalPublisher`, `OwnedTransactions`, `Transaction`, `RequestReply`, `Positioned`,
+`Seeker`), поэтому их операции доступны там же, где и политики. `Partitioned` намеренно оставлен за
+бортом: в области видимости он делает `msg.partition_key()` неоднозначным с методом
+`IncomingMessage` по умолчанию, поэтому сервис, читающий ключи партиционирования, импортирует его
+явно. Тело обработчика сохраняет `use ruststream::prelude::*;` - оно называет совместимости, а не
+политики, и потому не знает, какой брокер его выполняет, - а файлу, где живут и тело, и точка
+монтирования, достаточно одного брокерного glob.
+
 ## Семантика
 
 - **Точное совпадение имён.** Подписка на `orders` получает сообщения, опубликованные в `orders`;
@@ -42,18 +67,22 @@ dead-letter, поэтому зелёный тест здесь не говори
 
 - **Request / reply.** `broker.requester()` возвращает `MemoryRequester`; его `request` публикует
   сообщение с уникальным внутрипроцессным inbox в заголовке `reply-to` и разрешается на первом же
-  доставленном туда сообщении. Отвечающая сторона читает `reply-to` из запроса и публикует ответ на
-  это имя. Запросы, на которые никто не ответил, падают с `RequestError::Timeout`.
-- **Пакеты.** `MemorySubscriber` реализует `BatchSubscriber`: пакет - это первая дождавшаяся
-  доставка плюс всё, что уже лежит в буфере, с ограничением по `set_batch_limit` (по умолчанию 64).
-  Неполные пакеты уходят сразу, поэтому никакого таймера дедлайна тут нет.
-- **Транзакции.** `MemoryPublisher` реализует `TransactionalPublisher`: публикации между
-  `begin_transaction` и `commit` буферизуются и доставляются всем подписчикам разом, в порядке
-  публикации;
-  `abort` их отбрасывает. Неверное использование даёт ошибку `MemoryError` по контракту трейта:
-  второй `begin_transaction` возвращает `TransactionBusy` (открытая транзакция остаётся
-  нетронутой), а `commit` / `abort` без транзакции возвращают `NoTransaction`. Клоны хендла
-  издателя его транзакцию не разделяют.
+  доставленном туда сообщении; политика `MemoryRequest` спаривается именно с ним, поэтому слот с
+  ограничением `Out<impl RequestReply, ..>` привязывают к `MemoryRequest`. Отвечающая сторона читает
+  `reply-to` из запроса и публикует ответ на это имя. Запросы, на которые никто не ответил, падают
+  с `RequestError::Timeout`.
+- **Пакеты.** `MemorySubscriber` реализует `BatchSubscriber` нативно: пакет - это первая
+  дождавшаяся доставка плюс всё, что уже лежит в буфере, с ограничением по размеру, который точка
+  монтирования задала через `batch(n)`. Неполные пакеты уходят сразу, поэтому никакого таймера
+  дедлайна тут нет.
+- **Транзакции.** `MemoryPublisher`, с которым спаривается политика `MemoryPublish`, несёт обе
+  разновидности транзакций, поэтому слот или связывание с ограничением `TransactionalPublisher`
+  или `OwnedTransactions` привязывают к `MemoryPublish`. Публикации внутри области
+  буферизуются и при коммите доставляются всем подписчикам разом, в порядке публикации; abort их
+  отбрасывает; каждая владеющая транзакция буферизует сама по себе. Неверное использование сырого
+  хендла даёт ошибку `MemoryError` по контракту брокера: второй begin при открытой транзакции
+  возвращает `TransactionBusy` (открытая транзакция остаётся нетронутой), а commit или abort без
+  транзакции возвращают `NoTransaction`. Клоны хендла издателя его транзакцию не разделяют.
 - **Ключи партиционирования.** `MemoryMessage` реализует `Partitioned` и читает ключ из
   общеизвестного заголовка `partition-key` (`memory::PARTITION_KEY_HEADER`).
 - **Перемещение по логу.** `MemorySubscriber` реализует `Seekable` поверх лога публикаций брокера
@@ -87,7 +116,7 @@ dead-letter, поэтому зелёный тест здесь не говори
 === "Макросы"
 
     ```rust
-    use ruststream::memory::MemorySource;
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/routed_service/orders.rs:descriptor"
     ```
@@ -95,7 +124,7 @@ dead-letter, поэтому зелёный тест здесь не говори
 === "Вручную"
 
     ```rust
-    use ruststream::memory::{MemoryPublish, MemorySource};
+    use ruststream::memory::prelude::*;
 
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```

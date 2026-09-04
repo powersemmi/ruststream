@@ -43,7 +43,7 @@ header, unparsable value) never reaches the body - the delivery settles by the s
 `Headers` composes with a self-deserializing body (`&Frame<'_>` next to its typed headers) and
 with every other extractor.
 
-On a batch handler the headers stay per-delivery, so the page pairs each element with its own
+On a batch handler the headers stay per-delivery, so the batch pairs each element with its own
 contract: the input is `&[Message<H, T>]`, and `element.headers` sits next to `element.body`.
 The pairing holds by construction - an element whose payload or headers fail to materialize is
 settled by the same `on_failure(decode = ..)` policy and never reaches the handler, exactly as
@@ -131,7 +131,8 @@ whole declaration:
   call site and a templated one demands its placeholders;
 - the capability position is checked against the include-site policy statically, as always:
   `Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>` demands a policy whose
-  live publisher is transactional, and the declared publishes ride inside its transactions.
+  live publisher is transactional, and the declared publishes ride inside the scope the entry
+  opens, under the same declaration.
 
 A payload the service already holds encoded, or a foreign type that cannot carry a declaration
 (a bare `Vec<Frame>`), goes out in a newtype deriving both `Outgoing` and

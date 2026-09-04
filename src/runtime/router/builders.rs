@@ -1,416 +1,268 @@
-//! The router's registration builders: the attachment a form needs before it becomes a route.
+//! The one mount chain: the attachments a form needs before it becomes a route.
 //!
-//! A [`Router`] is a consuming builder, so these commit through an explicit terminal rather than
-//! on `Drop`: `Drop` cannot return the router the registration grew into. The terminals are
-//! [`publisher`](RouterWith::publisher) (an explicit policy, or a
-//! [`Bound`](crate::runtime::Bound) token for a cross-broker target) and
-//! [`mount`](RouterWith::mount) (the broker's [`DefaultPublish`](crate::DefaultPublish) policy).
-//! A chain left unfinished never becomes a router, so a forgotten terminal is a compile error at
-//! the next use.
+//! Every publish policy a registration names is attached with one verb,
+//! [`out`](RouterWith::out): [`Reply`] names the policy the value a `publish("dest")` handler
+//! returns leaves through, and a slot marker names one [`Out`](crate::runtime::Out) slot's. The
+//! steps after a call ride the position it named - [`codec`](RouterWith::codec),
+//! [`transform`](RouterWith::transform),
+//! [`map_publisher`](crate::runtime::MapPublisher::map_publisher) on either kind,
+//! [`batch_transform`](RouterWith::batch_transform) and
+//! [`transactional`](RouterWith::transactional) on the reply alone - so the chain reads the same
+//! whichever position it is filling.
+//!
+//! A [`Router`](super::Router) is a consuming builder, so the chain commits through an explicit
+//! terminal, [`build`](RouterWith::build): `Drop` cannot return the router the registration grew
+//! into. A chain left unfinished never becomes a router, so a forgotten `.build()` is a compile
+//! error at the next use. A [`BrokerScope`](crate::runtime::BrokerScope) drives the same chain
+//! through a guard that commits when the statement ends.
 
 use std::fmt;
 use std::marker::PhantomData;
 
-use crate::Broker;
-
-use crate::runtime::slot::{BindSlot, MissingSlot, OutSlot, WithSource};
-
-use super::builder::Router;
-use super::mount::{
-    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, InjectMount, PublishInjectMount,
-    PublishMount, RawReplyInjectMount, RawReplyMount,
+#[cfg(doc)]
+use crate::runtime::slot::Reply;
+use crate::runtime::slot::{
+    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound, ReplyStep,
+    TransactionalLast, TransformLast,
 };
 
-/// One commit strategy of a router registration builder, keyed by its `Mount` token. Machinery;
-/// never named directly.
+/// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
+/// it grew on. Machinery; never named directly.
 #[doc(hidden)]
-pub trait RouterCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, Def>: Sized {
+#[diagnostic::on_unimplemented(
+    message = "this registration is not ready to mount",
+    label = "the attachment `{Self}` has an unfilled position",
+    note = "bind every Out slot the handler declares with .out(marker, policy) before .build(); \
+            an unbound one shows as `MissingSlot<..>` naming its marker"
+)]
+pub trait RouterCommit<Mount, R, Def>: Sized {
     /// The router the committed registration grows into.
     type Out;
 
-    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out;
+    fn commit(self, def: Def, router: R) -> Self::Out;
 }
 
-/// The commit of a fully-bound slot registration, keyed by its `Mount` token. Implemented only
-/// for attachment tuples with every position bound, which is what turns a forgotten
-/// `.out(marker, policy)` into a compile error naming the slot (the unbound position shows as
-/// `MissingSlot<TheMarker>` in `{Self}`).
-#[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "not every Out slot of this handler is bound",
-    label = "the attachment still contains a `MissingSlot<..>` naming the unbound slot",
-    note = "bind each remaining slot with .out(marker, policy) before .build()"
-)]
-pub trait RouterSlotCommit<Mount, B: Broker, Routes, RouteCodec, RouteLayers, Def>: Sized {
-    /// See [`RouterCommit::Out`].
-    type Out;
-
-    fn commit(self, def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out;
-}
-
-/// A registration builder over one attachment, generic over its mount token.
+/// A mount chain over one registration's attachment.
 ///
-/// [`publisher`](Self::publisher) commits with an explicit reply policy and
-/// [`build`](Self::build) commits with the broker's default one; both consume the builder and
-/// return the grown router. The per-form names are aliases: [`RouterPublishing`],
-/// [`RouterBatchPublishing`].
-#[must_use = "a router registration is only added once .publisher(policy) or .build() commits it"]
-pub struct RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
-where
-    B: Broker + 'static,
-{
-    def: Def,
-    router: Router<B, Routes, RouteCodec, RouteLayers>,
-    _attachment: PhantomData<fn() -> (Mount, Fallback)>,
-}
-
-/// The builder [`Router::include`](super::Router::include) returns for a `publish("dest")`
-/// definition.
-pub type RouterPublishing<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
-    RouterWith<PublishMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
-
-/// The builder [`Router::include`](super::Router::include) returns for a `publish("dest")`
-/// definition whose reply type is [`Serialized`](crate::runtime::Serialized).
-///
-/// The reply bytes go out as-is through a bare publisher.
-pub type RouterRawReply<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
-    RouterWith<RawReplyMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
-
-/// The builder [`Router::include`](super::Router::include) returns for a
-/// `batch(.., publish("dest"))` definition.
-///
-/// The attachment is the batch reply source: a typed stack, or its
-/// [`transactional`](crate::runtime::TypedPublisher::transactional) form for one transaction per
-/// batch.
-pub type RouterBatchPublishing<B, Routes, RouteCodec, RouteLayers, Def, Fallback> =
-    RouterWith<BatchPublishMount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>;
-
-/// The builder [`Router::include`](super::Router::include) returns for a handler with
-/// [`Out`](crate::runtime::Out) parameters.
-pub type RouterOut<B, Routes, RouteCodec, RouteLayers, Def, Slots> =
-    RouterSlots<InjectMount, B, Routes, RouteCodec, RouteLayers, Def, Slots>;
-
-/// The builder [`Router::include`](super::Router::include) returns for a batch
-/// handler with [`Out`](crate::runtime::Out) parameters.
-pub type RouterBatchOut<B, Routes, RouteCodec, RouteLayers, Def, Slots> =
-    RouterSlots<BatchInjectMount, B, Routes, RouteCodec, RouteLayers, Def, Slots>;
-
-/// The builder [`Router::include`](super::Router::include) returns for a `publish("dest")`
-/// definition whose handler also takes [`Out`](crate::runtime::Out) parameters.
-pub type RouterPublishingOut<B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> =
-    RouterSlotsWithReply<PublishInjectMount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>;
-
-/// The builder [`Router::include`](super::Router::include) returns for a `publish("dest")`
-/// definition whose reply type is [`Serialized`](crate::runtime::Serialized).
-///
-/// The handler also takes [`Out`](crate::runtime::Out) parameters, bound one by one at the
-/// include site.
-pub type RouterRawReplyOut<B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> =
-    RouterSlotsWithReply<
-        RawReplyInjectMount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Def,
-        Reply,
-        Slots,
-    >;
-
-/// The builder [`Router::include`](super::Router::include) returns for a
-/// `batch(.., publish("dest"))` definition whose handler also takes
-/// [`Out`](crate::runtime::Out) parameters.
-pub type RouterBatchPublishingOut<B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> =
-    RouterSlotsWithReply<
-        BatchPublishInjectMount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Def,
-        Reply,
-        Slots,
-    >;
-
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
-    RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
-where
-    B: Broker + 'static,
-{
-    pub(super) fn new(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self {
-        Self {
-            def,
-            router,
-            _attachment: PhantomData,
-        }
-    }
-
-    /// Commits the registration with an explicit reply source: a
-    /// [`TypedPublisher`](crate::runtime::TypedPublisher) stack naming the reply codec and
-    /// transforms, a bare policy on the byte-reply form, or a [`Bound`](crate::runtime::Bound)
-    /// token wrapping one for a cross-broker target. The runtime pairs it after the brokers
-    /// connect.
-    #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
-    pub fn publisher<Policy>(
-        self,
-        policy: Policy,
-    ) -> <WithSource<Policy> as RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
-    where
-        WithSource<Policy>: RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>,
-    {
-        WithSource::new(policy).commit(self.def, self.router)
-    }
-
-    /// Commits the registration with the broker's own
-    /// [`DefaultPublish`](crate::DefaultPublish) policy, the terminal for a reply that needs no
-    /// wiring of its own.
-    #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
-    pub fn build(
-        self,
-    ) -> <Fallback as RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
-    where
-        Fallback: Default + RouterCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>,
-    {
-        Fallback::default().commit(self.def, self.router)
-    }
-}
-
-/// A registration builder for a handler with [`Out`](crate::runtime::Out) slots.
-///
-/// Each [`out`](Self::out) call binds one named slot (in any order) and the terminal
-/// [`build`](Self::build) commits - it exists only once every slot is bound, so a forgotten
-/// binding is a compile error naming the slot. A handler with a single slot skips the ceremony:
-/// [`publisher`](Self::publisher) binds it and commits in one call. The per-form names are
-/// aliases: [`RouterOut`], [`RouterBatchOut`].
-///
-/// The subscription source is not carried here: a slot-taking definition is only instantiated
-/// once the sources are bound, so its source comes from the instantiated definition at the
-/// commit.
-#[must_use = "a router registration is only added once .publisher(policy) or .out(..) + .build() commits it"]
-pub struct RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
-where
-    B: Broker + 'static,
-{
-    def: Def,
-    slots: Slots,
-    router: Router<B, Routes, RouteCodec, RouteLayers>,
-    _attachment: PhantomData<fn() -> Mount>,
-}
-
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
-    RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
-where
-    B: Broker + 'static,
-{
-    pub(super) fn new(
-        def: Def,
-        slots: Slots,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self {
-        Self {
-            def,
-            slots,
-            router,
-            _attachment: PhantomData,
-        }
-    }
-
-    /// Binds one named [`Out`](crate::runtime::Out) slot: `marker` picks the slot (the second
-    /// type argument of the handler's `Out<impl Publisher, Marker>` parameter) and `policy` is
-    /// its publish policy (or a [`Bound`](crate::runtime::Bound) token for a cross-broker
-    /// target). Calls bind by marker, so their order does not matter; binding the same slot
-    /// twice, or a marker the handler does not declare, fails to compile. Finish with
-    /// [`build`](Self::build).
-    // The unit marker drives inference, so it travels by value to keep the call site
-    // `.out(Encoded, ..)`; the return type names the builder with the bound slot.
-    #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
-    pub fn out<M, Policy, Index>(
-        self,
-        marker: M,
-        policy: Policy,
-    ) -> RouterSlots<
-        Mount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Def,
-        <Slots as BindSlot<M, Policy, Index>>::Out,
-    >
-    where
-        M: OutSlot,
-        Slots: BindSlot<M, Policy, Index>,
-    {
-        // The marker is inference input only; its value carries no data.
-        let _ = marker;
-        RouterSlots::new(self.def, self.slots.bind(policy), self.router)
-    }
-
-    /// Commits the registration. Exists only once every slot is bound: a chain that still has
-    /// a `MissingSlot<..>` in its attachment fails to compile here, naming the slot.
-    pub fn build(
-        self,
-    ) -> <Slots as RouterSlotCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
-    where
-        Slots: RouterSlotCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>,
-    {
-        self.slots.commit(self.def, self.router)
-    }
-}
-
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, M>
-    RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, (MissingSlot<M>,)>
-where
-    B: Broker + 'static,
-{
-    /// Binds the handler's single [`Out`](crate::runtime::Out) slot and commits, no
-    /// [`build`](Self::build) needed: the one-slot shorthand
-    /// (`router.include(forward).publisher(MemoryPublish)`).
-    #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
-    pub fn publisher<Policy>(
-        self,
-        policy: Policy,
-    ) -> <(WithSource<Policy>,) as RouterSlotCommit<
-        Mount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Def,
-    >>::Out
-    where
-        (WithSource<Policy>,): RouterSlotCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>,
-    {
-        (WithSource::new(policy),).commit(self.def, self.router)
-    }
-}
-
-/// A registration builder for a publishing handler that also takes
-/// [`Out`](crate::runtime::Out) slots: the reply attachment next to the slot tuple.
-///
-/// [`publisher`](Self::publisher) replaces the reply side (defaulted when the call is omitted),
-/// each slot binds with [`out`](Self::out), and the terminal [`build`](Self::build) commits. The
-/// per-form names are aliases: [`RouterPublishingOut`], [`RouterBatchPublishingOut`].
+/// The attachment is a pair: the reply position (the broker's default until `.out(Reply, ..)`
+/// names a policy, or [`NoReply`](crate::runtime::NoReply) on a handler that declares no reply)
+/// and the slot tuple (one position per [`Out`](crate::runtime::Out) marker the handler declares,
+/// each unbound until its `.out(marker, ..)`). `Last` is the position the chain named most
+/// recently, which is what the steps after it ride; it starts as
+/// [`NoOutBound`](crate::runtime::NoOutBound), where those steps do not exist.
 #[must_use = "a router registration is only added once .build() commits it"]
-pub struct RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
-where
-    B: Broker + 'static,
-{
+pub struct RouterWith<Mount, R, Def, Attach, Last = NoOutBound> {
     def: Def,
-    reply: Reply,
-    slots: Slots,
-    router: Router<B, Routes, RouteCodec, RouteLayers>,
-    _attachment: PhantomData<fn() -> Mount>,
+    attach: Attach,
+    router: R,
+    _mount: PhantomData<fn() -> Mount>,
+    _last: PhantomData<fn() -> Last>,
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
-    RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
-where
-    B: Broker + 'static,
-{
-    pub(super) fn new(
-        def: Def,
-        reply: Reply,
-        slots: Slots,
-        router: Router<B, Routes, RouteCodec, RouteLayers>,
-    ) -> Self {
+impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
+    pub(crate) fn new(def: Def, attach: Attach, router: R) -> Self {
         Self {
             def,
-            reply,
-            slots,
+            attach,
             router,
-            _attachment: PhantomData,
+            _mount: PhantomData,
+            _last: PhantomData,
         }
     }
 
-    /// Attaches the reply source, like [`RouterWith::publisher`]. Unlike there it is not a
-    /// terminal: the slots still have to be bound, so the chain finishes with
-    /// [`build`](Self::build).
-    #[allow(clippy::type_complexity)] // the builder's own pieces; an alias would hide them
-    pub fn publisher<Policy>(
-        self,
-        policy: Policy,
-    ) -> RouterSlotsWithReply<
-        Mount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Def,
-        WithSource<Policy>,
-        Slots,
-    > {
-        RouterSlotsWithReply::new(self.def, WithSource::new(policy), self.slots, self.router)
-    }
-
-    /// Binds one named [`Out`](crate::runtime::Out) slot, like [`RouterSlots::out`]: by marker,
-    /// in any order, next to the (optional) reply-side [`publisher`](Self::publisher).
-    // See `RouterSlots::out` for why the marker is by value and the return type stays spelled.
+    /// Names the publish policy of one position: [`Reply`] for the value a `publish("dest")`
+    /// handler returns, an [`Out`](crate::runtime::Out) slot's own marker for a slot.
+    ///
+    /// `policy` is one of the broker prelude's (`Publish`, `TransactionalPublish`, ...), or a
+    /// [`Bound`](crate::runtime::Bound) token wrapping one for a cross-broker target; the runtime
+    /// pairs it after the brokers connect. Calls bind by marker, so their order does not matter,
+    /// and each position takes exactly one: binding one twice does not compile. Omitting
+    /// `.out(Reply, ..)` leaves the reply on the broker's own
+    /// [`DefaultPublish`](crate::DefaultPublish) policy; omitting a slot's call does not compile.
+    ///
+    /// The steps after the call fill the rest of that position's wiring.
+    // The unit marker drives inference, so it travels by value to keep the call site
+    // `.out(Reply, ..)`; the return type names the chain with the bound position.
     #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
     pub fn out<M, Policy, Index>(
         self,
         marker: M,
         policy: Policy,
-    ) -> RouterSlotsWithReply<
-        Mount,
-        B,
-        Routes,
-        RouteCodec,
-        RouteLayers,
-        Def,
-        Reply,
-        <Slots as BindSlot<M, Policy, Index>>::Out,
-    >
+    ) -> RouterWith<Mount, R, Def, <Attach as BindAt<Mount, M, Policy, Index>>::Out, Index>
     where
-        M: OutSlot,
-        Slots: BindSlot<M, Policy, Index>,
+        Attach: BindAt<Mount, M, Policy, Index>,
     {
         // The marker is inference input only; its value carries no data.
         let _ = marker;
-        RouterSlotsWithReply::new(self.def, self.reply, self.slots.bind(policy), self.router)
+        RouterWith::new(self.def, self.attach.bind_at(policy), self.router)
     }
 
-    /// Commits the registration (reply attachment plus every bound slot). Exists only once
-    /// every slot is bound: a chain that still has a `MissingSlot<..>` in its attachment fails
-    /// to compile here, naming the slot.
-    #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
-    pub fn build(
+    /// Encodes what leaves the position named last with `codec` instead of the registration
+    /// surface's own.
+    ///
+    /// Named once per position: the codec slot the call fills is filled, so a second one does not
+    /// compile. A byte-for-byte ([`Serialized`](crate::runtime::Serialized)) reply carries its own
+    /// bytes and has no codec position at all.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn codec<Cd>(
         self,
-    ) -> <(Reply, Slots) as RouterSlotCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>>::Out
+        codec: Cd,
+    ) -> RouterWith<Mount, R, Def, <Attach as CodecLast<Cd, Last>>::Out, Last>
     where
-        (Reply, Slots): RouterSlotCommit<Mount, B, Routes, RouteCodec, RouteLayers, Def>,
+        Attach: CodecLast<Cd, Last, Step: NamedStep>,
     {
-        (self.reply, self.slots).commit(self.def, self.router)
+        RouterWith::new(self.def, self.attach.codec_last(codec), self.router)
+    }
+
+    /// Composes a static transform onto everything that leaves the position named last: a
+    /// [`PublishTransform`](crate::runtime::PublishTransform) on the reply, an
+    /// [`OutTransform`](crate::runtime::OutTransform) on a slot.
+    ///
+    /// The step repeats and the first one added runs first (closest to the encoded value), so a
+    /// chain can name one per position:
+    /// `.out(Reply, Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`.
+    /// Before any `.out(..)` the step has no position to ride, and the call fails naming the fix.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn transform<N>(
+        self,
+        transform: N,
+    ) -> RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>
+    where
+        Attach: TransformLast<N, Last, Step: NamedStep>,
+    {
+        RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
+    }
+
+    /// Composes a [`BatchPublishTransform`](crate::runtime::BatchPublishTransform) onto every
+    /// reply of a batch (`&[T]` plus `publish(..)`), after the per-message stack. Wrap a
+    /// per-message transform with [`for_batch`](crate::runtime::for_batch) to reuse it here.
+    ///
+    /// Reply-only: a slot publish is one message with no batch to run a batch transform over.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn batch_transform<N>(
+        self,
+        transform: N,
+    ) -> RouterWith<Mount, R, Def, <Attach as BatchTransformLast<N, Last>>::Out, Last>
+    where
+        Attach: BatchTransformLast<N, Last, Step: ReplyStep>,
+    {
+        RouterWith::new(
+            self.def,
+            self.attach.batch_transform_last(transform),
+            self.router,
+        )
+    }
+
+    /// Publishes a batch's replies inside one broker transaction: they all become visible
+    /// atomically on commit, or none of them do.
+    ///
+    /// The policy's live publisher has to be a
+    /// [`TransactionalPublisher`](crate::TransactionalPublisher), which the pairing checks against
+    /// the chain's own broker; a one-message reply has no batch to make atomic, so the wiring only
+    /// mounts on the batch forms. Reply-only, for the same reason
+    /// [`batch_transform`](Self::batch_transform) is.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn transactional(
+        self,
+    ) -> RouterWith<Mount, R, Def, <Attach as TransactionalLast<Last>>::Out, Last>
+    where
+        Attach: TransactionalLast<Last, Step: ReplyStep>,
+    {
+        RouterWith::new(self.def, self.attach.transactional_last(), self.router)
+    }
+
+    /// Adds the registration to the router, with whatever the chain attached - the broker's own
+    /// [`DefaultPublish`](crate::DefaultPublish) policy for a reply no `.out(Reply, ..)` named.
+    #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
+    pub fn build(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
+    where
+        Attach: RouterCommit<Mount, R, Def>,
+    {
+        self.attach.commit(self.def, self.router)
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback> fmt::Debug
-    for RouterWith<Mount, B, Routes, RouteCodec, RouteLayers, Def, Fallback>
-where
-    B: Broker + 'static,
-{
+impl<Mount, R, Def, Attach, Last> fmt::Debug for RouterWith<Mount, R, Def, Attach, Last> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RouterWith").finish_non_exhaustive()
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots> fmt::Debug
-    for RouterSlots<Mount, B, Routes, RouteCodec, RouteLayers, Def, Slots>
+/// Replaces the publish policy of the position a mount chain named last, keeping every step the
+/// chain already filled: the hook a broker crate layers its own publisher settings on.
+///
+/// The publish-side mirror of
+/// [`map_source`](crate::runtime::SubscriberSettings::map_source). Core cannot know that a publish
+/// has an exchange, a partition key or a confirm mode, so the broker declares a trait over the
+/// mount chain bound to its own policy type and implements each method as one `map_publisher`
+/// call. The bound means those methods simply do not exist on a chain that named another broker's
+/// policy - or none at all.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::MemoryPublish;
+/// use ruststream::runtime::MapPublisher;
+///
+/// /// What a broker crate ships next to its policy: the publisher's own settings, reachable
+/// /// wherever a mount chain named that policy.
+/// pub trait MemoryPublishSettings: Sized {
+///     /// Publishes every message through `prefix` instead of the declared destination.
+///     fn prefixed(self, prefix: &'static str) -> Self;
+/// }
+///
+/// impl<T: MapPublisher<Policy = MemoryPublish>> MemoryPublishSettings for T {
+///     fn prefixed(self, prefix: &'static str) -> Self {
+///         let _ = prefix;
+///         self.map_publisher(|policy| policy)
+///     }
+/// }
+/// # }
+/// ```
+pub trait MapPublisher: Sized {
+    /// The policy the position a mount chain named last carries.
+    type Policy;
+
+    /// Replaces it with what the broker's own settings made of it.
+    ///
+    /// The replacement is the same policy type: a broker's publisher settings are that policy's
+    /// own fields (an exchange, a partition key, a confirm mode), while a different policy type
+    /// is a different publish mode and belongs in the `.out(marker, policy)` call itself.
+    #[must_use]
+    fn map_publisher(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
+}
+
+impl<Mount, R, Def, Attach, Last> MapPublisher for RouterWith<Mount, R, Def, Attach, Last>
 where
-    B: Broker + 'static,
+    Attach: MapPolicyLast<Last, Step: NamedStep>,
 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RouterSlots").finish_non_exhaustive()
+    type Policy = Attach::Policy;
+
+    fn map_publisher(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self {
+        Self::new(self.def, self.attach.map_policy_last(f), self.router)
     }
 }
 
-impl<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots> fmt::Debug
-    for RouterSlotsWithReply<Mount, B, Routes, RouteCodec, RouteLayers, Def, Reply, Slots>
-where
-    B: Broker + 'static,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RouterSlotsWithReply")
-            .finish_non_exhaustive()
-    }
-}
+use super::mount::DefaultReply;
+use crate::runtime::slot::NoReply;
+
+/// The attachment a reply-only form starts with: the broker's default policy, no slots.
+pub(crate) type ReplyOnly = (DefaultReply, ());
+
+/// The attachment a slot-only form starts with: no reply position, one unbound slot per marker.
+pub(crate) type SlotsOnly<Slots> = (NoReply, Slots);
+
+/// The attachment a reply-and-slots form starts with.
+pub(crate) type ReplyAndSlots<Slots> = (DefaultReply, Slots);
+
+/// The chain a reply-only form hands back.
+pub type RouterPublishing<Mount, R, Def> = RouterWith<Mount, R, Def, ReplyOnly>;
+
+/// The chain a slot-carrying form hands back.
+pub type RouterOut<Mount, R, Def, Slots> = RouterWith<Mount, R, Def, SlotsOnly<Slots>>;
+
+/// The chain a reply-and-slots form hands back.
+pub type RouterPublishingOut<Mount, R, Def, Slots> =
+    RouterWith<Mount, R, Def, ReplyAndSlots<Slots>>;

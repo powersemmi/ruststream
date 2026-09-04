@@ -19,8 +19,8 @@ Codec features are strictly additive; enable as many as you need. Message types 
 ## The default codec
 
 `DefaultCodec` is a feature-selected alias: `json` if enabled, otherwise `cbor`, otherwise
-`msgpack`. It is what `include(def)` and `TypedPublisher::new(publisher)` use when nothing names a
-codec; neither takes a codec argument.
+`msgpack`. It is what `include(def)` and a reply chain that stops at `.out(Reply, policy)` use when
+nothing names a codec; neither takes a codec argument.
 
 With no codec feature enabled at all, nothing can encode or decode, so anything that would need
 the default codec is a compile error naming the ways out: enable a codec feature, name a codec
@@ -85,11 +85,12 @@ When nothing above names a codec, `include` uses [`DefaultCodec`](#the-default-c
 
 ## The publish side
 
-Publishers mirror the same rules: `TypedPublisher::new(policy)` encodes replies with the default
-codec, and `TypedPublisher::with_codec(policy, codec)` names one. Decoding of the incoming
-request follows the scope (the scope codec set with `with_broker_codec`, or the router chain's
-`Router::with_codec`, else the default), while the reply codec travels on the stack attached
-with `.publisher(..)` - so the request and reply formats differ freely.
+Publishers mirror the same rules: `.out(Reply, policy)` encodes replies with the default codec,
+and `.out(Reply, policy).codec(codec)` names one - as does `.out(marker, policy).codec(codec)` for
+one `Out` slot. Decoding of the incoming request follows the scope
+(the scope codec set with `with_broker_codec`, or the router chain's `Router::with_codec`, else
+the default), while the reply codec travels on the wiring the chain built - so the request and
+reply formats differ freely.
 
 The codec is a property of the mounting, not of the message type: one type decodes as JSON on one
 subscription and as CBOR on another, and the mount site is the single place that says which.

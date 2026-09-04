@@ -1,0 +1,18 @@
+error[E0599]: the method `codec` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::PublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, CallCodec<JsonCodec>>>, ()), ruststream::runtime::ReplyLast>, ruststream::runtime::OnDrop>`, but its trait bounds were not satisfied
+  --> tests/ui/reply_codec_named_twice.rs:29:14
+   |
+26 | /         b.include(confirm)
+27 | |             .out(Reply, MemoryPublish)
+28 | |             .codec(JsonCodec)
+29 | |             .codec(CborCodec);
+   | |             -^^^^^ method cannot be called due to unsatisfied trait bounds
+   | |_____________|
+   |
+   |
+  ::: src/runtime/publish/sink.rs
+   |
+   |   pub struct CallCodec<C>(pub(crate) C);
+   |   ----------------------- doesn't satisfy `_: CodecSlotOpen`
+   |
+   = note: the following trait bounds were not satisfied:
+           `CallCodec<JsonCodec>: ruststream::runtime::CodecSlotOpen`
