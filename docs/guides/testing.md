@@ -146,6 +146,27 @@ was mounted with a different codec (`with_broker_codec`, `Router::with_codec`), 
 `.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
 `.decoded_with(&CborCodec)` - while `with_raw` / `received_raw` / `messages` stay codec-free.
 
+### A message that serializes itself
+
+A value on a [byte lane](codecs.md#binary-protocols-are-not-codecs) has nothing between it and the
+wire, and every typed assertion above has a codec in it: `with(&value)`, `received::<T>()` and
+their `_with(codec)` variants all decode with one, which a `Serialized` / `Deserialized` type never
+resolves. The two codec-free assertions are what a test on this lane uses - `with_raw(bytes)` for
+the payload, `received_raw()` for reading a delivery back - and the type's own format supplies the
+rest:
+
+```rust
+--8<-- "tests/self_serialising.rs:assertions"
+```
+
+The expected bytes come from the format rather than from the harness: a hand-rolled frame is short
+enough to write out, and a generated message produces its own, so a `prost` message is
+`with_raw(&order.encode_to_vec())`. Reading a delivery back is `Deserialized::from_payload` over
+the owned `Bytes` that `received_raw()` returns - the same reader the lane ran on the way in, so
+the assertion is against the model type without a codec anywhere. The publish side splits the same
+way: `published::<T>(name).with_raw(bytes)` and `.messages()` are codec-free, `.with(&value)` and
+`.decoded()` are not.
+
 ### Asserting on Out slots
 
 A handler's [`Out` slot](publishing.md#named-slots) is also its testing identity:

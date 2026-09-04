@@ -148,6 +148,42 @@ async fn a_self_serialising_type_makes_the_round_trip() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
+// --8<-- [start:assertions]
+/// Asserting on a value that serializes itself. The harness's typed assertions decode with a
+/// codec, and this lane has none, so both ends of the test speak the type's own format: the
+/// expected payload is the frame the writer produces, and a delivery is read back with the
+/// reader the type already declares.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_self_serialising_message_is_asserted_on_its_own_bytes() {
+    let app =
+        RustStream::new(AppInfo::new("wire", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(count);
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Tick { seq: 9 })
+        .publish()
+        .await
+        .expect("inject");
+
+    let broker = tb.broker::<MemoryBroker>();
+    let ticks = broker.subscriber("wire.ticks");
+    // `from_payload` is the same reader the lane ran on the way in, so the test asserts on the
+    // model type without a codec and without repeating the frame layout.
+    let received = ticks.received_raw();
+    let decoded = Tick::from_payload(&received[0]).expect("a tick frame");
+    assert_eq!(decoded, Tick { seq: 9 });
+
+    // The bytes themselves, where the wire format is what the test is pinning.
+    ticks
+        .assert_called_once()
+        .with_raw(&[0, 0, 0, 9])
+        .settled(HandlerOutcome::ack());
+
+    tb.shutdown().await.expect("graceful shutdown");
+}
+// --8<-- [end:assertions]
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rejected_frame_is_settled_by_the_decode_policy() {
     let app =

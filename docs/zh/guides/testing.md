@@ -133,6 +133,25 @@ Broker，它就报告 `TestError::Ambiguous`。
 `published::<T>(name).with_codec(&CborCodec, &expected)`、`.decoded_with(&CborCodec)`；而 `with_raw` /
 `received_raw` / `messages` 与编解码器无关。
 
+### 自己做序列化的消息 { #a-message-that-serializes-itself }
+
+[字节路径](codecs.md#binary-protocols-are-not-codecs)上的值与线之间不隔任何东西，而上面每一个
+类型化断言里都隔着一个编解码器：`with(&value)`、`received::<T>()` 以及它们的 `_with(codec)` 变体
+都要用编解码器解码，而带 `Serialized` / `Deserialized` 的类型根本不解析编解码器。这条路径上的测试
+靠的是那两个与编解码器无关的断言 - `with_raw(bytes)` 断言载荷，`received_raw()` 把投递读回来 -
+其余由类型自己的格式提供：
+
+```rust
+--8<-- "tests/self_serialising.rs:assertions"
+```
+
+期望的字节来自格式，而不是来自测试工具：自己手写的帧短到可以直接写出来，生成的消息则自己产出
+字节，所以 `prost` 消息写成 `with_raw(&order.encode_to_vec())`。把一次投递读回来，用的是
+`Deserialized::from_payload`，作用在 `received_raw()` 返回的持有型 `Bytes` 上 - 正是这条路径在
+入站时跑过的那个读取器，因此断言针对的是模型类型，全程没有编解码器。发布一侧的分界也一样：
+`published::<T>(name).with_raw(bytes)` 和 `.messages()` 与编解码器无关，`.with(&value)` 和
+`.decoded()` 则有关。
+
 ### 对 Out 槽位做断言 { #asserting-on-out-slots }
 
 处理器的 [`Out` 槽位](publishing.md#named-slots)同时也是它在测试中的身份：`tb.out::<Marker>()` 恰好

@@ -151,6 +151,27 @@ newtype с `#[derive(Outgoing, Serialized)]`, поэтому тест назыв
 `.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
 `.decoded_with(&CborCodec)`, - а `with_raw` / `received_raw` / `messages` кодека не касаются.
 
+### Сообщение, которое сериализует себя само {#a-message-that-serializes-itself}
+
+Между значением на [байтовом пути](codecs.md#binary-protocols-are-not-codecs) и проводом не стоит
+ничего, а в каждой типизированной проверке выше стоит кодек: `with(&value)`, `received::<T>()` и их
+варианты `_with(codec)` декодируют кодеком, а тип с `Serialized` / `Deserialized` кодек не
+разрешает вовсе. Тест на этом пути опирается на две проверки, кодека не касающиеся, -
+`with_raw(bytes)` для нагрузки и `received_raw()` для чтения доставки обратно, - а остальное даёт
+собственный формат типа:
+
+```rust
+--8<-- "tests/self_serialising.rs:assertions"
+```
+
+Ожидаемые байты приходят из формата, а не из харнесса: самодельный кадр достаточно короток, чтобы
+выписать его целиком, а сгенерированное сообщение выдаёт свои байты само, поэтому для сообщения
+`prost` это `with_raw(&order.encode_to_vec())`. Чтение доставки обратно - это
+`Deserialized::from_payload` поверх владеющих `Bytes`, которые вернул `received_raw()`: тот же
+читатель, который путь запускал на входе, так что проверка идёт против типа модели и без кодека.
+Сторона публикации делится так же: `published::<T>(name).with_raw(bytes)` и `.messages()` кодека не
+касаются, а `.with(&value)` и `.decoded()` - касаются.
+
 ### Проверки слотов Out {#asserting-on-out-slots}
 
 Слот [`Out`](publishing.md#named-slots) обработчика служит заодно его тестовой идентичностью:
