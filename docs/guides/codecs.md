@@ -26,8 +26,52 @@ With no codec feature enabled at all, nothing can encode or decode, so anything 
 the default codec is a compile error naming the ways out: enable a codec feature, name a codec
 explicitly, or put the message on a byte lane. The byte lanes never need a codec - a
 [`Deserialized` input](subscribers.md#raw-subscribers) builds itself from the delivery's bytes,
-and a `Serialized` value carries its own - so a service that speaks only its own wire formats
+and a `Serialized` value produces its own - so a service that speaks only its own wire formats
 runs with no codec feature and loses nothing.
+
+## Binary protocols are not codecs
+
+A codec position means "a value, encoded by a codec the mount site chose". A generated Protobuf
+message does not fit there: it *is* its encoding, and it owns the byte layout end to end. Put it
+in a codec position and one mounting could send `Order` as JSON while another sends it as
+Protobuf - the confusion the byte lanes exist to prevent. So a binary protocol goes on the lanes,
+and nothing is resolved between the type and the wire.
+
+Generated code is not edited by hand, but every generator can decorate what it emits.
+`prost-build` takes `message_attribute`, so the whole recipe is two lines of build configuration:
+
+<!-- inline-rust: the service's own build script, which has no compiled home in this repository -->
+```rust
+// build.rs
+prost_build::Config::new()
+    .message_attribute(".", "#[derive(ruststream::Serialized, ruststream::Deserialized)]")
+    .message_attribute(".", "#[wire(prost)]")
+    .compile_protos(&["proto/orders.proto"], &["proto"])?;
+```
+
+Every message in the schema then arrives on the lanes already, as if it had been written out:
+
+```rust
+--8<-- "examples/protobuf.rs:message"
+```
+
+The handler names no codec, on the way in or the way out, because none is resolved for this type:
+
+```rust
+--8<-- "examples/protobuf.rs:handler"
+```
+
+`#[wire(prost)]` is a shorthand for one generator's two paths. The general form names the
+functions itself - `#[wire(encode = <path>, decode = <path>)]` - where `encode` is a
+`fn(&Self, &mut BytesMut)` returning either nothing or a `Result`, and `decode` a
+`fn(&[u8]) -> Result<Self, E>`. Cap'n Proto, FlatBuffers and a hand-rolled frame ride the same
+mechanism, with no cargo feature per format: this crate calls what the attribute names and
+depends on none of them, while the service depends on the one it uses.
+
+The model type stays visible where it matters. It is what the mount site names, what an `Out`
+slot's dictionary lists, and what the generated `AsyncAPI` document reports - all three of which a
+pre-encoded byte newtype hides behind a bag of bytes. This service is
+[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs).
 
 ## Where the decode codec comes from
 

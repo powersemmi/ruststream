@@ -24,8 +24,49 @@
 一个编解码器 feature 都不启用时，没有任何东西能编码或解码，于是凡是会用到默认编解码器的写法都是
 编译错误，而且错误会点明几条出路：启用一个编解码器 feature、显式指定一个编解码器，或者把这个消息
 放到字节路径上。字节路径从不需要编解码器 - [`Deserialized` 输入](subscribers.md#raw-subscribers)
-从这次投递的字节里构造自己，`Serialized` 值自带字节 - 所以只讲自家传输格式的服务，一个编解码器
+从这次投递的字节里构造自己，`Serialized` 值自己产出字节 - 所以只讲自家传输格式的服务，一个编解码器
 feature 都不开也照样运行，什么都不会少。
+
+## 二进制协议不是编解码器 { #binary-protocols-are-not-codecs }
+
+编解码器这个位置的含义是「一个值，由挂载点选定的编解码器来编码」。生成出来的 Protobuf 消息放不进
+这个位置：它本身就是自己的编码，字节布局从头到尾归它所有。放进编解码器的位置，一处挂载就可能把
+`Order` 发成 JSON，另一处发成 Protobuf - 字节路径存在的意义正是杜绝这种混淆。所以二进制协议走
+字节路径，类型与线之间不解析任何东西。
+
+生成出来的代码不靠手改，但给自己产出的代码加注解，是每个生成器都会的。`prost-build` 接受
+`message_attribute`，于是整份配方就是构建配置里的两行：
+
+<!-- inline-rust: the service's own build script, which has no compiled home in this repository -->
+```rust
+// build.rs
+prost_build::Config::new()
+    .message_attribute(".", "#[derive(ruststream::Serialized, ruststream::Deserialized)]")
+    .message_attribute(".", "#[wire(prost)]")
+    .compile_protos(&["proto/orders.proto"], &["proto"])?;
+```
+
+此后 schema 里的每个消息一到手就已经在字节路径上，如同手写出来的一样：
+
+```rust
+--8<-- "examples/protobuf.rs:message"
+```
+
+处理器进出两侧都不指定编解码器，因为这个类型根本不解析编解码器：
+
+```rust
+--8<-- "examples/protobuf.rs:handler"
+```
+
+`#[wire(prost)]` 是某一个生成器那两条路径的简写。通用写法自己点名这两个函数 -
+`#[wire(encode = <path>, decode = <path>)]`：`encode` 是 `fn(&Self, &mut BytesMut)`，返回空或者
+`Result`；`decode` 是 `fn(&[u8]) -> Result<Self, E>`。Cap'n Proto、FlatBuffers 和自己手写的帧都走
+同一套机制，不需要为每种格式加一个 cargo feature：本 crate 只调用属性点名的东西，不依赖其中任何
+一个，依赖它的是服务自己。
+
+模型类型在要紧的地方仍然看得见。挂载点点的是它，`Out` 槽位的词典列的是它，生成的 `AsyncAPI`
+文档报告的也是它 - 这三处，预先编码好的字节 newtype 全都藏在一袋字节后面。这个服务见
+[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs)。
 
 ## 解码用的编解码器从哪里来 { #where-the-decode-codec-comes-from }
 

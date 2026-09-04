@@ -37,6 +37,12 @@ required-features = ["macros", "memory", "json", "metrics", "asyncapi", "logging
 name = "quickstart"
 required-features = ["macros", "memory", "json"]
 
+# No codec feature in the list, and none missing: the message serializes itself, so the whole
+# service builds with the codec layer switched off.
+[[example]]
+name = "protobuf"
+required-features = ["macros", "memory"]
+
 # The `manual_*` examples are the macro-free counterparts the guides show side by side with the
 # macro form. They deliberately do not require the `macros` feature: that is what proves the
 # hand-written path stands on its own.
