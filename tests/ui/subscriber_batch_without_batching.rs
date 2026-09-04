@@ -1,8 +1,7 @@
 use futures::Stream;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemorySubscriber};
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-use ruststream::subscriber;
-use ruststream::{Subscribe, Subscriber, SubscriptionSource};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSettings};
+use ruststream::{Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -39,8 +38,8 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
     }
 }
 
-// The signature asks for several messages at once; this subscription delivers one at a time, so
-// the mount asks for the framework's buffer.
+// The signature asks for a page, and the mount names its size; this subscription cannot deliver
+// pages at all, which is the broker's own gap to close.
 #[subscriber(Trickle { name: "orders" })]
 async fn handle(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();
@@ -50,6 +49,6 @@ async fn handle(orders: &[Order]) -> HandlerOutcome {
 fn main() {
     let _app =
         RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(handle);
+            b.include(handle.batch(nonzero!(64)));
         });
 }

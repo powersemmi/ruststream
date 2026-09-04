@@ -188,12 +188,8 @@ async fn default_codec_router_batch_publishing_replies() {
     let publisher = broker.publisher();
 
     let router = Router::<MemoryBroker>::new()
-        .include(bp_relay)
-        .publisher(Publish)
-        .build()
-        .include(bp_relay_on)
-        .publisher(Publish)
-        .build();
+        .include(bp_relay.batch(nonzero!(8)).publisher(Publish).build())
+        .include(bp_relay_on.batch(nonzero!(8)).publisher(Publish).build());
 
     let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);
@@ -242,12 +238,8 @@ async fn chain_codec_router_batch_publishing_replies() {
 
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include(bpc_relay)
-        .publisher(Publish)
-        .build()
-        .include(bpc_relay_on)
-        .publisher(Publish)
-        .build();
+        .include(bpc_relay.batch(nonzero!(8)).publisher(Publish).build())
+        .include(bpc_relay_on.batch(nonzero!(8)).publisher(Publish).build());
 
     let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);
@@ -361,10 +353,8 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let router = Router::<MemoryBroker>::new()
-        .include(bl_relay)
-        .publisher(Publish)
-        .build();
+    let router =
+        Router::<MemoryBroker>::new().include(bl_relay.batch(nonzero!(8)).publisher(Publish).build());
 
     let app = RustStream::new(AppInfo::new("bl", "0.1.0"))
         .publish_layer(StampApp)

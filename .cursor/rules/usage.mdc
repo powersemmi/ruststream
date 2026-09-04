@@ -171,8 +171,20 @@ b.include(
         .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
 );
 
-// client-side batching for subscriptions without native batches
-b.include(drain.name("orders").buffered(nonzero!(128), Duration::from_millis(20)));
+// a page body: `batch(n)` is the page size, the one page parameter the framework carries, and it
+// is mandatory - a page handler mounted without it does not compile. The size goes to the broker,
+// which builds its pages to it; the body sees exactly what the broker delivered. It applies to
+// every page shape, replying or `Out`-carrying alike, and composes with a start position
+b.include(settle.name("orders").batch(nonzero!(64)));
+b.include(
+    drain
+        .name("orders")
+        .batch(nonzero!(128))
+        .start_at(MemoryPosition::start()),
+);
+
+// a broker's own batching options ride its subscription source, after the core's size:
+// b.include(settle.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)));
 ```
 
 `workers(n)` and `on_failure(..)` can also be written as attribute clauses

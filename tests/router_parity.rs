@@ -198,7 +198,7 @@ async fn a_router_mounts_a_batch_out_slot() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
-        .include(forward_page)
+        .include(forward_page.batch(nonzero!(64)))
         .publisher(Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-page", "0.1.0"))
@@ -443,7 +443,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
-        .include(settle_page)
+        .include(settle_page.batch(nonzero!(64)))
         .publisher(Publish)
         .out(DefaultSlot, Publish)
         .build();
@@ -508,12 +508,13 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
         .collect()
 }
 
-/// `.build()` on the batch publishing form takes the broker's own default publish policy.
+/// A batch publishing form mounted with only its page size takes the broker's own default
+/// publish policy: naming the size seals the definition, so the reply wiring defaults.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new().include(bulk_relay).build();
+    let router = Router::<MemoryBroker>::new().include(bulk_relay.batch(nonzero!(64)));
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -539,8 +540,7 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
         .build()
         .include(relay)
         .build()
-        .include(bulk_relay)
-        .build();
+        .include(bulk_relay.batch(nonzero!(64)));
 
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
     assert_eq!(

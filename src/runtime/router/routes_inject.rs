@@ -7,6 +7,7 @@
 //! handler.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use crate::{
@@ -55,6 +56,8 @@ pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra> {
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
+    /// The size the subscription opens its pages at, from the registration's `batch(n)`.
+    pub(super) page_size: NonZeroUsize,
 }
 
 /// See the publishing routes: a deferred route holds no built handler, so its `Debug` and its
@@ -181,6 +184,7 @@ where
             meta,
             policies,
             workers,
+            page_size,
         } = self;
         sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
@@ -199,6 +203,7 @@ where
             meta,
             policies,
             workers,
+            page_size,
         );
     }
 }
@@ -234,6 +239,7 @@ mod tests {
             meta: HandlerMetadata::raw("bulk-jobs"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
+            page_size: crate::nonzero!(8),
         };
         let rendered = format!("{batched:?}");
         assert!(rendered.contains("BatchInjectRoute"), "{rendered}");

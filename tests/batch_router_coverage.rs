@@ -99,13 +99,15 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
             |_msg: &MemoryMessage, _ctx: &mut Context| async { HandlerOutcome::ack() },
             HandlerMetadata::raw("brc-meta-handle"),
         )
-        .include(subscriber_def("brc-meta-batch", MetaBatch).build())
+        .include(
+            subscriber_def("brc-meta-batch", MetaBatch)
+                .batch(nonzero!(64))
+                .build(),
+        )
         .include(brc_relay)
         .publisher(Publish)
         .build()
-        .include(brc_batch_relay)
-        .publisher(Publish)
-        .build();
+        .include(brc_batch_relay.batch(nonzero!(64)).publisher(Publish).build());
 
     assert!(format!("{router:?}").contains("Router"));
 
@@ -202,10 +204,12 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
 /// startup failure, not a per-batch one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_publishing_route_reports_a_refused_reply_publisher() {
-    let router = Router::<MemoryBroker>::new()
-        .include(brc_batch_relay)
-        .publisher(RefusedPublish)
-        .build();
+    let router = Router::<MemoryBroker>::new().include(
+        brc_batch_relay
+            .batch(nonzero!(64))
+            .publisher(RefusedPublish)
+            .build(),
+    );
 
     let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(
         MemoryBroker::new(),

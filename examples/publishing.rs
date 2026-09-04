@@ -303,11 +303,16 @@ fn app() -> impl App {
             b.include(route).out(Orders, Publish).build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
-            // .transactional() marks the wiring; the pairing checks that the policy's live
+            // .batch(n) is the page size the subscription opens with, which every page mount
+            // owes. .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher is transactional. Without it, each reply publishes independently.
-            b.include(confirm)
-                .publisher(TransactionalPublish)
-                .transactional();
+            b.include(
+                confirm
+                    .batch(nonzero!(64))
+                    .publisher(TransactionalPublish)
+                    .transactional()
+                    .build(),
+            );
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

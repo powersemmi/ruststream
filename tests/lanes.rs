@@ -68,7 +68,7 @@ async fn the_lanes_compose_end_to_end() {
         b.include(mirror);
         b.include(measure);
         b.include(encode);
-        b.include(ingest);
+        b.include(ingest.batch(nonzero!(64)));
     });
     let tb = TestApp::start(app).await.expect("harness start");
 

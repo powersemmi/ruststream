@@ -493,6 +493,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
     workers: Workers,
+    page_size: NonZeroUsize,
 ) -> JoinHandle<()>
 where
     S: BatchSubscriber + Send + 'static,
@@ -503,7 +504,9 @@ where
 {
     tokio::spawn(async move {
         let hooks = TaskTracker::new();
-        let mut stream = std::pin::pin!(subscriber.batches());
+        // The registration's own page size, straight to the broker: whatever comes back is the
+        // page the handler sees.
+        let mut stream = std::pin::pin!(subscriber.batches(page_size));
         let mut tasks = JoinSet::new();
         loop {
             tokio::select! {

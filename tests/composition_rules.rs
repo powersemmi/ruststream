@@ -39,9 +39,13 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(broker, |b| {
-        b.include(tx_confirm)
-            .publisher(TransactionalPublish)
-            .transactional();
+        b.include(
+            tx_confirm
+                .batch(nonzero!(4))
+                .publisher(TransactionalPublish)
+                .transactional()
+                .build(),
+        );
     });
 
     let running = app.start().await.expect("startup failed");
@@ -76,9 +80,10 @@ async fn transactional_replies_compose_with_a_batch_pool() {
 static BUF_SEEN: AtomicUsize = AtomicUsize::new(0);
 static BUF_BATCHES: AtomicUsize = AtomicUsize::new(0);
 
-/// Client-side batching under a pool: the size cap or deadline (not the pool) closes a batch.
+/// Client-side paging under a pool: the page size or the adapter's deadline (not the pool)
+/// closes a page. The adapter is broker-author machinery, spelled here by hand to pin the
+/// composition; the size stays the mount site's.
 #[subscriber(Buffered::<Name>::new(Name::new("buf-in"))
-    .max_size(nonzero!(2))
     .max_wait(Duration::from_millis(10)), workers(2))]
 async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
     BUF_SEEN.fetch_add(orders.len(), Ordering::SeqCst);
@@ -86,7 +91,7 @@ async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// The Buffered adapter composes with a batch pool: batches still close by size or deadline,
+/// The Buffered adapter composes with a batch pool: pages still close by size or deadline,
 /// the pool only bounds how many are processed at once. Every delivery is drained.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_sources_compose_with_a_batch_pool() {
@@ -94,7 +99,7 @@ async fn buffered_sources_compose_with_a_batch_pool() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("buf", "0.1.0"))
-        .with_broker(broker, |b| b.include(buffered_drain));
+        .with_broker(broker, |b| b.include(buffered_drain.batch(nonzero!(2))));
 
     let running = app.start().await.expect("startup failed");
 

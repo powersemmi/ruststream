@@ -234,11 +234,12 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 
 ## 能力 trait
 
-只实现你的 Broker 真正支持的能力；它们都不属于必需接口。
+只实现你的 Broker 真正支持的能力；它们都不属于必需接口。`BatchSubscriber` 是例外：
+[每个 Broker 都提供它](#pages-batchsubscriber)，因为每个分页处理器都要它。
 
 | trait | 适用于支持这些能力的 Broker |
 |---|---|
-| `BatchSubscriber` | 批量接收消息 |
+| `BatchSubscriber` | 按页接收消息（每个 Broker 都要，见下文） |
 | `TransactionalPublisher` | 在句柄上围绕发布做 begin / commit / abort |
 | `OwnedTransactions` / `Transaction` | 缓冲区存放在值里的事务，同一个句柄上可同时开启任意多个 |
 | `RequestReply` | 原生的请求-响应（NATS 有，Kafka 没有） |
@@ -261,6 +262,30 @@ seeker，它只带句柄、不带位置。
 从不写你的任何类型；包含点会按这个约束把所绑定策略的活形态检查一次，在编译期完成。在四种发布者能力
 各自的约束之下，竞技场条目还会在包含点的编解码器和标记的字典之上给出该能力的类型化形态 - 发布构建
 器、事务作用域、拥有式事务、带关联的请求 - 所以服务要用到它们，只需你在实时发布者上实现该 trait。
+
+### 分页：`BatchSubscriber` {#pages-batchsubscriber}
+
+接受 `&[T]` 的处理器消费的是一页，而它的挂载点会给出一个数字 - 页大小 - 运行时把它直接传给
+`BatchSubscriber::batches(size)`。你的订阅者交出的那一页，就是处理器主体看到的那一页：运行时既不
+拆分也不合并，因此一页绝不能超过 `size` 条消息；传输手上只有更少的消息时，它也可以更短。
+
+把 `size` 翻译成你的客户端本来就说的话：`XREADGROUP COUNT`、JetStream 的 pull 批次、Kafka 的 poll
+上限。一页是怎么攒出来的，其余部分 - 阻塞超时、消费者组、预取窗口 - 仍归你自己的词汇，通过你的设置
+扩展 trait 配置在订阅源上，于是服务写出来是
+`b.include(handler.batch(nonzero!(6)).block(Duration::from_secs(5)))`：核心的词在前，你的词在后。
+
+如果传输一次只投递一条消息，不要干脆不实现这项能力：用核心的 `BufferedSubscriber` 在客户端攒页，
+它的 `batches` 会遵守拿到的页大小。封住不满一页的那个截止时间由你选定，在构造包装器时定一次；页
+大小则不由你选。订阅者的其余部分都原样穿过这层包装：
+
+```rust
+--8<-- "tests/batch_subscriber.rs:buffered_capability"
+```
+
+挂载点看不出你走的是两条路里的哪一条，而这正是要点：服务报出页大小，就拿到页。
+
+`conformance` 的批量套件会检查这项契约：它用小于整轮消息数的页大小打开订阅，页回得更长的 Broker
+会被判失败。
 
 ### 你的 crate 要提供的 prelude { #broker-prelude }
 

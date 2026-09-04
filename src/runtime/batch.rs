@@ -585,10 +585,15 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
 
 /// The page a batch settle is applying, captured for the harness: the payloads before the
 /// deliveries are consumed, then one settlement per element as it is applied.
+///
+/// The settlements are what release the harness's in-flight count, and the record is only
+/// complete once the last of them is applied - so the log holds a count of its own for as long
+/// as it lives, and a quiescence wait cannot return between the final settle and the record.
 #[cfg(feature = "testing")]
 struct PageLog {
     deliveries: Vec<crate::testing::coordinator::Delivered>,
     settled: usize,
+    _pending: crate::testing::coordinator::PendingRecord,
 }
 
 #[cfg(feature = "testing")]
@@ -603,6 +608,7 @@ impl PageLog {
                 })
                 .collect(),
             settled: 0,
+            _pending: crate::testing::coordinator::PendingRecord::new(),
         }
     }
 

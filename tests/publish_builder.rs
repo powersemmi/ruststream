@@ -312,7 +312,7 @@ async fn settle(
 async fn a_batch_publishing_handler_carries_the_builder() {
     let app =
         RustStream::new(AppInfo::new("bulk", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle)
+            b.include(settle.batch(nonzero!(8)))
                 .publisher(Publish)
                 .out(Events, Publish)
                 .build();

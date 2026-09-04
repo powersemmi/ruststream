@@ -6,7 +6,6 @@
 //! ```
 
 use std::future::{Future, ready};
-use std::time::Duration;
 
 // The attribute and the value constructor share the name in different namespaces, so the one glob
 // brings both into scope.
@@ -115,7 +114,7 @@ async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
 }
 // --8<-- [end:batch_selective]
 
-/// Whether batches arrive at all is a property of the broker, so it is settled at the mount.
+/// How big a page is, is the mount site's word, so both the name and the size land there.
 #[subscriber]
 async fn drain(orders: &[Order]) -> HandlerOutcome {
     println!("draining {} orders", orders.len());
@@ -143,19 +142,13 @@ fn app() -> RustStream {
         // --8<-- [end:name_mount]
         b.include(archive.name("archive"));
         // --8<-- [start:batch_mount]
-        b.include(settle);
+        // The page size is the one parameter a page mount owes the broker: at most 64 orders per
+        // call, whatever the broker builds its pages out of.
+        b.include(settle.batch(nonzero!(64)));
         // --8<-- [end:batch_mount]
-        b.include(ingest);
-        b.include(reconcile);
-        // --8<-- [start:batch_buffered]
-        // Client-side batching for subscriptions without native batches: close a batch at 128
-        // deliveries, or 20 ms after its first one.
-        b.include(
-            drain
-                .name("orders")
-                .buffered(nonzero!(128), Duration::from_millis(20)),
-        );
-        // --8<-- [end:batch_buffered]
+        b.include(ingest.batch(nonzero!(32)));
+        b.include(reconcile.batch(nonzero!(64)));
+        b.include(drain.name("orders").batch(nonzero!(128)));
         // --8<-- [start:builder_settings]
         b.include(
             bill.name("orders")

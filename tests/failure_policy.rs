@@ -277,7 +277,7 @@ async fn batch_decode_failure_drops_the_bad_element() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("bd", "0.1.0")).with_broker(broker, |b| {
-        b.include(bd);
+        b.include(bd.batch(nonzero!(64)));
     });
 
     let running = app.start().await.expect("startup failed");
@@ -315,10 +315,8 @@ async fn batch_decode_failure_drops_the_bad_element() {
 async fn batch_publishing_decode_failure_is_dropped() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let router = Router::<MemoryBroker>::new()
-        .include(bpd)
-        .publisher(Publish)
-        .build();
+    let router =
+        Router::<MemoryBroker>::new().include(bpd.batch(nonzero!(64)).publisher(Publish).build());
     let app = RustStream::new(AppInfo::new("bpd", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
 
@@ -358,7 +356,7 @@ async fn batch_handler_panic_fails_fast() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("batchboom", "0.1.0")).with_broker(broker, |b| {
-        b.include(batch_boom);
+        b.include(batch_boom.batch(nonzero!(64)));
     });
 
     let result = run_until_torn_down(app, publisher, "batchboom", &Wire::of(order_bytes(1))).await;

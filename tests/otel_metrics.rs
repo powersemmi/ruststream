@@ -17,9 +17,9 @@ use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::MemoryBroker;
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{ConnectedBroker, subscriber};
+use ruststream::{ConnectedBroker, nonzero, subscriber};
 use tokio::sync::{Mutex, Notify};
 
 use common::{Order, Wire, connected};
@@ -478,7 +478,7 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(absorb);
+        b.include(absorb.batch(nonzero!(8)));
     });
 
     let running = app.start().await.expect("startup failed");

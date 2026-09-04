@@ -161,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         |b| {
             b.include(convert).out(Events, Publish).build();
             b.include(status);
-            b.include(bulk);
+            b.include(bulk.batch(nonzero!(2)));
         },
     );
     // --8<-- [end:mounts]

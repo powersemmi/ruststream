@@ -1,0 +1,21 @@
+error[E0277]: this subscriber has no pages to size
+  --> tests/ui/subscriber_batch_without_pages.rs:19:26
+   |
+19 |     let _capped = handle.batch(nonzero!(64));
+   |                          ^^^^^ `batch(..)` sizes the pages a page body is handed
+   |
+   = help: the trait `ruststream::runtime::CapsPages` is not implemented for `HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>`
+   = note: the page size belongs to a page body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`), with or without a reply and `Out` slots; a single-message body has no page, and how many of those are in flight at once is `workers(n)` instead
+help: the following other types implement trait `ruststream::runtime::CapsPages`
+  --> src/runtime/handle/value.rs
+   |
+   | impl<T, R, O, C, H, Doc> CapsPages for HandleValue<Page<T>, R, O, C, H, Doc> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<Page<T>, R, O, C, H, Doc>`
+   |
+   | impl<F, R, O, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, R, O, C, H, Doc> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<PageDeserialized<F>, R, O, C, H, Doc>`
+   |
+   | impl<Hd, P, R, O, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, R, O, C, H, Doc> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<PagePair<Hd, P>, R, O, C, H, Doc>`
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>` to implement `ruststream::runtime::CapsPages`
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `BatchStep`

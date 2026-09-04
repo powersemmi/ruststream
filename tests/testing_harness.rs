@@ -15,9 +15,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use ruststream::memory::MemoryBroker;
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
 // needs no import (matching the `examples/publishing.rs` pattern).
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream, SubscriberSettings,
+};
 use ruststream::testing::{Outcome, TestApp, TestError};
-use ruststream::{Outgoing, Serialized, subscriber};
+use ruststream::{Outgoing, Serialized, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -94,7 +96,41 @@ async fn records_received_value_and_ack() {
         .received_raw();
     assert_eq!(raw.len(), 1);
 
+    // A single-message handler is handed one message at a time, which is the shape
+    // `assert_page_sizes` reports for it.
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_page_sizes(&[1]);
+
     tb.assert_running();
+}
+
+/// A page body sized well above what arrives: the page is what the broker had to give, and the
+/// page-size assertion reports that, not the size the mount asked for.
+#[subscriber("paged")]
+async fn take_page(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders.len();
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_reaches_the_body_as_the_broker_built_it() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(take_page.batch(nonzero!(8)));
+    });
+    let tb = TestApp::start(app).await.unwrap();
+
+    tb.message(&Order { id: 1 })
+        .to("paged")
+        .publish()
+        .await
+        .unwrap();
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("paged")
+        .assert_called_once()
+        .assert_page_sizes(&[1])
+        .settled(HandlerOutcome::ack());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

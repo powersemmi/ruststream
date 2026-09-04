@@ -135,7 +135,7 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward_page).publisher(Publish);
+        b.include(forward_page.batch(nonzero!(8))).publisher(Publish);
     });
     let running = app.start().await.expect("startup failed");
 
@@ -228,7 +228,9 @@ async fn a_batch_publishing_handler_composes_with_an_out_parameter() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let app = RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(broker, |b| {
-        b.include(settle_page).out(DefaultSlot, Publish).build();
+        b.include(settle_page.batch(nonzero!(8)))
+            .out(DefaultSlot, Publish)
+            .build();
     });
     let running = app.start().await.expect("startup failed");
 

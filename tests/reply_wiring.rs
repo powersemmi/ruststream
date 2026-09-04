@@ -132,10 +132,14 @@ async fn a_page_reply_commits_its_transaction() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(confirm_page)
-                .publisher(TransactionalPublish)
-                .batch_transform(for_batch(Stamp))
-                .transactional();
+            b.include(
+                confirm_page
+                    .batch(nonzero!(8))
+                    .publisher(TransactionalPublish)
+                    .batch_transform(for_batch(Stamp))
+                    .transactional()
+                    .build(),
+            );
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

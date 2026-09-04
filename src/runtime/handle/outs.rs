@@ -109,7 +109,7 @@ use super::axis::{
     Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
     SoloDeserialized, SoloPair,
 };
-use super::eager::{construct, settle_page, settle_solo};
+use super::eager::{construct, run_page, settle_solo};
 use super::value::{HandleValue, Sealed};
 
 // ------------------------------------------------------------------------------------- slots
@@ -874,8 +874,7 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        let verdict = self.0.body.handle(batch, injections, ctx).await;
-        settle_page(verdict, batch.len(), ctx.name())
+        run_page(&self.0.body, injections, batch, ctx).await
     }
 }
 
@@ -898,7 +897,6 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        let verdict = self.0.body.handle(batch, injections, ctx).await;
-        settle_page(verdict, batch.len(), ctx.name())
+        run_page(&self.0.body, injections, batch, ctx).await
     }
 }

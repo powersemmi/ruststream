@@ -85,7 +85,8 @@ pub use value::{
 };
 #[doc(hidden)]
 pub use value::{
-    ProbedReplyDef, ReplyAttach, UnbuiltDefinition, UnwiredReplyChain, probed_def, probed_reply_def,
+    ProbedReplyDef, ReplyAttach, UnbuiltDefinition, UnwiredReplyChain, UnwiredSealedReplyChain,
+    probed_def, probed_reply_def,
 };
 pub use verdict::Verdict;
 #[doc(hidden)]

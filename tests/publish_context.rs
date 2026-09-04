@@ -144,9 +144,13 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
         // single-message mounts would reject a wiring carrying it.
-        b.include(batch_echo)
-            .publisher(Publish)
-            .batch_transform(for_batch(MarkBatched));
+        b.include(
+            batch_echo
+                .batch(nonzero!(8))
+                .publisher(Publish)
+                .batch_transform(for_batch(MarkBatched))
+                .build(),
+        );
         b.include(batch_capture);
     });
 

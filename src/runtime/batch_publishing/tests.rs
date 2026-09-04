@@ -112,6 +112,51 @@ async fn transactional_replies_publish_atomically_then_ack() {
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
+/// A page reply is one call for the page the broker delivered: its replies publish together
+/// (one transaction under a transactional publisher) and the page settles once.
+#[tokio::test]
+async fn a_page_reply_answers_for_the_whole_delivered_page() {
+    let broker = MemoryBroker::new();
+    let mut input = broker.subscribe("orders");
+    let mut replies = broker.subscribe("confirmations");
+
+    let def = Confirm::new("confirmations");
+    let calls = def.calls();
+    let handler = BatchPublishingHandler {
+        def,
+        codec: JsonCodec,
+        publisher: Transactional::live(TypedPublisher::with_codec(broker.publisher(), JsonCodec)),
+        pipeline: PublishIdentity,
+        injections: (),
+        decode: FailurePolicy::Drop,
+    };
+
+    publish_numbers(&broker, "orders", &[1, 2, 3]).await;
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+    let batch = pull_batch(&mut input).await;
+    assert_eq!(batch.len(), 3, "the whole page is delivered at once");
+    handler.handle_batch(batch, &mut ctx).await;
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the delivered page is one call, whatever its size",
+    );
+    let confirmed = pull_batch(&mut replies).await;
+    let payloads: Vec<&[u8]> = confirmed.iter().map(IncomingMessage::payload).collect();
+    assert_eq!(payloads, [b"10".as_slice(), b"20", b"30"]);
+    for msg in confirmed {
+        msg.ack().await.unwrap();
+    }
+
+    // Every element of the page was acked, so nothing comes back.
+    let mut stream = std::pin::pin!(input.stream());
+    assert!(futures::poll!(stream.next()).is_pending());
+}
+
 #[tokio::test]
 async fn handler_error_publishes_nothing_and_settles_the_batch() {
     let broker = MemoryBroker::new();

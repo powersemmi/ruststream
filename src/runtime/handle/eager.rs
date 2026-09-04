@@ -188,12 +188,11 @@ where
 
 /// The dispatch adapter of a page body.
 ///
-/// Awaits the verdict, checks the per-element contract, and settles the page by it. Carries
-/// the [`batch`](crate::runtime::SubscriberBuilder::batch) cap, feeding an oversized page to
-/// the body in chunks.
+/// Awaits the verdict, checks the per-element contract, and settles the page by it. The page's
+/// size was named by [`batch`](crate::runtime::SubscriberSettings::batch) and applied by the
+/// broker, so nothing here resizes it.
 pub struct PageBody<A, H> {
     body: H,
-    cap: Option<std::num::NonZeroUsize>,
     _axes: PhantomData<fn() -> A>,
 }
 
@@ -203,46 +202,49 @@ impl<A, H> std::fmt::Debug for PageBody<A, H> {
     }
 }
 
-/// Applies the page contract to one verdict: `Ok` acks the chunk, an `Err` vector must be
-/// exactly chunk-length (a mismatch is a bug in the handler and panics under the subscriber's
+/// Applies the page contract to one verdict: `Ok` acks the page, an `Err` vector must be
+/// exactly page-length (a mismatch is a bug in the handler and panics under the subscriber's
 /// panic policy).
 pub(super) fn settle_page(
     verdict: Result<(), Vec<HandlerOutcome>>,
-    chunk_len: usize,
+    page_len: usize,
     subscription: &str,
 ) -> BatchResult {
     match verdict {
         Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
         Err(outcomes) => {
             assert!(
-                outcomes.len() == chunk_len,
+                outcomes.len() == page_len,
                 "subscriber '{subscription}' returned {} per-element outcomes for a page of {}",
                 outcomes.len(),
-                chunk_len,
+                page_len,
             );
             BatchResult::PerElement(outcomes)
         }
     }
 }
 
-/// Extends `settles` with one chunk's outcomes, one per element.
+/// Runs a page body over one delivered page and settles by its verdict.
 ///
-/// A uniform chunk outcome fans its status out per element; its one continuation rides the
-/// chunk's last element, so it still runs after the whole chunk is settled.
-fn extend_settles(settles: &mut Vec<HandlerOutcome>, outcome: BatchResult, chunk_len: usize) {
-    match outcome {
-        BatchResult::Uniform(uniform) => {
-            if chunk_len == 0 {
-                return;
-            }
-            let status = uniform.outcome();
-            settles.extend(
-                std::iter::repeat_with(|| HandlerOutcome::from(status)).take(chunk_len - 1),
-            );
-            settles.push(uniform);
-        }
-        BatchResult::PerElement(chunk) => settles.extend(chunk),
-    }
+/// The page arrives at the size the registration asked the broker for, and reaches the body
+/// exactly as it arrived: the settling page forms all run through here - plain and
+/// slot-carrying alike - and none of them splits it.
+pub(super) async fn run_page<T, O, C, S, H>(
+    body: &H,
+    outs: &O,
+    batch: &[T],
+    ctx: &mut Context<'_, C, S>,
+) -> BatchResult
+where
+    [T]: Input<Axis: PagedAxis>,
+    H: Handle<[T], (), O, C, S>,
+    T: Send + Sync,
+    O: Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+{
+    let verdict = body.handle(batch, outs, ctx).await;
+    settle_page(verdict, batch.len(), ctx.name())
 }
 
 impl<T, C, S, H> SliceHandler<T, C, S> for PageBody<Page<T>, H>
@@ -254,21 +256,7 @@ where
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_page(&self.body, &(), batch, ctx).await
     }
 }
 
@@ -286,26 +274,12 @@ where
         batch: &[Message<Hd, P>],
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_page(&self.body, &(), batch, ctx).await
     }
 }
 
 // The elements were already constructed by the dispatch adapter, borrowing the deliveries'
-// payloads, so this cell only chunks and settles like the decoded one. The element is a fresh
+// payloads, so this cell only runs and settles like the decoded one. The element is a fresh
 // parameter (`T`, one lifetime instantiation of the family's output) because a projection with
 // a free lifetime cannot head an impl; the pinned-axis bound is what ties it back to `F` and
 // normalizes the verdict family.
@@ -319,21 +293,7 @@ where
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        match self.cap {
-            None => {
-                let verdict = self.body.handle(batch, &(), ctx).await;
-                settle_page(verdict, batch.len(), ctx.name())
-            }
-            Some(max) => {
-                let mut settles = Vec::with_capacity(batch.len());
-                for chunk in batch.chunks(max.get()) {
-                    let verdict = self.body.handle(chunk, &(), ctx).await;
-                    let outcome = settle_page(verdict, chunk.len(), ctx.name());
-                    extend_settles(&mut settles, outcome, chunk.len());
-                }
-                BatchResult::PerElement(settles)
-            }
-        }
+        run_page(&self.body, &(), batch, ctx).await
     }
 }
 
@@ -383,50 +343,7 @@ where
     fn into_handler(self) -> PageBody<A, H> {
         PageBody {
             body: self.0.body,
-            cap: self.0.page_cap,
             _axes: PhantomData,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BatchResult, HandlerOutcome, extend_settles};
-
-    /// A uniform chunk outcome fans its status out per element, and the one continuation rides
-    /// the last of them.
-    #[test]
-    fn a_uniform_chunk_outcome_fans_out_per_element() {
-        let mut settles = Vec::new();
-        extend_settles(&mut settles, BatchResult::Uniform(HandlerOutcome::ack()), 3);
-        assert_eq!(settles.len(), 3);
-        assert!(settles.iter().all(HandlerOutcome::is_ack));
-    }
-
-    /// A chunk with nothing in it settles nothing: `chunks` never yields one, so this is the
-    /// guard that keeps the fan-out arithmetic from underflowing if it ever did.
-    #[test]
-    fn an_empty_chunk_settles_nothing() {
-        let mut settles = vec![HandlerOutcome::ack()];
-        extend_settles(
-            &mut settles,
-            BatchResult::Uniform(HandlerOutcome::drop()),
-            0,
-        );
-        assert_eq!(settles.len(), 1);
-        assert!(settles[0].is_ack());
-    }
-
-    /// A per-element chunk outcome extends by its own outcomes, unchanged.
-    #[test]
-    fn a_per_element_chunk_outcome_extends_by_its_own_outcomes() {
-        let mut settles = Vec::new();
-        extend_settles(
-            &mut settles,
-            BatchResult::PerElement(vec![HandlerOutcome::drop(), HandlerOutcome::retry()]),
-            2,
-        );
-        assert!(settles[0].is_drop());
-        assert!(settles[1].is_retry());
     }
 }

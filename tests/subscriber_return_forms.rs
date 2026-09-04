@@ -105,7 +105,7 @@ async fn every_settling_return_form_acks_a_finished_body() {
 async fn a_page_body_settles_its_whole_page() {
     let app =
         RustStream::new(AppInfo::new("returns", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle_page);
+            b.include(settle_page.batch(nonzero!(8)));
         });
     let tb = TestApp::start(app).await.expect("harness start");
 

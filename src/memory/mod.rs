@@ -256,7 +256,6 @@ impl MemoryBroker {
             name,
             rx,
             requeue: tx,
-            batch_limit: DEFAULT_BATCH_LIMIT,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
             #[cfg(feature = "testing")]
@@ -520,7 +519,6 @@ impl Subscribe for ConnectedMemoryBroker {
             name,
             rx,
             requeue: tx,
-            batch_limit: DEFAULT_BATCH_LIMIT,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
             #[cfg(feature = "testing")]
@@ -571,22 +569,17 @@ impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
     }
 }
 
-/// Default cap on how many buffered deliveries one batch drains.
-const DEFAULT_BATCH_LIMIT: usize = 64;
-
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
 ///
-/// Also consumable in batches through the
-/// [`BatchSubscriber`](crate::BatchSubscriber) capability; see
-/// [`set_batch_limit`](Self::set_batch_limit) for the batch size cap. Repositionable over the
-/// publish log through the [`Seekable`](crate::Seekable) capability: mint a [`MemorySeeker`]
-/// with [`seeker`](crate::Seekable::seeker) before opening the stream.
+/// Also consumable in pages through the [`BatchSubscriber`](crate::BatchSubscriber) capability,
+/// which caps each page at the size it is asked for. Repositionable over the publish log through
+/// the [`Seekable`](crate::Seekable) capability: mint a [`MemorySeeker`] with
+/// [`seeker`](crate::Seekable::seeker) before opening the stream.
 pub struct MemorySubscriber {
     name: String,
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
-    batch_limit: usize,
     /// Bus state, kept so a seek can read the publish log and check liveness.
     state: Arc<MemoryState>,
     /// Shared with every [`MemorySeeker`] minted off this subscriber: the pending reposition,
@@ -596,16 +589,6 @@ pub struct MemorySubscriber {
     /// re-counts and a consumed delivery decrements. `None` outside a harness run.
     #[cfg(feature = "testing")]
     coordinator: Option<Coordinator>,
-}
-
-impl MemorySubscriber {
-    /// Caps how many buffered deliveries one batch yielded by
-    /// [`BatchSubscriber::batches`](crate::BatchSubscriber::batches) may carry (default 64).
-    ///
-    /// A batch always carries at least one delivery, so a limit of zero behaves like one.
-    pub fn set_batch_limit(&mut self, limit: usize) {
-        self.batch_limit = limit;
-    }
 }
 
 impl fmt::Debug for MemorySubscriber {

@@ -48,7 +48,7 @@ async fn digest(page: &[Order], ctx: &mut Context<'_, MemoryBatchContext>) -> Ve
 async fn a_replying_page_reads_the_brokers_page_context() {
     let app =
         RustStream::new(AppInfo::new("digests", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(digest);
+            b.include(digest.batch(nonzero!(8)));
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -102,7 +102,7 @@ async fn replay_digest(
 async fn a_replying_page_repositions_through_the_page_context() {
     let app =
         RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(replay_digest);
+            b.include(replay_digest.batch(nonzero!(8)));
         });
     let tb = TestApp::start(app).await.expect("harness start");
 

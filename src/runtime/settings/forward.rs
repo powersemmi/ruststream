@@ -271,7 +271,7 @@ where
     type Extra = Def::Extra;
 
     fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra) {
-        let (def, source, workers, failures, codec) = self.into_parts();
+        let (def, source, (workers, failures, page_size, codec)) = self.into_parts();
         let (bound, extra) = def.bind(sources);
         (
             SubscriberBuilder {
@@ -279,6 +279,7 @@ where
                 source,
                 workers,
                 failures,
+                page_size,
                 codec,
                 _state: PhantomData,
             },

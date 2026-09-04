@@ -4,7 +4,7 @@
 //! depends on a capability adds it as a bound, leaving brokers that do not support it free of
 //! emulation cost.
 
-use std::{error::Error as StdError, future::Future, time::Duration};
+use std::{error::Error as StdError, future::Future, num::NonZeroUsize, time::Duration};
 
 use futures::Stream;
 
@@ -12,17 +12,19 @@ use crate::{
     Broker, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, Subscriber,
 };
 
-/// A subscriber that natively delivers messages in batches.
+/// A subscriber that delivers messages in pages.
 ///
-/// Brokers that batch on the wire (`Kafka`, `JetStream` pull consumers) implement this so the
-/// runtime can dispatch a whole batch through middleware in one go. Brokers without native
-/// batching simply do not implement it.
+/// Every broker offers this: those that batch on the wire (`Kafka` polls, `JetStream` pull
+/// consumers, `Redis` `XREADGROUP COUNT`) translate the page size into their client's own
+/// parameter, and those whose transport delivers one message at a time assemble pages on the
+/// client through the [`Buffered`](crate::Buffered) adapter. The page a handler sees is exactly
+/// the page the broker delivered: the runtime never splits or merges one.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not deliver messages in batches",
     label = "this subscription has no batching of its own",
-    note = "a handler taking `&[T]` needs batches: add the framework's buffer at the mount site, \
-            `b.include(handle.buffered(nonzero!(64), Duration::from_millis(10)))`, or mount the \
-            definition on a subscription kind that batches on the wire"
+    note = "a handler taking `&[T]` needs pages: mount it on a subscription kind that batches. A \
+            broker whose transport has no native batches gives its subscriber this capability \
+            through the `Buffered` adapter (see the broker-authors guide)"
 )]
 pub trait BatchSubscriber: Subscriber {
     /// Container yielded by [`batches`]. Implementations choose between [`Vec`], custom
@@ -31,13 +33,25 @@ pub trait BatchSubscriber: Subscriber {
     /// [`batches`]: Self::batches
     type Batch: IntoIterator<Item = <Self as Subscriber>::Message> + Send;
 
-    /// Returns a stream of batches.
+    /// Returns a stream of pages of at most `size` messages.
+    ///
+    /// `size` is the one parameter the framework passes down: it comes from the registration's
+    /// [`batch(n)`](crate::runtime::SubscriberSettings::batch), which every page handler names.
+    /// Everything else about how pages are formed - a block timeout, a consumer group, a
+    /// prefetch window - is the broker's own business, configured on its subscription source.
+    ///
+    /// A page must never carry more than `size` messages; it may carry fewer (that is what a
+    /// partial page or a deadline is for). Implementations translate `size` into whatever their
+    /// client already speaks (`XREADGROUP COUNT`, a pull batch size, a poll limit); one with no
+    /// native batching wraps its subscriber in [`Buffered`](crate::Buffered), which honours the
+    /// size on the client.
     ///
     /// # Cancel safety
     ///
     /// Same guarantees as [`Subscriber::stream`]: cancel-safe between polls.
     fn batches(
         &mut self,
+        size: NonZeroUsize,
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_;
 }
 

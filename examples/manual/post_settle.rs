@@ -73,8 +73,9 @@ impl Handle<[Order]> for NotifyPage {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("post_settle", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("orders", Notify).build());
-        // Batches dispatch per page rather than per delivery, and the page input is what says so.
-        b.include(subscriber("orders", NotifyPage).build());
+        // Batches dispatch per page rather than per delivery, and the page input is what says
+        // so; the page size is the one parameter the mount owes the broker.
+        b.include(subscriber("orders", NotifyPage).batch(nonzero!(64)).build());
     })
 }
 

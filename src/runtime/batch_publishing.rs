@@ -196,6 +196,8 @@ where
         if accepted.is_empty() {
             return;
         }
+        // The page the broker delivered is the page the handler answers for, whole: the size it
+        // was built at is the registration's own, so there is nothing left to split here.
         let result = match self.def.call(&values, &self.injections, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();

@@ -25,6 +25,7 @@ use crate::runtime::publishing::{
     PublishingCall, PublishingHandler, ReplySink, publishing_metadata,
 };
 use crate::runtime::router::{RouterDef, RouterSink};
+use crate::runtime::settings::PageSized;
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
@@ -231,7 +232,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef,
+        Def: BatchDef + PageSized,
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Context: crate::BuildBatchContext<<Source::Subscriber as Subscriber>::Message>
             + Send
@@ -245,12 +246,14 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         // The handler bound alone cannot pin the kind (two kinds may share an owned type), so
         // the adapter names the def's input kind explicitly.
         let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
             .with_decode(policies.decode);
-        self.sink
-            .push_subscribe_batch::<_, _, Def::Context>(source, handler, meta, policies, workers);
+        self.sink.push_subscribe_batch::<_, _, Def::Context>(
+            source, handler, meta, policies, workers, page_size,
+        );
     }
 
     /// Mounts a self-deserializing batch definition on `source`: no codec anywhere, each
@@ -259,7 +262,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
-        Def: BatchDef<Input = Provided<F>>,
+        Def: BatchDef<Input = Provided<F>> + PageSized,
         Def::Context: crate::BuildBatchContext<<Source::Subscriber as Subscriber>::Message>
             + Send
             + Sync
@@ -272,10 +275,12 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         let handler =
             DeserializedBatch::<_, F, _>::over(def.into_handler()).with_decode(policies.decode);
-        self.sink
-            .push_subscribe_batch::<_, _, Def::Context>(source, handler, meta, policies, workers);
+        self.sink.push_subscribe_batch::<_, _, Def::Context>(
+            source, handler, meta, policies, workers, page_size,
+        );
     }
 
     /// Mounts a publishing definition whose reply publisher is a policy source, paired by the
@@ -418,7 +423,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + 'static,
-        Def: BatchInjectCall<State> + 'static,
+        Def: BatchInjectCall<State> + PageSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
         Def::Context: crate::BuildBatchContext<<Source::Subscriber as Subscriber>::Message>
@@ -433,6 +438,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = batch_inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         self.sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
@@ -450,6 +456,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
             meta,
             policies,
             workers,
+            page_size,
         );
     }
 
@@ -475,7 +482,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
         <Source::Subscriber as Subscriber>::Message: Send + 'static,
-        Def: BatchPublishingCall<State> + 'static,
+        Def: BatchPublishingCall<State> + PageSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Injections: FromStartup<B, Source::Subscriber, OutExtra> + Send + Sync + 'static,
         Def::Reply: Serialize + Send + Sync + 'static,
@@ -496,6 +503,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = batch_publishing_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
+        let page_size = def.page_size();
         let pipeline = self.pipeline.clone();
         self.sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
@@ -520,6 +528,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
             meta,
             policies,
             workers,
+            page_size,
         );
     }
 }

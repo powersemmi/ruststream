@@ -16,7 +16,7 @@ use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{DefMountCodec, MountsWith};
+use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
 
 use super::builder::Router;
@@ -188,7 +188,10 @@ impl<B, Routes, RouteCodec, RouteLayers, Def, Policy>
 where
     B: Broker + 'static,
     // As on the single-message routes: the input kind decides whether a codec is wanted here.
-    Def: BatchPublishingDef + MountsWith<<Def as BatchPublishingDef>::Input, RouteCodec> + 'static,
+    Def: BatchPublishingDef
+        + PageSized
+        + MountsWith<<Def as BatchPublishingDef>::Input, RouteCodec>
+        + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchPublishingDef>::Input, RouteCodec>>,

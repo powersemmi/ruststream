@@ -805,7 +805,14 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     let workers_state = state_marker(args.workers.is_some());
     let failure_state = state_marker(args.on_failure.is_some());
     let settings_chain = quote!(#workers_step #failure_step #start_at_step);
-    let settings_state_ty = quote!((#workers_state, #failure_state, #position_state));
+    // The page-supply slot (`buffered(..)` / `batch(..)`) has no attribute clause of its own, so
+    // it is always the mount site's to fill.
+    let settings_state_ty = quote!((
+        #workers_state,
+        #failure_state,
+        #position_state,
+        ::ruststream::runtime::Open
+    ));
 
     Ok(HandlerParts {
         vis: &func.vis,

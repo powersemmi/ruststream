@@ -74,6 +74,36 @@ pub(crate) fn record_page(name: &str, deliveries: Vec<Delivered>) {
     });
 }
 
+/// One page's record still owed to the harness, held from the moment the settle path captures
+/// the page until the record is pushed.
+///
+/// The settlements a page applies are what release the in-flight count, and the record is
+/// written after the last of them, so without this a [`drive`](Coordinator::drive) could return
+/// in between and a test would assert against a page that has not been recorded yet.
+pub(crate) struct PendingRecord(Option<Coordinator>);
+
+impl PendingRecord {
+    /// Takes the count against the harness driving the current dispatch task, if any.
+    pub(crate) fn new() -> Self {
+        Self(
+            HARNESS
+                .try_with(|scope| {
+                    scope.coordinator.enqueued();
+                    scope.coordinator.clone()
+                })
+                .ok(),
+        )
+    }
+}
+
+impl Drop for PendingRecord {
+    fn drop(&mut self) {
+        if let Some(coordinator) = &self.0 {
+            coordinator.consumed();
+        }
+    }
+}
+
 /// Runs `fut` with the harness (when one is attached) visible to the recorders above.
 pub(crate) async fn in_harness_scope<F: Future>(scope: Option<HarnessScope>, fut: F) -> F::Output {
     match scope {

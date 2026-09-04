@@ -17,7 +17,7 @@ use crate::runtime::{
     Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings,
     Verdict, for_batch, subscriber,
 };
-use crate::{Publisher, Seeker};
+use crate::{Buffered, Publisher, Seeker};
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -512,9 +512,22 @@ fn eager_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber(MemorySource::new("orders"), Audit).build())
         .include(subscriber("frames", Inspect).build())
         .include(subscriber("orders", Expedite).build())
+        // Every page spelling names its size, and none of them mounts without it: the decoded
+        // one, the self-deserializing one and the paired one.
         .include(subscriber("orders", SettlePage).batch(nonzero!(8)).build())
-        .include(subscriber("frames", Frames).build())
-        .include(subscriber("orders", HeaderedPage).build())
+        .include(subscriber("frames", Frames).batch(nonzero!(8)).build())
+        .include(
+            subscriber("orders", HeaderedPage)
+                .batch(nonzero!(8))
+                .build(),
+        )
+        // The size composes with a start position, in either order.
+        .include(
+            subscriber("orders", SettlePage)
+                .batch(nonzero!(4))
+                .start_at(MemoryPosition::start())
+                .build(),
+        )
         .include(
             subscriber("orders", Audit)
                 .describe("Inbound orders")
@@ -568,6 +581,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .build(),
         )
         .include(subscriber("frames", RawEcho).reply().to("echoes").build())
+        // A page that replies names its size like any other page.
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
@@ -583,6 +597,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .publisher(MemoryPublish)
                 .batch_transform(for_batch(StampReply))
                 .transactional()
+                .batch(nonzero!(8))
                 .build(),
         )
         .include(
@@ -595,6 +610,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", ConfirmPagesInContext)
                 .reply()
                 .to("confirmations")
+                .batch(nonzero!(8))
                 .build(),
         )
         .include(
@@ -602,6 +618,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .reply()
                 .to("confirmations")
                 .publisher(MemoryPublish)
+                .batch(nonzero!(8))
                 .build(),
         )
         // The client-side buffer turns any subscriber into a page source, so the reply and the
@@ -610,7 +627,8 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", ConfirmPagesInContext)
                 .reply()
                 .to("confirmations")
-                .buffered(nonzero!(4), std::time::Duration::from_millis(5))
+                .map_source(Buffered::new)
+                .batch(nonzero!(4))
                 .build(),
         )
 }
@@ -881,7 +899,8 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", PinnedMirror).build())
         .out(Analytics, MemoryPublish)
         .build()
-        .include(subscriber("orders", PageMirror).build())
+        // A slot-carrying page names its size like any other page.
+        .include(subscriber("orders", PageMirror).batch(nonzero!(8)).build())
         .out(Analytics, MemoryPublish)
         .build()
         .include(
@@ -915,10 +934,12 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .out(Analytics, MemoryPublish)
         .transform(Trace)
         .build()
+        // A page that both replies and fans out through the arena.
         .include(
             subscriber("orders", PageGateway)
                 .reply()
                 .to("confirmations")
+                .batch(nonzero!(8))
                 .build(),
         )
         .out(Analytics, MemoryPublish)
@@ -936,11 +957,16 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", PageGatewayInContext)
                 .reply()
                 .to("confirmations")
+                .batch(nonzero!(8))
                 .build(),
         )
         .out(Analytics, MemoryPublish)
         .build()
-        .include(subscriber("orders", PageMirrorInContext).build())
+        .include(
+            subscriber("orders", PageMirrorInContext)
+                .batch(nonzero!(8))
+                .build(),
+        )
         .out(Analytics, MemoryPublish)
         .build()
 }
@@ -1005,13 +1031,9 @@ async fn a_subscriber_dispatches_end_to_end() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("orders", Audit).build());
-            b.include(
-                subscriber("orders", SettlePage)
-                    .buffered(nonzero!(4), std::time::Duration::from_millis(5))
-                    .build(),
-            );
+            b.include(subscriber("orders", SettlePage).batch(nonzero!(4)).build());
             b.include(subscriber("frames", Inspect).build());
-            b.include(subscriber("frames", Frames).build());
+            b.include(subscriber("frames", Frames).batch(nonzero!(4)).build());
             b.include(
                 subscriber("orders", Echo)
                     .reply()
@@ -1024,12 +1046,14 @@ async fn a_subscriber_dispatches_end_to_end() {
                 subscriber("orders", ConfirmPagesInContext)
                     .reply()
                     .to("confirmations")
+                    .batch(nonzero!(4))
                     .build(),
             );
             b.include(
                 subscriber("orders", PageGatewayInContext)
                     .reply()
                     .to("confirmations")
+                    .batch(nonzero!(4))
                     .build(),
             )
             .out(Analytics, MemoryPublish)

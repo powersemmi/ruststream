@@ -95,12 +95,17 @@ async fn scope_codec_include_family_dispatches() {
     let app =
         RustStream::new(AppInfo::new("sc", "0.1.0")).with_broker_codec(broker, JsonCodec, |b| {
             b.include(plain_on);
-            b.include(batch);
-            b.include(batch_on);
+            b.include(batch.batch(nonzero!(64)));
+            b.include(batch_on.batch(nonzero!(64)));
             b.include(relay).publisher(Publish);
             b.include(relay_on).publisher(Publish);
-            b.include(batch_relay).publisher(Publish);
-            b.include(batch_relay_on).publisher(Publish);
+            b.include(batch_relay.batch(nonzero!(64)).publisher(Publish).build());
+            b.include(
+                batch_relay_on
+                    .batch(nonzero!(64))
+                    .publisher(Publish)
+                    .build(),
+            );
             b.include(pout_check);
             b.include(pout_on_check);
             b.include(bpout_check);
@@ -188,9 +193,14 @@ async fn default_codec_include_family_dispatches() {
 
     let app = RustStream::new(AppInfo::new("dsc", "0.1.0")).with_broker(broker, |b| {
         b.include(d_plain_on);
-        b.include(d_batch_on);
+        b.include(d_batch_on.batch(nonzero!(64)));
         b.include(d_relay_on).publisher(Publish);
-        b.include(d_batch_relay_on).publisher(Publish);
+        b.include(
+            d_batch_relay_on
+                .batch(nonzero!(64))
+                .publisher(Publish)
+                .build(),
+        );
         b.include(d_pout_on_check);
         b.include(d_bpout_on_check);
     });

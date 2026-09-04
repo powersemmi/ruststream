@@ -15,8 +15,8 @@ use std::{
 
 use common::{BackgroundRun, Order, wait_for};
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream};
-use ruststream::subscriber;
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
+use ruststream::{nonzero, subscriber};
 use tokio::sync::Notify;
 
 // Shared counters keyed by a static so the macro handler (a free fn) can reach them.
@@ -194,7 +194,7 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
     let publisher = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("batched", "0.1.0"))
-        .with_broker(broker, |b| b.include(handle_batch));
+        .with_broker(broker, |b| b.include(handle_batch.batch(nonzero!(64))));
 
     let run = BackgroundRun::spawn(app);
 

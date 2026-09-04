@@ -354,16 +354,15 @@ pub mod __private {
 ///
 /// The expansion is an inline `const` block, so `nonzero!(0)` fails the build instead of
 /// panicking at runtime, and the `NonZero` width is inferred from the call site - the same
-/// literal works for [`Buffered::max_size`](crate::Buffered::max_size) (`NonZeroUsize`) and any
-/// other `NonZero` parameter.
+/// literal works for a page size (`NonZeroUsize`) and any other `NonZero` parameter.
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Buffered, Name, nonzero};
+/// use ruststream::nonzero;
 ///
-/// let source = Buffered::new(Name::new("orders")).max_size(nonzero!(128));
-/// # let _ = source;
+/// let page: core::num::NonZeroUsize = nonzero!(128);
+/// # let _ = page;
 /// ```
 ///
 /// Zero does not compile:

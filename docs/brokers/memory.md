@@ -70,9 +70,9 @@ a simulation of another broker's:
   `Out<impl RequestReply, ..>` binds to `MemoryRequest`. A responder reads `reply-to` from the
   request and publishes its reply to that name. Requests nobody answers fail with
   `RequestError::Timeout`.
-- **Batches.** `MemorySubscriber` implements `BatchSubscriber`: a batch is the first awaited
-  delivery plus everything already buffered, capped by `set_batch_limit` (default 64). Partial
-  batches ship immediately, so no deadline timer is involved.
+- **Pages.** `MemorySubscriber` implements `BatchSubscriber` natively: a page is the first
+  awaited delivery plus everything already buffered, capped at the size the registration named
+  with `batch(n)`. Partial pages ship immediately, so no deadline timer is involved.
 - **Transactions.** `MemoryPublisher`, what the `MemoryPublish` policy pairs into, carries both
   transaction kinds, so a slot or wiring bound with `TransactionalPublisher` or
   `OwnedTransactions` binds to `MemoryPublish`. Publishes inside a scope are buffered and

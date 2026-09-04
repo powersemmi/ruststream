@@ -511,7 +511,7 @@ mod typed_headers_spec {
             |b| {
                 b.include(convert).out(Events, Publish).build();
                 b.include(respond);
-                b.include(bulk);
+                b.include(bulk.batch(nonzero!(8)));
             },
         );
         let spec = build_spec(&app);

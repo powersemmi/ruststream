@@ -278,6 +278,31 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
+    /// Asserts the body was handed pages of exactly `sizes`, in the order they arrived.
+    ///
+    /// The page the body sees is the page the broker delivered: the mount site names the size
+    /// with [`batch`](crate::runtime::SubscriberSettings::batch) and the broker builds the pages
+    /// to it, so this is where a test reads back that it did. One call is one page, which is
+    /// what [`assert_called`](Self::assert_called) counts, while
+    /// [`received_raw`](Self::received_raw) still lists the elements flat. A single-message
+    /// handler is called per delivery, so a run of three reports `[1, 1, 1]`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pages differ from `sizes`.
+    pub fn assert_page_sizes(self, sizes: &[usize]) -> Self {
+        self.with_records(|records| {
+            let pages: Vec<usize> = records.iter().map(|r| r.deliveries.len()).collect();
+            assert_eq!(
+                pages.as_slice(),
+                sizes,
+                "subscriber {:?} was handed pages of {pages:?}",
+                self.name,
+            );
+        });
+        self
+    }
+
     /// Asserts the handler panicked on the most recent delivery.
     ///
     /// # Panics

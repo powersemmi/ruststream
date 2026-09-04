@@ -146,8 +146,8 @@ async fn batch_pool_dispatches_batches() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app =
-        RustStream::new(AppInfo::new("pages", "0.1.0")).with_broker(broker, |b| b.include(settle));
+    let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
+        .with_broker(broker, |b| b.include(settle.batch(nonzero!(8))));
 
     let running = app.start().await.expect("startup failed");
 
@@ -254,7 +254,11 @@ async fn closure_batch_subscription_receives_batches() {
     let seen = Arc::new(AtomicUsize::new(0));
 
     let router = Router::<MemoryBroker>::new()
-        .include(subscriber("fn-pages", CountPages(Arc::clone(&seen))).build())
+        .include(
+            subscriber("fn-pages", CountPages(Arc::clone(&seen)))
+                .batch(nonzero!(8))
+                .build(),
+        )
         .workers(Workers::pool(nonzero!(2)));
 
     let app = RustStream::new(AppInfo::new("fn-pages", "0.1.0"))

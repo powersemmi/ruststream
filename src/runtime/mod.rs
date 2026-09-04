@@ -72,7 +72,7 @@ pub use handle::{
     EntryMarkers, OutPos, ReplyAttach, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute,
     SealedBatchPublishing, SealedBatchPublishingOut, SealedPublishing, SealedPublishingOut,
     SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach, UnbuiltDefinition,
-    UnwiredReplyChain, WireDocs,
+    UnwiredReplyChain, UnwiredSealedReplyChain, WireDocs,
 };
 #[doc(hidden)]
 pub use handler::IntoOutcome;
@@ -127,11 +127,11 @@ pub use router::{
     RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
 };
 pub use settings::{
-    AllOpen, BufferedStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
+    AllOpen, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open, PageSized,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
-pub use settings::{DefinitionInputCodec, MountsWith};
+pub use settings::{CapsPages, DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
 pub use slot::{
     BindSlot, InitSlots, IntoSlotSource, MissingSlot, NamedStep, NoOutBound, OutAttachment,

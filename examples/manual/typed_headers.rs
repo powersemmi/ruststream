@@ -332,7 +332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .to("jobs.status")
                     .build(),
             );
-            b.include(subscriber("chunks.bulk", Bulk).build());
+            b.include(subscriber("chunks.bulk", Bulk).batch(nonzero!(2)).build());
         },
     );
     // --8<-- [end:mounts]
