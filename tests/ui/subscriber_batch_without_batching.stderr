@@ -20,4 +20,5 @@ help: the following other types implement trait `BatchSubscriber`
    |
    | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
-   = note: required for `Batch` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
+   = note: required for `Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
+   = note: required for `Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`

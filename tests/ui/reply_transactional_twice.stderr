@@ -1,21 +1,18 @@
-error[E0277]: this reply already publishes inside a transaction
-  --> tests/ui/reply_transactional_twice.rs:30:18
+error[E0599]: the method `transactional` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::BatchPublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Page<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Fixed)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>, ()), ruststream::runtime::ReplyLast>, ruststream::runtime::OnDrop>`, but its trait bounds were not satisfied
+  --> tests/ui/reply_transactional_twice.rs:28:14
    |
-30 |                 .transactional()
-   |                  ^^^^^^^^^^^^^ `.transactional()` marks the reply's publish state, and it is marked
+25 | /         b.include(confirm.batch(nonzero!(8)))
+26 | |             .out(Reply, MemoryPublish)
+27 | |             .transactional()
+28 | |             .transactional();
+   | |             -^^^^^^^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   | |_____________|
    |
-   = help: the trait `ruststream::runtime::PublishingDirectly` is not implemented for `InTransaction`
-   = note: a page's replies ride one transaction: drop one of the `.transactional()` calls
-help: the trait `ruststream::runtime::PublishingDirectly` is implemented for `Direct`
-  --> src/runtime/publish/wiring.rs
    |
-   | impl PublishingDirectly for Direct {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: required by a bound in `ReplyWiringChain::<Chain, W>::transactional`
-  --> src/runtime/handle/value.rs
+  ::: src/runtime/publish/wiring.rs
    |
-   |     pub fn transactional(self) -> ReplyWiringChain<Chain, W::Out>
-   |            ------------- required by a bound in this associated function
-   |     where
-   |         W: TransactionalReply<State: PublishingDirectly>,
-   |                                      ^^^^^^^^^^^^^^^^^^ required by this bound in `ReplyWiringChain::<Chain, W>::transactional`
+   |   pub struct InTransaction;
+   |   ------------------------ doesn't satisfy `_: PublishingDirectly`
+   |
+   = note: the following trait bounds were not satisfied:
+           `InTransaction: ruststream::runtime::PublishingDirectly`

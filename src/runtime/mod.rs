@@ -133,7 +133,8 @@ pub use settings::{CapsPages, DefinitionInputCodec, MountsWith};
 pub use slot::{
     BatchTransformLast, BindAt, BindSlot, CodecAt, CodecLast, InitSlots, IntoSlotSource,
     MapPolicyAt, MapPolicyLast, MissingSlot, NamedStep, NoOutBound, NoReply, OutAttachment,
-    ReplyLast, SlotCodec, SlotPos, TransactionalLast, TransformAt, TransformLast, WithSource,
+    ReplyLast, ReplyOpen, ReplyStep, SlotCodec, SlotPos, TransactionalLast, TransformAt,
+    TransformLast, WithSource,
 };
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,

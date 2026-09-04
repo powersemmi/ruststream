@@ -1,10 +1,10 @@
 error[E0277]: this step has no publish position to apply to
-  --> tests/ui/out_transform_without_slot.rs:31:24
+  --> tests/ui/reply_transform_without_position.rs:32:38
    |
-31 |             .transform(Envelope)
-   |              --------- ^^^^^^^^ no `.out(marker, policy)` call precedes it in this chain
-   |              |
-   |              required by a bound introduced by this call
+32 |         b.include(confirm).transform(Stamp);
+   |                            --------- ^^^^^ no `.out(marker, policy)` call precedes it in this chain
+   |                            |
+   |                            required by a bound introduced by this call
    |
    = help: the trait `ruststream::runtime::NamedStep` is not implemented for `ruststream::runtime::NoOutBound`
    = note: a step rides the position named right before it: `.out(Reply, Policy).transform(..)` for a reply, `.out(Marker, Policy).transform(..)` for a slot

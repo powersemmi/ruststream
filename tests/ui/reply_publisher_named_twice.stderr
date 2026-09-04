@@ -1,0 +1,12 @@
+error[E0599]: the method `out` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::PublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ()), ruststream::runtime::ReplyLast>, ruststream::runtime::OnDrop>`, but its trait bounds were not satisfied
+  --> tests/ui/reply_publisher_named_twice.rs:27:14
+   |
+25 | /         b.include(confirm)
+26 | |             .out(Reply, MemoryPublish)
+27 | |             .out(Reply, MemoryPublish);
+   | |             -^^^ method cannot be called due to unsatisfied trait bounds
+   | |_____________|
+   |
+   |
+   = note: the following trait bounds were not satisfied:
+           `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ()): ruststream::runtime::BindAt<runtime::router::mount::PublishMount, _, _, _>`

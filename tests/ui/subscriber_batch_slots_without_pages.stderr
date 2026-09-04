@@ -14,7 +14,7 @@ help: the trait `ruststream::runtime::CapsPages` is not implemented for `handle`
              HandleValue<Page<T>, R, O, C, H, Doc>
              HandleValue<PageDeserialized<F>, R, O, C, H, Doc>
              HandleValue<PagePair<Hd, P>, R, O, C, H, Doc>
-             ReplyValue<V, Dest, Attach>
+             ReplyValue<V, Dest>
              Sealed<V>
    = note: required for `SubscriberBuilder<handle, Name, (Open, Open, Open, Open)>` to implement `BatchStep`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

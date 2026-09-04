@@ -9,7 +9,7 @@ use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
 use crate::runtime::router::{MapPublisher, Router, RouterCommit, RouterDef, RouterWith};
 use crate::runtime::slot::{
-    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, TransactionalLast,
+    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, ReplyStep, TransactionalLast,
     TransformLast,
 };
 
@@ -303,7 +303,7 @@ where
         Term,
     >
     where
-        Attach: BatchTransformLast<N, Last, Step: NamedStep>,
+        Attach: BatchTransformLast<N, Last, Step: ReplyStep>,
         Term: ScopeTerminal<
                 B,
                 Layers,
@@ -335,7 +335,7 @@ where
         Term,
     >
     where
-        Attach: TransactionalLast<Last, Step: NamedStep>,
+        Attach: TransactionalLast<Last, Step: ReplyStep>,
         Term: ScopeTerminal<
                 B,
                 Layers,
@@ -367,8 +367,8 @@ where
 }
 
 /// Commits a slot-carrying registration once every position is bound.
-impl<'s, B, Layers, C, State, Pipeline, Chain>
-    Mounting<'s, B, Layers, C, State, Pipeline, Chain, OnBuild>
+impl<B, Layers, C, State, Pipeline, Chain>
+    Mounting<'_, B, Layers, C, State, Pipeline, Chain, OnBuild>
 where
     B: Broker + 'static,
 {

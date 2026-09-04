@@ -22,8 +22,8 @@ use std::marker::PhantomData;
 #[cfg(doc)]
 use crate::runtime::slot::Reply;
 use crate::runtime::slot::{
-    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound, TransactionalLast,
-    TransformLast,
+    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound, ReplyStep,
+    TransactionalLast, TransformLast,
 };
 
 /// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
@@ -144,7 +144,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         transform: N,
     ) -> RouterWith<Mount, R, Def, <Attach as BatchTransformLast<N, Last>>::Out, Last>
     where
-        Attach: BatchTransformLast<N, Last, Step: NamedStep>,
+        Attach: BatchTransformLast<N, Last, Step: ReplyStep>,
     {
         RouterWith::new(
             self.def,
@@ -166,7 +166,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         self,
     ) -> RouterWith<Mount, R, Def, <Attach as TransactionalLast<Last>>::Out, Last>
     where
-        Attach: TransactionalLast<Last, Step: NamedStep>,
+        Attach: TransactionalLast<Last, Step: ReplyStep>,
     {
         RouterWith::new(self.def, self.attach.transactional_last(), self.router)
     }
@@ -230,6 +230,7 @@ pub trait MapPublisher: Sized {
     /// The replacement is the same policy type: a broker's publisher settings are that policy's
     /// own fields (an exchange, a partition key, a confirm mode), while a different policy type
     /// is a different publish mode and belongs in the `.out(marker, policy)` call itself.
+    #[must_use]
     fn map_publisher(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
 }
 
@@ -240,7 +241,7 @@ where
     type Policy = Attach::Policy;
 
     fn map_publisher(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self {
-        RouterWith::new(self.def, self.attach.map_policy_last(f), self.router)
+        Self::new(self.def, self.attach.map_policy_last(f), self.router)
     }
 }
 

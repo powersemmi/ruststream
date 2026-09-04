@@ -11,4 +11,5 @@ help: the trait `PageSized` is implemented for `SubscriberBuilder<Def, Src, (W, 
    |
    | impl<Def, Src, W, F, P, DC> PageSized for SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = note: required for `Batch` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`

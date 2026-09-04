@@ -1,34 +1,3 @@
-error[E0277]: `runtime::inject::InjectHandler<SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec>` cannot handle `MemoryMessage`
-  --> tests/ui/out_typed_capability_mismatch.rs:35:55
-   |
-35 |         b.include(forward).out(Events, MemoryPublish).build();
-   |                                                       ^^^^^ unsatisfied trait bound
-   |
-   = help: the trait `Handler<MemoryMessage>` is not implemented for `runtime::inject::InjectHandler<SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec>`
-   = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
-help: the trait `Handler<Msg, <Def as runtime::inject::InjectDef>::Context, State>` is conditionally implemented for `runtime::inject::InjectHandler<Def, DecodeCodec>`
-  --> src/runtime/inject.rs
-   |
-   | / impl<Msg, Def, DecodeCodec, State> Handler<Msg, Def::Context, State>
-   | |     for InjectHandler<Def, DecodeCodec>
-   | | where
-   | |     Msg: IncomingMessage,
-   | |     Def: InjectCall<State>,
-   | |          ----------------- unsatisfied requirement introduced here: `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>: runtime::inject::InjectCall<()>`
-...  |
-   | |     DecodeCodec: Send + Sync,
-   | |     State: Send + Sync,
-   | |_______________________^
-   = note: required for `(ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<MemoryPublish>>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open, Open)>>`
-note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::build`
-  --> src/runtime/app/include/slot_builder.rs
-   |
-   |     pub fn build(self)
-   |            ----- required by a bound in this associated function
-   |     where
-   |         Slots: SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::build`
-
 error[E0277]: `MemoryPublisher` does not support request / reply messaging
   --> tests/ui/out_typed_capability_mismatch.rs:35:55
    |
@@ -65,13 +34,17 @@ note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<Events, 
    = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
    = note: 1 redundant requirement hidden
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`
-   = note: required for `(ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<MemoryPublish>>,)` to implement `ruststream::runtime::SlotCommit<runtime::router::mount::InjectMount, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<forward, Name, (Open, Open, Open, Open)>>`
-note: required by a bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::build`
-  --> src/runtime/app/include/slot_builder.rs
+   = note: required for `runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>` to implement `runtime::router::routes::MountRoute<MemoryBroker, ()>`
+   = note: required for `(runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Events, MemoryPublisher, JsonCodec, PublishIdentity, Progress>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: 1 redundant requirement hidden
+   = note: required for `RouterWith<runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<forward, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<MemoryPublish>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, Chain, ruststream::runtime::OnBuild>::build`
+  --> src/runtime/app/include/guard.rs
    |
    |     pub fn build(self)
    |            ----- required by a bound in this associated function
    |     where
-   |         Slots: SlotCommit<Mount, B, Layers, C, State, Pipeline, Def>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `IncludeSlots::<'s, Mount, B, Layers, C, State, Pipeline, Def, Slots, Last>::build`
+   |         Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, Chain, OnBuild>::build`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

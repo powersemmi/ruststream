@@ -1,0 +1,18 @@
+error[E0277]: `.batch_transform(..)` and `.transactional()` ride the reply position
+  --> tests/ui/slot_batch_transform_rejected.rs:36:30
+   |
+36 |             .batch_transform(for_batch(Stamp))
+   |              --------------- ^^^^^^^^^^^^^^^^ the position this chain named before it is not `Reply`
+   |              |
+   |              required by a bound introduced by this call
+   |
+   = help: the trait `ruststream::runtime::ReplyStep` is not implemented for `ruststream::runtime::SlotPos<0>`
+   = note: name the reply's publish policy first (`.out(Reply, policy)`); a slot publish is one message with no page, so a slot takes `.transform(..)` instead and a body opens its own slot transaction with `entry.begin()`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>, Term>::batch_transform`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn batch_transform<N>(
+   |            --------------- required by a bound in this associated function
+...
+   |         Attach: BatchTransformLast<N, Last, Step: ReplyStep>,
+   |                                                   ^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>, Term>::batch_transform`

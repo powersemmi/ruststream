@@ -61,6 +61,7 @@ pub trait MapReplyPolicy: Sized {
     type Policy;
 
     /// Replaces it with one the broker's own settings produced.
+    #[must_use]
     fn map_policy(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
 }
 

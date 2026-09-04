@@ -579,10 +579,29 @@ pub trait BindAt<Mount, M, Policy, Index> {
     fn bind_at(self, policy: Policy) -> Self::Out;
 }
 
-// The reply position, open exactly while it still carries the broker's default: a second
-// `.out(Reply, ..)` finds no impl and reads the trait's own note.
-impl<Mount, Policy, Slots> BindAt<Mount, Reply, Policy, ReplyLast> for (DefaultReply, Slots)
+/// A reply position still open: what `.out(Reply, policy)` binds.
+///
+/// The bind step states this about the position rather than about the whole attachment, so a
+/// second `.out(Reply, ..)` - and an `.out(Reply, ..)` on a handler that declares no reply -
+/// fails on this bound and the call site reads the note instead of a bare "no method".
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this registration has no open reply position",
+    label = "`.out(Reply, ..)` has nothing to bind here",
+    note = "`.out(Reply, policy)` names the publish policy of a `publish(\"dest\")` handler's \
+            returned value, once: a handler that declares no reply has no `Reply` position at \
+            all, and one whose policy is already named has none left open"
+)]
+pub trait ReplyOpen {}
+
+impl ReplyOpen for DefaultReply {}
+
+// The reply position, open exactly while it still carries the broker's default: the impl matches
+// on any reply attachment so that a second `.out(Reply, ..)` fails on `ReplyOpen` and reads its
+// note, rather than finding no impl at all.
+impl<Mount, Policy, Rep, Slots> BindAt<Mount, Reply, Policy, ReplyLast> for (Rep, Slots)
 where
+    Rep: ReplyOpen,
     Mount: ReplyAttachment<Policy>,
 {
     type Out = (WithSource<Mount::Wiring>, Slots);
@@ -639,6 +658,7 @@ pub trait MapPolicyAt<Index>: Sized {
     type Policy;
 
     /// Replaces it.
+    #[must_use]
     fn map_policy_at(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
 }
 
@@ -743,17 +763,27 @@ impl<Cd, Rep, Slots> CodecLast<Cd, NoOutBound> for (Rep, Slots) {
     }
 }
 
+/// A position the page-only steps can ride: the reply, and nothing else.
+///
+/// [`BatchTransformLast`] and [`TransactionalLast`] report the position as an associated type and
+/// state this about it, so the step fails on this bound and the call site reads the note rather
+/// than a bare "no method".
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`.batch_transform(..)` and `.transactional()` ride the reply position",
+    label = "the position this chain named before it is not `Reply`",
+    note = "name the reply's publish policy first (`.out(Reply, policy)`); a slot publish is one \
+            message with no page, so a slot takes `.transform(..)` instead and a body opens its \
+            own slot transaction with `entry.begin()`"
+)]
+pub trait ReplyStep {}
+
+impl ReplyStep for ReplyLast {}
+
 /// Composes a batch transform onto the reply a mount chain named last. Reply-only: a slot
 /// publish is one message, so there is no page for a batch transform to run over. Machinery;
 /// never named directly.
 #[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "`.batch_transform(..)` does not apply to an Out slot",
-    label = "the position named before it is a slot, not the reply",
-    note = "a slot publish is one message with no page: `.batch_transform(..)` rides the reply \
-            of a page handler (`.out(Reply, policy).batch_transform(..)`), and a slot takes \
-            `.transform(..)` instead"
-)]
 pub trait BatchTransformLast<N, Last> {
     /// See [`TransformLast::Step`].
     type Step;
@@ -781,7 +811,17 @@ where
     }
 }
 
-// See `TransformLast`'s own arm.
+// The slot and the "nothing named yet" arms: present so the step resolves as a method and fails
+// on `Step: ReplyStep`, which is where the guidance lives. Neither ever runs.
+impl<N, const POS: usize, Rep, Slots> BatchTransformLast<N, SlotPos<POS>> for (Rep, Slots) {
+    type Step = SlotPos<POS>;
+    type Out = Self;
+
+    fn batch_transform_last(self, _transform: N) -> Self {
+        self
+    }
+}
+
 impl<N, Rep, Slots> BatchTransformLast<N, NoOutBound> for (Rep, Slots) {
     type Step = NoOutBound;
     type Out = Self;
@@ -794,13 +834,6 @@ impl<N, Rep, Slots> BatchTransformLast<N, NoOutBound> for (Rep, Slots) {
 /// Marks the reply a mount chain named last as publishing inside one broker transaction.
 /// Reply-only, for the same reason [`BatchTransformLast`] is. Machinery; never named directly.
 #[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "`.transactional()` does not apply to an Out slot",
-    label = "the position named before it is a slot, not the reply",
-    note = "`.transactional()` makes a page's replies one broker transaction, and a slot publish \
-            is one message with no page: a body opens its own slot transaction with \
-            `entry.begin()` or `entry.transaction()`"
-)]
 pub trait TransactionalLast<Last> {
     /// See [`TransformLast::Step`].
     type Step;
@@ -825,7 +858,16 @@ where
     }
 }
 
-// See `TransformLast`'s own arm.
+// See `BatchTransformLast`'s own arms: present so the step fails on `Step: ReplyStep`.
+impl<const POS: usize, Rep, Slots> TransactionalLast<SlotPos<POS>> for (Rep, Slots) {
+    type Step = SlotPos<POS>;
+    type Out = Self;
+
+    fn transactional_last(self) -> Self {
+        self
+    }
+}
+
 impl<Rep, Slots> TransactionalLast<NoOutBound> for (Rep, Slots) {
     type Step = NoOutBound;
     type Out = Self;
@@ -846,6 +888,7 @@ pub trait MapPolicyLast<Last>: Sized {
     type Policy;
 
     /// Replaces it.
+    #[must_use]
     fn map_policy_last(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
 }
 

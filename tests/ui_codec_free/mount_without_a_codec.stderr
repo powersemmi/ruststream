@@ -14,4 +14,5 @@ help: the trait `ruststream::runtime::DefinitionInputCodec<Input, Surface>` is c
    |                      |
    |                      unsatisfied requirement introduced here: `(): runtime::router::mount::InputCodec<runtime::input::Decoded<Order>>`
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `ruststream::runtime::MountsWith<runtime::input::Decoded<Order>, ()>`
-   = note: required for `Subscribing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`

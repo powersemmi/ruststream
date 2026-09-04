@@ -12,4 +12,5 @@ help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is implemented for `
    |
    | impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = note: required for `Subscribing` to implement `runtime::app::include::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`

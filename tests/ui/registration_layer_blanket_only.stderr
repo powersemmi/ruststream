@@ -1,0 +1,30 @@
+error[E0277]: `Observe` cannot wrap `Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>`
+  --> tests/ui/registration_layer_blanket_only.rs:37:71
+   |
+37 |     let _router = Router::<MemoryBroker>::new().include(handle).layer(Observe);
+   |                                                                 ----- ^^^^^^^ unsatisfied trait bound
+   |                                                                 |
+   |                                                                 required by a bound introduced by this call
+   |
+help: the trait `Layer<Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>` is not implemented for `Observe`
+  --> tests/ui/registration_layer_blanket_only.rs:19:1
+   |
+19 | struct Observe;
+   | ^^^^^^^^^^^^^^
+   = note: a layer that wraps one registration implements `Layer<H>` for the handler it wraps; a layer that wraps every handler in an app or a router implements `BlanketLayer` instead and rides `RustStream::layer(..)` or `Router::layer(..)`
+   = help: the following other types implement trait `Layer<H>`:
+             DynStack<I>
+             Identity
+             MetricsLayer
+             OpenTelemetryLayer
+             OtelConsumeLayer
+             Stack<Inner, Outer>
+             TracingLayer
+note: required by a bound in `Router::<B, (runtime::router::routes::SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>::layer`
+  --> src/runtime/router/builder.rs
+   |
+   |     pub fn layer<N>(
+   |            ----- required by a bound in this associated function
+...
+   |         N: Layer<H>,
+   |            ^^^^^^^^ required by this bound in `Router::<B, (SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>::layer`
