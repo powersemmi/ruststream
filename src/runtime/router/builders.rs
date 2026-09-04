@@ -198,28 +198,51 @@ impl<Mount, R, Def, Attach, Last> fmt::Debug for RouterWith<Mount, R, Def, Attac
 /// call. The bound means those methods simply do not exist on a chain that named another broker's
 /// policy - or none at all.
 ///
+/// A mount site then reads `b.include(confirm).out(Reply, StreamPublish::default()).stream("ORDERS")`,
+/// and the same one impl serves the reply position and every slot, on a router and on a broker
+/// scope alike.
+///
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
-/// # mod demo {
-/// use ruststream::memory::MemoryPublish;
 /// use ruststream::runtime::MapPublisher;
 ///
-/// /// What a broker crate ships next to its policy: the publisher's own settings, reachable
-/// /// wherever a mount chain named that policy.
-/// pub trait MemoryPublishSettings: Sized {
-///     /// Publishes every message through `prefix` instead of the declared destination.
-///     fn prefixed(self, prefix: &'static str) -> Self;
+/// /// A broker's publish policy: the mode, plus the options that shape it. Freely
+/// /// constructible, because it holds no connection.
+/// #[derive(Debug, Clone, Default)]
+/// pub struct StreamPublish {
+///     stream: Option<String>,
+///     expect_last_sequence: Option<u64>,
 /// }
 ///
-/// impl<T: MapPublisher<Policy = MemoryPublish>> MemoryPublishSettings for T {
-///     fn prefixed(self, prefix: &'static str) -> Self {
-///         let _ = prefix;
-///         self.map_publisher(|policy| policy)
+/// /// What the broker crate ships next to it: the publisher's own settings, reachable wherever
+/// /// a mount chain named that policy.
+/// pub trait StreamPublishSettings: Sized {
+///     /// Publishes into `stream` rather than letting the server pick by subject.
+///     fn stream(self, stream: impl Into<String>) -> Self;
+///
+///     /// Rejects the publish unless the stream's last sequence is `seq`.
+///     fn expect_last_sequence(self, seq: u64) -> Self;
+/// }
+///
+/// // Each method is one `map_publisher` call: take the policy the chain carries, set the
+/// // option on it, hand it back. Everything else the chain named stays where it was.
+/// impl<T: MapPublisher<Policy = StreamPublish>> StreamPublishSettings for T {
+///     fn stream(self, stream: impl Into<String>) -> Self {
+///         let stream = stream.into();
+///         self.map_publisher(move |mut policy| {
+///             policy.stream = Some(stream);
+///             policy
+///         })
+///     }
+///
+///     fn expect_last_sequence(self, seq: u64) -> Self {
+///         self.map_publisher(move |mut policy| {
+///             policy.expect_last_sequence = Some(seq);
+///             policy
+///         })
 ///     }
 /// }
-/// # }
 /// ```
 pub trait MapPublisher: Sized {
     /// The policy the position a mount chain named last carries.
@@ -230,7 +253,14 @@ pub trait MapPublisher: Sized {
     /// The replacement is the same policy type: a broker's publisher settings are that policy's
     /// own fields (an exchange, a partition key, a confirm mode), while a different policy type
     /// is a different publish mode and belongs in the `.out(marker, policy)` call itself.
-    #[must_use]
+    // No `#[must_use]`, unlike what the lint asks for: the steps beside it on the chain carry
+    // none either, because a scope registration commits when its guard drops at the end of the
+    // statement. The attribute would fire on
+    // `b.include(confirm).out(Reply, Publish).stream("ORDERS");`, which is correct as written,
+    // and a broker's settings trait built on this hook would have to carry the same false
+    // positive at every one of its own methods. What genuinely must be used - a router chain, and
+    // a scope chain with unbound slots - says so on its own type instead.
+    #[allow(clippy::return_self_not_must_use)]
     fn map_publisher(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
 }
 
