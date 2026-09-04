@@ -41,6 +41,13 @@ pub trait BatchPublishingDef: Send + Sync {
     /// [`InjectDef::Injections`](super::InjectDef::Injections).
     type Injections;
 
+    /// The broker's typed subscription-scoped context the page's handler reads by key (`()` when
+    /// the handler names none), exactly as on [`BatchDef::Context`](super::BatchDef::Context):
+    /// built once per page from its first delivery, so a replying page body reaches the
+    /// subscription's handles (a reposition handle, a consumer-group name) the same way a
+    /// settling one does.
+    type Context;
+
     /// The reply element type; each entry of the returned `Vec` is encoded and published.
     type Reply;
 
@@ -121,7 +128,7 @@ pub trait BatchPublishingCall<S>: BatchPublishingDef {
         &self,
         batch: &[<Self::Input as InputKind>::Owned],
         injections: &Self::Injections,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = Result<Vec<Self::Reply>, BatchResult>> + Send;
 }
 
@@ -168,23 +175,24 @@ impl<D: BatchPublishingDef, C, R, PP> std::fmt::Debug for BatchPublishingHandler
     }
 }
 
-// The batch publishing forms keep the unit batch context for now; see `BatchDef::Context`.
-impl<M, D, C, R, PP, S> BatchHandler<M, (), S> for BatchPublishingHandler<D, C, R, PP>
+impl<M, D, C, R, PP, S> BatchHandler<M, D::Context, S> for BatchPublishingHandler<D, C, R, PP>
 where
     M: IncomingMessage,
     D: BatchPublishingCall<S>,
     D::Input: DecodeWith<C>,
     D::Injections: Send + Sync,
     D::Reply: Serialize + Send + Sync,
+    D::Context: Send + Sync,
     C: Send + Sync,
-    R: ReplyPublisher,
+    R: ReplyPublisher<D::Context>,
     PP: PublishPipeline,
     S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, (), S>) {
+    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, D::Context, S>) {
         let subscription = ctx.name().to_owned();
         let (values, accepted) =
-            decode_batch::<M, D::Input, C, (), S>(batch, &self.codec, self.decode, ctx).await;
+            decode_batch::<M, D::Input, C, D::Context, S>(batch, &self.codec, self.decode, ctx)
+                .await;
         if accepted.is_empty() {
             return;
         }

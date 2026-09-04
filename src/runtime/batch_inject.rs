@@ -33,6 +33,10 @@ pub trait BatchInjectDef: Send + Sync {
     /// The tuple of startup-injected parameters ([`Out`](super::Out), ...).
     type Injections;
 
+    /// The broker's typed subscription-scoped context the page's handler reads by key (`()` when
+    /// the handler names none); see [`BatchDef::Context`](super::BatchDef::Context).
+    type Context;
+
     /// Builds the subscription source (fresh each call).
     fn source(&self) -> Self::Source;
 
@@ -91,7 +95,7 @@ pub trait BatchInjectCall<S>: BatchInjectDef {
         &self,
         batch: &[<Self::Input as InputKind>::Owned],
         injections: &Self::Injections,
-        ctx: &mut Context<'_, (), S>,
+        ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = BatchResult> + Send;
 }
 
@@ -125,20 +129,20 @@ impl<Def: BatchInjectDef, DecodeCodec> std::fmt::Debug for BatchInjectHandler<De
     }
 }
 
-// The injected batch forms keep the unit batch context for now; see `BatchDef::Context`.
-impl<Msg, Def, DecodeCodec, State> BatchHandler<Msg, (), State>
+impl<Msg, Def, DecodeCodec, State> BatchHandler<Msg, Def::Context, State>
     for BatchInjectHandler<Def, DecodeCodec>
 where
     Msg: IncomingMessage,
     Def: BatchInjectCall<State>,
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: Send + Sync,
+    Def::Context: Send + Sync,
     DecodeCodec: Send + Sync,
     State: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<Msg>, ctx: &mut Context<'_, (), State>) {
+    async fn handle_batch(&self, batch: Vec<Msg>, ctx: &mut Context<'_, Def::Context, State>) {
         let subscription = ctx.name().to_owned();
-        let (values, accepted) = decode_batch::<Msg, Def::Input, DecodeCodec, (), State>(
+        let (values, accepted) = decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State>(
             batch,
             &self.codec,
             self.decode,
@@ -191,6 +195,7 @@ mod tests {
         type Input = Decoded<u32>;
         type Source = Name;
         type Injections = u32;
+        type Context = ();
 
         fn source(&self) -> Self::Source {
             Name::new("scale")

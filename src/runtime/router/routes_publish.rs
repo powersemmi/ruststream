@@ -14,7 +14,8 @@ use serde::Serialize;
 
 use crate::codec::Codec;
 use crate::{
-    BatchSubscriber, Broker, BuildContext, Connected, PublishPolicy, Publisher, SubscriptionSource,
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, PublishPolicy, Publisher,
+    SubscriptionSource,
 };
 
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingHandler};
@@ -297,12 +298,13 @@ where
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Reply: Serialize + Send + Sync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
-    // transactional).
+    // transactional) that reads the page's context while publishing each reply.
     ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
-    BatchReply: ReplyPublisher + 'static,
+    BatchReply: ReplyPublisher<Def::Context> + 'static,
 {
     fn mount_one<G, PP>(self, _global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
     where
@@ -323,9 +325,7 @@ where
             policies,
             workers,
         } = self;
-        // The batch publishing forms keep the unit batch context for now; see
-        // `BatchDef::Context`.
-        sink.push_injected_batch::<_, _, _, _, ()>(
+        sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = publisher

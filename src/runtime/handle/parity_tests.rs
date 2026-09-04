@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::codec::{Codec, JsonCodec};
 use crate::memory::{
-    MemoryBroker, MemoryContext, MemoryPublish, MemoryPublisher, MemorySource, Position, SeekHandle,
+    MemoryBatchContext, MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish,
+    MemoryPublisher, MemorySource, Position, SeekHandle,
 };
 use crate::nonzero;
 use crate::runtime::{
@@ -230,6 +231,55 @@ impl Handle<[Order], Vec<Confirmation>> for ConfirmPages {
         ready(Ok(page
             .iter()
             .map(|order| Confirmation { id: order.id })
+            .collect()))
+    }
+}
+
+/// A page that answers and reads the broker's subscription-scoped context in one body: the
+/// reply axis and the context axis are independent, so naming one must not close the other.
+struct ConfirmPagesInContext;
+
+impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmPagesInContext {
+    async fn handle(
+        &self,
+        page: &[Order],
+        _outs: &(),
+        ctx: &mut Context<'_, MemoryBatchContext>,
+    ) -> Result<Vec<Confirmation>, Vec<HandlerOutcome>> {
+        if ctx
+            .context(SeekHandle)
+            .seek(MemoryPosition::end())
+            .await
+            .is_err()
+        {
+            // The per-element failure side of the page reply verdict, on the context axis.
+            return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+        }
+        Ok(page
+            .iter()
+            .map(|order| Confirmation { id: order.id })
+            .collect())
+    }
+}
+
+/// The same cell on the pair page: typed element headers and a broker page context together.
+struct HeaderedPageInContext;
+
+impl Handle<[Message<Meta, Order>], Vec<Confirmation>, (), MemoryBatchContext>
+    for HeaderedPageInContext
+{
+    fn handle(
+        &self,
+        page: &[Message<Meta, Order>],
+        _outs: &(),
+        ctx: &mut Context<'_, MemoryBatchContext>,
+    ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
+        let _ = ctx.context(SeekHandle);
+        ready(Ok(page
+            .iter()
+            .map(|element| Confirmation {
+                id: element.body.id,
+            })
             .collect()))
     }
 }
@@ -541,6 +591,28 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .to("confirmations")
                 .build(),
         )
+        .include(
+            subscriber("orders", ConfirmPagesInContext)
+                .reply()
+                .to("confirmations")
+                .build(),
+        )
+        .include(
+            subscriber("orders", HeaderedPageInContext)
+                .reply()
+                .to("confirmations")
+                .publisher(MemoryPublish)
+                .build(),
+        )
+        // The client-side buffer turns any subscriber into a page source, so the reply and the
+        // broker page context must survive that wrapping too.
+        .include(
+            subscriber("orders", ConfirmPagesInContext)
+                .reply()
+                .to("confirmations")
+                .buffered(nonzero!(4), std::time::Duration::from_millis(5))
+                .build(),
+        )
 }
 
 /// A publish transform the reply chain composes on: it only has to exist for the mount to
@@ -719,6 +791,50 @@ where
     }
 }
 
+/// The three-axis page cell: an answer, an injections arena and the broker's page context in
+/// one signature.
+struct PageGatewayInContext;
+
+impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>, MemoryBatchContext>
+    for PageGatewayInContext
+where
+    W: Publisher,
+    E: Codec + Send + Sync,
+{
+    fn handle(
+        &self,
+        page: &[Order],
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        ctx: &mut Context<'_, MemoryBatchContext>,
+    ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
+        let _ = (outs, ctx.context(SeekHandle));
+        ready(Ok(page
+            .iter()
+            .map(|order| Confirmation { id: order.id })
+            .collect()))
+    }
+}
+
+/// The same arena on a settling page, so the context axis is open with and without a reply.
+struct PageMirrorInContext;
+
+impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>, MemoryBatchContext>
+    for PageMirrorInContext
+where
+    W: Publisher,
+    E: Codec + Send + Sync,
+{
+    fn handle(
+        &self,
+        page: &[Order],
+        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        ctx: &mut Context<'_, MemoryBatchContext>,
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+        let _ = (page.len(), outs, ctx.context(SeekHandle));
+        ready(Ok(()))
+    }
+}
+
 struct RawGateway;
 
 impl<W, E> Handle<Order, Export, Outs<(Slot<Analytics, W, E>,)>> for RawGateway
@@ -816,6 +932,17 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         )
         .out(Analytics, MemoryPublish)
         .build()
+        .include(
+            subscriber("orders", PageGatewayInContext)
+                .reply()
+                .to("confirmations")
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .build()
+        .include(subscriber("orders", PageMirrorInContext).build())
+        .out(Analytics, MemoryPublish)
+        .build()
 }
 
 #[test]
@@ -893,6 +1020,20 @@ async fn a_subscriber_dispatches_end_to_end() {
                     .build(),
             );
             b.include(subscriber("frames", RawEcho).reply().to("echoes").build());
+            b.include(
+                subscriber("orders", ConfirmPagesInContext)
+                    .reply()
+                    .to("confirmations")
+                    .build(),
+            );
+            b.include(
+                subscriber("orders", PageGatewayInContext)
+                    .reply()
+                    .to("confirmations")
+                    .build(),
+            )
+            .out(Analytics, MemoryPublish)
+            .build();
             b.include(
                 subscriber("orders", Confirm)
                     .reply()

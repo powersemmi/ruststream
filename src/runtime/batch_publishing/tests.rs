@@ -46,6 +46,7 @@ impl Confirm {
 impl BatchPublishingDef for Confirm {
     type Input = Decoded<u32>;
     type Injections = ();
+    type Context = ();
     type Reply = u32;
     type Source = Name;
 

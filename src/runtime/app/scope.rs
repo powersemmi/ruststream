@@ -421,6 +421,10 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Def: BatchInjectCall<State> + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
+        Def::Context: crate::BuildBatchContext<<Source::Subscriber as Subscriber>::Message>
+            + Send
+            + Sync
+            + 'static,
         Extra: Send + Sync + 'static,
         DecodeCodec: Send + Sync + 'static,
         State: Send + Sync + 'static,
@@ -429,8 +433,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let meta = batch_inject_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
-        // The injected batch forms keep the unit batch context for now; see `BatchDef::Context`.
-        self.sink.push_injected_batch::<_, _, _, _, ()>(
+        self.sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -476,10 +479,14 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Injections: FromStartup<B, Source::Subscriber, OutExtra> + Send + Sync + 'static,
         Def::Reply: Serialize + Send + Sync + 'static,
+        Def::Context: crate::BuildBatchContext<<Source::Subscriber as Subscriber>::Message>
+            + Send
+            + Sync
+            + 'static,
         // The reply side: the source pairs at startup into a batch reply wiring (plain or
-        // transactional).
+        // transactional) that reads the page's context while publishing each reply.
         ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
-        BatchReply: ReplyPublisher + 'static,
+        BatchReply: ReplyPublisher<Def::Context> + 'static,
         OutExtra: Send + Sync + 'static,
         DecodeCodec: Send + Sync + 'static,
         Pipeline: PublishPipeline + Clone + Send + 'static,
@@ -490,9 +497,7 @@ impl<B: Broker + 'static, Layers, SC, State, Pipeline> BrokerScope<B, Layers, SC
         let policies = def.failure_policies();
         let workers = def.workers();
         let pipeline = self.pipeline.clone();
-        // The batch publishing forms keep the unit batch context for now; see
-        // `BatchDef::Context`.
-        self.sink.push_injected_batch::<_, _, _, _, ()>(
+        self.sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let publisher = reply
