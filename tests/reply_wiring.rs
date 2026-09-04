@@ -319,3 +319,67 @@ async fn a_batch_reply_commits_its_transaction() {
         "the batch's replies must carry the batch transform's header",
     );
 }
+
+#[derive(OutSlot)]
+#[publishes(Receipt)]
+struct Journal;
+
+#[subscriber("both.in", publish("both.out"))]
+async fn confirm_and_journal(
+    orders: &[Order],
+    Out(journal): Out<impl Publisher, Journal>,
+) -> Vec<Receipt> {
+    for order in orders {
+        let _ = journal
+            .message(&Receipt { id: order.id })
+            .to("both.journal")
+            .publish()
+            .await;
+    }
+    orders
+        .iter()
+        .map(|order| Receipt { id: order.id })
+        .collect()
+}
+
+/// A registration that carries both positions commits with `.build()`, and the reply-only steps
+/// still ride the reply: the batch transform stamps every reply and the transaction wraps them,
+/// while the slot beside it takes its own policy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_and_slot_chain_keeps_the_reply_only_steps() {
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(confirm_and_journal.batch(nonzero!(8)))
+                .out(Reply, TransactionalPublish)
+                .batch_transform(for_batch(Stamp))
+                .transactional()
+                .out(Journal, Publish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 12 })
+        .to("both.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    let handle = tb.broker::<MemoryBroker>();
+    handle
+        .published::<Receipt>("both.out")
+        .assert_called_once()
+        .with(&Receipt { id: 12 })
+        .with_header("x-stamped", b"1");
+    // The slot publish is the body's own, so the reply's batch transform never touches it.
+    let journalled = handle.published::<Receipt>("both.journal");
+    let journalled = journalled.assert_called_once().with(&Receipt { id: 12 });
+    assert!(
+        journalled.messages()[0]
+            .headers()
+            .get("x-stamped")
+            .is_none(),
+        "a batch transform rides the reply position, not a slot",
+    );
+}

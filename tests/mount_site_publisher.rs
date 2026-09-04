@@ -197,6 +197,32 @@ async fn a_broker_settings_trait_reaches_the_reply_policy() {
         .with(&Order { id: 5 });
 }
 
+/// ...one `Out` slot on a broker scope, whose guard forwards the same hook to the same chain...
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_settings_trait_reaches_a_slot_policy_on_a_scope() {
+    let app = RustStream::new(AppInfo::new("mount-map-scope-slot", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(mirror)
+                .out(Audit, Prefixed::default())
+                .prefixed("pre.")
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 8 })
+        .to("mount.mirror")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("pre.mount.audit")
+        .assert_called_once()
+        .with(&Order { id: 8 });
+}
+
 /// ...and one `Out` slot on a router, without a second implementation.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_broker_settings_trait_reaches_a_slot_policy() {
