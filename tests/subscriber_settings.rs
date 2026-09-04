@@ -1,8 +1,9 @@
 //! Integration tests for the declarative settings a subscriber carries: the ones the attribute
 //! fixes, the ones the mount site fills in through the builder, and the four source forms.
 //!
-//! Apps come up through `start()`, which resolves only after subscriptions are open, so each
-//! message is published exactly once; the tests wait on the handlers' recorded state.
+//! Every case runs on the `TestApp` harness: an injection drives the whole reaction to a
+//! standstill before it returns, so what a handler saw is read off the harness afterwards rather
+//! than out of state the handler recorded for the test.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -12,172 +13,170 @@
 
 mod common;
 
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Event, Order, Wire, wait_for};
+use common::{Event, Order, Wire};
+use futures::future::join_all;
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource};
 use ruststream::runtime::{
     AppInfo, DefaultSlot, FailurePolicies, FailurePolicy, HandlerOutcome, Out, PublishExt, Router,
     RustStream, SubscriberSettings,
 };
-use ruststream::testing::TestApp;
+use ruststream::testing::{Outcome, TestApp};
 use ruststream::{Buffered, Deserialized, Name, Publisher, nonzero, subscriber};
+use tokio::sync::Barrier;
 
 /// The payload view the raw batch body below takes, one element per delivery in the batch.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
-static NAMED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-
 /// The shortest source form: the by-name source with its value left to the mount site.
 #[subscriber]
 async fn audit(order: &Order) -> HandlerOutcome {
-    NAMED.lock().unwrap().push(order.id);
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bare_attribute_is_named_at_the_mount_site() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
     // The name is a value the service only knows here, which is the whole point of the form.
     let subject = format!("audit-{}", 7);
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include(audit.name(subject.clone())));
-    let running = app.start().await.expect("startup failed");
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), {
+        let subject = subject.clone();
+        |b| b.include(audit.name(subject))
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Order { id: 11 })
+    tb.message(&Order { id: 11 })
         .to(&*subject)
         .publish()
         .await
         .expect("publish failed");
-    wait_for(|| !NAMED.lock().unwrap().is_empty(), Duration::from_secs(5)).await;
-    assert_eq!(NAMED.lock().unwrap().as_slice(), [11]);
-    running.shutdown().await.expect("shutdown failed");
-}
 
-static KIND: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    tb.broker::<MemoryBroker>()
+        .subscriber(&subject)
+        .assert_called_once()
+        .with(&Order { id: 11 })
+        .settled(HandlerOutcome::ack());
+}
 
 /// A named kind carrying only what it needs to exist: the value arrives through the builder,
 /// which constructs it through the kind's own from-name constructor.
 #[subscriber(MemorySource)]
 async fn record(order: &Order) -> HandlerOutcome {
-    KIND.lock().unwrap().push(order.id);
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_named_kind_is_built_from_the_name_the_mount_site_gives() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         // `map_source` is the hook a broker's own settings trait layers on; the identity
         // transform pins that it composes between the name and the mount.
         b.include(record.name("record-kind").map_source(|source| source));
     });
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Order { id: 3 })
+    tb.message(&Order { id: 3 })
         .to("record-kind")
         .publish()
         .await
         .expect("publish failed");
-    wait_for(|| !KIND.lock().unwrap().is_empty(), Duration::from_secs(5)).await;
-    assert_eq!(KIND.lock().unwrap().as_slice(), [3]);
-    running.shutdown().await.expect("shutdown failed");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("record-kind")
+        .assert_called_once()
+        .with(&Order { id: 3 })
+        .settled(HandlerOutcome::ack());
 }
 
-static CONCURRENT: AtomicUsize = AtomicUsize::new(0);
-static PEAK: AtomicUsize = AtomicUsize::new(0);
+/// The deadline the "did the pool run these together?" wait rides. A pool that dispatched
+/// sequentially would park on the barrier forever, so the timeout turns that into a failure.
+const CONCURRENCY_DEADLINE: Duration = Duration::from_secs(5);
 
-/// The worker policy is left open by the attribute and named at the mount site.
+/// The worker policy is left open by the attribute and named at the mount site. Four deliveries
+/// must be in flight at once to pass the barrier; a sequential loop would deadlock on the first.
 #[subscriber("workers-from-builder")]
-async fn parallel(order: &Order) -> HandlerOutcome {
+async fn parallel(order: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> HandlerOutcome {
     let _ = order.id;
-    let in_flight = CONCURRENT.fetch_add(1, Ordering::SeqCst) + 1;
-    PEAK.fetch_max(in_flight, Ordering::SeqCst);
-    // Yield so a second delivery can overlap this one when the pool allows it.
-    for _ in 0..64 {
-        tokio::task::yield_now().await;
-    }
-    CONCURRENT.fetch_sub(1, Ordering::SeqCst);
+    ctx.state().wait().await;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_builder_supplies_the_worker_policy() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include(parallel.workers(nonzero!(4))));
-    let running = app.start().await.expect("startup failed");
+        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Barrier::new(4))))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(parallel.workers(nonzero!(4)));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    for id in 0..4u32 {
-        publisher
-            .message(&Order { id })
-            .to("workers-from-builder")
-            .publish()
-            .await
-            .expect("publish failed");
+    // Exactly the barrier's worth of deliveries: with a pool of one, the first would park on the
+    // barrier and the deadline below would expire.
+    let orders: Vec<Order> = (0..4u32).map(|id| Order { id }).collect();
+    let published = tokio::time::timeout(
+        CONCURRENCY_DEADLINE,
+        join_all(
+            orders
+                .iter()
+                .map(|order| tb.message(order).to("workers-from-builder").publish()),
+        ),
+    )
+    .await
+    .expect("the mount-site worker policy must hold four deliveries in flight at once");
+    for result in published {
+        result.expect("publish failed");
     }
-    wait_for(|| PEAK.load(Ordering::SeqCst) > 1, Duration::from_secs(5)).await;
-    running.shutdown().await.expect("shutdown failed");
-}
 
-static SKIPPED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    tb.broker::<MemoryBroker>()
+        .subscriber("workers-from-builder")
+        .assert_called(4)
+        .settled(HandlerOutcome::ack());
+}
 
 /// The failure policies are left open by the attribute and named at the mount site.
 #[subscriber("failures-from-builder")]
 async fn tolerant(order: &Order) -> HandlerOutcome {
-    SKIPPED.lock().unwrap().push(order.id);
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_builder_supplies_the_failure_policies() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(tolerant.on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)));
     });
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     // The undecodable payload is skipped by the mount-site policy; the next one still arrives.
-    publisher
-        .message(&Wire::of(b"not json"))
+    tb.message(&Wire::of(b"not json"))
         .to("failures-from-builder")
         .publish()
         .await
         .expect("publish failed");
-    publisher
-        .message(&Order { id: 9 })
+    tb.message(&Order { id: 9 })
         .to("failures-from-builder")
         .publish()
         .await
         .expect("publish failed");
-    wait_for(
-        || !SKIPPED.lock().unwrap().is_empty(),
-        Duration::from_secs(5),
-    )
-    .await;
-    assert_eq!(SKIPPED.lock().unwrap().as_slice(), [9]);
-    running.shutdown().await.expect("shutdown failed");
-}
 
-static REPLAYED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    let subscriber = tb.broker::<MemoryBroker>();
+    let subscriber = subscriber.subscriber("failures-from-builder");
+    assert_eq!(
+        subscriber.outcomes(),
+        [Outcome::DecodeFailed, Outcome::Ack],
+        "the mount-site policy must ack past the malformed payload and keep the subscription",
+    );
+    subscriber.with(&Order { id: 9 });
+}
 
 /// The start position is left open by the attribute and named at the mount site.
 #[subscriber(MemorySource)]
 async fn replay(order: &Order) -> HandlerOutcome {
-    REPLAYED.lock().unwrap().push(order.id);
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
@@ -185,7 +184,8 @@ async fn replay(order: &Order) -> HandlerOutcome {
 async fn the_builder_supplies_the_start_position() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    // Published before the service exists: only a subscription opened at the start sees it.
+    // Published before the service exists: only a subscription opened at the start sees it, so
+    // it goes through a handle taken off the broker rather than through the harness.
     publisher
         .message(&Order { id: 42 })
         .to("replay")
@@ -196,15 +196,14 @@ async fn the_builder_supplies_the_start_position() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         b.include(replay.name("replay").start_at(MemoryPosition::start()));
     });
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed delivery settles");
 
-    wait_for(
-        || !REPLAYED.lock().unwrap().is_empty(),
-        Duration::from_secs(5),
-    )
-    .await;
-    assert_eq!(REPLAYED.lock().unwrap().as_slice(), [42]);
-    running.shutdown().await.expect("shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("replay")
+        .assert_called_once()
+        .with(&Order { id: 42 })
+        .settled(HandlerOutcome::ack());
 }
 
 /// The batch shape read off the signature; the mount site names how big a batch is and the broker
@@ -406,76 +405,64 @@ async fn the_buffer_composes_with_a_start_position() {
     tb.shutdown().await.expect("shutdown failed");
 }
 
-static FRAMES: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
-
 /// A batch of payloads: the typed batch without the decode step, borrowed from the batch's own
 /// messages.
 #[subscriber("frames")]
 async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
-    FRAMES
-        .lock()
-        .unwrap()
-        .extend(frames.iter().map(|f| f.0.to_vec()));
+    let _ = frames.len();
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_batch_handler_borrows_the_payloads() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include(ingest.batch(nonzero!(8))));
-    let running = app.start().await.expect("startup failed");
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(ingest.batch(nonzero!(8)));
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     for frame in [b"one".as_slice(), b"two".as_slice()] {
-        publisher
-            .message(&Wire::of(frame))
+        tb.message(&Wire::of(frame))
             .to("frames")
             .publish()
             .await
             .expect("publish failed");
     }
-    wait_for(|| FRAMES.lock().unwrap().len() >= 2, Duration::from_secs(5)).await;
-    assert_eq!(
-        FRAMES.lock().unwrap().as_slice(),
-        [b"one".to_vec(), b"two".to_vec()],
-    );
-    running.shutdown().await.expect("shutdown failed");
-}
 
-static ROUTED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    let subscriber = tb.broker::<MemoryBroker>();
+    let subscriber = subscriber.subscriber("frames");
+    // The bytes reach the body as they were published: nothing decodes a self-deserializing view.
+    assert_eq!(
+        subscriber.received_raw(),
+        [b"one".as_slice(), b"two".as_slice()],
+    );
+    subscriber.settled(HandlerOutcome::ack());
+}
 
 /// The same surface on the router: `include` takes the settings builder there too.
 #[subscriber]
 async fn routed(order: &Order) -> HandlerOutcome {
-    ROUTED.lock().unwrap().push(order.id);
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_the_settings_builder() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let routes = Router::<MemoryBroker>::new().include(routed.name("routed").workers(nonzero!(2)));
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(routes));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include_router(routes));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Order { id: 5 })
+    tb.message(&Order { id: 5 })
         .to("routed")
         .publish()
         .await
         .expect("publish failed");
-    wait_for(
-        || !ROUTED.lock().unwrap().is_empty(),
-        Duration::from_secs(5),
-    )
-    .await;
-    assert_eq!(ROUTED.lock().unwrap().as_slice(), [5]);
-    running.shutdown().await.expect("shutdown failed");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("routed")
+        .assert_called_once()
+        .with(&Order { id: 5 })
+        .settled(HandlerOutcome::ack());
 }
 
 /// The per-registration codec, the top rung of the codec ladder: a scope decoding with CBOR, and
@@ -487,18 +474,14 @@ async fn a_router_mounts_the_settings_builder() {
 /// fail to decode the JSON payloads below if the scope's CBOR had won.
 #[cfg(feature = "cbor")]
 mod codec_override {
-    use std::sync::Mutex;
-    use std::time::Duration;
-
     use ruststream::codec::{CborCodec, JsonCodec};
     use ruststream::memory::MemoryBroker;
-    use ruststream::runtime::{
-        AppInfo, HandlerOutcome, Message, PublishExt, RustStream, SubscriberSettings,
-    };
+    use ruststream::runtime::{AppInfo, HandlerOutcome, Message, RustStream, SubscriberSettings};
+    use ruststream::testing::{Outcome, TestApp};
     use ruststream::{Outgoing, subscriber};
     use serde::{Deserialize, Serialize};
 
-    use super::{Frame, Order, Wire, wait_for};
+    use super::{Frame, Order, Wire};
 
     /// The contract the paired case reads off the delivery's headers.
     #[derive(Serialize, Deserialize, Debug, PartialEq, schemars::JsonSchema)]
@@ -514,22 +497,15 @@ mod codec_override {
         id: u32,
     }
 
-    static DECODED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-    static PAIRED: Mutex<Vec<(u32, u8)>> = Mutex::new(Vec::new());
-    static PROVIDED: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
-
     #[subscriber]
     async fn decoded(order: &Order) -> HandlerOutcome {
-        DECODED.lock().unwrap().push(order.id);
+        let _ = order.id;
         HandlerOutcome::ack()
     }
 
     #[subscriber]
     async fn paired(order: &Message<Meta, Order>) -> HandlerOutcome {
-        PAIRED
-            .lock()
-            .unwrap()
-            .push((order.body.id, order.headers.shard));
+        let _ = (order.body.id, order.headers.shard);
         HandlerOutcome::ack()
     }
 
@@ -537,17 +513,15 @@ mod codec_override {
     /// byte input: the plain self-deserializing mount reads none at all.
     #[subscriber(publish("codec-provided-out"))]
     async fn provided(frame: &Frame<'_>) -> Order {
-        PROVIDED.lock().unwrap().push(frame.0.to_vec());
-        Order { id: 0 }
+        Order {
+            id: u32::try_from(frame.0.len()).unwrap_or(u32::MAX),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_builder_overrides_the_scope_codec_per_registration() {
-        let broker = MemoryBroker::new();
-        let publisher = broker.publisher();
-
         let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_codec(
-            broker,
+            MemoryBroker::new(),
             CborCodec,
             |b| {
                 b.include(decoded.name("codec-decoded").codec(JsonCodec));
@@ -555,43 +529,44 @@ mod codec_override {
                 b.include(provided.name("codec-provided").codec(JsonCodec));
             },
         );
-        let running = app.start().await.expect("startup failed");
+        let tb = TestApp::start(app).await.expect("startup failed");
 
-        publisher
-            .message(&Order { id: 1 })
+        tb.message(&Order { id: 1 })
             .to("codec-decoded")
             .publish()
             .await
             .expect("publish failed");
-        publisher
-            .message(&PairedOrder { id: 2 })
+        tb.message(&PairedOrder { id: 2 })
             .to("codec-paired")
             .with_headers(&Meta { shard: 7 })
             .publish()
             .await
             .expect("publish failed");
-        publisher
-            .message(&Wire::of(b"\x00\xffnot json"))
+        tb.message(&Wire::of(b"\x00\xffnot json"))
             .to("codec-provided")
             .publish()
             .await
             .expect("publish failed");
 
-        wait_for(
-            || {
-                !DECODED.lock().unwrap().is_empty()
-                    && !PAIRED.lock().unwrap().is_empty()
-                    && !PROVIDED.lock().unwrap().is_empty()
-            },
-            Duration::from_secs(5),
-        )
-        .await;
-        assert_eq!(DECODED.lock().unwrap().as_slice(), [1]);
-        assert_eq!(PAIRED.lock().unwrap().as_slice(), [(2, 7)]);
-        assert_eq!(
-            PROVIDED.lock().unwrap().as_slice(),
-            [b"\x00\xffnot json".to_vec()],
-        );
-        running.shutdown().await.expect("shutdown failed");
+        let handle = tb.broker::<MemoryBroker>();
+        // The registration's own codec decoded the body; the scope's CBOR would have failed here.
+        handle
+            .subscriber("codec-decoded")
+            .assert_called_once()
+            .with_codec(&JsonCodec, &Order { id: 1 })
+            .settled(HandlerOutcome::ack());
+        // The pair materialized whole: an unreadable header contract settles as a decode failure
+        // before the body runs, so the ack is what says both halves arrived.
+        handle
+            .subscriber("codec-paired")
+            .assert_called_once()
+            .assert_outcome(Outcome::Ack)
+            .with_codec(&JsonCodec, &Order { id: 2 });
+        // A self-deserializing body reads no codec at all, so the bytes arrive untouched.
+        handle
+            .subscriber("codec-provided")
+            .assert_called_once()
+            .with_raw(b"\x00\xffnot json")
+            .settled(HandlerOutcome::ack());
     }
 }

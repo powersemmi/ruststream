@@ -22,9 +22,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// A suite whose subject is the application surface does not need this: the
 /// [`TestApp`](ruststream::testing::TestApp) harness settles the whole reaction before its
-/// injection returns. What is left here serves the suites that must observe a RUNNING app
-/// mid-reaction - the subscriber-settings suite, and the otel suite that kills the bus under a
-/// handler that is still holding its delivery.
+/// injection returns. What is left here serves the one suite that must observe a RUNNING app
+/// mid-reaction: the otel suite, which kills the bus under a handler still holding its delivery.
 #[allow(dead_code)]
 pub(crate) async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
     let result = tokio::time::timeout(timeout, async {
