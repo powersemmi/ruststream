@@ -51,29 +51,51 @@ prost_build::Config::new()
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
 
-Дальше каждое сообщение схемы приходит уже на путях, как будто его выписали руками:
+Дальше каждое сообщение схемы приходит уже на путях, как будто его выписали руками. Вкладка
+«Вручную» - то же сообщение с раскрытыми деривами: два импла путей, выбранные ими способы передачи
+и декларация исходящего:
 
-```rust
---8<-- "examples/protobuf.rs:message"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/protobuf.rs:message"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/protobuf.rs:message"
+    ```
 
 Обработчик не называет кодек ни на входе, ни на выходе: для этого типа кодек не разрешается вовсе.
 
-```rust
---8<-- "examples/protobuf.rs:handler"
-```
+=== "Макросы"
+
+    ```rust
+    --8<-- "examples/protobuf.rs:handler"
+    ```
+
+=== "Вручную"
+
+    ```rust
+    --8<-- "examples/manual/protobuf.rs:handler"
+    ```
 
 `#[wire(prost)]` - сокращение для двух путей одного генератора. Общая форма называет функции сама:
 `#[wire(encode = <path>, decode = <path>)]`, где `encode` - это `fn(&Self, &mut BytesMut)`,
 возвращающая либо ничего, либо `Result`, а `decode` - `fn(&[u8]) -> Result<Self, E>`. Cap'n Proto,
 FlatBuffers и самодельный кадр едут по тому же механизму, и отдельная фича cargo на каждый формат
 не нужна: этот крейт вызывает то, что назвал атрибут, и ни от одного из них не зависит, а сервис
-зависит от того, который использует.
+зависит от того, который использует. Формат, который не укладывается ни в одну из этих форм,
+пишется так же, как вкладка «Вручную» пишет этот: `wire_bytes` и `from_payload` - методы
+публичных трейтов, поэтому весь путь доступен вообще без фичи `macros`.
 
 Тип модели остаётся виден там, где это важно. Его называет точка монтирования, его перечисляет
 словарь слота `Out`, о нём сообщает сгенерированный документ `AsyncAPI` - и все три поверхности
-newtype с заранее закодированными байтами прячет за мешком байтов. Этот сервис -
-[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs).
+newtype с заранее закодированными байтами прячет за мешком байтов. Эти сервисы -
+[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs)
+и
+[`examples/manual/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/manual/protobuf.rs).
 
 ## Откуда берётся кодек декодирования {#where-the-decode-codec-comes-from}
 

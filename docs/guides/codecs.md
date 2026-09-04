@@ -49,29 +49,51 @@ prost_build::Config::new()
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
 
-Every message in the schema then arrives on the lanes already, as if it had been written out:
+Every message in the schema then arrives on the lanes already, as if it had been written out. The
+Manual tab is the same message with the derives expanded - two lane impls, the wire spellings they
+pick, and the outgoing declaration:
 
-```rust
---8<-- "examples/protobuf.rs:message"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/protobuf.rs:message"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/protobuf.rs:message"
+    ```
 
 The handler names no codec, on the way in or the way out, because none is resolved for this type:
 
-```rust
---8<-- "examples/protobuf.rs:handler"
-```
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/protobuf.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/protobuf.rs:handler"
+    ```
 
 `#[wire(prost)]` is a shorthand for one generator's two paths. The general form names the
 functions itself - `#[wire(encode = <path>, decode = <path>)]` - where `encode` is a
 `fn(&Self, &mut BytesMut)` returning either nothing or a `Result`, and `decode` a
 `fn(&[u8]) -> Result<Self, E>`. Cap'n Proto, FlatBuffers and a hand-rolled frame ride the same
 mechanism, with no cargo feature per format: this crate calls what the attribute names and
-depends on none of them, while the service depends on the one it uses.
+depends on none of them, while the service depends on the one it uses. A format that fits neither
+shape is written the way the Manual tab writes this one: `wire_bytes` and `from_payload` are
+public trait methods, so the whole lane is reachable without the `macros` feature at all.
 
 The model type stays visible where it matters. It is what the mount site names, what an `Out`
 slot's dictionary lists, and what the generated `AsyncAPI` document reports - all three of which a
-pre-encoded byte newtype hides behind a bag of bytes. This service is
-[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs).
+pre-encoded byte newtype hides behind a bag of bytes. These services are
+[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs)
+and
+[`examples/manual/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/manual/protobuf.rs).
 
 ## Where the decode codec comes from
 

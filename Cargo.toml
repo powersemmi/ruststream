@@ -51,6 +51,13 @@ name = "manual_quickstart"
 path = "examples/manual/quickstart.rs"
 required-features = ["memory", "json"]
 
+# The counterpart of `protobuf` with the derives written out: no codec feature, and no `macros`
+# either, which is what shows the lanes are public traits rather than macro-only sugar.
+[[example]]
+name = "manual_protobuf"
+path = "examples/manual/protobuf.rs"
+required-features = ["memory"]
+
 [[example]]
 name = "manual_tutorial"
 path = "examples/manual/tutorial/main.rs"

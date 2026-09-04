@@ -46,27 +46,47 @@ prost_build::Config::new()
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
 
-此后 schema 里的每个消息一到手就已经在字节路径上，如同手写出来的一样：
+此后 schema 里的每个消息一到手就已经在字节路径上，如同手写出来的一样。「手写」这一栏是同一个消息把
+derive 展开后的样子：两个字节路径的 impl、它们选定的传输方式，以及出站声明：
 
-```rust
---8<-- "examples/protobuf.rs:message"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/protobuf.rs:message"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/protobuf.rs:message"
+    ```
 
 处理器进出两侧都不指定编解码器，因为这个类型根本不解析编解码器：
 
-```rust
---8<-- "examples/protobuf.rs:handler"
-```
+=== "宏"
+
+    ```rust
+    --8<-- "examples/protobuf.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/protobuf.rs:handler"
+    ```
 
 `#[wire(prost)]` 是某一个生成器那两条路径的简写。通用写法自己点名这两个函数 -
 `#[wire(encode = <path>, decode = <path>)]`：`encode` 是 `fn(&Self, &mut BytesMut)`，返回空或者
 `Result`；`decode` 是 `fn(&[u8]) -> Result<Self, E>`。Cap'n Proto、FlatBuffers 和自己手写的帧都走
 同一套机制，不需要为每种格式加一个 cargo feature：本 crate 只调用属性点名的东西，不依赖其中任何
-一个，依赖它的是服务自己。
+一个，依赖它的是服务自己。哪种格式这两种写法都套不进去，就照「手写」那一栏写这个消息的办法来写：
+`wire_bytes` 和 `from_payload` 都是公开 trait 的方法，整条字节路径根本不需要 `macros` feature。
 
 模型类型在要紧的地方仍然看得见。挂载点点的是它，`Out` 槽位的词典列的是它，生成的 `AsyncAPI`
-文档报告的也是它 - 这三处，预先编码好的字节 newtype 全都藏在一袋字节后面。这个服务见
-[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs)。
+文档报告的也是它 - 这三处，预先编码好的字节 newtype 全都藏在一袋字节后面。这两个服务见
+[`examples/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/protobuf.rs)
+和
+[`examples/manual/protobuf.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/manual/protobuf.rs)。
 
 ## 解码用的编解码器从哪里来 { #where-the-decode-codec-comes-from }
 
