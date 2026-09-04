@@ -1,14 +1,13 @@
 //! The injections arena: the second body argument, built statically by the include site's
 //! `.out(marker, policy)` chain.
 //!
-//! A body that publishes declares the arena in its `O` position - one [`Slot`] entry per
-//! marker, generic over the wired live value and the include site's codec, with the broker
-//! capability it needs as a mandatory bound on that value:
+//! A body that publishes declares the arena in its `O` position - one entry per marker, each a
+//! type parameter bounded with [`OutEntry`] at the marker it stands for, carrying the broker
+//! capability the body needs on the wired value and nothing else:
 //!
 //! ```
 //! # #[cfg(all(feature = "memory", feature = "json"))]
 //! # mod demo {
-//! use ruststream::codec::Codec;
 //! use ruststream::prelude::*;
 //! # #[derive(serde::Deserialize, schemars::JsonSchema)]
 //! # struct Order { id: u64 }
@@ -22,15 +21,14 @@
 //!
 //! struct Mirror;
 //!
-//! impl<W, E> Handle<Order, (), Outs<(Slot<Primary, W, E>,)>> for Mirror
+//! impl<P> Handle<Order, (), Outs<(P,)>> for Mirror
 //! where
-//!     W: Publisher,
-//!     E: Codec + Send + Sync,
+//!     P: OutEntry<Primary, Wire: Publisher>,
 //! {
 //!     async fn handle(
 //!         &self,
 //!         order: &Order,
-//!         outs: &Outs<(Slot<Primary, W, E>,)>,
+//!         outs: &Outs<(P,)>,
 //!         _ctx: &mut Context<'_>,
 //!     ) -> Result<(), HandlerOutcome> {
 //!         if outs
@@ -71,10 +69,10 @@
 //! reachable as `OwnedTransactions::transaction(entry)`.
 //!
 //! The slot's wired value is the policy's live form itself, so a body needing a broker-defined
-//! capability bounds `W` with the broker's own trait (or pins the entry to the concrete live
-//! type, `Slot<Lanes, LaneRouter, E>`) and calls it directly through the entry's transparent
-//! `Deref`. Everything is monomorphized: the arena is built once at startup, and a delivery only
-//! ever passes a reference to it.
+//! capability bounds `Wire` with the broker's own trait (or pins the entry to the concrete
+//! [`Slot`], `Outs<(Slot<Lanes, LaneRouter, JsonCodec>,)>`) and calls it directly through the
+//! entry's transparent `Deref`. Everything is monomorphized: the arena is built once at startup,
+//! and a delivery only ever passes a reference to it.
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -118,16 +116,19 @@ use super::value::{HandleValue, Sealed};
 /// the broker capability vocabulary ([`TransactionalPublisher`](crate::TransactionalPublisher),
 /// [`OwnedTransactions`](crate::OwnedTransactions), [`RequestReply`](crate::RequestReply)) and
 /// any broker-defined capability trait alike, so a body pins the entry to the broker's concrete
-/// live type (or bounds `W` with the broker's trait) and calls it directly. Under each of the
-/// core capability bounds the entry also offers that capability's typed form -
+/// live type (or bounds [`OutEntry::Wire`] with the broker's trait) and calls it directly. Under
+/// each of the core capability bounds the entry also offers that capability's typed form -
 /// [`message`](Self::message), [`begin`](Self::begin), [`transaction`](Self::transaction) - over
 /// the include site's codec and the marker's dictionary.
+///
+/// A body does not normally spell this type out: it names one parameter per marker and bounds it
+/// with [`OutEntry`], which projects `W`, `E` and `Pipe` so a mount the body never sees cannot
+/// change its signature. Spelling the entry is for pinning it to a concrete live value.
 ///
 /// `Pipe` is that publish path: the app's own publish pipeline (the
 /// [`publish_layer`](crate::runtime::RustStream::publish_layer) chain) with the slot's
 /// `.transform(..)` steps composed on top. It is [`PublishIdentity`] - nothing in the way, the
-/// bare leaf call - until a mount site names either, so a body generic over its entry leaves it
-/// generic and bounds it with [`OutPipeline`].
+/// bare leaf call - until a mount site names either.
 ///
 /// Autoderef carries a method call, not a trait bound: a helper written as `fn f<L: Lanes>(l:
 /// &L)` rejects the entry a body holds. A broker crate that wants such helpers - or bodies
@@ -508,6 +509,111 @@ where
         })
     }
 }
+/// What one arena entry is, stated as the mount's choices rather than spelled out: the bound
+/// marker `M`, and the wired value, codec and publish path the include site gave it.
+///
+/// This is how a body declares its arena. It names one type parameter per marker and bounds it
+/// here, with the broker capability it needs on [`Wire`](Self::Wire) and nothing else:
+///
+/// ```
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::prelude::*;
+/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// # struct Order { id: u64 }
+/// # #[derive(serde::Serialize, schemars::JsonSchema)]
+/// # struct Event { id: u64 }
+/// # impl OutgoingDestination for Event { type Form = CallerName; }
+/// # impl MessageHeaders for Event { type Contract = NoHeaders; }
+/// # struct Audit;
+/// # impl OutSlot for Audit { const NAME: &'static str = "Audit"; }
+/// # impl PublishedThrough<Audit> for Event {}
+/// # struct Journal;
+/// # impl OutSlot for Journal { const NAME: &'static str = "Journal"; }
+///
+/// struct Route;
+///
+/// impl<A, J> Handle<Order, (), Outs<(A, J)>> for Route
+/// where
+///     A: OutEntry<Audit, Wire: Publisher>,
+///     J: OutEntry<Journal, Wire: TransactionalPublisher>,
+/// {
+///     async fn handle(
+///         &self,
+///         order: &Order,
+///         outs: &Outs<(A, J)>,
+///         _ctx: &mut Context<'_>,
+///     ) -> Result<(), HandlerOutcome> {
+///         let scope = outs.get(Journal).begin().await;
+///         let _ = scope.is_ok();
+///         if outs
+///             .get(Audit)
+///             .message(&Event { id: order.id })
+///             .to("audit")
+///             .publish()
+///             .await
+///             .is_err()
+///         {
+///             return Err(HandlerOutcome::retry());
+///         }
+///         Ok(())
+///     }
+/// }
+/// # }
+/// ```
+///
+/// The three projections are the include site's business, so nothing the mount does reaches the
+/// body's signature: a `.transform(..)` on the slot, an app-wide
+/// [`publish_layer`](crate::runtime::RustStream::publish_layer), a `.codec(..)` override, or a
+/// different broker behind the policy all land in [`Pipe`](Self::Pipe) and [`Enc`](Self::Enc)
+/// and leave the `where` clause alone.
+///
+/// `Body` is the body's own declaration and not the mount's, which is why it is a parameter and
+/// not a projection: it is the message set the entry's typed publish admits, `()` (whatever the
+/// marker's `#[publishes(..)]` dictionary holds) unless a body narrows it, and a body that
+/// publishes has to know it to name a type at all.
+///
+/// [`Outs::get`] hands back the entry itself, so
+/// [`message`](Slot::message) / [`begin`](Slot::begin) / [`transaction`](Slot::transaction) /
+/// [`request`](RequestReply::request) and the live value's own surface behind the entry's
+/// `Deref` read exactly as they do on a spelled-out arena.
+// `Send + Sync` on the trait and on the wired value, rather than on every body's `where`: the
+// arena is built once at startup and shared by reference across the subscription's worker tasks,
+// so an entry that is not shareable never reaches a body in the first place.
+pub trait OutEntry<M, Body = ()>: Send + Sync {
+    /// The wired live value: the bound policy's [`Live`](crate::PublishPolicy::Live) form, which
+    /// a body bounds with the broker capability it needs.
+    type Wire: Send + Sync;
+
+    /// The codec the entry's typed publishes encode with: the include site's own, or the one a
+    /// `.codec(..)` named for this slot.
+    type Enc: Codec;
+
+    /// The publish path every message leaving the entry travels: the app's publish pipeline with
+    /// the slot's `.transform(..)` steps composed on top.
+    type Pipe: OutPipeline;
+
+    /// The entry behind the bound. Machinery: [`Outs::get`] resolves the concrete slot through
+    /// it, and only a [`Slot`] can produce one.
+    #[doc(hidden)]
+    fn entry(&self) -> &Slot<M, Self::Wire, Self::Enc, Self::Pipe, Body>;
+}
+
+impl<M, W, E, Pipe, Body> OutEntry<M, Body> for Slot<M, W, E, Pipe, Body>
+where
+    W: Send + Sync,
+    E: Codec,
+    Pipe: OutPipeline,
+{
+    type Wire = W;
+    type Enc = E;
+    type Pipe = Pipe;
+
+    fn entry(&self) -> &Self {
+        self
+    }
+}
+
 /// The injections arena a slot body receives: its entries mirror the marker tuple the body
 /// declared, and [`get`](Self::get) picks one by marker.
 pub struct Outs<E> {
@@ -556,19 +662,25 @@ pub trait SelectSlot<M, I> {
 #[derive(Debug, Clone, Copy)]
 pub struct OutPos<const N: usize>;
 
+// The picked entry is reached through `OutEntry`, not by matching `Slot<..>` in the tuple
+// position, so an arena a body left generic (`Outs<(A, J)>`) picks exactly like a spelled-out
+// one. The declared set rides the index: it is what tells the position impls apart from the
+// mount's side, and a type parameter in the trait reference is what keeps it constrained.
 macro_rules! impl_select_slot {
     ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
-        impl<M, W, E, Pipe, Body $(, $before)* $(, $after)*> SelectSlot<M, OutPos<$pos>>
-            for ($($before,)* Slot<M, W, E, Pipe, Body>, $($after,)*)
+        impl<M, Body, Entry $(, $before)* $(, $after)*> SelectSlot<M, (OutPos<$pos>, Body)>
+            for ($($before,)* Entry, $($after,)*)
+        where
+            Entry: OutEntry<M, Body>,
         {
-            type Picked = Slot<M, W, E, Pipe, Body>;
+            type Picked = Slot<M, Entry::Wire, Entry::Enc, Entry::Pipe, Body>;
 
-            fn pick(&self) -> &Slot<M, W, E, Pipe, Body> {
+            fn pick(&self) -> &Self::Picked {
                 #[allow(non_snake_case)]
                 let ($($before,)* picked, $($after,)*) = self;
                 $(let _ = $before;)*
                 $(let _ = $after;)*
-                picked
+                picked.entry()
             }
         }
     )+};

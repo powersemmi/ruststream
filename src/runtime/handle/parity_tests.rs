@@ -9,14 +9,14 @@ use std::future::{Future, ready};
 
 use serde::{Deserialize, Serialize};
 
-use crate::codec::{Codec, JsonCodec};
+use crate::codec::JsonCodec;
 use crate::memory::{
     MemoryBatchContext, MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish,
     MemoryPublisher, MemorySource, Position, SeekHandle,
 };
 use crate::nonzero;
 use crate::runtime::{
-    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, OutPipeline,
+    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, OutEntry,
     OutTransform, Outgoing, Outs, PublishContext, PublishTransform, Reply, ReplyShape, Router,
     RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
     SubscriberSettings, Verdict, for_batch, subscriber,
@@ -339,15 +339,14 @@ impl crate::runtime::PublishedThrough<Analytics> for Export {}
 /// Publishes a serialized dictionary member's own bytes through the slot.
 struct RawMirror;
 
-impl<W, E> Handle<Order, (), Outs<(Slot<Analytics, W, E>,)>> for RawMirror
+impl<A> Handle<Order, (), Outs<(A,)>> for RawMirror
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(A,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let export = Export(order.id.to_be_bytes().to_vec());
@@ -365,21 +364,20 @@ where
     }
 }
 
-/// The generic spelling of the entry's publish path: the body leaves the mount site's pipeline
-/// open too, so it mounts under a slot transform and an app-wide `publish_layer` alike. A body
-/// that never sees either (every other one here) leaves the parameter defaulted.
+/// The publish path never reaches the signature: this one body is mounted below both bare and
+/// under a slot `.transform(..)`, and would be mounted the same under an app-wide
+/// `publish_layer`. The pipeline the mount composes is an [`OutEntry`] projection, so the
+/// `where` clause that compiles against one compiles against the other.
 struct Mirror;
 
-impl<W, E, Pipe> Handle<Order, (), Outs<(Slot<Analytics, W, E, Pipe>,)>> for Mirror
+impl<A> Handle<Order, (), Outs<(A,)>> for Mirror
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
-    Pipe: OutPipeline,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Analytics, W, E, Pipe>,)>,
+        outs: &Outs<(A,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -409,21 +407,15 @@ impl crate::runtime::PublishedThrough<Ledger> for Event {}
 /// Two slots, each with its own publish path.
 struct PairMirror;
 
-impl<WA, EA, PipeA, WB, EB, PipeB>
-    Handle<Order, (), Outs<(Slot<Analytics, WA, EA, PipeA>, Slot<Ledger, WB, EB, PipeB>)>>
-    for PairMirror
+impl<A, L> Handle<Order, (), Outs<(A, L)>> for PairMirror
 where
-    WA: Publisher,
-    EA: Codec + Send + Sync,
-    PipeA: OutPipeline,
-    WB: Publisher,
-    EB: Codec + Send + Sync,
-    PipeB: OutPipeline,
+    A: OutEntry<Analytics, Wire: Publisher>,
+    L: OutEntry<Ledger, Wire: Publisher>,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Analytics, WA, EA, PipeA>, Slot<Ledger, WB, EB, PipeB>)>,
+        outs: &Outs<(A, L)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -488,15 +480,14 @@ impl Handle<Order, (), Outs<(Slot<Analytics, MemoryPublisher, JsonCodec>,)>> for
 
 struct BatchMirror;
 
-impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>> for BatchMirror
+impl<A> Handle<[Order], (), Outs<(A,)>> for BatchMirror
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     fn handle(
         &self,
         batch: &[Order],
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(A,)>,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         let _ = (batch.len(), outs);
@@ -790,16 +781,14 @@ fn the_source_steps_reach_through_the_reply_declaration() {
 
 struct Gateway;
 
-impl<W, E, Pipe> Handle<Order, Confirmation, Outs<(Slot<Analytics, W, E, Pipe>,)>> for Gateway
+impl<A> Handle<Order, Confirmation, Outs<(A,)>> for Gateway
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
-    Pipe: OutPipeline,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Analytics, W, E, Pipe>,)>,
+        outs: &Outs<(A,)>,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> {
         let _ = outs;
@@ -809,15 +798,14 @@ where
 
 struct BatchGateway;
 
-impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>> for BatchGateway
+impl<A> Handle<[Order], Vec<Confirmation>, Outs<(A,)>> for BatchGateway
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     fn handle(
         &self,
         batch: &[Order],
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(A,)>,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
         let _ = outs;
@@ -832,16 +820,14 @@ where
 /// one signature.
 struct BatchGatewayInContext;
 
-impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>, MemoryBatchContext>
-    for BatchGatewayInContext
+impl<A> Handle<[Order], Vec<Confirmation>, Outs<(A,)>, MemoryBatchContext> for BatchGatewayInContext
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     fn handle(
         &self,
         batch: &[Order],
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(A,)>,
         ctx: &mut Context<'_, MemoryBatchContext>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
         let _ = (outs, ctx.context(SeekHandle));
@@ -855,16 +841,14 @@ where
 /// The same arena on a settling batch, so the context axis is open with and without a reply.
 struct BatchMirrorInContext;
 
-impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>, MemoryBatchContext>
-    for BatchMirrorInContext
+impl<A> Handle<[Order], (), Outs<(A,)>, MemoryBatchContext> for BatchMirrorInContext
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     fn handle(
         &self,
         batch: &[Order],
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(A,)>,
         ctx: &mut Context<'_, MemoryBatchContext>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         let _ = (batch.len(), outs, ctx.context(SeekHandle));
@@ -874,15 +858,14 @@ where
 
 struct RawGateway;
 
-impl<W, E> Handle<Order, Export, Outs<(Slot<Analytics, W, E>,)>> for RawGateway
+impl<A> Handle<Order, Export, Outs<(A,)>> for RawGateway
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Analytics, W, E>,)>,
+        outs: &Outs<(A,)>,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
         let _ = outs;

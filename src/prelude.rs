@@ -17,8 +17,9 @@
 //! contracts), the mount-site publish vocabulary ([`Reply`] and [`DefaultSlot`], the two markers
 //! `.out(marker, policy)` binds, and [`MapPublisher`] for a broker's own publisher settings), the
 //! slot vocabulary ([`OutSlot`], [`PublishedThrough`], [`OutMessages`] with the
-//! [`OutgoingMessageMetadata`] a dictionary reports), the state projection ([`FromRef`]) and
-//! the extractor binding ([`FromContext`]).
+//! [`OutgoingMessageMetadata`] a dictionary reports, and [`OutEntry`], the bound a manual body
+//! declares its arena with), the state projection ([`FromRef`]) and the extractor binding
+//! ([`FromContext`]).
 //!
 //! Brokers, codecs and the optional feature modules (`asyncapi`, `metrics`, `logging`, `otel`,
 //! `testing`) stay explicit imports.
@@ -37,9 +38,10 @@
 pub use crate::runtime::{
     App, AppInfo, Context, Ctx, DefaultSlot, Deserialized, FailurePolicies, FailurePolicy,
     FromContext, FromRef, Handle, HandlerOutcome, Headers, Input, MapPublisher, Message,
-    MessageWire, Out, OutMessages, OutgoingMessageMetadata, Outs, PublishExt, PublishedThrough,
-    Reply, ReplyShape, Router, RouterDef, RunningApp, RustStream, Serialized, SerializedReply,
-    SerializedWire, Slot, SoloDeserialized, State, SubscriberSettings, Workers, subscriber,
+    MessageWire, Out, OutEntry, OutMessages, OutgoingMessageMetadata, Outs, PublishExt,
+    PublishedThrough, Reply, ReplyShape, Router, RouterDef, RunningApp, RustStream, Serialized,
+    SerializedReply, SerializedWire, Slot, SoloDeserialized, State, SubscriberSettings, Workers,
+    subscriber,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a

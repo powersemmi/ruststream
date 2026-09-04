@@ -13,11 +13,10 @@ use std::error::Error;
 use std::fmt::Display;
 use std::future::{Future, ready};
 
-use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    BoundSegment, MissingSegment, OutPipeline, OutTransform, PublishAt, PublishContext,
-    PublishError, PublishLayer, PublishNext, PublishPipeline, PublishTransform, TemplateAddress,
+    BoundSegment, MissingSegment, OutTransform, PublishAt, PublishContext, PublishError,
+    PublishLayer, PublishNext, PublishPipeline, PublishTransform, TemplateAddress,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
@@ -99,23 +98,21 @@ impl Handle<Request, Response> for Validate {
 // --8<-- [start:forward]
 // The publisher arrives as an injection: the policy is attached at the include site, the runtime
 // pairs it with the connected broker at startup, and the body always holds a live publisher - no
-// registry, no erased lookup, no state plumbing. The publisher type is not named: the body is
-// generic over it, over the scope codec the slot carries and over the publish path the mount
-// site gave it (its transforms and the app's own middleware), stating just the capability it
-// needs, so the same body mounts on a production broker and its in-process test transport
-// unchanged. `Event` declares no destination of its own, so the call site names one.
+// registry, no erased lookup, no state plumbing. Nothing the mount site chose is named here: one
+// parameter stands for the slot's entry, `OutEntry` ties it to the marker, and the body states
+// only the capability it needs of the wired publisher - so the same body mounts on a production
+// broker and its in-process test transport unchanged, and under a slot transform or an app-wide
+// publish layer alike. `Event` declares no destination of its own, so the call site names one.
 struct Forward;
 
-impl<P, Enc, Pipe> Handle<Event, (), Outs<(Slot<DefaultSlot, P, Enc, Pipe>,)>> for Forward
+impl<Egress> Handle<Event, (), Outs<(Egress,)>> for Forward
 where
-    P: Publisher,
-    Enc: Codec + Send + Sync,
-    Pipe: OutPipeline,
+    Egress: OutEntry<DefaultSlot, Wire: Publisher>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<DefaultSlot, P, Enc, Pipe>,)>,
+        outs: &Outs<(Egress,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -163,30 +160,15 @@ impl PublishedThrough<Shadow> for Event {}
 
 struct Mirror;
 
-impl<PA, EncA, PipeA, PB, EncB, PipeB>
-    Handle<
-        Event,
-        (),
-        Outs<(
-            Slot<Primary, PA, EncA, PipeA>,
-            Slot<Shadow, PB, EncB, PipeB>,
-        )>,
-    > for Mirror
+impl<P, S> Handle<Event, (), Outs<(P, S)>> for Mirror
 where
-    PA: Publisher,
-    EncA: Codec + Send + Sync,
-    PipeA: OutPipeline,
-    PB: Publisher,
-    EncB: Codec + Send + Sync,
-    PipeB: OutPipeline,
+    P: OutEntry<Primary, Wire: Publisher>,
+    S: OutEntry<Shadow, Wire: Publisher>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(
-            Slot<Primary, PA, EncA, PipeA>,
-            Slot<Shadow, PB, EncB, PipeB>,
-        )>,
+        outs: &Outs<(P, S)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -217,16 +199,14 @@ where
 // and the arena - and the mount site fills both.
 struct Gateway;
 
-impl<P, Enc, Pipe> Handle<Request, Response, Outs<(Slot<DefaultSlot, P, Enc, Pipe>,)>> for Gateway
+impl<Audit> Handle<Request, Response, Outs<(Audit,)>> for Gateway
 where
-    P: Publisher,
-    Enc: Codec + Send + Sync,
-    Pipe: OutPipeline,
+    Audit: OutEntry<DefaultSlot, Wire: Publisher>,
 {
     async fn handle(
         &self,
         req: &Request,
-        outs: &Outs<(Slot<DefaultSlot, P, Enc, Pipe>,)>,
+        outs: &Outs<(Audit,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<Response, HandlerOutcome> {
         if outs
@@ -367,16 +347,14 @@ impl PublishedThrough<Orders> for OrderPlaced {}
 
 struct Route;
 
-impl<P, Enc, Pipe> Handle<Event, (), Outs<(Slot<Orders, P, Enc, Pipe>,)>> for Route
+impl<O> Handle<Event, (), Outs<(O,)>> for Route
 where
-    P: Publisher,
-    Enc: Codec + Send + Sync,
-    Pipe: OutPipeline,
+    O: OutEntry<Orders, Wire: Publisher>,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<Orders, P, Enc, Pipe>,)>,
+        outs: &Outs<(O,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let orders = outs.get(Orders);

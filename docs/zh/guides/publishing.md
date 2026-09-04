@@ -176,7 +176,7 @@ trait 约束里的能力还可以收窄：`Out<impl OwnedTransactions, Ledger>` 
 owned 事务时才能编译，这一点在挂载点检查，并给出点名缺失能力的诊断信息。约束里写的是 Broker 的能力
 trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`，或者你的 Broker
 crate 自己定义的那一个），而不是任何 Broker 类型，所以主体与 Broker 无关；在手动路径上，同一个约束
-写在条目的活值上：`where W: OwnedTransactions, E: Codec + Send + Sync`。在每一个这样的约束之下，条目
+写在条目的活值上：`where L: OutEntry<Ledger, Wire: OwnedTransactions>`。在每一个这样的约束之下，条目
 还会在挂载点的编解码器和标记的列表之上给出该能力的类型化形态（发布构建器、事务作用域、拥有式事务）。
 槽位标记同时也是[测试套件](testing.md#asserting-on-out-slots)
 记录发布时所用的身份标识。

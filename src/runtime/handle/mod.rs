@@ -70,7 +70,7 @@ pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
-pub use outs::{Outs, Slot};
+pub use outs::{OutEntry, Outs, Slot};
 #[doc(hidden)]
 pub use reply::{ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, WireDocs};
 pub use reply::{ReplyShape, Serialized};

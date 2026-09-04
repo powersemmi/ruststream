@@ -13,7 +13,6 @@ use std::any::type_name;
 use std::convert::Infallible;
 use std::future::{Future, ready};
 
-use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{ContainsMessage, SlotPos};
 use ruststream::schemars::{JsonSchema, schema_for};
@@ -189,15 +188,14 @@ impl Input for Chunk<'_> {
 #[derive(Clone, Copy)]
 struct Convert;
 
-impl<'p, P, Enc> Handle<Chunk<'p>, (), Outs<(Slot<Events, P, Enc>,)>> for Convert
+impl<'p, E> Handle<Chunk<'p>, (), Outs<(E,)>> for Convert
 where
-    P: Publisher,
-    Enc: Codec + Send + Sync,
+    E: OutEntry<Events, Wire: Publisher>,
 {
     async fn handle(
         &self,
         chunk: &Chunk<'p>,
-        outs: &Outs<(Slot<Events, P, Enc>,)>,
+        outs: &Outs<(E,)>,
         ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         // Read the policy before the extraction takes the mutable borrow.

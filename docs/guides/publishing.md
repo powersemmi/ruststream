@@ -195,9 +195,10 @@ against a policy whose live publisher supports owned transactions, checked at th
 with a diagnostic naming the missing capability. The bound names a broker capability trait -
 `Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`, or one your broker
 crate defines - and never a broker type, so the body stays broker-agnostic; on the manual path
-the same bound sits on the entry's wired value, `where W: OwnedTransactions, E: Codec + Send +
-Sync`. Under each bound the entry offers that capability's typed form (the publish builder, a
-transaction scope, an owned transaction) over the include site's codec and the marker's list.
+the same bound sits on the entry's wired value, `where L: OutEntry<Ledger, Wire:
+OwnedTransactions>`. Under each bound the entry offers that capability's typed form (the publish
+builder, a transaction scope, an owned transaction) over the include site's codec and the
+marker's list.
 The slot marker is also the identity the
 [test harness](testing.md#asserting-on-out-slots) records publishes against.
 

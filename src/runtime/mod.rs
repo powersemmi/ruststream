@@ -63,8 +63,8 @@ pub use handle::{
 };
 pub use handle::{
     BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,
-    IntoSource, Message, Outs, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
-    Undocumented, ValueBuilder, Verdict, subscriber,
+    IntoSource, Message, OutEntry, Outs, ReplyShape, Serialized, SerializedReply, Slot,
+    SoloDeserialized, Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{

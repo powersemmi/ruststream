@@ -7,7 +7,6 @@
 
 use std::time::Duration;
 
-use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::PublishedThrough;
 use ruststream::testing::TestApp;
@@ -69,15 +68,14 @@ impl PublishedThrough<Journal> for Audit {}
 /// visible together on commit, or not at all when the body aborts.
 struct SettleAtomically;
 
-impl<W, E> Handle<Order, (), Outs<(Slot<Journal, W, E>,)>> for SettleAtomically
+impl<J> Handle<Order, (), Outs<(J,)>> for SettleAtomically
 where
-    W: TransactionalPublisher,
-    E: Codec + Send + Sync,
+    J: OutEntry<Journal, Wire: TransactionalPublisher>,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Journal, W, E>,)>,
+        outs: &Outs<(J,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let Ok(scope) = outs.get(Journal).begin().await else {
@@ -176,15 +174,14 @@ impl PublishedThrough<Ledger> for Settled {}
 /// Settles an order through an owned transaction opened on the entry.
 struct SettleOwned;
 
-impl<W, E> Handle<Order, (), Outs<(Slot<Ledger, W, E>,)>> for SettleOwned
+impl<L> Handle<Order, (), Outs<(L,)>> for SettleOwned
 where
-    W: OwnedTransactions,
-    E: Codec + Send + Sync,
+    L: OutEntry<Ledger, Wire: OwnedTransactions>,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Ledger, W, E>,)>,
+        outs: &Outs<(L,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let Ok(mut txn) = outs.get(Ledger).transaction().await else {
@@ -265,15 +262,14 @@ impl PublishedThrough<Answers> for Answer {}
 /// The responder: a plain publishing body that answers where the request's `reply-to` points.
 struct Respond;
 
-impl<W, E> Handle<Ask, (), Outs<(Slot<Answers, W, E>,)>> for Respond
+impl<A> Handle<Ask, (), Outs<(A,)>> for Respond
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Answers, Wire: Publisher>,
 {
     async fn handle(
         &self,
         ask: &Ask,
-        outs: &Outs<(Slot<Answers, W, E>,)>,
+        outs: &Outs<(A,)>,
         ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let Some(reply_to) = ctx.headers().reply_to().map(str::to_owned) else {
@@ -305,15 +301,14 @@ impl PublishedThrough<Quotes> for Quoted {}
 /// the same entry - the plain builder comes with the `Publisher` supertrait of the bound.
 struct AskQuote;
 
-impl<W, E> Handle<Order, (), Outs<(Slot<Quotes, W, E>,)>> for AskQuote
+impl<Q> Handle<Order, (), Outs<(Q,)>> for AskQuote
 where
-    W: RequestReply,
-    E: Codec + Send + Sync,
+    Q: OutEntry<Quotes, Wire: RequestReply>,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Quotes, W, E>,)>,
+        outs: &Outs<(Q,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         let ask = serde_json::to_vec(&Ask { id: order.id }).expect("an ask serializes");

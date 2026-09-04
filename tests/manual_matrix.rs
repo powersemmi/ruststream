@@ -9,7 +9,6 @@
 
 use std::future::{Future, ready};
 
-use ruststream::codec::Codec;
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
@@ -70,20 +69,20 @@ fn confirmation_of(msg: &Message<Meta, Order>) -> Confirmation {
     }
 }
 
-/// The arena a single-slot body declares.
-type AnalyticsArena<W, E> = Outs<(Slot<Analytics, W, E>,)>;
+/// The arena a single-slot body declares: one entry, described by its marker and the capability
+/// the bodies need, never by the mount site's wiring.
+type AnalyticsArena<A> = Outs<(A,)>;
 /// A pair input fanned out through a slot.
 struct MirrorPair;
 
-impl<W, E> Handle<Message<Meta, Order>, (), AnalyticsArena<W, E>> for MirrorPair
+impl<A> Handle<Message<Meta, Order>, (), AnalyticsArena<A>> for MirrorPair
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         msg: &Message<Meta, Order>,
-        outs: &AnalyticsArena<W, E>,
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         if outs
@@ -117,15 +116,14 @@ impl Handle<Message<Meta, Order>, Confirmation> for ConfirmPair {
 /// A pair input answering with a reply and fanning out through a slot in the same signature.
 struct GatewayPair;
 
-impl<W, E> Handle<Message<Meta, Order>, Confirmation, AnalyticsArena<W, E>> for GatewayPair
+impl<A> Handle<Message<Meta, Order>, Confirmation, AnalyticsArena<A>> for GatewayPair
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         msg: &Message<Meta, Order>,
-        outs: &AnalyticsArena<W, E>,
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<Confirmation, HandlerOutcome> {
         if outs
@@ -144,15 +142,14 @@ where
 /// A batch of pairs fanned out through a slot.
 struct MirrorPairBatch;
 
-impl<W, E> Handle<[Message<Meta, Order>], (), AnalyticsArena<W, E>> for MirrorPairBatch
+impl<A> Handle<[Message<Meta, Order>], (), AnalyticsArena<A>> for MirrorPairBatch
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         batch: &[Message<Meta, Order>],
-        outs: &AnalyticsArena<W, E>,
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), Vec<HandlerOutcome>> {
         for msg in batch {
@@ -188,16 +185,14 @@ impl Handle<[Message<Meta, Order>], Vec<Confirmation>> for ConfirmPairBatch {
 /// A batch of pairs answering with one reply per element and fanning out through a slot.
 struct GatewayPairBatch;
 
-impl<W, E> Handle<[Message<Meta, Order>], Vec<Confirmation>, AnalyticsArena<W, E>>
-    for GatewayPairBatch
+impl<A> Handle<[Message<Meta, Order>], Vec<Confirmation>, AnalyticsArena<A>> for GatewayPairBatch
 where
-    W: Publisher,
-    E: Codec + Send + Sync,
+    A: OutEntry<Analytics, Wire: Publisher>,
 {
     async fn handle(
         &self,
         batch: &[Message<Meta, Order>],
-        outs: &AnalyticsArena<W, E>,
+        outs: &AnalyticsArena<A>,
         _ctx: &mut Context<'_>,
     ) -> Result<Vec<Confirmation>, Vec<HandlerOutcome>> {
         for msg in batch {
