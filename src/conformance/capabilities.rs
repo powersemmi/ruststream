@@ -7,9 +7,8 @@
 //! caller-supplied factories so it stays broker-agnostic, and the in-memory broker is the
 //! executable reference that passes all of them.
 //!
-//! Every suite names its subject through
-//! [`unique_subject`](super::helpers::unique_subject) rather than fixing one, so a run reads only
-//! its own messages. A fixed subject would pass once and fail on the second run against any
+//! Every suite names its subject through [`unique_subject`] rather than fixing one, so a run
+//! reads only its own messages. A fixed subject would pass once and fail on the second run against any
 //! broker that keeps what the first left: a retained log, a durable queue, a key namespace. The
 //! suites are therefore re-runnable against one server, and two of them can run at once in one
 //! process.

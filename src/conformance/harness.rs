@@ -96,8 +96,8 @@ where
 ///
 /// Run it from the broker crate, against a real server where one is needed (NATS, Kafka, ...) or
 /// in-process for the in-memory broker. The subject it publishes under is unique per run (see
-/// [`unique_subject`](super::helpers::unique_subject)), so a server that keeps what an earlier run
-/// left - a retained log, a durable queue - does not fail the next one.
+/// [`unique_subject`]), so a server that keeps what an earlier run left - a retained log, a
+/// durable queue - does not fail the next one.
 ///
 /// # Examples
 ///
