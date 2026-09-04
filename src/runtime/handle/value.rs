@@ -96,7 +96,7 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// application state. The chain then carries what is not in the signature - the declarative
 /// settings ([`workers`](crate::runtime::SubscriberSettings::workers),
 /// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
-/// [`buffered`](crate::runtime::SubscriberSettings::buffered), ...), the reply wiring
+/// [`start_at`](crate::runtime::SubscriberSettings::start_at), ...), the reply wiring
 /// ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to),
 /// [`publisher`](SubscriberBuilder::publisher)), the page size
 /// ([`batch`](crate::runtime::SubscriberSettings::batch)) and the documentation opt-out
