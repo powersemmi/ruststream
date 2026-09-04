@@ -600,9 +600,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         self.coordinator.drive().await
     }
 
-    /// Waits (best-effort) for post-settle `and_after` continuations spawned so far to finish, for
-    /// tests that assert on their side effects. Synchronous handler effects need only
+    /// Waits for the post-settle continuations of everything settled so far to finish, for tests
+    /// that assert on their side effects. Synchronous handler effects need only
     /// [`settle`](Self::settle).
+    ///
+    /// A settlement registers its continuations - the outcome's `and_after` and the context's
+    /// `after(..)` / `after_settle(..)` hooks alike - before it releases the delivery, so an
+    /// injection that has returned has already put its continuations here for this to find.
     pub async fn drain(&self) {
         while !self.continuations.is_empty() {
             tokio::task::yield_now().await;

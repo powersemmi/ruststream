@@ -216,14 +216,13 @@ where
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
-        let hooks = TaskTracker::new();
         let mut stream = std::pin::pin!(subscriber.stream());
         loop {
             tokio::select! {
                 () = shutdown.cancelled() => break,
                 next = stream.next() => match next {
                     Some(Ok(msg)) => {
-                        dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure).await;
+                        dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
                     }
                     Some(Err(err)) => {
                         error!(
@@ -243,16 +242,7 @@ where
                 }
             }
         }
-        drain_hooks(hooks).await;
     })
-}
-
-/// Closes a hook tracker to new spawns and waits for the in-flight post-settle continuations to
-/// finish. Called once the dispatch loop exits; bounded from the outside by the app's
-/// `shutdown_timeout`, which aborts the whole dispatch task (and these hooks with it) on timeout.
-async fn drain_hooks(hooks: TaskTracker) {
-    hooks.close();
-    hooks.wait().await;
 }
 
 /// Spawns a task that drives `subscriber` through `handler` with a bounded worker pool: up to
@@ -317,7 +307,6 @@ where
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
-        let hooks = TaskTracker::new();
         let mut stream = std::pin::pin!(subscriber.stream());
         let mut tasks = JoinSet::new();
         loop {
@@ -333,11 +322,9 @@ where
                         let name = Arc::clone(&name);
                         let state = Arc::clone(&state);
                         let delivery = Arc::clone(&delivery);
-                        let hooks = hooks.clone();
                         let failure = failure.clone();
                         tasks.spawn(async move {
-                            dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure)
-                                .await;
+                            dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
                         });
                     }
                     Some(Err(err)) => {
@@ -361,7 +348,6 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
-        drain_hooks(hooks).await;
     })
 }
 
@@ -387,7 +373,6 @@ where
         // One sequential worker per lane, fed by a capacity-1 channel: a keyed delivery always
         // lands in the lane its key hashes to, so per-key order is preserved. In-flight cap is
         // one processing plus one queued delivery per lane.
-        let hooks = TaskTracker::new();
         let mut lanes = Vec::with_capacity(workers.count);
         let mut tasks = JoinSet::new();
         for _ in 0..workers.count {
@@ -396,11 +381,10 @@ where
             let name = Arc::clone(&name);
             let state = Arc::clone(&state);
             let delivery = Arc::clone(&delivery);
-            let hooks = hooks.clone();
             let failure = failure.clone();
             tasks.spawn(async move {
                 while let Some(msg) = rx.recv().await {
-                    dispatch(&*handler, msg, &name, &state, &delivery, &hooks, &failure).await;
+                    dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
                 }
             });
             lanes.push(tx);
@@ -456,7 +440,6 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
-        drain_hooks(hooks).await;
     })
 }
 
@@ -503,7 +486,6 @@ where
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
-        let hooks = TaskTracker::new();
         // The registration's own page size, straight to the broker: whatever comes back is the
         // page the handler sees.
         let mut stream = std::pin::pin!(subscriber.batches(page_size));
@@ -522,7 +504,7 @@ where
                             // Turbofish: the adapter handlers are generic over the batch
                             // context, so the spawn's own parameter names it.
                             run_batch::<_, _, C, _>(
-                                &*handler, batch, &name, &state, &delivery, &hooks, &failure,
+                                &*handler, batch, &name, &state, &delivery, &failure,
                             )
                             .await;
                         } else {
@@ -530,11 +512,10 @@ where
                             let name = Arc::clone(&name);
                             let state = Arc::clone(&state);
                             let delivery = Arc::clone(&delivery);
-                            let hooks = hooks.clone();
                             let failure = failure.clone();
                             tasks.spawn(async move {
                                 run_batch::<_, _, C, _>(
-                                    &*handler, batch, &name, &state, &delivery, &hooks, &failure,
+                                    &*handler, batch, &name, &state, &delivery, &failure,
                                 )
                                 .await;
                             });
@@ -561,18 +542,15 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
-        drain_hooks(hooks).await;
     })
 }
 
-#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 async fn dispatch<H, M, C, St>(
     handler: &H,
     msg: M,
     name: &str,
     state: &St,
     delivery: &Delivery,
-    hooks: &TaskTracker,
     failure: &DispatchFailure,
 ) where
     H: Handler<M, C, St>,
@@ -676,9 +654,10 @@ async fn dispatch<H, M, C, St>(
         }
     }
     // Context-registered hooks run after the message is settled: at-most-once, off the delivery
-    // path. Tracked so a graceful shutdown drains them.
+    // path. They ride the same app-wide tracker as an `and_after` continuation, so one drain
+    // covers both - the harness's `drain` and the shutdown's alike.
     for fut in continuations {
-        hooks.spawn(fut);
+        delivery.tasks.spawn(fut);
     }
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
@@ -691,14 +670,12 @@ async fn dispatch<H, M, C, St>(
 /// the service down (`fail_fast`) or be logged and skipped. Per-element settlement is out of scope
 /// (see the batch decode path for per-element decode handling). Ungated `after_settle` hooks run
 /// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
-#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 async fn run_batch<H, M, C, St>(
     handler: &H,
     batch: Vec<M>,
     name: &str,
     state: &St,
     delivery: &Delivery,
-    hooks: &TaskTracker,
     failure: &DispatchFailure,
 ) where
     H: BatchHandler<M, C, St>,
@@ -749,7 +726,7 @@ async fn run_batch<H, M, C, St>(
     match result {
         Ok(()) => {
             for fut in ctx.take_settle_hooks() {
-                hooks.spawn(fut);
+                delivery.tasks.spawn(fut);
             }
         }
         Err(payload) => {
