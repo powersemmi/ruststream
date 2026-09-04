@@ -243,8 +243,8 @@ pub trait NatsSubscriber {
 
 // The four state slots are (workers, failure policies, start position, batch size); `Codec` is
 // the registration's own decode override, `()` until one is named. Both travel unchanged.
-impl<Def, Workers, Failures, StartAt, Batch, Codec> NatsSubscriber
-    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartAt, Batch), Codec>
+impl<Def, Workers, Failures, StartPosition, Batch, Codec> NatsSubscriber
+    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartPosition, Batch), Codec>
 where
     Def: Declared,
 {
@@ -261,6 +261,39 @@ where
 The bound on the source type means the methods do not exist on a builder for another broker.
 Users import the trait to reach them, as with any extension trait. This is the same extension
 shape the `Out` slot vocabulary uses below.
+
+One core setting changes the source type rather than a state slot: `start_at(..)` wraps the
+descriptor in `StartAt<SubscribeOptions, Position>`, so on exactly the subscriptions that named a
+start position your methods are no longer in scope. Cover that with a second impl over the wrapped
+source. `StartAt::map_inner` reaches the descriptor underneath and hands the position back
+untouched, so each method stays one line:
+
+<!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
+```rust
+use ruststream::StartAt;
+use ruststream::runtime::Fixed;
+
+// The start-position slot is `Fixed` here by construction - `start_at(..)` is what produced the
+// wrapper - and the source type is a different one, so this impl and the one above never overlap.
+impl<Def, Workers, Failures, Batch, Codec, Position> NatsSubscriber
+    for SubscriberBuilder<
+        Def,
+        StartAt<SubscribeOptions, Position>,
+        (Workers, Failures, Fixed, Batch),
+        Codec,
+    >
+where
+    Def: Declared,
+{
+    fn jetstream(self, stream: impl Into<String>) -> Self {
+        self.map_source(|source| source.map_inner(|inner| inner.jetstream(stream)))
+    }
+
+    fn durable(self, name: impl Into<String>) -> Self {
+        self.map_source(|source| source.map_inner(|inner| inner.durable(name)))
+    }
+}
+```
 
 ### Publisher settings in your own vocabulary
 
@@ -306,12 +339,13 @@ hook is the ergonomic mirror, not a replacement.
 ## Capability traits
 
 Implement only the capabilities your broker supports; none are part of the mandatory interface.
-`BatchSubscriber` is the exception: [every broker offers it](#batches-batchsubscriber), because
-every batch handler asks for one.
+`BatchSubscriber` comes closest to one: [offer it wherever you can](#batches-batchsubscriber),
+because every batch handler asks for one and a transport with no batching of its own can still
+assemble batches on the client.
 
 | Trait | For brokers that support |
 |---|---|
-| `BatchSubscriber` | receiving messages in batches (every broker; see below) |
+| `BatchSubscriber` | receiving messages in batches (offer it wherever you can; see below) |
 | `TransactionalPublisher` | begin / commit / abort around publishes on the handle |
 | `OwnedTransactions` / `Transaction` | transactions whose buffer lives in a value, any number open at once per handle |
 | `RequestReply` | native request-reply (NATS yes, Kafka no) |
@@ -353,11 +387,21 @@ group, a prefetch window - stays your own vocabulary, configured on your subscri
 through your settings extension trait, so a service writes `b.include(handler.batch(nonzero!(6))
 .block(Duration::from_secs(5)))` with the core's word first and yours after it.
 
+Put the capability on every subscriber a mount can reach, not only on the one your own descriptor
+opens. `#[subscriber("topic")]` goes through `Subscribe`, so a `&[T]` body on that form asks for
+`BatchSubscriber` on `Subscribe::Subscriber`; a crate that wired the capability onto its
+descriptor's subscriber alone leaves the string-literal form failing to compile. Where the two are
+the same type there is nothing to do, and where they differ both need it.
+
 Where the transport delivers one message at a time, do not leave the capability out: assemble
 the batches on the client with the core's `BufferedSubscriber`, whose `batches` honours the size
-it is given. The deadline that closes a partial batch is your choice, made once when you build
-the wrapper; the size is not yours to choose. Everything else about the subscriber reaches
-through the wrapper unchanged:
+it is given. The deadline that closes a partial batch is your choice, and it need not be a
+constant: expose it on your subscription descriptor (`.max_wait(Duration::from_millis(25))`) and
+hand it to the wrapper as the subscription opens, so a service can tune it per subscription. A
+network transport wants exactly that: the 10 ms default is sized for an in-process bus, and once a
+round trip is in the way it closes most batches at a single delivery, so the broker crates that
+ship the deadline as a descriptor option settle between 10 and 50 ms. The size is not yours to
+choose. Everything else about the subscriber reaches through the wrapper unchanged:
 
 ```rust
 --8<-- "tests/batch_subscriber.rs:buffered_capability"
@@ -366,8 +410,16 @@ through the wrapper unchanged:
 Nothing in the mount site says which of the two you did, which is the point: a service names the
 batch size and gets batches.
 
+Declining the capability is still a legitimate answer where batching would break a guarantee the
+transport carries. A ZeroMQ ROUTER is the case in practice: it answers each peer at that peer's
+own `reply-to`, while a batch reaches its reply wiring with one `PublishContext` for the whole
+batch, so batched replies would follow one peer's address and misroute the rest. Say so in your
+crate's docs; a `&[T]` body then simply does not compile on that transport, which is the honest
+outcome.
+
 The `conformance` batch suite checks the contract - it opens a subscription at a size smaller
-than the run and fails a broker whose batches come back larger.
+than the run and fails a broker whose batches come back larger. It is not part of
+`harness::run_suite`: capability suites are yours to call, one per capability you implement.
 
 ### The prelude your crate ships { #broker-prelude }
 
@@ -386,10 +438,15 @@ Those three names are policy names, so the core prelude exports nothing under th
 reads the same whichever broker it is on, and swapping brokers swaps the glob. Never alias a
 policy to a core trait name (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
 `RequestReply`) or re-export something else under one: a body that globs both preludes has to keep
-resolving those to the core traits. Leave out a trait whose methods would collide with a defaulted
-core method - `Partitioned::partition_key` against `IncomingMessage::partition_key` is the case in
-practice - and let a service that needs it import it explicitly.
-`ruststream::memory::prelude` is the worked example.
+resolving those to the core traits.
+
+The manifest is what your glob adds, so it is the consumer-side traits a body reaches through your
+broker - `Positioned`, `Seeker`, `Transaction` and the like. The four publisher capabilities are
+already in the core prelude, so re-exporting them changes nothing. Leave out a trait whose method
+would collide with a defaulted core method - `Partitioned::partition_key` against
+`IncomingMessage::partition_key` is the case in practice - and let a service that needs it import
+it explicitly. `BatchSubscriber` belongs in no manifest at all: the framework calls it, and no
+body ever writes it as a bound. `ruststream::memory::prelude` is the worked example.
 
 ### Extending the `Out` slot vocabulary
 

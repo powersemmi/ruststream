@@ -225,8 +225,8 @@ pub trait NatsSubscriber {
 
 // 四个状态槽位依次是（工作者、失败策略、起始位置、批次大小）；`Codec` 是这次注册自己的解码覆盖，
 // 在没人指定之前是 `()`。两者都原样传递下去。
-impl<Def, Workers, Failures, StartAt, Batch, Codec> NatsSubscriber
-    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartAt, Batch), Codec>
+impl<Def, Workers, Failures, StartPosition, Batch, Codec> NatsSubscriber
+    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartPosition, Batch), Codec>
 where
     Def: Declared,
 {
@@ -242,6 +242,38 @@ where
 
 对源类型的 trait 约束意味着，这些方法在别的 Broker 的构建器上根本不存在。用户像用任何扩展 trait
 那样导入它，就能用到这些方法。下文中 `Out` 槽位的词汇采用的也是同一种扩展形态。
+
+有一项核心设定改变的不是状态槽位，而是源类型本身：`start_at(..)` 会把描述符包进
+`StartAt<SubscribeOptions, Position>`，于是恰恰在那些指定了起始位置的订阅上，你的方法不再在作用域
+里。为这种情形再写一个针对被包装源的 impl。`StartAt::map_inner` 能够到里面的描述符，并原样交还位置，
+所以每个方法仍旧只有一行：
+
+<!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
+```rust
+use ruststream::StartAt;
+use ruststream::runtime::Fixed;
+
+// 这里起始位置槽位按构造必然是 `Fixed` - 这个包装正是 `start_at(..)` 造出来的 - 而且源类型也
+// 不同，所以这个 impl 与上面那个永远不会重叠。
+impl<Def, Workers, Failures, Batch, Codec, Position> NatsSubscriber
+    for SubscriberBuilder<
+        Def,
+        StartAt<SubscribeOptions, Position>,
+        (Workers, Failures, Fixed, Batch),
+        Codec,
+    >
+where
+    Def: Declared,
+{
+    fn jetstream(self, stream: impl Into<String>) -> Self {
+        self.map_source(|source| source.map_inner(|inner| inner.jetstream(stream)))
+    }
+
+    fn durable(self, name: impl Into<String>) -> Self {
+        self.map_source(|source| source.map_inner(|inner| inner.durable(name)))
+    }
+}
+```
 
 ### 用你自己的词汇表达发布者配置
 
@@ -284,12 +316,13 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 
 ## 能力 trait
 
-只实现你的 Broker 真正支持的能力；它们都不属于必需接口。`BatchSubscriber` 是例外：
-[每个 Broker 都提供它](#batches-batchsubscriber)，因为每个批量处理器都要它。
+只实现你的 Broker 真正支持的能力；它们都不属于必需接口。最接近必需的是 `BatchSubscriber`：
+[能提供的地方就提供它](#batches-batchsubscriber)，因为每个批量处理器都要它，而自身没有批量能力的
+传输照样可以在客户端攒批。
 
 | trait | 适用于支持这些能力的 Broker |
 |---|---|
-| `BatchSubscriber` | 按批次接收消息（每个 Broker 都要，见下文） |
+| `BatchSubscriber` | 按批次接收消息（能提供就提供，见下文） |
 | `TransactionalPublisher` | 在句柄上围绕发布做 begin / commit / abort |
 | `OwnedTransactions` / `Transaction` | 缓冲区存放在值里的事务，同一个句柄上可同时开启任意多个 |
 | `RequestReply` | 原生的请求-响应（NATS 有，Kafka 没有） |
@@ -324,9 +357,17 @@ seeker，它只带句柄、不带位置。
 扩展 trait 配置在订阅源上，于是服务写出来是
 `b.include(handler.batch(nonzero!(6)).block(Duration::from_secs(5)))`：核心的词在前，你的词在后。
 
+要把这项能力放到挂载能够到的每一个订阅者上，而不只是你自己的描述符打开的那一个。
+`#[subscriber("topic")]` 走的是 `Subscribe`，因此这种写法下的 `&[T]` 主体要的是
+`Subscribe::Subscriber` 上的 `BatchSubscriber`；只把能力挂在自家描述符订阅者上的 crate，会让字符串
+字面量那种写法编译不过。两者是同一个类型时无事可做；类型不同时两边都得有。
+
 如果传输一次只投递一条消息，不要干脆不实现这项能力：用核心的 `BufferedSubscriber` 在客户端攒批次，
-它的 `batches` 会遵守拿到的批次大小。封住不满一个批次的那个截止时间由你选定，在构造包装器时定一次；
-批次大小则不由你选。订阅者的其余部分都原样穿过这层包装：
+它的 `batches` 会遵守拿到的批次大小。封住不满一个批次的那个截止时间由你选定，而且它不必是个常量：
+把它放到你的订阅描述符上（`.max_wait(Duration::from_millis(25))`），在订阅打开时交给包装器，这样
+服务就能逐个订阅去调。网络传输要的正是这个：10 ms 的默认值是照进程内总线定的，一旦中间隔着一次网络
+往返，它会把大多数批次封在一条投递上，所以把这个截止时间做成描述符选项的那些 Broker crate 落在
+10 到 50 ms 之间。批次大小则不由你选。订阅者的其余部分都原样穿过这层包装：
 
 ```rust
 --8<-- "tests/batch_subscriber.rs:buffered_capability"
@@ -334,8 +375,13 @@ seeker，它只带句柄、不带位置。
 
 挂载点看不出你走的是两条路里的哪一条，而这正是要点：服务报出批次大小，就拿到批次。
 
+在攒批会破坏传输自身某项保证的地方，不提供这项能力同样是正当的答复。ZeroMQ 的 ROUTER 就是现实中的
+例子：它按每个对端各自的 `reply-to` 去回复，而一个批次到达它的回复接线时只带着一个覆盖整批的
+`PublishContext`，于是批量回复会顺着某一个对端的地址走，把其余的送错地方。在你的 crate 文档里把这点
+写明；`&[T]` 主体在那种传输上便直接编译不过，这是诚实的结果。
+
 `conformance` 的批量套件会检查这项契约：它用小于整轮消息数的批次大小打开订阅，批次回得更长的
-Broker 会被判失败。
+Broker 会被判失败。它不在 `harness::run_suite` 之内：能力套件由你自己调用，实现了哪项能力就调哪一个。
 
 ### 你的 crate 要提供的 prelude { #broker-prelude }
 
@@ -352,9 +398,13 @@ Broker 会被判失败。
 这三个名字是策略的名字，因此核心 prelude 在这些名字下什么都不导出：挂载点在哪个 Broker 上读起来都
 一样，换 Broker 换的只是那个 glob。绝不要把策略取名成核心 trait 的名字（`Publisher`、
 `TransactionalPublisher`、`OwnedTransactions`、`RequestReply`），也不要在这些名字下重导出别的东西：
-同时 glob 了两个 prelude 的主体，必须仍然把这些名字解析成核心 trait。如果某个 trait 的方法会和核心的
-默认方法冲突，就把它留在外面 - 实践中就是 `Partitioned::partition_key` 与
-`IncomingMessage::partition_key` - 让需要它的服务显式导入。可以参照的现成例子是
+同时 glob 了两个 prelude 的主体，必须仍然把这些名字解析成核心 trait。
+
+清单指的是你的 glob 添加的那部分，也就是主体经由你的 Broker 才够得到的消费侧 trait：`Positioned`、
+`Seeker`、`Transaction` 之类。四个发布者能力已经在核心 prelude 里了，再导出一遍什么也不改变。如果
+某个 trait 的方法会和核心的默认方法冲突，就把它留在外面 - 实践中就是 `Partitioned::partition_key`
+与 `IncomingMessage::partition_key` - 让需要它的服务显式导入。`BatchSubscriber` 则根本不属于任何
+清单：调用它的是框架，没有哪个主体会把它写成边界。可以参照的现成例子是
 `ruststream::memory::prelude`。
 
 ### 扩展 `Out` 槽位的词汇

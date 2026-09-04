@@ -406,7 +406,12 @@ carry a value from the incoming message onto the reply:
 ```
 
 A batch handler's replies skip the per-message `.transform(..)` stack; add a transform there with
-`.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`.
+`.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`. Each
+reply runs through it one at a time, but they share one `PublishContext`, and it is the batch's,
+not a delivery's: a batch spans many deliveries, so `name()` is the subscription, `headers()` is
+empty, and `context(..)` reads the broker's batch context. A transform that has to read the
+message it is answering for belongs on the per-message path, where a reply and its delivery are
+one.
 
 An `OutTransform` implements `apply(&mut Outgoing<'_>)` and rides one slot:
 

@@ -14,6 +14,11 @@ use crate::HeaderMap;
 /// propagates from the incoming message onto the reply (the static, zero-cost path; the app-wide
 /// [`PublishLayer`](crate::runtime::PublishLayer) stays context-agnostic). `C` is the
 /// handler's context type (`()` when it names none).
+///
+/// A batch's replies are the exception, because a batch spans many deliveries and has no single
+/// one to read: a [`BatchPublishTransform`] sees one view for the whole batch, whose
+/// [`name`](Self::name) is the subscription, whose [`headers`](Self::headers) are empty, and
+/// whose [`context`](Self::context) is the broker's batch context.
 pub struct PublishContext<'a, C = ()> {
     name: &'a str,
     headers: &'a HeaderMap,
@@ -106,11 +111,20 @@ impl<C, Inner: PublishTransform<C>, Outer: PublishTransform<C>> PublishTransform
 /// `.batch_transform(..)`, which the single-message mounts reject at compile time. The
 /// per-message [`PublishTransform`] stack does not run for batched replies and this one does not run for
 /// single-message replies - the two paths are independent. To use the same transform on both, add
-/// it to each, reusing it on the batch side with [`for_batch`] (no second implementation). Each
-/// reply in the batch is passed through it individually, reading the delivery through
-/// [`PublishContext`].
+/// it to each, reusing it on the batch side with [`for_batch`] (no second implementation).
+///
+/// Each reply in the batch runs through it individually, but they all see one
+/// [`PublishContext`], and it is the batch's rather than a delivery's: a batch spans many
+/// deliveries, so it has no single one to read. [`name`](PublishContext::name) is the
+/// subscription, [`headers`](PublishContext::headers) is empty, and
+/// [`context`](PublishContext::context) reads the broker's batch context (built from the batch's
+/// first delivery). A transform that has to read the message it answers for belongs on the
+/// per-message path, where the reply and its delivery are one.
 pub trait BatchPublishTransform<C = ()>: Send + Sync {
     /// Transforms one of the batch's outgoing replies before it is sent.
+    ///
+    /// `cx` is the batch's context, not the reply's own delivery: see the trait's own docs for
+    /// what it carries.
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>);
 }
 

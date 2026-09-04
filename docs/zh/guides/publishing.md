@@ -360,7 +360,10 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
 ```
 
 批量处理器的回复会跳过按消息生效的 `.transform(..)` 栈；要在那里加变换，用 `.batch_transform(..)`，
-并可以通过 `for_batch(transform)` 复用一个按消息的 `PublishTransform`。
+并可以通过 `for_batch(transform)` 复用一个按消息的 `PublishTransform`。每条回复都会挨个走一遍它，
+但它们共用同一个 `PublishContext`，而且那是整批的、不是某一条投递的：一批跨越许多条投递，所以
+`name()` 是订阅，`headers()` 是空的，`context(..)` 读到的是 Broker 的批上下文。要读它所回应的那条
+消息的变换，该待在按消息的那条路上 - 在那里，一条回复和它的投递是同一件事。
 
 `OutTransform` 实现的是 `apply(&mut Outgoing<'_>)`，只跟着一个槽位走：
 
