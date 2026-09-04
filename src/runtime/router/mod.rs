@@ -16,7 +16,6 @@
 mod builder;
 mod builders;
 mod form_eager;
-mod form_handle;
 mod form_out;
 mod form_publish;
 pub mod forms;
@@ -28,22 +27,15 @@ mod routes_publish;
 mod sink;
 
 pub use builder::Router;
-pub use builders::{
-    RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterRawReply, RouterRawReplyOut, RouterSlots, RouterSlotsWithReply,
-    RouterWith,
-};
+pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
 #[doc(hidden)]
-pub use builders::{RouterCommit, RouterSlotCommit};
+pub use builders::RouterCommit;
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;
-pub(crate) use mount::{
-    BatchInjectMount, BatchPublishInjectMount, BatchPublishMount, InjectMount, InputCodec,
-    MountCodec, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
-};
+pub(crate) use mount::InputCodec;
 #[doc(hidden)]
 pub use mount::{ReplyAttachment, RouterMount};
 pub use routes::{RouterDef, RouterHandlers};
@@ -68,9 +60,10 @@ pub(crate) type TypedRoute<B, S, D, C> = SubscribeRoute<
 >;
 
 /// The router that mounting a [`SubscriberDef`] `D` on source `S` (decoded with `C`) onto `R`
-/// produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
-pub(crate) type IncludedRouter<B, S, D, C, RC, RL, R> =
-    Router<B, (TypedRoute<B, S, D, C>, R), RC, RL>;
+/// produces. `RC` / `RL` / `RP` are the router's own codec, layer and slot-pipeline parameters,
+/// carried unchanged.
+pub(crate) type IncludedRouter<B, S, D, C, RC, RL, RP, R> =
+    Router<B, (TypedRoute<B, S, D, C>, R), RC, RL, RP>;
 
 /// The route a [`BatchDef`] `D` mounted on source `S` (decoded with `C`) becomes.
 pub(crate) type BatchTypedRoute<B, S, D, C> = BatchRoute<
@@ -80,9 +73,9 @@ pub(crate) type BatchTypedRoute<B, S, D, C> = BatchRoute<
 >;
 
 /// The router that mounting a [`BatchDef`] `D` on source `S` (decoded with `C`) onto `R`
-/// produces. `RC` / `RL` are the router's own codec and layer parameters, carried unchanged.
-pub(crate) type IncludedBatchRouter<B, S, D, C, RC, RL, R> =
-    Router<B, (BatchTypedRoute<B, S, D, C>, R), RC, RL>;
+/// produces. See [`IncludedRouter`] for the carried parameters.
+pub(crate) type IncludedBatchRouter<B, S, D, C, RC, RL, RP, R> =
+    Router<B, (BatchTypedRoute<B, S, D, C>, R), RC, RL, RP>;
 
 /// The route a self-deserializing [`BatchDef`] `D` mounted on source `S` becomes: no codec is
 /// involved, so the adapter carries the message type, the element family `F` and the handler.
@@ -94,34 +87,36 @@ type DeserializedBatchRoute<B, S, D, F> = BatchRoute<
 
 /// The router that mounting a self-deserializing [`BatchDef`] `D` on source `S` onto `R`
 /// produces.
-type IncludedRawBatchRouter<B, S, D, F, RC, RL, R> =
-    Router<B, (DeserializedBatchRoute<B, S, D, F>, R), RC, RL>;
+type IncludedRawBatchRouter<B, S, D, F, RC, RL, RP, R> =
+    Router<B, (DeserializedBatchRoute<B, S, D, F>, R), RC, RL, RP>;
 
 /// The router that mounting an injected definition `D` on source `S` (decoded with `C`,
 /// resolving its startup injections against the attachment `E`) onto `R` produces.
-type InjectedRouter<B, S, D, C, E, RC, RL, R> = Router<B, (InjectRoute<S, D, C, E>, R), RC, RL>;
+type InjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
+    Router<B, (InjectRoute<S, D, C, E>, R), RC, RL, RP>;
 
 /// The batch counterpart of [`InjectedRouter`].
-type BatchInjectedRouter<B, S, D, C, E, RC, RL, R> =
-    Router<B, (BatchInjectRoute<S, D, C, E>, R), RC, RL>;
+type BatchInjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
+    Router<B, (BatchInjectRoute<S, D, C, E>, R), RC, RL, RP>;
 
 /// The router that mounting a publishing [`PublishingDef`](crate::runtime::PublishingDef) `D` on
 /// source `S` (decoded with `C`, replying through the policy `RP` and resolving its startup
-/// injections against the attachment `E`) onto `R` produces. `RC` / `RL` are the router's own
-/// codec and layer parameters, carried unchanged.
-type PublishingRouter<B, S, D, C, RP, E, RC, RL, R> =
-    Router<B, (PublishingRoute<S, D, C, RP, E>, R), RC, RL>;
+/// injections against the attachment `E`) onto `R` produces. See [`IncludedRouter`] for the
+/// carried parameters.
+type PublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
+    Router<B, (PublishingRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The byte-reply counterpart of [`PublishingRouter`].
-type RawReplyRouter<B, S, D, C, RP, E, RC, RL, R> =
-    Router<B, (RawReplyRoute<S, D, C, RP, E>, R), RC, RL>;
+type RawReplyRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
+    Router<B, (RawReplyRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The router that mounting a batch publishing
 /// [`BatchPublishingDef`](crate::runtime::BatchPublishingDef) `D` on source `S` (decoded with `C`,
-/// replying through the policy `RP`) onto `R` produces.
-type BatchPublishingRouter<B, S, D, C, RP, E, RC, RL, R> =
-    Router<B, (BatchPublishingRoute<S, D, C, RP, E>, R), RC, RL>;
+/// replying through the policy `Reply`) onto `R` produces.
+type BatchPublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
+    Router<B, (BatchPublishingRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The router that [`Router::merge`] produces: the merged router becomes one registration in the
 /// list.
-type MergedRouter<B, R2, C2, L2, RC, RL, R> = Router<B, (Router<B, R2, C2, L2>, R), RC, RL>;
+type MergedRouter<B, R2, C2, L2, P2, RC, RL, RP, R> =
+    Router<B, (Router<B, R2, C2, L2, P2>, R), RC, RL, RP>;

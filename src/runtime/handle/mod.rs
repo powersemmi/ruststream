@@ -72,22 +72,14 @@ pub use docs::{Documentable, Documented, Undocumented};
 pub use outs::{EntryMarkers, OutPos, SelectSlot};
 pub use outs::{Outs, Slot};
 #[doc(hidden)]
-pub use reply::{
-    ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, SealedBatchPublishing,
-    SealedPublishing, SealedRawReply, SplitAttach, WireDocs,
-};
+pub use reply::{ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, WireDocs};
 pub use reply::{ReplyShape, Serialized};
-#[doc(hidden)]
-pub use reply_slots::{SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut};
 pub use value::{
-    DeclaredDest, DefaultReplyAttach, EncodedReply, HandleValue, IsDocumented, NamedDest,
-    ReplyValue, ReplyWiringChain, Sealed, SerializedReply, subscriber,
+    DeclaredDest, EncodedReply, HandleValue, IsDocumented, NamedDest, ReplyValue, Sealed,
+    SerializedReply, subscriber,
 };
 #[doc(hidden)]
-pub use value::{
-    ProbedReplyDef, ReplyAttach, UnbuiltDefinition, UnwiredReplyChain, UnwiredSealedReplyChain,
-    probed_def, probed_reply_def,
-};
+pub use value::{ProbedReplyDef, UnbuiltDefinition, probed_def, probed_reply_def};
 pub use verdict::Verdict;
 #[doc(hidden)]
 pub use verdict::{OneByOne, Paged, VerdictFamily};

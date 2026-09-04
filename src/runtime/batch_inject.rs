@@ -89,7 +89,7 @@ pub trait BatchInjectDef: Send + Sync {
 ///
 /// The same state-generic shape as [`SliceHandler`](super::SliceHandler); see
 /// [`PublishingCall`](super::PublishingCall) for the rationale.
-pub trait BatchInjectCall<S>: BatchInjectDef {
+pub(crate) trait BatchInjectCall<S>: BatchInjectDef {
     /// Runs the handler body on one decoded batch, with the resolved injections.
     fn call(
         &self,

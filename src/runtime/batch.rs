@@ -158,7 +158,7 @@ pub fn uniform_page(outcome: HandlerOutcome, page_len: usize) -> Vec<HandlerOutc
     note = "a batch handler takes (&[T], &mut Context) and returns an IntoBatchResult value; \
             per-element header contracts ride a `&[Message<H, T>]` body instead"
 )]
-pub trait SliceHandler<T, C = (), S = ()>: Send + Sync {
+pub(crate) trait SliceHandler<T, C = (), S = ()>: Send + Sync {
     /// Handles one decoded batch, with the per-page [`Context`] carrying the broker's
     /// subscription-scoped context `C` and the typed app state `S`.
     fn handle_slice(

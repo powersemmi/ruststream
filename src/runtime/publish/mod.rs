@@ -136,7 +136,8 @@ pub use transform::{
 };
 pub use wiring::{
     AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, Direct, InTransaction,
-    NameReplyCodec, PublishingDirectly, ReplyWiring, TransactionalReply,
+    MapReplyPolicy, NameReplyCodec, PublishingDirectly, RawReplyWiring, ReplyWiring,
+    TransactionalReply,
 };
 
 #[cfg(test)]

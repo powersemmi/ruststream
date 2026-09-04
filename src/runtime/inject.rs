@@ -93,7 +93,7 @@ type OutVocabulary<P, M, Body> = PhantomData<fn() -> (P, M, Body)>;
 /// each slot pairs with its own attachment. The runtime resolves the whole
 /// [`InjectDef::Injections`] tuple after the subscription opens and before the first delivery,
 /// so injected values are live by construction.
-pub trait FromStartup<B: Broker, Sub, Extra>: Sized {
+pub(crate) trait FromStartup<B: Broker, Sub, Extra>: Sized {
     /// Resolves the injected value against the connected broker and the opened subscriber.
     ///
     /// Runs once per subscription, so the attachment arrives by value: a publish policy is
@@ -223,7 +223,7 @@ pub trait InjectDef: Send + Sync {
 /// Runs an [`InjectDef`]'s handler body over an app state of type `S` (the same state-generic
 /// shape as [`Handler`](super::Handler); see
 /// [`PublishingCall`](super::PublishingCall) for the rationale).
-pub trait InjectCall<S>: InjectDef {
+pub(crate) trait InjectCall<S>: InjectDef {
     /// Runs the handler body with the resolved injections.
     fn call(
         &self,
@@ -250,7 +250,7 @@ pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMet
 
 /// The [`Handler`] built from an [`InjectDef`] once its injections resolved: decode, then run
 /// the body with them.
-pub struct InjectHandler<Def: InjectDef, DecodeCodec> {
+pub(crate) struct InjectHandler<Def: InjectDef, DecodeCodec> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
     pub(crate) injections: Def::Injections,

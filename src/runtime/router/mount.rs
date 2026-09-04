@@ -6,15 +6,12 @@
 //! machinery that form needs, at compile time. The subscription source is never named at a
 //! mount site: it belongs to the definition, which takes the broker's own source expression.
 
-use crate::Broker;
 use crate::codec::Codec;
 use crate::runtime::input::{Decoded, DecodedPair, Provided};
-use crate::runtime::publish::ReplyWiring;
+use crate::runtime::publish::{RawReplyWiring, ReplyWiring};
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-
-use super::builder::Router;
 
 /// Ties a definition type to its form token.
 ///
@@ -155,15 +152,15 @@ pub struct RawReplyInjectMount;
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishInjectMount;
 
-/// What `.publisher(policy)` attaches on one mount, per the reply's wire.
+/// What `.out(Reply, policy)` attaches on one mount, per the reply's wire.
 ///
 /// An encoded reply wraps the policy in a [`ReplyWiring`] the rest of the chain grows
-/// (`.codec(..)`, `.transform(..)`, `.transactional()`); a byte-for-byte reply takes the policy
-/// itself, because its bytes leave with no codec and no transform stack to name. Machinery; the
-/// chain reads it off its own mount token.
+/// (`.codec(..)`, `.transform(..)`, `.transactional()`); a byte-for-byte reply wraps it in a
+/// [`RawReplyWiring`], which carries the policy alone because its bytes leave with no codec and
+/// no transform stack to name. Machinery; the chain reads it off its own mount token.
 #[doc(hidden)]
 pub trait ReplyAttachment<Policy> {
-    /// The wiring the chain carries from `.publisher(..)` to the commit.
+    /// The wiring the chain carries from `.out(Reply, ..)` to the commit.
     type Wiring;
 
     /// Wraps the policy for this mount.
@@ -194,10 +191,10 @@ impl_encoded_reply_attachment!(
 macro_rules! impl_raw_reply_attachment {
     ($($mount:ident),+ $(,)?) => {$(
         impl<Policy> ReplyAttachment<Policy> for $mount {
-            type Wiring = Policy;
+            type Wiring = RawReplyWiring<Policy>;
 
-            fn wire(policy: Policy) -> Policy {
-                policy
+            fn wire(policy: Policy) -> RawReplyWiring<Policy> {
+                RawReplyWiring::new(policy)
             }
         }
     )+};
@@ -215,10 +212,10 @@ impl_raw_reply_attachment!(RawReplyMount, RawReplyInjectMount);
     note = "every `#[subscriber]` form mounts with .include(..); check that the definition is a \
             generated one and that its broker matches the router's"
 )]
-pub trait RouterMount<B: Broker, Routes, RouteCodec, RouteLayers, Def> {
-    /// What `include` hands back: the grown router for eager forms, a registration builder for
-    /// the ones that take an attachment.
+pub trait RouterMount<R, Def> {
+    /// What `include` hands back: the grown router for eager forms, a mount chain for the ones
+    /// that take an attachment.
     type Out;
 
-    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out;
+    fn begin(def: Def, router: R) -> Self::Out;
 }

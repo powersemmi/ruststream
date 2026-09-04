@@ -10,11 +10,9 @@ mod service;
 
 pub use app_trait::App;
 pub use health::{HealthProbe, HealthState};
-pub use include::{
-    IncludeBatchOut, IncludeBatchPublishing, IncludeBatchPublishingOut, IncludeOut,
-    IncludePublishing, IncludePublishingOut, IncludeRawReply, IncludeRawReplyOut, IncludeSlots,
-    IncludeSlotsWithReply, IncludeWith, SlotCommit,
-};
+pub use include::Mounting;
+#[doc(hidden)]
+pub use include::{IncludeMount, OnBuild, OnDrop, ScopeCommit, ScopeTerminal};
 pub use run::RunningApp;
 pub use scope::BrokerScope;
 #[cfg(feature = "testing")]

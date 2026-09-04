@@ -4,24 +4,11 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
-use std::num::NonZeroUsize;
 
-use crate::runtime::dispatch::Workers;
-use crate::runtime::failure::FailurePolicies;
-use crate::runtime::publish::{
-    AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, NameReplyCodec, PublishingDirectly,
-    ReplyWiring, TransactionalReply,
-};
-use crate::runtime::router::DefaultReply;
-use crate::runtime::settings::{
-    BatchStep, CapsPages, FailureStep, MapSourceStep, NameStep, StartAtStep, SubscriberBuilder,
-    WorkersStep,
-};
-use crate::runtime::slot::WithSource;
+use crate::runtime::settings::{CapsPages, SubscriberBuilder};
 
-use super::axis::{Axis, Input, Page, PageDeserialized, PagePair};
+use super::axis::{Input, Page, PageDeserialized, PagePair};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
-use super::reply::ReplyRoute;
 use super::{Handle, IntoSource};
 
 /// The phantom carrying a definition's axes.
@@ -36,13 +23,12 @@ type PlainChain<A, R, O, C, H, Doc, Src, State, DC> =
     SubscriberBuilder<HandleValue<A, R, O, C, H, Doc>, Src, State, DC>;
 
 /// The chain over a reply-wired definition.
-type ReplyChain<V, Dest, Attach, Src, State, DC> =
-    SubscriberBuilder<ReplyValue<V, Dest, Attach>, Src, State, DC>;
+type ReplyChain<V, Dest, Src, State, DC> = SubscriberBuilder<ReplyValue<V, Dest>, Src, State, DC>;
 
 /// The chain [`reply`](SubscriberBuilder::reply) hands back: the wrapped definition at the
-/// declared destination and the default attach.
-type ReplyStart<A, R, O, C, H, Doc, Attach, Src, State, DC> =
-    ReplyChain<HandleValue<A, R, O, C, H, Doc>, DeclaredDest, Attach, Src, State, DC>;
+/// declared destination.
+type ReplyStart<A, R, O, C, H, Doc, Src, State, DC> =
+    ReplyChain<HandleValue<A, R, O, C, H, Doc>, DeclaredDest, Src, State, DC>;
 
 /// The sealed chain [`build`](SubscriberBuilder::build) hands back.
 type SealedChain<V, Src, State, DC> = SubscriberBuilder<Sealed<V>, Src, State, DC>;
@@ -55,12 +41,12 @@ type SealedPlainChain<A, R, O, C, H, Doc, Src, State, DC> =
     SealedChain<HandleValue<A, R, O, C, H, Doc>, Src, State, DC>;
 
 /// The reply chain at the opted-out documentation state.
-type UndocumentedReplyChain<A, R, O, C, H, Dest, Attach, Src, State, DC> =
-    ReplyChain<HandleValue<A, R, O, C, H, Undocumented>, Dest, Attach, Src, State, DC>;
+type UndocumentedReplyChain<A, R, O, C, H, Dest, Src, State, DC> =
+    ReplyChain<HandleValue<A, R, O, C, H, Undocumented>, Dest, Src, State, DC>;
 
 /// The sealed reply chain.
-type SealedReplyChain<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC> =
-    SealedChain<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Attach>, Src, State, DC>;
+type SealedReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> =
+    SealedChain<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest>, Src, State, DC>;
 
 /// The definition under construction: what [`subscriber`] returns, wrapped in the settings
 /// builder. You never name this type; chain on it and seal with
@@ -96,13 +82,16 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// application state. The chain then carries what is not in the signature - the declarative
 /// settings ([`workers`](crate::runtime::SubscriberSettings::workers),
 /// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
-/// [`start_at`](crate::runtime::SubscriberSettings::start_at), ...), the reply wiring
-/// ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to),
-/// [`publisher`](SubscriberBuilder::publisher)), the page size
+/// [`start_at`](crate::runtime::SubscriberSettings::start_at), ...), what the body replies with
+/// and where ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to)), the page size
 /// ([`batch`](crate::runtime::SubscriberSettings::batch)) and the documentation opt-out
 /// ([`undocumented`](SubscriberBuilder::undocumented)) - and
 /// [`build`](SubscriberBuilder::build) seals the definition for
 /// [`include`](crate::runtime::Router::include).
+///
+/// What the definition never carries is who publishes: a policy is a broker's, and a definition
+/// is broker-agnostic, so the reply's publisher is named at the mount site with
+/// `.out(Reply, policy)`.
 ///
 /// # Examples
 ///
@@ -173,12 +162,11 @@ pub fn probed_def<A, R, O, C, H>(
 /// macro spells the concrete form itself.
 #[doc(hidden)]
 pub type ProbedReplyDef<A, R, O, C, H> =
-    Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, NamedDest, DefaultReply>>;
+    Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, NamedDest>>;
 
 /// Builds a `#[subscriber]` expansion's sealed reply definition: the plain definition wrapped
-/// at the clause-named destination with the default attach - the reply's wire comes from the
-/// reply type itself, as everywhere. Machinery behind the macro expansion; not part of the
-/// public API.
+/// at the clause-named destination - the reply's wire comes from the reply type itself, as
+/// everywhere. Machinery behind the macro expansion; not part of the public API.
 // The explicit `&'static str` parameter keeps a wrongly-typed destination expression a plain
 // type error at the expansion site, as the attribute always reported it.
 #[doc(hidden)]
@@ -192,7 +180,6 @@ pub fn probed_reply_def<A, R, O, C, H>(
     Sealed(ReplyValue {
         value,
         dest: NamedDest(Cow::Borrowed(dest)),
-        attach: DefaultReply,
     })
 }
 
@@ -218,59 +205,27 @@ pub struct EncodedReply;
 #[derive(Debug, Clone, Copy)]
 pub struct SerializedReply;
 
-/// What [`publisher`](SubscriberBuilder::publisher) makes of the policy it is handed, per the
-/// reply type's wire.
+/// A definition whose body declares a reply: what [`reply`](SubscriberBuilder::reply) wraps the
+/// definition in.
 ///
-/// The wire follows the reply type: a `serde::Serialize` reply opens a [`ReplyWiring`] the rest
-/// of the chain grows (`.codec(..)`, `.transform(..)`, `.transactional()`), while a
-/// [`Serialized`](super::Serialized) reply carries the publish policy itself and its bytes leave
-/// as they are.
-#[doc(hidden)]
-pub trait ReplyAttach<Wire> {
-    /// The wiring the chain carries until it seals.
-    type Wiring;
-
-    /// Opens it.
-    fn into_wiring(self) -> Self::Wiring;
-}
-
-impl<Policy> ReplyAttach<EncodedReply> for Policy {
-    type Wiring = ReplyWiring<Policy>;
-
-    fn into_wiring(self) -> ReplyWiring<Policy> {
-        ReplyWiring::new(self)
-    }
-}
-
-// A serialized reply needs no codec and has no transform stack, so the policy travels bare.
-impl<Policy> ReplyAttach<SerializedReply> for Policy {
-    type Wiring = Policy;
-
-    fn into_wiring(self) -> Policy {
-        self
-    }
-}
-
-/// A definition whose body's reply the chain is wiring: what
-/// [`reply`](SubscriberBuilder::reply) wraps the definition in.
-pub struct ReplyValue<V, Dest, Attach> {
+/// It carries what the reply is and where it goes, and nothing about who publishes it: that is a
+/// broker's policy, named at the mount site with `.out(Reply, policy)`.
+pub struct ReplyValue<V, Dest> {
     pub(super) value: V,
     pub(super) dest: Dest,
-    pub(super) attach: Attach,
 }
 
-impl<V, Dest, Attach> fmt::Debug for ReplyValue<V, Dest, Attach> {
+impl<V, Dest> fmt::Debug for ReplyValue<V, Dest> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReplyValue").finish_non_exhaustive()
     }
 }
 
-impl<V, Dest, Attach> ReplyValue<V, Dest, Attach> {
-    fn map_value<W>(self, f: impl FnOnce(V) -> W) -> ReplyValue<W, Dest, Attach> {
+impl<V, Dest> ReplyValue<V, Dest> {
+    fn map_value<W>(self, f: impl FnOnce(V) -> W) -> ReplyValue<W, Dest> {
         ReplyValue {
             value: f(self.value),
             dest: self.dest,
-            attach: self.attach,
         }
     }
 }
@@ -287,7 +242,7 @@ impl<A, R, O, C, H, Doc> crate::runtime::router::IncludeDef for HandleValue<A, R
     type Form = UnbuiltDefinition;
 }
 
-impl<V, Dest, Attach> crate::runtime::router::IncludeDef for ReplyValue<V, Dest, Attach> {
+impl<V, Dest> crate::runtime::router::IncludeDef for ReplyValue<V, Dest> {
     type Form = UnbuiltDefinition;
 }
 
@@ -316,9 +271,9 @@ impl<F, R, O, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, R, O, C,
 
 impl<Hd, P, R, O, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, R, O, C, H, Doc> {}
 
-// The reply wiring and the seal are transparent to the step, so the attribute path sizes the
+// The reply wrapper and the seal are transparent to the step, so the attribute path sizes the
 // very definition the `subscriber(..)` chain does.
-impl<V: CapsPages, Dest, Attach> CapsPages for ReplyValue<V, Dest, Attach> {}
+impl<V: CapsPages, Dest> CapsPages for ReplyValue<V, Dest> {}
 
 impl<V: CapsPages> CapsPages for Sealed<V> {}
 
@@ -350,19 +305,18 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
         self.map_def(HandleValue::with_doc)
     }
 
-    /// Declares the body's reply wired for publishing: the reply type's declared destination
-    /// applies (name one with [`to`](SubscriberBuilder::to)), and the reply publish policy
-    /// attaches with [`publisher`](SubscriberBuilder::publisher) (the broker's default without
-    /// it).
+    /// Declares the body's reply published: the reply type's declared destination applies (name
+    /// one with [`to`](SubscriberBuilder::to)).
     ///
     /// The wire follows the reply type: a `serde::Serialize` reply encodes through the reply
     /// publisher's codec, a [`Serialized`](super::Serialized) reply's bytes leave as they are.
+    /// Which publisher that is belongs to the mount site (`.out(Reply, policy)`), so the
+    /// definition stays broker-agnostic; without a call there the broker's own default applies.
     #[must_use]
-    pub fn reply(self) -> ReplyStart<A, R, O, C, H, Doc, DefaultReply, Src, State, DC> {
+    pub fn reply(self) -> ReplyStart<A, R, O, C, H, Doc, Src, State, DC> {
         self.map_def(|value| ReplyValue {
             value,
             dest: DeclaredDest,
-            attach: DefaultReply,
         })
     }
 
@@ -384,9 +338,7 @@ impl IsDocumented for Documented {}
 
 // ------------------------------------------------------------------ steps on the reply chain
 
-impl<V, Attach, Src, State, DC>
-    SubscriberBuilder<ReplyValue<V, DeclaredDest, Attach>, Src, State, DC>
-{
+impl<V, Src, State, DC> SubscriberBuilder<ReplyValue<V, DeclaredDest>, Src, State, DC> {
     /// Names the subject the reply is published to, overriding nothing: without this call the
     /// destination comes from the reply type's own `#[outgoing(name = "..")]` declaration, and
     /// a type declaring none does not mount.
@@ -394,305 +346,18 @@ impl<V, Attach, Src, State, DC>
     pub fn to(
         self,
         name: impl Into<Cow<'static, str>>,
-    ) -> SubscriberBuilder<ReplyValue<V, NamedDest, Attach>, Src, State, DC> {
+    ) -> SubscriberBuilder<ReplyValue<V, NamedDest>, Src, State, DC> {
         self.map_def(|def| ReplyValue {
             value: def.value,
             dest: NamedDest(name.into()),
-            attach: def.attach,
-        })
-    }
-}
-
-/// A reply attach still at the broker's default, replaceable by
-/// [`publisher`](SubscriberBuilder::publisher). Naming a policy twice is a compile error
-/// carrying this bound.
-#[diagnostic::on_unimplemented(
-    message = "this reply's publish policy is already attached",
-    label = "`.publisher(..)` was already chained"
-)]
-pub trait DefaultReplyAttach {}
-impl DefaultReplyAttach for DefaultReply {}
-
-impl<A, R, O, C, H, Doc, Dest, Attach: DefaultReplyAttach, Src, State, DC>
-    SubscriberBuilder<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Attach>, Src, State, DC>
-{
-    /// Names the reply's publish policy and opens the reply wiring. Policies are connection-free
-    /// declarations, so the definition carries the attachment; without this call the broker's
-    /// default policy applies.
-    ///
-    /// The reply type's wire decides what the call opens (see [`ReplyAttach`]): an encoded reply
-    /// gets a wiring the chain grows with [`codec`](ReplyWiringChain::codec),
-    /// [`transform`](ReplyWiringChain::transform),
-    /// [`batch_transform`](ReplyWiringChain::batch_transform) and
-    /// [`transactional`](ReplyWiringChain::transactional), while a
-    /// [`Serialized`](super::Serialized) reply carries the policy alone. Either way the chain
-    /// seals with [`build`](ReplyWiringChain::build).
-    // Every parameter is one axis or chain state the wire step carries through; the count is
-    // the typestate itself, not incidental nesting an alias could hide.
-    #[allow(clippy::type_complexity)]
-    pub fn publisher<Policy>(
-        self,
-        policy: Policy,
-    ) -> ReplyWiringChain<
-        UnwiredReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC>,
-        <Policy as ReplyAttach<<R as ReplyRoute<A::Family>>::Wire>>::Wiring,
-    >
-    where
-        A: Axis,
-        R: ReplyRoute<A::Family>,
-        Policy: ReplyAttach<R::Wire>,
-    {
-        ReplyWiringChain {
-            chain: self.map_def(|def| ReplyValue {
-                value: def.value,
-                dest: def.dest,
-                attach: (),
-            }),
-            wiring: policy.into_wiring(),
-        }
-    }
-}
-
-/// The reply chain with its wiring lifted out: what [`publisher`](SubscriberBuilder::publisher)
-/// keeps hold of while the wiring steps run.
-pub type UnwiredReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> =
-    ReplyChain<HandleValue<A, R, O, C, H, Doc>, Dest, (), Src, State, DC>;
-
-/// The reply wiring under construction: what `.publisher(..)` opens on the manual path.
-///
-/// [`codec`](Self::codec), [`transform`](Self::transform),
-/// [`batch_transform`](Self::batch_transform) and [`transactional`](Self::transactional) fill the
-/// wiring's slots - each once, so naming one twice does not compile - and [`build`](Self::build)
-/// folds it back into the definition and seals it for
-/// [`include`](crate::runtime::Router::include).
-///
-/// Every other step of the chain reaches through the wiring unchanged: the value steps
-/// ([`describe`](Self::describe), [`undocumented`](Self::undocumented)) and the declarative
-/// settings ([`workers`](crate::runtime::SubscriberSettings::workers),
-/// [`batch`](crate::runtime::SubscriberSettings::batch),
-/// [`on_failure`](crate::runtime::SubscriberSettings::on_failure), ...) apply on either side of
-/// `.publisher(..)` and produce the same definition, each still fixed once. Opening the wiring
-/// therefore closes nothing: the chain has no order to remember.
-#[must_use = "the reply wiring seals with .build()"]
-pub struct ReplyWiringChain<Chain, W> {
-    chain: Chain,
-    wiring: W,
-}
-
-impl<Chain, W> fmt::Debug for ReplyWiringChain<Chain, W> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ReplyWiringChain").finish_non_exhaustive()
-    }
-}
-
-impl<Chain, W> ReplyWiringChain<Chain, W> {
-    /// Rebuilds the wrapper over a stepped chain, keeping the wiring: how every forwarded step
-    /// reaches the definition underneath.
-    fn map_chain<NewChain>(
-        self,
-        f: impl FnOnce(Chain) -> NewChain,
-    ) -> ReplyWiringChain<NewChain, W> {
-        ReplyWiringChain {
-            chain: f(self.chain),
-            wiring: self.wiring,
-        }
-    }
-}
-
-// A wiring chain is not mountable until `.build()` seals it, so it carries the same diagnostic
-// form token an unsealed definition does - and, through the `Declared` blanket over it, the whole
-// settings surface, forwarded step by step below.
-impl<Chain, W> crate::runtime::router::IncludeDef for ReplyWiringChain<Chain, W> {
-    type Form = UnbuiltDefinition;
-}
-
-/// Implements one settings step on the wiring chain by forwarding it to the chain underneath.
-/// The step's own typestate travels with it, so a setting is still fixed exactly once whichever
-/// side of `.publisher(..)` names it.
-macro_rules! forward_settings_step {
-    ($($trait:ident<$($param:ident),*>::$method:ident($($arg:ident: $ty:ty),*)),+ $(,)?) => {$(
-        impl<Chain: $trait<$($param),*>, W $(, $param)*> $trait<$($param),*>
-            for ReplyWiringChain<Chain, W>
-        {
-            type Out = ReplyWiringChain<<Chain as $trait<$($param),*>>::Out, W>;
-
-            fn $method(self $(, $arg: $ty)*) -> Self::Out {
-                self.map_chain(|chain| chain.$method($($arg),*))
-            }
-        }
-    )+};
-}
-
-forward_settings_step! {
-    NameStep<>::apply_name(name: Cow<'static, str>),
-    WorkersStep<>::apply_workers(workers: Workers),
-    FailureStep<>::apply_failures(policies: FailurePolicies),
-    StartAtStep<P>::apply_start_at(position: P),
-    BatchStep<>::apply_batch(size: NonZeroUsize),
-    MapSourceStep<F>::apply_map_source(f: F),
-}
-
-impl<Chain, W> ReplyWiringChain<Chain, W> {
-    /// Encodes the reply with `codec` instead of the
-    /// [`DefaultCodec`](crate::codec::DefaultCodec). Named once per registration.
-    pub fn codec<Cd>(self, codec: Cd) -> ReplyWiringChain<Chain, W::Out>
-    where
-        W: NameReplyCodec<Cd, Slot: CodecSlotOpen>,
-    {
-        ReplyWiringChain {
-            chain: self.chain,
-            wiring: self.wiring.name_codec(codec),
-        }
-    }
-
-    /// Composes a static [`PublishTransform`](crate::runtime::PublishTransform) onto every reply
-    /// of this registration. The first one added runs first (closest to the encoded value).
-    pub fn transform<N>(self, transform: N) -> ReplyWiringChain<Chain, W::Out>
-    where
-        W: AddReplyTransform<N>,
-    {
-        ReplyWiringChain {
-            chain: self.chain,
-            wiring: self.wiring.add_transform(transform),
-        }
-    }
-
-    /// Composes a [`BatchPublishTransform`](crate::runtime::BatchPublishTransform) onto every
-    /// reply of a page, after the per-message stack.
-    pub fn batch_transform<N>(self, transform: N) -> ReplyWiringChain<Chain, W::Out>
-    where
-        W: AddBatchReplyTransform<N>,
-    {
-        ReplyWiringChain {
-            chain: self.chain,
-            wiring: self.wiring.add_batch_transform(transform),
-        }
-    }
-
-    /// Publishes a page's replies inside one broker transaction: they all become visible
-    /// atomically on commit, or none of them do. The policy's live publisher has to be a
-    /// [`TransactionalPublisher`](crate::TransactionalPublisher), which the mount checks against
-    /// its own broker.
-    pub fn transactional(self) -> ReplyWiringChain<Chain, W::Out>
-    where
-        W: TransactionalReply<State: PublishingDirectly>,
-    {
-        ReplyWiringChain {
-            chain: self.chain,
-            wiring: self.wiring.into_transactional(),
-        }
-    }
-}
-
-// The value steps reach through the wiring the same way the settings do, so `.describe(..)`
-// and `.undocumented()` read the same on either side of `.publisher(..)`.
-impl<A, R, O, C, H, Doc, Dest, Src, State, DC, W>
-    ReplyWiringChain<UnwiredReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC>, W>
-{
-    /// See [`describe`](SubscriberBuilder::describe) on the reply chain.
-    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
-        self.map_chain(|chain| chain.describe(text))
-    }
-
-    /// See [`undocumented`](SubscriberBuilder::undocumented) on the reply chain.
-    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the axes
-    pub fn undocumented(
-        self,
-    ) -> ReplyWiringChain<UnwiredReplyChain<A, R, O, C, H, Undocumented, Dest, Src, State, DC>, W>
-    where
-        Doc: IsDocumented,
-    {
-        // The method path is ambiguous here (the plain and the reply chain both define
-        // `undocumented`), so the closure is what picks the reply chain's one.
-        #[allow(clippy::redundant_closure_for_method_calls)]
-        self.map_chain(|chain| chain.undocumented())
-    }
-}
-
-impl<V, Dest, Src, State, DC, W> ReplyWiringChain<ReplyChain<V, Dest, (), Src, State, DC>, W> {
-    /// Folds the wiring back into the definition and seals it for `include`.
-    #[must_use]
-    pub fn build(self) -> SealedChain<ReplyValue<V, Dest, WithSource<W>>, Src, State, DC> {
-        let wiring = self.wiring;
-        self.chain.map_def(|def| {
-            Sealed(ReplyValue {
-                value: def.value,
-                dest: def.dest,
-                attach: WithSource::new(wiring),
-            })
-        })
-    }
-}
-
-/// The sealed reply chain with its wiring lifted out: what
-/// [`publisher`](SealedReplyChain::publisher) keeps hold of on the attribute path.
-pub type UnwiredSealedReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> =
-    SealedReplyChain<A, R, O, C, H, Doc, Dest, (), Src, State, DC>;
-
-impl<A, R, O, C, H, Doc, Dest, Attach: DefaultReplyAttach, Src, State, DC>
-    SealedReplyChain<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC>
-{
-    /// See [`publisher`](SubscriberBuilder::publisher) on the reply chain: the same step on the
-    /// attribute path, whose definition arrives sealed by the expansion.
-    ///
-    /// The two paths meet here. A `#[subscriber(publish("..."))]` definition mounted bare takes
-    /// its reply policy from the include-site chain; one that names any setting - a page body's
-    /// mandatory [`batch`](crate::runtime::SubscriberSettings::batch) among them - is a settings
-    /// builder over the sealed definition, and this is where its policy attaches. The wiring
-    /// grows exactly as it does on the value chain and seals the same way, with
-    /// [`build`](ReplyWiringChain::build).
-    // Every parameter is one axis or chain state the wiring step carries through; the count is
-    // the typestate itself, not incidental nesting an alias could hide.
-    #[allow(clippy::type_complexity)]
-    pub fn publisher<Policy>(
-        self,
-        policy: Policy,
-    ) -> ReplyWiringChain<
-        UnwiredSealedReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC>,
-        <Policy as ReplyAttach<<R as ReplyRoute<A::Family>>::Wire>>::Wiring,
-    >
-    where
-        A: Axis,
-        R: ReplyRoute<A::Family>,
-        Policy: ReplyAttach<R::Wire>,
-    {
-        ReplyWiringChain {
-            chain: self.map_def(|Sealed(def)| {
-                Sealed(ReplyValue {
-                    value: def.value,
-                    dest: def.dest,
-                    attach: (),
-                })
-            }),
-            wiring: policy.into_wiring(),
-        }
-    }
-}
-
-impl<A, R, O, C, H, Doc, Dest, Src, State, DC, W>
-    ReplyWiringChain<UnwiredSealedReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC>, W>
-{
-    /// Folds the wiring back under the seal the expansion already applied.
-    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the axes
-    #[must_use]
-    pub fn build(
-        self,
-    ) -> SealedReplyChain<A, R, O, C, H, Doc, Dest, WithSource<W>, Src, State, DC> {
-        let wiring = self.wiring;
-        self.chain.map_def(|Sealed(def)| {
-            Sealed(ReplyValue {
-                value: def.value,
-                dest: def.dest,
-                attach: WithSource::new(wiring),
-            })
         })
     }
 }
 
 // The inner-value steps stay reachable after `.reply()`: `.describe(..)` and `.undocumented()`
 // reach through the wrapper, so the chain order is free.
-impl<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC>
-    SubscriberBuilder<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest, Attach>, Src, State, DC>
+impl<A, R, O, C, H, Doc, Dest, Src, State, DC>
+    SubscriberBuilder<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest>, Src, State, DC>
 {
     /// See [`describe`](SubscriberBuilder::describe) on the plain chain.
     #[must_use]
@@ -707,7 +372,7 @@ impl<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC>
 
     /// See [`undocumented`](SubscriberBuilder::undocumented) on the plain chain.
     #[must_use]
-    pub fn undocumented(self) -> UndocumentedReplyChain<A, R, O, C, H, Dest, Attach, Src, State, DC>
+    pub fn undocumented(self) -> UndocumentedReplyChain<A, R, O, C, H, Dest, Src, State, DC>
     where
         Doc: IsDocumented,
     {
@@ -715,11 +380,8 @@ impl<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC>
     }
 
     /// Seals the definition for `include`.
-    // Every parameter is one axis or chain state the seal carries through; the count is the
-    // typestate itself, not incidental nesting an alias could hide.
-    #[allow(clippy::type_complexity)]
     #[must_use]
-    pub fn build(self) -> SealedReplyChain<A, R, O, C, H, Doc, Dest, Attach, Src, State, DC> {
+    pub fn build(self) -> SealedReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> {
         self.map_def(Sealed)
     }
 }

@@ -88,10 +88,8 @@ pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
 /// Renders the deferred routes by the registration they carry: they hold no built handler to
 /// print, so without the metadata a router's registration list would be anonymous.
 macro_rules! debug_by_metadata {
-    ($($route:ident),+ $(,)?) => {$(
-        impl<Source, Def, DecodeCodec, ReplySource, Extra> fmt::Debug
-            for $route<Source, Def, DecodeCodec, ReplySource, Extra>
-        {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> fmt::Debug for $route<$($param),+> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_struct(stringify!($route))
                     .field("meta", &self.meta)
@@ -99,9 +97,7 @@ macro_rules! debug_by_metadata {
             }
         }
 
-        impl<Source, Def, DecodeCodec, ReplySource, Extra> RouteMeta
-            for $route<Source, Def, DecodeCodec, ReplySource, Extra>
-        {
+        impl<$($param),+> RouteMeta for $route<$($param),+> {
             fn collect(&self, out: &mut Vec<HandlerMetadata>) {
                 out.push(self.meta.clone());
             }
@@ -109,7 +105,11 @@ macro_rules! debug_by_metadata {
     )+};
 }
 
-debug_by_metadata!(PublishingRoute, RawReplyRoute, BatchPublishingRoute);
+debug_by_metadata!(
+    PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+);
 
 impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Leaf, ReplyCodec, Transforms>
     MountRoute<B, State> for PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>

@@ -186,28 +186,6 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
         }
     }
 
-    /// Splits the wrapped definition, keeping the source and the collected settings on the
-    /// remainder: the hook the sealed mounts extract their pre-attached pieces through.
-    pub(crate) fn split_def<NewDef, Extra>(
-        self,
-        f: impl FnOnce(Def) -> (NewDef, Extra),
-    ) -> (SubscriberBuilder<NewDef, Src, State, DefCodec>, Extra) {
-        let (def, source, (workers, failures, page_size, codec)) = self.into_parts();
-        let (def, extra) = f(def);
-        (
-            SubscriberBuilder {
-                def,
-                source,
-                workers,
-                failures,
-                page_size,
-                codec,
-                _state: PhantomData,
-            },
-            extra,
-        )
-    }
-
     /// Replaces the wrapped definition, keeping the source and the collected settings: the hook
     /// the value-definition methods (`describe`, `documented`, `to`, ...) grow their
     /// definitions through.

@@ -24,20 +24,8 @@ use super::outs::{EntryMarkers, Outs, Slot};
 use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs, page_reply_verdict};
 use super::value::{HandleValue, ReplyValue, Sealed};
 
-/// The mount token of a sealed single-message reply definition carrying slots.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedPublishingOut;
-
-/// The mount token of a sealed serialized-reply definition carrying slots.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedRawReplyOut;
-
-/// The mount token of a sealed page reply definition carrying slots.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedBatchPublishingOut;
-
-impl<A, R, E, C, H, Doc, Dest, Attach> IncludeDef
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
     A: Axis,
     R: ReplyRoute<A::Family>,
@@ -45,8 +33,8 @@ where
     type Form = R::SlotForm;
 }
 
-impl<A, R, E, C, H, Doc, Dest, Attach> HasSlots
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> HasSlots
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
     E: EntryMarkers,
 {
@@ -57,7 +45,7 @@ where
 /// live values, so the definition is its own bound form.
 macro_rules! impl_reply_bind_slots {
     ($(($($m:ident / $p:ident: $e:ident / $pipe:ident),+))+) => {$(
-        impl<Conn, A, R, C, H, Doc, Dest, Attach, $($m, $p, $e, $pipe),+>
+        impl<Conn, A, R, C, H, Doc, Dest, $($m, $p, $e, $pipe),+>
             BindSlots<Conn, ($(($p, $e, $pipe),)+)>
             for Sealed<
                 ReplyValue<
@@ -70,7 +58,6 @@ macro_rules! impl_reply_bind_slots {
                         Doc,
                     >,
                     Dest,
-                    Attach,
                 >,
             >
         where
@@ -98,8 +85,8 @@ impl_reply_bind_slots! {
 
 // ------------------------------------------------------------------------- the solo reply def
 
-impl<A, R, E, C, H, Doc, Dest, Attach> PublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> PublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
     A: SoloAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
@@ -108,7 +95,6 @@ where
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Attach: Send + Sync,
 {
     type Input = A::Kind;
     type Injections = Outs<E>;
@@ -170,8 +156,8 @@ where
     }
 }
 
-impl<T, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<T, R, E, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = Outs<E>, Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -191,8 +177,8 @@ where
     }
 }
 
-impl<F, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<F, R, E, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
             Input = <SoloDeserialized<F> as Axis>::Kind,
@@ -219,8 +205,8 @@ where
     }
 }
 
-impl<Hd, P, R, E, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<Hd, P, R, E, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
             Input = <SoloPair<Hd, P> as Axis>::Kind,
@@ -249,8 +235,8 @@ where
 
 // ------------------------------------------------------------------------- the page reply def
 
-impl<A, R, E, C, H, Doc, Dest, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<A, R, E, C, H, Doc, Dest> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     A: PagedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
@@ -259,7 +245,6 @@ where
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Attach: Send + Sync,
 {
     type Input = A::Kind;
     type Injections = Outs<E>;
@@ -320,8 +305,8 @@ where
     }
 }
 
-impl<T, R, E, C, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<T, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <Page<T> as Axis>::Kind,
@@ -348,8 +333,8 @@ where
     }
 }
 
-impl<Hd, P, R, E, C, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest, Attach>>
+impl<Hd, P, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <PagePair<Hd, P> as Axis>::Kind,

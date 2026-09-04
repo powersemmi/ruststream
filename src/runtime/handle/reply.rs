@@ -10,12 +10,8 @@ use crate::runtime::context::Context;
 use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publishing::{PublishingCall, PublishingDef};
-use crate::runtime::router::{
-    BatchPublishMount, IncludeDef, PublishMount, RawReplyMount, Router, RouterCommit, RouterMount,
-    forms,
-};
-use crate::runtime::settings::SubscriberBuilder;
-use crate::{Broker, FixedName, Name, OutgoingDestination, Unnamed};
+use crate::runtime::router::{IncludeDef, forms};
+use crate::{FixedName, Name, OutgoingDestination, Unnamed};
 
 use super::Handle;
 use super::axis::{
@@ -24,7 +20,6 @@ use super::axis::{
 };
 use super::docs::DocState;
 use super::eager::construct;
-use super::reply_slots::{SealedBatchPublishingOut, SealedPublishingOut, SealedRawReplyOut};
 use super::value::{
     DeclaredDest, EncodedReply, HandleValue, NamedDest, ReplyValue, Sealed, SerializedReply,
 };
@@ -176,35 +171,25 @@ where
             `Serialized` (raw-byte) reply mounts one-by-one only"
 )]
 pub trait ReplyFormFor<Fam> {
-    /// The sealed mount token.
+    /// The mount token of a reply definition.
     type Form;
-    /// The sealed slot-carrying mount token.
+    /// The mount token of a reply definition that also carries slots.
     type SlotForm;
-    /// The attribute path's builder-producing form.
-    type DeclaredForm;
-    /// The attribute path's builder-producing form with slots.
-    type DeclaredSlotForm;
 }
 
 impl ReplyFormFor<OneByOne> for EncodedReply {
-    type Form = SealedPublishing;
-    type SlotForm = SealedPublishingOut;
-    type DeclaredForm = forms::Publishing;
-    type DeclaredSlotForm = forms::PublishingOut;
+    type Form = forms::Publishing;
+    type SlotForm = forms::PublishingOut;
 }
 
 impl ReplyFormFor<Paged> for EncodedReply {
-    type Form = SealedBatchPublishing;
-    type SlotForm = SealedBatchPublishingOut;
-    type DeclaredForm = forms::BatchPublishing;
-    type DeclaredSlotForm = forms::BatchPublishingOut;
+    type Form = forms::BatchPublishing;
+    type SlotForm = forms::BatchPublishingOut;
 }
 
 impl ReplyFormFor<OneByOne> for SerializedReply {
-    type Form = SealedRawReply;
-    type SlotForm = SealedRawReplyOut;
-    type DeclaredForm = forms::RawReply;
-    type DeclaredSlotForm = forms::RawReplyOut;
+    type Form = forms::RawReply;
+    type SlotForm = forms::RawReplyOut;
 }
 
 /// The route of one reply type on one verdict family: its wire, and the form tokens that wire
@@ -218,10 +203,6 @@ pub trait ReplyRoute<Fam> {
     type Form;
     /// See [`ReplyFormFor::SlotForm`].
     type SlotForm;
-    /// See [`ReplyFormFor::DeclaredForm`].
-    type DeclaredForm;
-    /// See [`ReplyFormFor::DeclaredSlotForm`].
-    type DeclaredSlotForm;
 }
 
 impl<R> ReplyRoute<OneByOne> for R
@@ -232,8 +213,6 @@ where
     type Wire = R::Wire;
     type Form = <R::Wire as ReplyFormFor<OneByOne>>::Form;
     type SlotForm = <R::Wire as ReplyFormFor<OneByOne>>::SlotForm;
-    type DeclaredForm = <R::Wire as ReplyFormFor<OneByOne>>::DeclaredForm;
-    type DeclaredSlotForm = <R::Wire as ReplyFormFor<OneByOne>>::DeclaredSlotForm;
 }
 
 impl<R> ReplyRoute<Paged> for Vec<R>
@@ -244,24 +223,10 @@ where
     type Wire = R::Wire;
     type Form = <R::Wire as ReplyFormFor<Paged>>::Form;
     type SlotForm = <R::Wire as ReplyFormFor<Paged>>::SlotForm;
-    type DeclaredForm = <R::Wire as ReplyFormFor<Paged>>::DeclaredForm;
-    type DeclaredSlotForm = <R::Wire as ReplyFormFor<Paged>>::DeclaredSlotForm;
 }
 
-/// The mount token of a sealed single-message reply definition.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedPublishing;
-
-/// The mount token of a sealed serialized-reply definition.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedRawReply;
-
-/// The mount token of a sealed page reply definition.
-#[derive(Debug, Clone, Copy)]
-pub struct SealedBatchPublishing;
-
-impl<A, R, C, H, Doc, Dest, Attach> IncludeDef
-    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Attach>>
+impl<A, R, C, H, Doc, Dest> IncludeDef
+    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest>>
 where
     A: Axis,
     R: ReplyRoute<A::Family>,
@@ -271,8 +236,8 @@ where
 
 // ------------------------------------------------------------------------- the solo reply def
 
-impl<A, R, C, H, Doc, Dest, Attach> PublishingDef
-    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest, Attach>>
+impl<A, R, C, H, Doc, Dest> PublishingDef
+    for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest>>
 where
     A: SoloAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
@@ -280,7 +245,6 @@ where
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Attach: Send + Sync,
 {
     type Input = A::Kind;
     type Injections = ();
@@ -340,8 +304,8 @@ where
     }
 }
 
-impl<T, R, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, H, Doc>, Dest, Attach>>
+impl<T, R, C, S, H, Doc, Dest>PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = (), Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
@@ -360,8 +324,8 @@ where
     }
 }
 
-impl<F, R, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, (), C, H, Doc>, Dest, Attach>>
+impl<F, R, C, S, H, Doc, Dest>PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
             Input = <SoloDeserialized<F> as Axis>::Kind,
@@ -387,8 +351,8 @@ where
     }
 }
 
-impl<Hd, P, R, C, S, H, Doc, Dest, Attach> PublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest, Attach>>
+impl<Hd, P, R, C, S, H, Doc, Dest>PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
             Input = <SoloPair<Hd, P> as Axis>::Kind,
@@ -416,8 +380,8 @@ where
 
 // ------------------------------------------------------------------------- the page reply def
 
-impl<A, R, C, H, Doc, Dest, Attach> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), C, H, Doc>, Dest, Attach>>
+impl<A, R, C, H, Doc, Dest> BatchPublishingDef
+    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), C, H, Doc>, Dest>>
 where
     A: PagedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
@@ -425,7 +389,6 @@ where
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
     Dest: ReplyDest<R>,
-    Attach: Send + Sync,
 {
     type Input = A::Kind;
     type Injections = ();
@@ -511,8 +474,8 @@ pub(super) fn page_reply_verdict<R>(
     }
 }
 
-impl<T, R, C, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), C, H, Doc>, Dest, Attach>>
+impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = (), Context = C, Reply = R>,
     [T]: Input<Axis = Page<T>>,
@@ -533,8 +496,8 @@ where
     }
 }
 
-impl<Hd, P, R, C, S, H, Doc, Dest, Attach> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest, Attach>>
+impl<Hd, P, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <PagePair<Hd, P> as Axis>::Kind,
@@ -561,75 +524,3 @@ where
     }
 }
 
-// --------------------------------------------------------------------------- the mount seams
-
-/// Splits a sealed reply chain into the definition the publishing machinery drives and the
-/// attach it commits with. Machinery; never named in user code.
-#[doc(hidden)]
-pub trait SplitAttach: Sized {
-    /// The definition without its attach.
-    type Rest;
-    /// The chain-attached reply commit (a policy, or a default marker).
-    type Attach;
-
-    fn split_attach(self) -> (Self::Rest, Self::Attach);
-}
-
-impl<V, Dest, Attach, Src, St, DC> SplitAttach
-    for SubscriberBuilder<Sealed<ReplyValue<V, Dest, Attach>>, Src, St, DC>
-{
-    type Rest = SubscriberBuilder<Sealed<ReplyValue<V, Dest, ()>>, Src, St, DC>;
-    type Attach = Attach;
-
-    fn split_attach(self) -> (Self::Rest, Attach) {
-        self.split_def(|Sealed(def)| {
-            let ReplyValue {
-                value,
-                dest,
-                attach,
-            } = def;
-            (
-                Sealed(ReplyValue {
-                    value,
-                    dest,
-                    attach: (),
-                }),
-                attach,
-            )
-        })
-    }
-}
-
-/// Implements the router mount of one sealed reply token: split the attach off and commit it
-/// through the same machinery a post-include `.publisher(..)` resolves.
-macro_rules! sealed_reply_router_mount {
-    ($($token:ty => $mount:ty),+ $(,)?) => {$(
-        impl<B, Routes, RouteCodec, RouteLayers, Def> RouterMount<B, Routes, RouteCodec, RouteLayers, Def>
-            for $token
-        where
-            B: Broker + 'static,
-            Def: SplitAttach,
-            Def::Attach: RouterCommit<$mount, B, Routes, RouteCodec, RouteLayers, Def::Rest>,
-        {
-            type Out = <Def::Attach as RouterCommit<
-                $mount,
-                B,
-                Routes,
-                RouteCodec,
-                RouteLayers,
-                Def::Rest,
-            >>::Out;
-
-            fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers>) -> Self::Out {
-                let (rest, attach) = def.split_attach();
-                attach.commit(rest, router)
-            }
-        }
-    )+};
-}
-
-sealed_reply_router_mount! {
-    SealedPublishing => PublishMount,
-    SealedRawReply => RawReplyMount,
-    SealedBatchPublishing => BatchPublishMount,
-}

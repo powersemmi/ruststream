@@ -16,6 +16,76 @@ use super::{
 };
 use crate::{ConnectedBroker, PairError, PublishPolicy, TransactionalPublisher};
 
+/// The publish policy of a byte-for-byte reply, as the mount chain carries it.
+///
+/// A [`Serialized`](super::Serialized) reply leaves with no codec and no transform stack, so its
+/// wiring is the policy and nothing else; the newtype exists so the two wires are different type
+/// constructors, which is what lets `.codec(..)`, `.transform(..)`, `.batch_transform(..)` and
+/// `.transactional()` report "not on this wire" instead of "no such method". Machinery; the chain
+/// builds it and the mount pairs it.
+pub struct RawReplyWiring<Policy>(Policy);
+
+impl<Policy> RawReplyWiring<Policy> {
+    /// The wiring `.out(Reply, policy)` produces on the serialized wire.
+    pub(crate) const fn new(policy: Policy) -> Self {
+        Self(policy)
+    }
+}
+
+impl<Policy> fmt::Debug for RawReplyWiring<Policy> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RawReplyWiring").finish_non_exhaustive()
+    }
+}
+
+// The wiring is transparent to the pairing: the bytes leave through the policy's own live form.
+impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
+    for RawReplyWiring<Policy>
+{
+    type Live = Policy::Live;
+
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
+        self.0.pair(connected).await
+    }
+}
+
+/// Replaces the publish policy a wiring carries, keeping every step the chain already named:
+/// the hook [`map_publisher`](crate::runtime::MapPublisher::map_publisher) - and so a broker
+/// crate's own publisher settings - reaches the policy through.
+///
+/// Implemented for both reply wires and for one [`Out`](crate::runtime::Out) slot's attachment,
+/// so a broker's settings trait is written once and applies wherever a policy is named.
+#[doc(hidden)]
+pub trait MapReplyPolicy: Sized {
+    /// The policy the wiring carries.
+    type Policy;
+
+    /// Replaces it with one the broker's own settings produced.
+    fn map_policy(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
+}
+
+impl<Policy, Enc, PL, BL, Tx> MapReplyPolicy for ReplyWiring<Policy, Enc, PL, BL, Tx> {
+    type Policy = Policy;
+
+    fn map_policy(self, f: impl FnOnce(Policy) -> Policy) -> Self {
+        Self {
+            policy: f(self.policy),
+            enc: self.enc,
+            layers: self.layers,
+            batch_layers: self.batch_layers,
+            _tx: PhantomData,
+        }
+    }
+}
+
+impl<Policy> MapReplyPolicy for RawReplyWiring<Policy> {
+    type Policy = Policy;
+
+    fn map_policy(self, f: impl FnOnce(Policy) -> Policy) -> Self {
+        Self(f(self.0))
+    }
+}
+
 /// The transaction state a wiring starts in: each reply publishes on its own.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Direct;
@@ -27,7 +97,7 @@ pub struct InTransaction;
 
 /// A reply publish policy with the mount site's chain steps folded into its type.
 ///
-/// Built by `.publisher(<policy>)` on a mount site's chain and grown by `.codec(..)`,
+/// Built by `.out(Reply, <policy>)` on a mount site's chain and grown by `.codec(..)`,
 /// `.transform(..)`, `.batch_transform(..)` and `.transactional()`; the runtime pairs it with the
 /// connected broker at startup, which is where the policy becomes a live publisher and the
 /// wiring becomes the reply sink the dispatch publishes through. Machinery: the chain builds it
@@ -47,7 +117,7 @@ pub struct ReplyWiring<
 }
 
 impl<Policy> ReplyWiring<Policy> {
-    /// The wiring a bare `.publisher(policy)` produces: no codec named (the default applies), no
+    /// The wiring a bare `.out(Reply, policy)` produces: no codec named (the default applies), no
     /// transforms, one broker call per reply.
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
@@ -76,7 +146,7 @@ impl<Policy, Enc, PL, BL, Tx> fmt::Debug for ReplyWiring<Policy, Enc, PL, BL, Tx
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not take a reply codec",
     label = "this reply's codec cannot be named here",
-    note = "`.codec(..)` names an encoded reply's codec, right after `.publisher(..)`; a \
+    note = "`.codec(..)` names an encoded reply's codec, right after `.out(Reply, ..)`; a \
             `Serialized` reply carries its own bytes and takes no codec at all"
 )]
 pub trait NameReplyCodec<C> {
@@ -129,7 +199,7 @@ impl CodecSlotOpen for UnnamedCodec {}
     message = "`{Self}` does not take a publish transform",
     label = "this reply has no transform stack",
     note = "`.transform(..)` composes a `PublishTransform` onto an encoded reply, right after \
-            `.publisher(..)`; a `Serialized` reply's bytes leave as they are"
+            `.out(Reply, ..)`; a `Serialized` reply's bytes leave as they are"
 )]
 pub trait AddReplyTransform<N> {
     /// The wiring with the transform on top of its stack.
@@ -164,7 +234,7 @@ impl<Policy, Enc, PL, BL, Tx, N> AddReplyTransform<N> for ReplyWiring<Policy, En
     message = "`{Self}` does not take a batch publish transform",
     label = "this reply has no batch transform stack",
     note = "`.batch_transform(..)` composes a `BatchPublishTransform` onto an encoded page reply \
-            (`&[T]` plus `publish(..)`), right after `.publisher(..)`"
+            (`&[T]` plus `publish(..)`), right after `.out(Reply, ..)`"
 )]
 pub trait AddBatchReplyTransform<N> {
     /// The wiring with the transform on top of its batch stack.
@@ -205,7 +275,7 @@ impl<Policy, Enc, PL, BL, Tx, N> AddBatchReplyTransform<N>
     message = "`{Self}` cannot publish its replies inside a transaction",
     label = "this reply has no transaction to open",
     note = "`.transactional()` marks an encoded page reply's wiring, right after \
-            `.publisher(..)`; the policy it marks must pair into a `TransactionalPublisher`"
+            `.out(Reply, ..)`; the policy it marks must pair into a `TransactionalPublisher`"
 )]
 pub trait TransactionalReply {
     /// How the wiring publishes right now: [`Direct`] until a `.transactional()` marks it.

@@ -110,8 +110,8 @@ where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
-        // The apply-and-push tail: the router wraps through `BlanketLayer::apply`, whose return
-        // type cannot be named, so this one step stays per surface (see the scope's own tail).
+        // The apply-and-push tail: the app's stack wraps through `BlanketLayer::apply`, whose
+        // return type cannot be named, so this one step stays here rather than in a helper.
         let handler = global.apply::<SourceMessage<B, S>, Cx, State, H>(self.handler);
         sink.push_subscribe_workers(self.source, handler, self.meta, self.policies, self.workers);
     }

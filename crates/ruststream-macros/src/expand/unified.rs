@@ -296,7 +296,6 @@ fn definition_wiring(
                 ::ruststream::runtime::Sealed<::ruststream::runtime::ReplyValue<
                     #plain,
                     ::ruststream::runtime::NamedDest,
-                    ::ruststream::runtime::DefaultReply,
                 >>
             },
         }
@@ -556,8 +555,8 @@ fn form_token(
     match (reply, has_outs) {
         (ReplyPlan::None, false) => quote!(<#axis as ::ruststream::runtime::Axis>::EagerForm),
         (ReplyPlan::None, true) => quote!(<#axis as ::ruststream::runtime::Axis>::SlotForm),
-        (ReplyPlan::Publish { .. }, false) => quote!(#route::DeclaredForm),
-        (ReplyPlan::Publish { .. }, true) => quote!(#route::DeclaredSlotForm),
+        (ReplyPlan::Publish { .. }, false) => quote!(#route::Form),
+        (ReplyPlan::Publish { .. }, true) => quote!(#route::SlotForm),
     }
 }
 

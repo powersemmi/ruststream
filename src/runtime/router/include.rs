@@ -18,8 +18,8 @@ use super::builder::Router;
 use super::mount::RouterMount;
 use crate::runtime::settings::Declared;
 
-impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
-    Router<B, Routes, RouteCodec, RouteLayers>
+impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Mounts a `#[subscriber]` definition of any form, on the source the definition names: a
     /// plain or batch handler grows the router directly, a `publish("dest")` or `Out`-taking one
@@ -58,17 +58,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers>
     /// }
     /// # }
     /// ```
-    pub fn include<D>(
-        self,
-        def: D,
-    ) -> <D::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, D::Settings>>::Out
+    pub fn include<D>(self, def: D) -> <D::Form as RouterMount<Self, D::Settings>>::Out
     where
         D: Declared,
-        D::Form: RouterMount<B, Routes, RouteCodec, RouteLayers, D::Settings>,
+        D::Form: RouterMount<Self, D::Settings>,
     {
-        <D::Form as RouterMount<B, Routes, RouteCodec, RouteLayers, D::Settings>>::begin(
-            def.declare(),
-            self,
-        )
+        <D::Form as RouterMount<Self, D::Settings>>::begin(def.declare(), self)
     }
 }

@@ -118,7 +118,7 @@ pub trait BatchPublishingDef: Send + Sync {
 /// (mounts on any app), while one that reads it via [`Context::state`](super::Context::state)
 /// implements this only for its declared `S` - the state match is checked at compile time without
 /// pinning a single `State` on the def.
-pub trait BatchPublishingCall<S>: BatchPublishingDef {
+pub(crate) trait BatchPublishingCall<S>: BatchPublishingDef {
     /// Runs the handler body on one decoded batch.
     ///
     /// `Ok(replies)` publishes every reply to [`reply_name`](BatchPublishingDef::reply_name) and

@@ -36,17 +36,16 @@ pub(crate) type SourceSubscriber<B, S> =
 pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as crate::Subscriber>::Message;
 
 pub use app::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, IncludeBatchOut, IncludeBatchPublishing,
-    IncludeBatchPublishingOut, IncludeOut, IncludePublishing, IncludePublishingOut,
-    IncludeRawReply, IncludeRawReplyOut, IncludeSlots, IncludeSlotsWithReply, IncludeWith,
-    RunningApp, RustStream, RustStreamError, Setup, SlotCommit, Wired,
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, RunningApp, RustStream,
+    RustStreamError, Setup, Wired,
 };
+#[doc(hidden)]
+pub use app::{IncludeMount, OnBuild, OnDrop, ScopeCommit, ScopeTerminal};
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.
-pub(crate) use batch::SliceHandler;
 #[doc(hidden)]
 pub use batch::{page_verdict, uniform_page};
 pub use context::{After, Context};
@@ -58,21 +57,19 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
-    Axis, AxisDocs, DeclaredDest, DefaultReplyAttach, DocState, Docs, HandleValue, IsDocumented,
-    NamedDest, OneByOne, Page, PagePair, Paged, PagedAxis, Probed, ProbedDocs, ProbedReplyDef,
-    ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
+    Axis, AxisDocs, DeclaredDest, DocState, Docs, HandleValue, IsDocumented, NamedDest, OneByOne,
+    Page, PagePair, Paged, PagedAxis, Probed, ProbedDocs, ProbedReplyDef, ReplyValue, Sealed, Solo,
+    SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
     Deserialized, Documentable, Documented, EncodedReply, Handle, Input, IntoSource, Message, Outs,
-    PageDeserialized, ReplyShape, ReplyWiringChain, Serialized, SerializedReply, Slot,
-    SoloDeserialized, Undocumented, ValueBuilder, Verdict, subscriber,
+    PageDeserialized, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
+    Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
-    EntryMarkers, OutPos, ReplyAttach, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute,
-    SealedBatchPublishing, SealedBatchPublishingOut, SealedPublishing, SealedPublishingOut,
-    SealedRawReply, SealedRawReplyOut, SelectSlot, SplitAttach, UnbuiltDefinition,
-    UnwiredReplyChain, UnwiredSealedReplyChain, WireDocs,
+    EntryMarkers, OutPos, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, SelectSlot,
+    UnbuiltDefinition, WireDocs,
 };
 #[doc(hidden)]
 pub use handler::IntoOutcome;
@@ -99,8 +96,9 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use publish::{
     AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, Direct,
-    InTransaction, LowerOutTransforms, NameReplyCodec, PublishingDirectly, ReplyPublisher,
-    ReplyWiring, Transactional, TransactionalReply, TypedPublisher, WireBytes, WirePayload,
+    InTransaction, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, PublishingDirectly,
+    RawReplyWiring, ReplyPublisher, ReplyWiring, Transactional, TransactionalReply, TypedPublisher,
+    WireBytes, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
@@ -120,11 +118,10 @@ pub(crate) use publish::message_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]
-pub use router::{DefaultReply, ReplyAttachment, RouterCommit, RouterMount, RouterSlotCommit};
+pub use router::{DefaultReply, ReplyAttachment, RouterCommit, RouterMount};
 pub use router::{
-    IncludeDef, Router, RouterBatchOut, RouterBatchPublishing, RouterBatchPublishingOut, RouterDef,
-    RouterHandlers, RouterOut, RouterPublishing, RouterPublishingOut, RouterRawReply,
-    RouterRawReplyOut, RouterSink, RouterSlots, RouterSlotsWithReply, RouterWith, forms,
+    IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
+    RouterPublishingOut, RouterSink, RouterWith, forms,
 };
 pub use settings::{
     AllOpen, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open, PageSized,
@@ -134,11 +131,12 @@ pub use settings::{
 pub use settings::{CapsPages, DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
 pub use slot::{
-    BindSlot, InitSlots, IntoSlotSource, MissingSlot, NamedStep, NoOutBound, OutAttachment,
-    ReplyLast, SlotPos, TransformAt, TransformLast, WithSource,
+    BatchTransformLast, BindAt, BindSlot, CodecAt, CodecLast, InitSlots, IntoSlotSource,
+    MapPolicyAt, MapPolicyLast, MissingSlot, NamedStep, NoOutBound, NoReply, OutAttachment,
+    ReplyLast, SlotCodec, SlotPos, TransactionalLast, TransformAt, TransformLast, WithSource,
 };
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
-    SlotPublisher, Unrestricted,
+    Reply, SlotPublisher, Unrestricted,
 };
 pub use typed::{Typed, typed};

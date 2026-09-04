@@ -63,8 +63,8 @@ pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra> {
 /// See the publishing routes: a deferred route holds no built handler, so its `Debug` and its
 /// metadata collection both go through the registration metadata.
 macro_rules! debug_by_metadata {
-    ($($route:ident),+ $(,)?) => {$(
-        impl<Source, Def, DecodeCodec, Extra> fmt::Debug for $route<Source, Def, DecodeCodec, Extra> {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> fmt::Debug for $route<$($param),+> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_struct(stringify!($route))
                     .field("meta", &self.meta)
@@ -72,7 +72,7 @@ macro_rules! debug_by_metadata {
             }
         }
 
-        impl<Source, Def, DecodeCodec, Extra> RouteMeta for $route<Source, Def, DecodeCodec, Extra> {
+        impl<$($param),+> RouteMeta for $route<$($param),+> {
             fn collect(&self, out: &mut Vec<HandlerMetadata>) {
                 out.push(self.meta.clone());
             }
@@ -80,7 +80,10 @@ macro_rules! debug_by_metadata {
     )+};
 }
 
-debug_by_metadata!(InjectRoute, BatchInjectRoute);
+debug_by_metadata!(
+    InjectRoute<Source, Def, DecodeCodec, Extra>,
+    BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
+);
 
 impl<B, Source, Def, DecodeCodec, Extra, State> MountRoute<B, State>
     for InjectRoute<Source, Def, DecodeCodec, Extra>

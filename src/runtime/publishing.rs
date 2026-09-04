@@ -34,7 +34,7 @@ use super::publish::{
 /// [`Publisher`] sends the reply's bytes as-is (no codec, no transforms, no pipeline). One
 /// [`PublishingHandler`] serves both, so the encoded and the byte reply forms differ only in
 /// what pairs at the include site.
-pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
+pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     /// The error surfaced when the reply cannot be published.
     type Error: std::fmt::Display;
 
@@ -59,7 +59,7 @@ pub trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
             `Message<Headers, Payload>` pair whose halves are; reply bytes that must leave \
             unencoded ride a `#[derive(Serialized)]` reply type instead"
 )]
-pub trait EncodeReply: Send + Sync {
+pub(crate) trait EncodeReply: Send + Sync {
     /// Delivers `self` through the typed reply stack.
     #[doc(hidden)]
     fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
@@ -269,7 +269,7 @@ pub trait PublishingDef: Send + Sync {
 /// on any app), while one that reads it via [`Context::state`](super::Context::state) implements
 /// this only for its declared `S` - the same shape as [`Handler<M, C, S>`](super::Handler), so the
 /// state match is checked at compile time without pinning a single `State` on the def.
-pub trait PublishingCall<S>: PublishingDef {
+pub(crate) trait PublishingCall<S>: PublishingDef {
     /// Runs the handler body.
     ///
     /// `Ok(reply)` is encoded and published to [`reply_name`](PublishingDef::reply_name), then the
@@ -308,7 +308,7 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 /// definition's [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)`
 /// skips the publish; a failed reply publish nacks the incoming message with `requeue = true`,
 /// so the broker redelivers it instead of silently losing the reply.
-pub struct PublishingHandler<Def: PublishingDef, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
+pub(crate) struct PublishingHandler<Def: PublishingDef, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
     pub(crate) publisher: Wiring,
