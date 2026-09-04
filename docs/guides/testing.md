@@ -114,12 +114,22 @@ body as `[2, 1]` - two calls, because the broker built two pages. A single-messa
 called per delivery, so the same run reports `[1, 1, 1]`.
 
 `tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
-the broker's publish log: `.assert_called_once().with(&Receipt { id: 1 })`.
+the broker's publish log: `.assert_called_once()` / `.assert_called(n)` /
+`.assert_not_called()` pin the count, `.with(&Receipt { id: 1 })` / `.with_raw(bytes)` the most
+recent payload, and `.with_header("x-app", b"1")` the header a publish middleware or a
+[`PublishTransform`](publishing.md) stamped on the way out.
 
 Beyond the assertions, the messages themselves are retrievable for custom checks:
 `subscriber(name).received::<T>()` / `.received_raw()` returns what the handler received, and
 `published::<T>(name).decoded()` / `.messages()` returns every message published to the channel - both
 in order.
+
+Two more views keep what a flat list drops. `subscriber(name).pages::<T>()` / `.pages_raw()`
+returns the deliveries grouped by CALL - one inner vector per call - so a test can pin how a stream
+was cut into pages, which `received::<T>()` flattens away. `subscriber(name).outcomes()` returns the
+classified outcome of every call in order, which is what a redelivery sequence (a nack, then the
+redelivery's ack) is compared against; `settled(..)` and `assert_outcome(..)` read the most recent
+call only.
 
 The decoding helpers (`with`, `received`, `decoded`) use the default codec. If a handler or publisher
 was mounted with a different codec (`with_broker_codec`, `Router::with_codec`), pass it explicitly with the

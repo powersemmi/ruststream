@@ -206,7 +206,7 @@ impl BatchSubscriber for MemorySubscriber {
         let limit = size.get();
         let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
-        let coordinator = self.coordinator.clone();
+        let coordinator = self.coordinator();
         let seeker = Arc::new(Seekable::seeker(self));
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
@@ -538,10 +538,6 @@ pub struct MemorySeeker {
     // stay allocation-free on the dispatch path.
     name: Arc<str>,
     control: Arc<SeekControl>,
-    /// The harness watching this subscription, so a requested replay counts as in-flight work
-    /// from the moment the seek resolves (see [`Seeker::seek`]).
-    #[cfg(feature = "testing")]
-    coordinator: Option<Coordinator>,
 }
 
 impl fmt::Debug for MemorySeeker {
@@ -562,8 +558,6 @@ impl Seekable for MemorySubscriber {
             state: Arc::clone(&self.state),
             name: Arc::from(self.name.as_str()),
             control: Arc::clone(&self.seek),
-            #[cfg(feature = "testing")]
-            coordinator: self.coordinator.clone(),
         }
     }
 }
@@ -612,11 +606,14 @@ impl Seeker for MemorySeeker {
             .expect("memory broker mutex poisoned")
             .replace(clamped);
         drop(bus);
-        // One in-flight token per pending reposition, released when the subscription applies it:
-        // a second seek before the first is applied replaces the target and owes nothing more.
+        // Under the harness, hold the reaction open from the moment the reposition is recorded
+        // until the stream applies it: the replay it will enqueue is not counted yet, and a
+        // quiescence wait landing in that window would return on an empty in-flight count.
+        // One token per pending reposition, released when the subscription applies it: a second
+        // seek before the first is applied replaces the target and owes nothing more.
         #[cfg(feature = "testing")]
         if replaced.is_none()
-            && let Some(coordinator) = &self.coordinator
+            && let Some(coordinator) = self.state.coordinator()
         {
             coordinator.enqueued();
         }
@@ -645,11 +642,13 @@ impl MemorySubscriber {
             .expect("memory broker mutex poisoned")
             .take();
         let Some(target) = pending else { return };
-        // The seek counted itself in flight when it recorded this target; the token is released
-        // once the swap below is complete, so a quiescence wait cannot observe the gap between
-        // the request and the replay.
         #[cfg(feature = "testing")]
-        let seek_token = SeekToken(self.coordinator.clone());
+        let coordinator = self.coordinator();
+        // The seek counted itself in flight when it recorded this target; the token goes back
+        // however this returns, so a quiescence wait cannot observe the gap between the request
+        // and the replay, and a seek that raced shutdown still drains the in-flight count.
+        #[cfg(feature = "testing")]
+        let seek_token = SeekToken(coordinator.clone());
 
         let bus = self
             .state
@@ -676,7 +675,7 @@ impl MemorySubscriber {
         // concurrent quiescence wait (`TestApp::settle`) could observe that instant and return
         // before the replayed deliveries were processed.
         #[cfg(feature = "testing")]
-        if let Some(coordinator) = &self.coordinator {
+        if let Some(coordinator) = &coordinator {
             for _ in target..entries.len() {
                 coordinator.enqueued();
             }
@@ -685,7 +684,7 @@ impl MemorySubscriber {
         while self.rx.try_recv().is_ok() {
             // Every drained delivery was counted in flight when it was enqueued.
             #[cfg(feature = "testing")]
-            if let Some(coordinator) = &self.coordinator {
+            if let Some(coordinator) = &coordinator {
                 coordinator.consumed();
             }
         }

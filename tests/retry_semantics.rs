@@ -1,42 +1,56 @@
 //! Integration tests for retry semantics at the dispatcher level: the `retry_after` delay is
 //! honored (not merely "redelivery happens"), retries complete inside worker pools and keyed
 //! lanes, and batch pools genuinely overlap batches.
-//!
-//! Apps come up through `start()`, which resolves only after subscriptions are open, so every
-//! message is published exactly once; any further delivery is a genuine redelivery.
-#![cfg(feature = "macros")]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
 use std::{
     sync::{
-        LazyLock, Mutex,
-        atomic::{AtomicU32, AtomicUsize, Ordering},
+        Arc, LazyLock, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 use common::Order;
+use futures::future::join_all;
+use ruststream::HeaderMap;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
+use ruststream::testing::{Outcome, TestApp};
 use ruststream::{nonzero, subscriber};
 use tokio::sync::{Notify, watch};
-use tokio::time::Instant;
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
-static DELAY_ATTEMPTS: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
-static DELAY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+/// The ids this subscription has already seen once. Held in application state so the handler
+/// reads it the way a service reads any dependency.
+#[derive(Default)]
+struct FirstSeen(Mutex<Vec<u32>>);
 
-/// Records the paused-clock instant of every attempt; defers the first one by `RETRY_DELAY`.
+impl FirstSeen {
+    /// Records `id` and reports whether this is its first sighting.
+    fn first(&self, id: u32) -> bool {
+        let mut seen = self.0.lock().expect("the test holds no poisoned lock");
+        if seen.contains(&id) {
+            false
+        } else {
+            seen.push(id);
+            true
+        }
+    }
+}
+
+/// Defers the first attempt by `RETRY_DELAY`, then acks.
 #[subscriber("delayed")]
-async fn deferred(_o: &Order) -> HandlerOutcome {
-    let mut attempts = DELAY_ATTEMPTS.lock().unwrap();
-    attempts.push(Instant::now());
-    let first = attempts.len() == 1;
-    drop(attempts);
-    DELAY_NOTIFY.notify_one();
-    if first {
+async fn deferred(order: &Order, ctx: &mut Context<'_, (), Arc<FirstSeen>>) -> HandlerOutcome {
+    if ctx.state().first(order.id) {
         HandlerOutcome::retry_after(RETRY_DELAY)
     } else {
         HandlerOutcome::ack()
@@ -47,180 +61,144 @@ async fn deferred(_o: &Order) -> HandlerOutcome {
 /// the paused clock - not merely redeliver eventually.
 ///
 /// `start_paused` requires the current-thread runtime (tokio cannot pause a multithreaded
-/// clock); the auto-advancing timer makes the test instant while keeping the measured interval
-/// exact.
+/// clock); advancing the clock in two steps is what pins the delay: the redelivery is still
+/// absent one tick short of it, and lands on the tick that reaches it.
 #[tokio::test(start_paused = true)]
 async fn retry_after_delay_is_honored_by_the_dispatcher() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("delayed", "0.1.0"))
-        .with_broker(broker, |b| b.include(deferred));
-
-    let running = app.start().await.expect("startup failed");
+        .on_startup(async move |()| {
+            Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(deferred));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
-    publisher
-        .message(&Order { id: 1 })
+    tb.message(&Order { id: 1 })
         .to("delayed")
         .publish()
         .await
         .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .subscriber("delayed")
+        .assert_called_once()
+        .settled(HandlerOutcome::retry_after(RETRY_DELAY));
 
-    let result = tokio::time::timeout(Duration::from_secs(60), async {
-        while DELAY_ATTEMPTS.lock().unwrap().len() < 2 {
-            DELAY_NOTIFY.notified().await;
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "the deferred message was never redelivered");
+    // One tick short of the delay the message is still held back.
+    tb.advance(RETRY_DELAY.saturating_sub(Duration::from_millis(1)))
+        .await
+        .expect("settle");
+    tb.broker::<MemoryBroker>()
+        .subscriber("delayed")
+        .assert_called_once();
 
-    let between = {
-        let attempts = DELAY_ATTEMPTS.lock().unwrap();
-        attempts[1].duration_since(attempts[0])
-    };
-    assert!(
-        between >= RETRY_DELAY,
-        "redelivery arrived after {between:?}, before the requested {RETRY_DELAY:?}",
+    // The tick that reaches the delay releases it.
+    tb.advance(Duration::from_millis(1)).await.expect("settle");
+    assert_eq!(
+        tb.broker::<MemoryBroker>().subscriber("delayed").outcomes(),
+        [Outcome::Nack, Outcome::Ack],
     );
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
-
-static POOL_ACKED: AtomicU32 = AtomicU32::new(0);
-static POOL_RETRIED: AtomicU32 = AtomicU32::new(0);
-static POOL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// First sight of each id asks for an immediate retry; the redelivery is acked.
 #[subscriber("pool-retry", workers(3))]
-async fn pool_retry(order: &Order) -> HandlerOutcome {
-    static FIRST_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-    let first = {
-        let mut seen = FIRST_SEEN.lock().unwrap();
-        if seen.contains(&order.id) {
-            false
-        } else {
-            seen.push(order.id);
-            true
-        }
-    };
-    if first {
-        POOL_RETRIED.fetch_add(1, Ordering::SeqCst);
-        POOL_NOTIFY.notify_one();
-        return HandlerOutcome::retry();
+async fn pool_retry(order: &Order, ctx: &mut Context<'_, (), Arc<FirstSeen>>) -> HandlerOutcome {
+    if ctx.state().first(order.id) {
+        HandlerOutcome::retry()
+    } else {
+        HandlerOutcome::ack()
     }
-    POOL_ACKED.fetch_add(1, Ordering::SeqCst);
-    POOL_NOTIFY.notify_one();
-    HandlerOutcome::ack()
 }
 
 /// Retried deliveries re-enter a worker pool and complete: every message is nacked once
 /// (requeue) and acked on the second pass.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn retry_completes_inside_a_worker_pool() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("pool-retry", "0.1.0"))
-        .with_broker(broker, |b| b.include(pool_retry));
+        .on_startup(async move |()| {
+            Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(pool_retry));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    for id in 1..=4u32 {
-        publisher
-            .message(&Order { id })
-            .to("pool-retry")
-            .publish()
-            .await
-            .expect("publish");
+    // Injected together, so the pool has several deliveries to spread over its workers; the
+    // publishes all resolve once the whole reaction, redeliveries included, has settled.
+    let orders: Vec<Order> = (1..=4u32).map(|id| Order { id }).collect();
+    for result in join_all(
+        orders
+            .iter()
+            .map(|order| tb.message(order).to("pool-retry").publish()),
+    )
+    .await
+    {
+        result.expect("publish");
     }
 
-    // 4 distinct ids, each retried once then acked.
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        while POOL_ACKED.load(Ordering::SeqCst) < 4 {
-            POOL_NOTIFY.notified().await;
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "retried deliveries did not all complete in the pool: acked {}, retried {}",
-        POOL_ACKED.load(Ordering::SeqCst),
-        POOL_RETRIED.load(Ordering::SeqCst),
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // 4 distinct ids, each retried once then acked. The pool decides the interleaving, so the
+    // counts are what is promised, not the order.
+    let outcomes = tb
+        .broker::<MemoryBroker>()
+        .subscriber("pool-retry")
+        .outcomes();
+    assert_eq!(outcomes.iter().filter(|o| **o == Outcome::Nack).count(), 4);
+    assert_eq!(outcomes.iter().filter(|o| **o == Outcome::Ack).count(), 4);
+    tb.broker::<MemoryBroker>()
+        .subscriber("pool-retry")
+        .assert_called(8);
 }
-
-static LANE_ACKED: AtomicU32 = AtomicU32::new(0);
-static LANE_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// First sight of each id asks for an immediate retry; the redelivery is acked.
 #[subscriber("lane-retry", workers(2, by_key))]
-async fn lane_retry(order: &Order) -> HandlerOutcome {
-    static FIRST_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-    let first = {
-        let mut seen = FIRST_SEEN.lock().unwrap();
-        if seen.contains(&order.id) {
-            false
-        } else {
-            seen.push(order.id);
-            true
-        }
-    };
-    LANE_NOTIFY.notify_one();
-    if first {
-        return HandlerOutcome::retry();
+async fn lane_retry(order: &Order, ctx: &mut Context<'_, (), Arc<FirstSeen>>) -> HandlerOutcome {
+    if ctx.state().first(order.id) {
+        HandlerOutcome::retry()
+    } else {
+        HandlerOutcome::ack()
     }
-    LANE_ACKED.fetch_add(1, Ordering::SeqCst);
-    LANE_NOTIFY.notify_one();
-    HandlerOutcome::ack()
 }
 
 /// Retried deliveries re-enter keyed lanes and complete (per-key ordering across a retry is
 /// not promised: a requeued message rejoins the stream from the back).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn retry_completes_inside_keyed_lanes() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("lane-retry", "0.1.0"))
-        .with_broker(broker, |b| b.include(lane_retry));
+        .on_startup(async move |()| {
+            Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(lane_retry));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    let keyed_publish = |key: &'static str, id: u32| {
-        let publisher = publisher.clone();
-        async move {
-            let mut headers = ruststream::HeaderMap::new();
-            headers.insert("partition-key", key);
-            publisher
-                .message(&Order { id })
-                .with_headers(headers)
-                .to("lane-retry")
-                .publish()
-                .await
-        }
+    let keyed = |key: &'static str, id: u32| {
+        let mut headers = HeaderMap::new();
+        headers.insert("partition-key", key);
+        (Order { id }, headers)
     };
+    let inputs = [keyed("alpha", 1), keyed("beta", 2)];
+    // Two keyed messages, each retried once then acked, injected together so both lanes are live.
+    for result in join_all(inputs.iter().map(|(order, headers)| {
+        tb.message(order)
+            .with_headers(headers.clone())
+            .to("lane-retry")
+            .publish()
+    }))
+    .await
+    {
+        result.expect("publish");
+    }
 
-    // Two keyed messages, each retried once then acked.
-    keyed_publish("alpha", 1).await.expect("publish");
-    keyed_publish("beta", 2).await.expect("publish");
-
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        while LANE_ACKED.load(Ordering::SeqCst) < 2 {
-            LANE_NOTIFY.notified().await;
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "retried deliveries did not all complete in keyed lanes: acked {}",
-        LANE_ACKED.load(Ordering::SeqCst),
-    );
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    let outcomes = tb
+        .broker::<MemoryBroker>()
+        .subscriber("lane-retry")
+        .outcomes();
+    assert_eq!(outcomes.iter().filter(|o| **o == Outcome::Nack).count(), 2);
+    assert_eq!(outcomes.iter().filter(|o| **o == Outcome::Ack).count(), 2);
+    tb.broker::<MemoryBroker>()
+        .subscriber("lane-retry")
+        .assert_called(4);
 }
+
+// The subject below IS the dispatcher's batch pool: it is observed mid-reaction, with one batch
+// deliberately held while a second is pulled, which the harness's drive-to-quiescence publish
+// cannot express - so this one keeps the running app and its own latches.
 
 static BATCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 static OVERLAP_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);

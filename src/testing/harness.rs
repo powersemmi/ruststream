@@ -234,6 +234,9 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// Returns [`TestError::Startup`] if a lifecycle hook fails, [`TestError::Connect`] if a
     /// broker fails to connect, or [`TestError::Subscribe`] if a subscription fails to open.
+    /// The app's publish pipeline is whatever it was built with: an app-wide
+    /// [`publish_layer`](RustStream::publish_layer) is already baked into the mounted routes, so
+    /// the harness drives the same stack production would.
     pub async fn start<Layers, Pipeline, Phase>(
         app: RustStream<Layers, State, Pipeline, Phase>,
     ) -> Result<Self, TestError> {
@@ -301,8 +304,6 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// `connect`, and recovers the per-broker transports from the connected forms. Returns the
     /// coordinator, the broker entries, and the remaining parts (the brokers field is now
     /// consumed and empty).
-    // The app's publish pipeline is already folded into the handlers it registered, so the
-    // harness drives an app with middleware exactly as it drives one without.
     async fn setup<Layers, Pipeline, Phase>(
         app: RustStream<Layers, State, Pipeline, Phase>,
     ) -> Result<(Coordinator, Vec<BrokerEntry>, TestParts<State>), TestError> {

@@ -1,173 +1,166 @@
 //! Integration tests for the workers(..) dispatch policies: concurrent pools, per-key lanes,
 //! and batch pools.
 //!
-//! Apps come up through `start()`, which resolves only after subscriptions are open, so every
-//! message is published exactly once - no warmup or republish loops.
-#![cfg(feature = "macros")]
+//! The pool tests inject their deliveries together rather than one at a time: a pool only has
+//! something to spread over its workers while more than one delivery is in flight, and the
+//! harness settles the whole reaction before the injections resolve.
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
 use std::{
     future::{Future, ready},
-    sync::{
-        Arc, LazyLock, Mutex,
-        atomic::{AtomicU32, AtomicUsize, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 
-use common::{Order, wait_for};
+use common::Order;
+use futures::future::join_all;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
+use ruststream::testing::TestApp;
 use tokio::sync::Barrier;
 
-static CRUNCHED: AtomicU32 = AtomicU32::new(0);
-static GATE: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(4));
+/// The deadline every "did the pool run these together?" wait rides. A pool that dispatched
+/// sequentially would park on the barrier forever, so the timeout is what turns that deadlock
+/// into a failed assertion.
+const CONCURRENCY_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Four deliveries must be in flight at once to pass the barrier; a sequential loop would
 /// deadlock on the first one.
 #[subscriber("jobs", workers(4))]
-async fn crunch(_job: &Order) -> HandlerOutcome {
-    GATE.wait().await;
-    CRUNCHED.fetch_add(1, Ordering::SeqCst);
+async fn crunch(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> HandlerOutcome {
+    ctx.state().wait().await;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pool_processes_deliveries_concurrently() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("jobs", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Barrier::new(4))))
+        .with_broker(MemoryBroker::new(), |b| b.include(crunch));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let app =
-        RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| b.include(crunch));
-
-    let running = app.start().await.expect("startup failed");
-
-    // Exactly the barrier's worth of jobs: if they were dispatched sequentially, the first one
-    // would deadlock on the barrier and the wait below would time out.
-    for id in 1..=4u32 {
-        publisher
-            .message(&Order { id })
-            .to("jobs")
-            .publish()
-            .await
-            .expect("publish");
+    // Exactly the barrier's worth of jobs: dispatched sequentially, the first would park on the
+    // barrier and the deadline below would expire.
+    let jobs: Vec<Order> = (1..=4u32).map(|id| Order { id }).collect();
+    let published = tokio::time::timeout(
+        CONCURRENCY_DEADLINE,
+        join_all(jobs.iter().map(|job| tb.message(job).to("jobs").publish())),
+    )
+    .await
+    .expect("the pool must hold four deliveries in flight at once");
+    for result in published {
+        result.expect("publish");
     }
 
-    wait_for(
-        || CRUNCHED.load(Ordering::SeqCst) >= 4,
-        Duration::from_secs(5),
-    )
-    .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("jobs")
+        .assert_called(4)
+        .settled(HandlerOutcome::ack());
 }
 
-static KEYED_SEEN: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
-
-/// Records (key, id) pairs; per-key arrival order must match publish order.
+/// Records nothing of its own: the id carries the key, so the harness's delivery order per key
+/// is what the assertion reads.
 #[subscriber("keyed", workers(4, by_key))]
-async fn keyed(order: &Order, ctx: &mut ruststream::runtime::Context<'_>) -> HandlerOutcome {
-    let key = ctx
-        .headers()
-        .get_str("partition-key")
-        .unwrap_or_default()
-        .to_owned();
+async fn keyed(order: &Order) -> HandlerOutcome {
+    let _ = order.id;
     // Encourage interleaving between lanes; each lane itself stays sequential.
     tokio::task::yield_now().await;
-    KEYED_SEEN.lock().unwrap().push((key, order.id));
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn by_key_lanes_preserve_per_key_order() {
     const PER_KEY: u32 = 10;
+    // The key rides the headers (that is what picks the lane) and the id band says which key a
+    // delivery belongs to, so per-key order is readable off the recorded deliveries alone.
+    const BETA_BAND: u32 = 100;
 
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("keyed", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(keyed));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let app =
-        RustStream::new(AppInfo::new("keyed", "0.1.0")).with_broker(broker, |b| b.include(keyed));
-
-    let running = app.start().await.expect("startup failed");
-
-    let keyed_publish = |key: &'static str, id: u32| {
-        let publisher = publisher.clone();
-        async move {
-            let mut headers = HeaderMap::new();
-            headers.insert("partition-key", key);
-            publisher
-                .message(&Order { id })
-                .with_headers(headers)
-                .to("keyed")
-                .publish()
-                .await
-        }
+    let keyed_input = |key: &'static str, id: u32| {
+        let mut headers = HeaderMap::new();
+        headers.insert("partition-key", key);
+        (Order { id }, headers)
     };
+    let inputs: Vec<_> = (1..=PER_KEY)
+        .flat_map(|id| {
+            [
+                keyed_input("alpha", id),
+                keyed_input("beta", id + BETA_BAND),
+            ]
+        })
+        .collect();
 
-    for id in 1..=PER_KEY {
-        keyed_publish("alpha", id).await.expect("publish");
-        keyed_publish("beta", id + 100).await.expect("publish");
+    // Injected together, in publish order, so the lanes have a stream to keep in order.
+    for result in join_all(inputs.iter().map(|(order, headers)| {
+        tb.message(order)
+            .with_headers(headers.clone())
+            .to("keyed")
+            .publish()
+    }))
+    .await
+    {
+        result.expect("publish");
     }
 
-    wait_for(
-        || KEYED_SEEN.lock().unwrap().len() >= (PER_KEY as usize) * 2,
-        Duration::from_secs(5),
-    )
-    .await;
-
-    let seen = KEYED_SEEN.lock().unwrap().clone();
-    for key in ["alpha", "beta"] {
+    let seen: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("keyed").received();
+    for band in [0, BETA_BAND] {
         let ids: Vec<u32> = seen
             .iter()
-            .filter(|(k, _)| k == key)
-            .map(|(_, id)| *id)
+            .map(|order| order.id)
+            .filter(|id| (*id > band) && (*id <= band + PER_KEY))
             .collect();
+        assert_eq!(
+            ids.len(),
+            PER_KEY as usize,
+            "the whole key band must arrive: {ids:?}",
+        );
         assert!(
             ids.windows(2).all(|w| w[0] < w[1]),
-            "per-key order lost for {key}: {ids:?}",
+            "per-key order lost in band {band}: {ids:?}",
         );
     }
-
-    running.shutdown().await.expect("graceful shutdown failed");
 }
-
-static PAGES: AtomicUsize = AtomicUsize::new(0);
 
 /// Batch form composing with a pool: up to two pages in flight.
 #[subscriber("pages", workers(2))]
 async fn settle(orders: &[Order]) -> HandlerOutcome {
-    PAGES.fetch_add(orders.len(), Ordering::SeqCst);
+    let _ = orders;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_pool_dispatches_batches() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
-        .with_broker(broker, |b| b.include(settle.batch(nonzero!(8))));
+        .with_broker(MemoryBroker::new(), |b| b.include(settle.batch(nonzero!(8))));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 1 })
+    tb.message(&Order { id: 1 })
         .to("pages")
         .publish()
         .await
         .expect("publish");
 
     // A batch carrying the message must be dispatched through the pool.
-    wait_for(|| PAGES.load(Ordering::SeqCst) >= 1, Duration::from_secs(5)).await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("pages")
+        .assert_called_once()
+        .with(&Order { id: 1 })
+        .settled(HandlerOutcome::ack());
 }
 
 /// The manual path's body of the pool test: it passes the barrier only if the requested number of
 /// deliveries is in flight at once.
 struct CrunchJobs {
-    crunched: Arc<AtomicU32>,
     gate: Arc<Barrier>,
 }
 
@@ -179,7 +172,6 @@ impl Handle<Order> for CrunchJobs {
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         self.gate.wait().await;
-        self.crunched.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -189,15 +181,8 @@ impl Handle<Order> for CrunchJobs {
 /// default sequential loop would deadlock on the first one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closure_subscription_pool_runs_concurrently() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let crunched = Arc::new(AtomicU32::new(0));
-    let gate = Arc::new(Barrier::new(3));
-
     let handler = CrunchJobs {
-        crunched: Arc::clone(&crunched),
-        gate: Arc::clone(&gate),
+        gate: Arc::new(Barrier::new(3)),
     };
 
     let router = Router::<MemoryBroker>::new()
@@ -205,33 +190,32 @@ async fn closure_subscription_pool_runs_concurrently() {
         .workers(Workers::pool(nonzero!(3)));
 
     let app = RustStream::new(AppInfo::new("fn-jobs", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    // Exactly the barrier's worth of jobs: sequential dispatch would deadlock on the first one
-    // and the wait below would time out.
-    for id in 1..=3u32 {
-        publisher
-            .message(&Order { id })
-            .to("fn-jobs")
-            .publish()
-            .await
-            .expect("publish");
+    let jobs: Vec<Order> = (1..=3u32).map(|id| Order { id }).collect();
+    let published = tokio::time::timeout(
+        CONCURRENCY_DEADLINE,
+        join_all(
+            jobs.iter()
+                .map(|job| tb.message(job).to("fn-jobs").publish()),
+        ),
+    )
+    .await
+    .expect("the pool must hold three deliveries in flight at once");
+    for result in published {
+        result.expect("publish");
     }
 
-    wait_for(
-        || crunched.load(Ordering::SeqCst) >= 3,
-        Duration::from_secs(5),
-    )
-    .await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("fn-jobs")
+        .assert_called(3)
+        .settled(HandlerOutcome::ack());
 }
 
-/// The manual path's page body: it counts what the page carried, so the batch either arrived as a
+/// The manual path's page body: it takes whole decoded pages, so the batch either arrived as a
 /// page or did not.
-struct CountPages(Arc<AtomicUsize>);
+struct CountPages;
 
 impl Handle<[Order]> for CountPages {
     fn handle(
@@ -240,7 +224,7 @@ impl Handle<[Order]> for CountPages {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        self.0.fetch_add(orders.len(), Ordering::SeqCst);
+        let _ = orders;
         ready(Ok(()))
     }
 }
@@ -248,33 +232,28 @@ impl Handle<[Order]> for CountPages {
 /// The manual batch path: a page body receives whole decoded batches without a macro definition.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closure_batch_subscription_receives_batches() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let seen = Arc::new(AtomicUsize::new(0));
-
     let router = Router::<MemoryBroker>::new()
         .include(
-            subscriber("fn-pages", CountPages(Arc::clone(&seen)))
+            subscriber("fn-pages", CountPages)
                 .batch(nonzero!(8))
                 .build(),
         )
         .workers(Workers::pool(nonzero!(2)));
 
     let app = RustStream::new(AppInfo::new("fn-pages", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 1 })
+    tb.message(&Order { id: 1 })
         .to("fn-pages")
         .publish()
         .await
         .expect("publish");
 
-    // The message must reach the slice closure as a decoded batch.
-    wait_for(|| seen.load(Ordering::SeqCst) >= 1, Duration::from_secs(5)).await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    // The message must reach the slice body as a decoded batch.
+    tb.broker::<MemoryBroker>()
+        .subscriber("fn-pages")
+        .assert_called_once()
+        .with(&Order { id: 1 })
+        .settled(HandlerOutcome::ack());
 }

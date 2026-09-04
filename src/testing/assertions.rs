@@ -123,6 +123,85 @@ impl<'a> SubscriberAssertions<'a> {
         })
     }
 
+    /// The raw payloads this subscriber received grouped by handler CALL, in call order: one inner
+    /// vector per call, holding what that call carried.
+    ///
+    /// This is [`received_raw`](Self::received_raw) with the page boundaries kept. A
+    /// single-message handler yields one-element vectors; a batch handler yields one vector per
+    /// page, which is what a test pinning how a stream was cut into pages reads.
+    #[must_use]
+    pub fn pages_raw(&self) -> Vec<Vec<Bytes>> {
+        self.with_records(|records| {
+            records
+                .iter()
+                .map(|record| {
+                    record
+                        .deliveries
+                        .iter()
+                        .map(|one| one.raw.clone())
+                        .collect()
+                })
+                .collect()
+        })
+    }
+
+    /// Decodes [`pages_raw`](Self::pages_raw) with [`DefaultCodec`](crate::codec::DefaultCodec).
+    /// Use [`pages_with`](Self::pages_with) for a non-default codec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any received payload fails to decode as `T`.
+    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+    #[must_use]
+    pub fn pages<T: DeserializeOwned>(&self) -> Vec<Vec<T>> {
+        self.pages_with(&DefaultCodec::default())
+    }
+
+    /// Like [`pages`](Self::pages), but decodes with `codec` - use it when the handler was mounted
+    /// with a non-default codec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any received payload fails to decode as `T`.
+    #[must_use]
+    pub fn pages_with<T, C>(&self, codec: &C) -> Vec<Vec<T>>
+    where
+        T: DeserializeOwned,
+        C: Codec,
+    {
+        self.with_records(|records| {
+            records
+                .iter()
+                .map(|record| {
+                    record
+                        .deliveries
+                        .iter()
+                        .map(|one| {
+                            codec.decode(&one.raw).unwrap_or_else(|err| {
+                                panic!(
+                                    "subscriber {:?} received a payload that did not decode as \
+                                     {}: {err}",
+                                    self.name,
+                                    std::any::type_name::<T>(),
+                                )
+                            })
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+    }
+
+    /// The classified [`Outcome`] of every call, in call order.
+    ///
+    /// [`assert_outcome`](Self::assert_outcome) and [`settled`](Self::settled) read the most recent
+    /// call only; this is what a test pinning a SEQUENCE (a nack followed by the redelivery's ack)
+    /// compares against.
+    #[must_use]
+    pub fn outcomes(&self) -> Vec<Outcome> {
+        self.with_records(|records| records.iter().map(|record| record.outcome()).collect())
+    }
+
     /// Decodes every payload this subscriber received (with
     /// [`DefaultCodec`](crate::codec::DefaultCodec)), in delivery order, for custom inspection. Use
     /// [`received_with`](Self::received_with) for a non-default codec.
@@ -386,6 +465,21 @@ impl<T> PublishedAssertions<T> {
         self
     }
 
+    /// Asserts exactly `times` messages were published to this channel.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the published count differs from `times`.
+    pub fn assert_called(self, times: usize) -> Self {
+        let count = self.messages.len();
+        assert_eq!(
+            count, times,
+            "channel {:?} was published to {count} times, expected {times}",
+            self.name,
+        );
+        self
+    }
+
     /// Asserts nothing was published to this channel.
     ///
     /// # Panics
@@ -450,7 +544,7 @@ impl<T> PublishedAssertions<T> {
     /// # Panics
     ///
     /// Panics if nothing was published, the header is absent, or its value differs.
-    pub fn with_header(self, name: &str, value: &[u8]) -> Self {
+    pub fn with_header(self, name: &str, value: impl AsRef<[u8]>) -> Self {
         let message = self.last("the published headers");
         let actual = message.headers().get(name).unwrap_or_else(|| {
             panic!(
@@ -459,7 +553,8 @@ impl<T> PublishedAssertions<T> {
             )
         });
         assert_eq!(
-            actual, value,
+            actual,
+            value.as_ref(),
             "channel {:?} published an unexpected {name:?} header",
             self.name,
         );
@@ -562,6 +657,12 @@ mod tests {
         id: u64,
     }
 
+    fn headers(name: &str, value: &'static [u8]) -> crate::HeaderMap {
+        let mut headers = crate::HeaderMap::new();
+        headers.insert(name.to_owned(), value);
+        headers
+    }
+
     fn undecodable() -> PublishedAssertions<Order> {
         PublishedAssertions::new(
             "orders".to_owned(),
@@ -601,6 +702,40 @@ mod tests {
     #[should_panic(expected = "did not decode as")]
     fn decoding_every_published_payload_reports_the_first_failure() {
         let _ = undecodable().decoded_with(&JsonCodec);
+    }
+
+    #[test]
+    fn a_published_header_is_read_back_by_name() {
+        let stamped = PublishedAssertions::<Order>::new(
+            "orders".to_owned(),
+            vec![
+                RawMessage::new("orders", br#"{"id":7}"#.as_slice())
+                    .with_headers(headers("x-app", b"1")),
+            ],
+        );
+        stamped.assert_called(1).with_header("x-app", b"1");
+    }
+
+    // A header assertion that fails has to name the header, or a stamping middleware's absence
+    // reads as "some header differs".
+    #[test]
+    #[should_panic(expected = "without the \"x-app\" header")]
+    fn a_missing_published_header_names_itself() {
+        let bare = PublishedAssertions::<Order>::new(
+            "orders".to_owned(),
+            vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+        );
+        bare.with_header("x-app", b"1");
+    }
+
+    #[test]
+    #[should_panic(expected = "was published to 1 times, expected 2")]
+    fn a_wrong_published_count_reports_both_numbers() {
+        let one = PublishedAssertions::<Order>::new(
+            "orders".to_owned(),
+            vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+        );
+        one.assert_called(2);
     }
 
     #[test]

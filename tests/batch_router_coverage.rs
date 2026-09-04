@@ -2,20 +2,24 @@
 //! subscriber created before connect), metadata collection over every route kind, and the startup
 //! failures of the two deferred publishing routes (a reply publisher that refuses to pair, a
 //! source that refuses to open).
-#![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
 use std::future::{Future, ready};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
-use common::{Order, Receipt, Wire, wait_for};
+use common::{Order, Receipt, Wire};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher, MemorySubscriber};
 use ruststream::runtime::{
     HandlerMetadata, RouterHandlers, RustStreamError, subscriber as subscriber_def,
 };
+use ruststream::testing::TestApp;
 use ruststream::{PairError, SubscriptionSource};
 
 #[subscriber("brc-in", publish("brc-out"))]
@@ -28,26 +32,20 @@ async fn brc_batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-static BRC_HANDLED: AtomicUsize = AtomicUsize::new(0);
-
 /// The `handle` form attaches a handler to a subscriber created before the broker connects; the
 /// registration still mounts and dispatches once the app runs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
     let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    // The subscriber is built here, before the app takes the broker: that pre-connect handle is
+    // exactly what this route kind mounts.
     let subscriber = broker.subscribe("brc-handle");
 
     let router = Router::<MemoryBroker>::new().handle(
         subscriber,
         |msg: &MemoryMessage, _ctx: &mut Context| {
-            let payload = msg.payload().to_vec();
-            async move {
-                if payload == b"ping" {
-                    BRC_HANDLED.fetch_add(1, Ordering::SeqCst);
-                }
-                HandlerOutcome::ack()
-            }
+            let _ = msg.payload();
+            async move { HandlerOutcome::ack() }
         },
         HandlerMetadata::raw("brc-handle"),
     );
@@ -55,21 +53,19 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
     let app = RustStream::new(AppInfo::new("brc", "0.1.0")).with_broker(broker, |b| {
         b.include_router(router);
     });
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Wire::of(b"ping"))
+    tb.message(&Wire::of(b"ping"))
         .to("brc-handle")
         .publish()
         .await
         .expect("publish");
-    wait_for(
-        || BRC_HANDLED.load(Ordering::SeqCst) >= 1,
-        Duration::from_secs(5),
-    )
-    .await;
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("brc-handle")
+        .assert_called_once()
+        .with_raw(b"ping")
+        .settled(HandlerOutcome::ack());
 }
 
 /// A page body carrying no behaviour: the route kind is what the metadata sweep below reads, not

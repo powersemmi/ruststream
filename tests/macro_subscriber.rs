@@ -1,39 +1,35 @@
 //! Integration test for the `#[subscriber]` attribute macro.
-//!
-//! Apps come up through `start()`, which resolves only after subscriptions are open, so each
-//! distinct message is published exactly once - no republish loops.
-#![cfg(feature = "macros")]
-
-mod common;
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use common::wait_for;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishTransform};
+use ruststream::testing::{Outcome, TestApp};
 use ruststream::{Subscribe, SubscriptionSource};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
 
 // The derive is spelled out: `runtime::Outgoing` above is the publish transform's message view,
 // a different item that happens to share the name.
-#[derive(Debug, Serialize, Deserialize, ruststream::Outgoing)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ruststream::Outgoing)]
 struct Order {
     id: u32,
     total: f64,
 }
 
-static HANDLED: AtomicU32 = AtomicU32::new(0);
-static HANDLED_NOTIFY: Notify = Notify::const_new();
-
 #[subscriber("orders")]
 async fn handle(order: &Order) -> HandlerOutcome {
-    HANDLED.fetch_add(order.id, Ordering::SeqCst);
-    HANDLED_NOTIFY.notify_one();
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
@@ -76,78 +72,60 @@ impl SubscriptionSource<ConnectedMemoryBroker> for StreamSource {
     }
 }
 
-static HANDLED_CTOR: AtomicU32 = AtomicU32::new(0);
-static HANDLED_CTOR_NOTIFY: Notify = Notify::const_new();
-
 // The descriptor lives in the decorator: the macro pulls the `StreamSource` type out of the
 // constructor path and `include` mounts on `def.source()`, with the broker checked at compile time.
 #[subscriber(StreamSource::new("ctor.stream"))]
 async fn on_ctor(order: &Order) -> HandlerOutcome {
-    HANDLED_CTOR.fetch_add(order.id, Ordering::SeqCst);
-    HANDLED_CTOR_NOTIFY.notify_one();
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_descriptor_in_decorator() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     // No source at the call site - it came from the macro argument.
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(on_ctor));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(on_ctor));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 6, total: 1.0 })
+    tb.message(&Order { id: 6, total: 1.0 })
         .to("ctor.stream")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), HANDLED_CTOR_NOTIFY.notified())
-        .await
-        .expect("descriptor-in-decorator handler did not run");
-    assert_eq!(HANDLED_CTOR.load(Ordering::SeqCst), 6);
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("ctor.stream")
+        .assert_called_once()
+        .with(&Order { id: 6, total: 1.0 })
+        .settled(HandlerOutcome::ack());
 }
-
-static HANDLED_CHAIN: AtomicU32 = AtomicU32::new(0);
-static HANDLED_CHAIN_NOTIFY: Notify = Notify::const_new();
 
 // A builder chain in the decorator: the macro follows the receivers down to `StreamSource::new`
 // for the type, and emits the whole chain as the source constructor.
 #[subscriber(StreamSource::new("placeholder").at("chain.stream"))]
 async fn on_chain(order: &Order) -> HandlerOutcome {
-    HANDLED_CHAIN.fetch_add(order.id, Ordering::SeqCst);
-    HANDLED_CHAIN_NOTIFY.notify_one();
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_builder_chain_in_decorator() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(on_chain));
-
-    let running = app.start().await.expect("startup failed");
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(on_chain));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     // The `at(..)` option won: the subscription binds to "chain.stream".
-    publisher
-        .message(&Order { id: 7, total: 1.0 })
+    tb.message(&Order { id: 7, total: 1.0 })
         .to("chain.stream")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), HANDLED_CHAIN_NOTIFY.notified())
-        .await
-        .expect("builder-chain-in-decorator handler did not run");
-    assert_eq!(HANDLED_CHAIN.load(Ordering::SeqCst), 7);
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("chain.stream")
+        .assert_called_once()
+        .with(&Order { id: 7, total: 1.0 })
+        .settled(HandlerOutcome::ack());
 }
 
 /// An order placed by a customer.
@@ -168,62 +146,50 @@ fn derive_message_metadata() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_subscriber_dispatches() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(handle));
-
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 5, total: 1.0 })
+    tb.message(&Order { id: 5, total: 1.0 })
         .to("orders")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), HANDLED_NOTIFY.notified())
-        .await
-        .expect("macro handler did not run");
-    assert_eq!(HANDLED.load(Ordering::SeqCst), 5);
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .with(&Order { id: 5, total: 1.0 })
+        .settled(HandlerOutcome::ack());
 }
-
-static HANDLED_DEFAULT: AtomicU32 = AtomicU32::new(0);
-static HANDLED_DEFAULT_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("orders-default")]
 async fn handle_default(order: &Order) -> HandlerOutcome {
-    HANDLED_DEFAULT.fetch_add(order.id, Ordering::SeqCst);
-    HANDLED_DEFAULT_NOTIFY.notify_one();
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scope_default_codec_drops_per_call_codec() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     // with_broker_codec sets the scope default, so include takes no codec argument.
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0"))
-            .with_broker_codec(broker, JsonCodec, |b| b.include(handle_default));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_codec(
+        MemoryBroker::new(),
+        JsonCodec,
+        |b| b.include(handle_default),
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    publisher
-        .message(&Order { id: 9, total: 1.0 })
+    tb.message(&Order { id: 9, total: 1.0 })
         .to("orders-default")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), HANDLED_DEFAULT_NOTIFY.notified())
-        .await
-        .expect("scope-default-codec handler did not run");
-    assert_eq!(HANDLED_DEFAULT.load(Ordering::SeqCst), 9);
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders-default")
+        .assert_called_once()
+        .with_codec(&JsonCodec, &Order { id: 9, total: 1.0 })
+        .settled(HandlerOutcome::ack());
 }
 
 /// A static (zero-cost) publish transform composed onto the reply wiring.
@@ -235,13 +201,10 @@ impl<C> PublishTransform<C> for StaticEnvelope {
     }
 }
 
-#[derive(Serialize, Deserialize, ruststream::Outgoing)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ruststream::Outgoing)]
 struct Ping {
     n: u32,
 }
-
-static STATIC_SEEN: AtomicU32 = AtomicU32::new(0);
-static STATIC_SEEN_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("ping-in", publish("ping-out"))]
 async fn relay(p: &Ping) -> Ping {
@@ -249,51 +212,45 @@ async fn relay(p: &Ping) -> Ping {
 }
 
 #[subscriber("ping-out")]
-async fn check(p: &Ping, ctx: &mut Context) -> HandlerOutcome {
-    if ctx.headers().get("x-static").is_some() {
-        STATIC_SEEN.store(p.n, Ordering::SeqCst);
-    }
-    STATIC_SEEN_NOTIFY.notify_one();
+async fn check(p: &Ping) -> HandlerOutcome {
+    let _ = p.n;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn static_publish_layer_transforms_reply() {
-    let ingress = MemoryBroker::new();
-    let egress = MemoryBroker::new();
-    let ingress_pub = ingress.publisher();
-
     // The static layer is composed onto the policy stack at compile time - no dyn dispatch.
-    let egress = egress.bindable();
+    let egress = MemoryBroker::new().bindable();
     let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(egress, |b| {
+        .with_broker_labeled("egress", egress, |b| {
             b.include(check);
         })
-        .with_broker(ingress, |b| {
+        .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(relay)
                 .publisher(egress_pub)
                 .transform(StaticEnvelope);
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    ingress_pub
+    tb.broker_named("ingress")
         .message(&Ping { n: 7 })
         .to("ping-in")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), STATIC_SEEN_NOTIFY.notified())
-        .await
-        .expect("the reply never reached the consumer");
-    assert_eq!(
-        STATIC_SEEN.load(Ordering::SeqCst),
-        7,
-        "static publish layer header did not reach the consumer",
-    );
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    // The static publish layer stamped the reply on its way to the other broker, and the reply
+    // still reached the consumer there.
+    tb.broker_named("egress")
+        .published::<Ping>("ping-out")
+        .assert_called_once()
+        .with(&Ping { n: 7 })
+        .with_header("x-static", b"1");
+    tb.broker_named("egress")
+        .subscriber("ping-out")
+        .assert_called_once()
+        .with(&Ping { n: 7 });
 }
 
 #[derive(Serialize, Deserialize, ruststream::Outgoing)]
@@ -301,14 +258,10 @@ struct Request {
     n: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Response {
     doubled: u32,
 }
-
-static REPLY_DOUBLED: AtomicU32 = AtomicU32::new(0);
-static REPLY_DOUBLED_NOTIFY: Notify = Notify::const_new();
-static REPLY_TAGGED: AtomicU32 = AtomicU32::new(0);
 
 /// A publish middleware that tags every outgoing reply with a header (envelope-style).
 #[derive(Clone)]
@@ -331,70 +284,53 @@ async fn reply(req: &Request) -> Response {
 }
 
 #[subscriber("responses")]
-async fn capture(resp: &Response, ctx: &mut Context) -> HandlerOutcome {
-    if ctx.headers().get("x-envelope").is_some() {
-        REPLY_TAGGED.store(1, Ordering::SeqCst);
-    }
-    REPLY_DOUBLED.store(resp.doubled, Ordering::SeqCst);
-    REPLY_DOUBLED_NOTIFY.notify_one();
+async fn capture(resp: &Response) -> HandlerOutcome {
+    let _ = resp.doubled;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_publisher_replies_cross_broker() {
-    let ingress = MemoryBroker::new();
-    let egress = MemoryBroker::new();
-    let ingress_pub = ingress.publisher();
-
     // The reply is published cross-broker: a token bound to egress; name from the macro.
-    let egress = egress.bindable();
+    let egress = MemoryBroker::new().bindable();
     let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
-        .with_broker(egress, |b| {
+        .with_broker_labeled("egress", egress, |b| {
             b.include(capture);
         })
-        .with_broker(ingress, |b| {
+        .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(reply).publisher(egress_pub);
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    ingress_pub
+    tb.broker_named("ingress")
         .message(&Request { n: 21 })
         .to("requests")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), REPLY_DOUBLED_NOTIFY.notified())
-        .await
-        .expect("reply was not published to egress");
-    assert_eq!(REPLY_DOUBLED.load(Ordering::SeqCst), 42);
-    assert_eq!(
-        REPLY_TAGGED.load(Ordering::SeqCst),
-        1,
-        "publish middleware header did not reach the consumer",
-    );
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker_named("egress")
+        .published::<Response>("responses")
+        .assert_called_once()
+        .with(&Response { doubled: 42 })
+        .with_header("x-envelope", b"1");
+    tb.broker_named("egress")
+        .subscriber("responses")
+        .assert_called_once()
+        .with(&Response { doubled: 42 });
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Confirmation {
     id: u32,
     accepted: bool,
 }
 
-static CONFIRM_REJECTED: AtomicU32 = AtomicU32::new(0);
-static CONFIRM_REJECTED_NOTIFY: Notify = Notify::const_new();
-static CONFIRM_ACCEPTED: AtomicU32 = AtomicU32::new(0);
-static CONFIRM_ACCEPTED_NOTIFY: Notify = Notify::const_new();
-
 #[subscriber("confirm-in", publish("confirm-out"))]
 async fn confirm(order: &Order) -> Result<Confirmation, HandlerOutcome> {
     if order.id == 0 {
-        CONFIRM_REJECTED.fetch_add(1, Ordering::SeqCst);
-        CONFIRM_REJECTED_NOTIFY.notify_one();
         return Err(HandlerOutcome::drop());
     }
     Ok(Confirmation {
@@ -405,62 +341,59 @@ async fn confirm(order: &Order) -> Result<Confirmation, HandlerOutcome> {
 
 #[subscriber("confirm-out")]
 async fn confirm_sink(c: &Confirmation) -> HandlerOutcome {
-    if c.accepted {
-        CONFIRM_ACCEPTED.store(c.id, Ordering::SeqCst);
-        CONFIRM_ACCEPTED_NOTIFY.notify_one();
-    }
+    let _ = c.accepted;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_result_form_controls_ack_and_publish() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(confirm);
         b.include(confirm_sink);
     });
-
-    let running = app.start().await.expect("startup failed");
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     // Err(HandlerOutcome) skips the publish entirely.
-    ingress
-        .message(&Order { id: 0, total: 0.0 })
+    tb.message(&Order { id: 0, total: 0.0 })
         .to("confirm-in")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), CONFIRM_REJECTED_NOTIFY.notified())
-        .await
-        .expect("Err branch of the publishing handler did not run");
-    assert_eq!(CONFIRM_REJECTED.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        CONFIRM_ACCEPTED.load(Ordering::SeqCst),
-        0,
-        "Err(..) must not publish a reply",
-    );
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("confirm-in")
+        .assert_called_once()
+        .assert_outcome(Outcome::Drop);
+    tb.broker::<MemoryBroker>()
+        .published::<Confirmation>("confirm-out")
+        .assert_not_called();
 
     // Ok(reply) publishes and acks.
-    ingress
-        .message(&Order { id: 6, total: 1.0 })
+    tb.message(&Order { id: 6, total: 1.0 })
         .to("confirm-in")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), CONFIRM_ACCEPTED_NOTIFY.notified())
-        .await
-        .expect("Ok branch did not publish the reply");
-    assert_eq!(CONFIRM_ACCEPTED.load(Ordering::SeqCst), 6);
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Confirmation>("confirm-out")
+        .assert_called_once()
+        .with(&Confirmation {
+            id: 6,
+            accepted: true,
+        });
+    tb.broker::<MemoryBroker>()
+        .subscriber("confirm-out")
+        .assert_called_once()
+        .with(&Confirmation {
+            id: 6,
+            accepted: true,
+        });
 }
 
 /// App state read from the publishing handler's optional `&mut Context` parameter.
 #[derive(Clone, Copy)]
 struct Bump(u32);
-
-static CTX_REPLY: AtomicU32 = AtomicU32::new(0);
-static CTX_REPLY_NOTIFY: Notify = Notify::const_new();
 
 #[subscriber("ctx-in", publish("ctx-out"))]
 async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
@@ -472,77 +405,73 @@ async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
 
 #[subscriber("ctx-out")]
 async fn ctx_sink(resp: &Response) -> HandlerOutcome {
-    CTX_REPLY.store(resp.doubled, Ordering::SeqCst);
-    CTX_REPLY_NOTIFY.notify_one();
+    let _ = resp.doubled;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_handler_reads_context_state() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Bump(100)))
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(ctx_reply);
             b.include(ctx_sink);
         });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let running = app.start().await.expect("startup failed");
-
-    ingress
-        .message(&Request { n: 1 })
+    tb.message(&Request { n: 1 })
         .to("ctx-in")
         .publish()
         .await
         .expect("publish failed");
-    tokio::time::timeout(Duration::from_secs(5), CTX_REPLY_NOTIFY.notified())
-        .await
-        .expect("the reply never reached the sink");
-    assert_eq!(
-        CTX_REPLY.load(Ordering::SeqCst),
-        101,
-        "publishing handler did not read app state from the context",
-    );
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    // 1 plus the state's bump: the publishing handler read app state from the context.
+    tb.broker::<MemoryBroker>()
+        .subscriber("ctx-out")
+        .assert_called_once()
+        .with(&Response { doubled: 101 });
 }
 
-static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+/// How many times the deferred subscription has been called, held in application state.
+struct Attempts(Arc<AtomicU32>);
 
 /// Asks for a delayed redelivery on first sight, then acks: the not-ready-yet pattern.
 #[subscriber("deferred")]
-async fn eventually(order: &Order) -> HandlerOutcome {
+async fn eventually(order: &Order, ctx: &mut Context<'_, (), Attempts>) -> HandlerOutcome {
     let _ = order;
-    let prev = ATTEMPTS.fetch_add(1, Ordering::SeqCst);
-    if prev == 0 {
+    if ctx.state().0.fetch_add(1, Ordering::SeqCst) == 0 {
         return HandlerOutcome::retry_after(Duration::from_millis(10));
     }
     HandlerOutcome::ack()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(start_paused = true)]
 async fn retry_after_redelivers_through_the_dispatcher() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
+    let attempts = Arc::new(AtomicU32::new(0));
+    let state_attempts = Arc::clone(&attempts);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(broker, |b| b.include(eventually));
-
-    let running = app.start().await.expect("startup failed");
+        .on_startup(move |()| {
+            let attempts = state_attempts;
+            async move { Ok::<_, Infallible>(Attempts(attempts)) }
+        })
+        .with_broker(MemoryBroker::new(), |b| b.include(eventually));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
-    publisher
-        .message(&Order { id: 5, total: 1.0 })
+    tb.message(&Order { id: 5, total: 1.0 })
         .to("deferred")
         .publish()
         .await
         .expect("publish failed");
-    wait_for(
-        || ATTEMPTS.load(Ordering::SeqCst) >= 2,
-        Duration::from_secs(5),
-    )
-    .await;
+    tb.advance(Duration::from_millis(10))
+        .await
+        .expect("the redelivery settles");
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("deferred")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
 }

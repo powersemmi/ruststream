@@ -105,11 +105,18 @@ Broker，它就报告 `TestError::Ambiguous`。
 单条消息的处理器每来一次投递就被调用一次，所以同一轮报出来是 `[1, 1, 1]`。
 
 `tb.broker::<B>().published::<T>(name)` 断言处理器向下游发布了什么，数据取自 Broker 的发布日志：
-`.assert_called_once().with(&Receipt { id: 1 })`。
+`.assert_called_once()` / `.assert_called(n)` / `.assert_not_called()` 固定发布次数，
+`.with(&Receipt { id: 1 })` / `.with_raw(bytes)` 固定最近一条载荷，`.with_header("x-app", b"1")`
+固定发布中间件或 [`PublishTransform`](publishing.md) 在出站时盖上的消息头。
 
 除了这些断言，消息本身也可以取出来做自定义检查：`subscriber(name).received::<T>()` /
 `.received_raw()` 返回处理器收到的内容，`published::<T>(name).decoded()` / `.messages()` 返回发布到
 该通道的每一条消息，两者都保持原有顺序。
+
+还有两个视图保留了扁平列表丢掉的信息。`subscriber(name).pages::<T>()` / `.pages_raw()` 按调用把投递
+分组，每次调用一个内层向量，因此测试可以固定这个流是怎样切成页的，而 `received::<T>()` 会把这条边界
+抹平。`subscriber(name).outcomes()` 按顺序返回每次调用归类之后的结算结果，重投递的序列（先 nack，
+重投递再 ack）就是与它比对的；`settled(..)` 和 `assert_outcome(..)` 只读最近一次调用。
 
 解码用的辅助方法（`with`、`received`、`decoded`）使用默认编解码器。如果某个处理器或发布者是用别的
 编解码器挂载的（`with_broker_codec`、`Router::with_codec`），就用 `_with` / `with_codec` 变体把它显式传入：

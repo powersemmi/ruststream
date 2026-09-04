@@ -1,25 +1,31 @@
 //! Integration tests for post-settle hooks (`ctx.after(..).then(..)`, `after_ack`,
 //! `after_settle`) on the single-message and batch dispatch paths, driven through the
 //! `#[subscriber]` macro over `MemoryBroker`.
-#![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+//!
+//! A hook runs off the delivery path, so the harness drains the continuations
+//! ([`TestApp::drain`], or the drain a shutdown performs) before the counters are read.
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
 mod common;
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
 };
 
-use common::{BackgroundRun, Order, wait_for};
+use common::Order;
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSettings};
+use ruststream::testing::{Outcome, TestApp};
 use ruststream::{nonzero, subscriber};
-use tokio::sync::Notify;
 
-// Shared counters keyed by a static so the macro handler (a free fn) can reach them.
+/// What the hooks under test count, held in application state so a macro handler (a free fn)
+/// reaches it the way a service reaches any dependency.
 #[derive(Clone, Default)]
 struct Counters {
     ack: Arc<AtomicU32>,
@@ -27,6 +33,12 @@ struct Counters {
     retried: Arc<AtomicU32>,
     settle: Arc<AtomicU32>,
     handled: Arc<AtomicU32>,
+}
+
+impl Counters {
+    fn read(counter: &AtomicU32) -> u32 {
+        counter.load(Ordering::SeqCst)
+    }
 }
 
 /// Odd ids ack, even ids drop (never retry); each registers an ack-gated, a drop-gated, a
@@ -64,168 +76,125 @@ async fn handle_order(order: &Order, ctx: &mut Context<'_, (), Counters>) -> Han
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
     let counters = Counters::default();
     let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
-        .with_broker(broker, |b| b.include(handle_order));
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_order));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
+    for id in [1u32, 2] {
+        tb.message(&Order { id })
+            .to("orders")
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    // The macro subscription opens inside run(); retry until both deliveries land.
-    let publish = |id: u32| {
-        let publisher = &publisher;
-        async move {
-            let _ = publisher
-                .message(&Order { id })
-                .to("orders")
-                .publish()
-                .await;
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            publish(1).await;
-            publish(2).await;
-            if counters.handled.load(Ordering::SeqCst) >= 2 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("deliveries within deadline");
+    assert_eq!(
+        tb.broker::<MemoryBroker>().subscriber("orders").outcomes(),
+        [Outcome::Ack, Outcome::Drop],
+    );
+    tb.drain().await;
 
-    // One ack-gated, one drop-gated; both settle hooks ran. Use >= since the retry loop may
-    // publish extra copies before the first pair is handled.
-    wait_for(
-        || {
-            counters.ack.load(Ordering::SeqCst) >= 1
-                && counters.dropped.load(Ordering::SeqCst) >= 1
-                && counters.settle.load(Ordering::SeqCst) >= 2
-        },
-        Duration::from_secs(5),
-    )
-    .await;
-
+    // One acked and one dropped delivery: one hook of each gate, and the ungated hook for both.
+    assert_eq!(Counters::read(&counters.handled), 2);
+    assert_eq!(Counters::read(&counters.ack), 1);
+    assert_eq!(Counters::read(&counters.dropped), 1);
+    assert_eq!(Counters::read(&counters.settle), 2);
     // Nothing ever retried, so the retry-gated hook never fired: drop does not trigger a retry hook.
     assert_eq!(
-        counters.retried.load(Ordering::SeqCst),
+        Counters::read(&counters.retried),
         0,
         "a retry-gated hook must not fire when messages are dropped",
     );
-
-    run.stop().await;
 }
-
-static SLOW_DONE: AtomicU32 = AtomicU32::new(0);
-static SLOW_HANDLED: Notify = Notify::const_new();
 
 /// A handler whose after-ack hook yields before completing, to prove graceful shutdown drains it.
 #[subscriber("slow")]
-async fn handle_slow(_order: &Order, ctx: &mut Context) -> HandlerOutcome {
-    ctx.after_ack(async {
+async fn handle_slow(_order: &Order, ctx: &mut Context<'_, (), Counters>) -> HandlerOutcome {
+    let done = Arc::clone(&ctx.state().ack);
+    ctx.after_ack(async move {
         tokio::task::yield_now().await;
-        SLOW_DONE.fetch_add(1, Ordering::SeqCst);
+        done.fetch_add(1, Ordering::SeqCst);
     });
-    SLOW_HANDLED.notify_one();
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hooks_drain_on_graceful_shutdown() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let counters = Counters::default();
+    let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("slow", "0.1.0"))
-        .with_broker(broker, |b| b.include(handle_slow));
+        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_slow));
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
+    tb.message(&Order { id: 1 })
+        .to("slow")
+        .publish()
+        .await
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .subscriber("slow")
+        .assert_called_once()
+        .settled(HandlerOutcome::ack());
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let _ = publisher
-                .message(&Order { id: 1 })
-                .to("slow")
-                .publish()
-                .await;
-            tokio::select! {
-                () = SLOW_HANDLED.notified() => break,
-                () = tokio::task::yield_now() => {}
-            }
-        }
-    })
-    .await
-    .expect("delivery within deadline");
-
-    // Request shutdown immediately; the in-flight hook must still be drained.
-    run.stop().await;
-    assert!(
-        SLOW_DONE.load(Ordering::SeqCst) >= 1,
-        "hook was not drained"
-    );
+    // Shut down without draining first: the in-flight hook must still be drained by the shutdown.
+    tb.shutdown().await.expect("graceful shutdown failed");
+    assert_eq!(Counters::read(&counters.ack), 1, "hook was not drained");
 }
-
-static BATCH_SETTLE: AtomicU32 = AtomicU32::new(0);
-static BATCH_GATED: AtomicU32 = AtomicU32::new(0);
-static BATCH_NOTIFY: Notify = Notify::const_new();
 
 /// A batch handler: the ungated after_settle hook fires once per batch; the outcome-gated one is
 /// dropped on the batch path (per-element outcomes make a single gate ill-defined).
 #[subscriber("batched")]
-async fn handle_batch(orders: &[Order], ctx: &mut Context) -> HandlerOutcome {
+async fn handle_batch(orders: &[Order], ctx: &mut Context<'_, (), Counters>) -> HandlerOutcome {
     let _ = orders.len();
-    ctx.after_settle(async {
-        BATCH_SETTLE.fetch_add(1, Ordering::SeqCst);
-        BATCH_NOTIFY.notify_one();
+    let c = ctx.state().clone();
+    let settle = Arc::clone(&c.settle);
+    ctx.after_settle(async move {
+        settle.fetch_add(1, Ordering::SeqCst);
     });
-    ctx.after(HandlerOutcome::ack()).then(async {
-        BATCH_GATED.fetch_add(1, Ordering::SeqCst);
+    let gated = Arc::clone(&c.ack);
+    ctx.after(HandlerOutcome::ack()).then(async move {
+        gated.fetch_add(1, Ordering::SeqCst);
     });
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_runs_after_settle_drops_outcome_gated() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    let counters = Counters::default();
+    let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("batched", "0.1.0"))
-        .with_broker(broker, |b| b.include(handle_batch.batch(nonzero!(64))));
+        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_batch.batch(nonzero!(64)))
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let run = BackgroundRun::spawn(app);
+    for id in 0..3u32 {
+        tb.message(&Order { id })
+            .to("batched")
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            for id in 0..3u32 {
-                let _ = publisher
-                    .message(&Order { id })
-                    .to("batched")
-                    .publish()
-                    .await;
-            }
-            tokio::select! {
-                () = BATCH_NOTIFY.notified() => break,
-                () = tokio::task::yield_now() => {}
-            }
-            if BATCH_SETTLE.load(Ordering::SeqCst) >= 1 {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("batch settled within deadline");
+    tb.broker::<MemoryBroker>()
+        .subscriber("batched")
+        .assert_called(3)
+        .settled(HandlerOutcome::ack());
+    tb.drain().await;
 
-    // Let any (incorrect) outcome-gated hook run before asserting it did not.
-    tokio::task::yield_now().await;
+    // The ungated hook fired once per page, and the outcome-gated one never did.
+    assert_eq!(Counters::read(&counters.settle), 3);
     assert_eq!(
-        BATCH_GATED.load(Ordering::SeqCst),
+        Counters::read(&counters.ack),
         0,
         "outcome-gated hooks must not run on the batch path",
     );
-
-    run.stop().await;
 }

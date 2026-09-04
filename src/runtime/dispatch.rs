@@ -582,6 +582,15 @@ async fn dispatch<H, M, C, St>(
     // borrows `&St` across the handler await, which requires `St: Sync`.
     St: Send + Sync,
 {
+    // Settling the message is what releases the harness's quiescence wait, and the post-settle
+    // continuations are spawned after it; one in-flight token spanning the whole dispatch keeps a
+    // `drain` from running before they exist.
+    #[cfg(feature = "testing")]
+    let watcher = delivery.hooks.coordinator().cloned();
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.enqueued();
+    }
     // Build the broker's typed per-delivery context from the message, then attach the fail-fast
     // handle.
     let cx = C::build(&msg);
@@ -671,6 +680,10 @@ async fn dispatch<H, M, C, St>(
     for fut in continuations {
         hooks.spawn(fut);
     }
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.consumed();
+    }
 }
 
 /// Runs one batch through its handler under panic protection. The handler owns and settles the
@@ -713,6 +726,16 @@ async fn run_batch<H, M, C, St>(
         .iter()
         .map(|msg| Bytes::copy_from_slice(msg.payload()))
         .collect();
+    // A batch settles its own deliveries inside the handler (a panic settles them by dropping
+    // them), so the last decrement lands before the page record and the fail-fast signal below.
+    // One extra in-flight token spans the whole dispatch, so a harness driving to quiescence
+    // cannot return into that window.
+    #[cfg(feature = "testing")]
+    let watcher = delivery.hooks.coordinator().cloned();
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.enqueued();
+    }
     #[cfg(feature = "testing")]
     let result = in_harness_scope(
         harness_scope(delivery),
@@ -756,6 +779,10 @@ async fn run_batch<H, M, C, St>(
                     .signal(name, &format!("batch handler panicked: {reason}"));
             }
         }
+    }
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.consumed();
     }
 }
 

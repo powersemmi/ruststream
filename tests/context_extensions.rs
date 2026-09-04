@@ -3,20 +3,29 @@
 //! reaching a downstream handler and being isolated per delivery, and `ctx.state()` still reaching
 //! app state. All use the in-memory broker with hand-written handlers (which can name a context
 //! type; macro handlers use the default `()` context).
+//!
+//! What a delivery context carries never leaves the handler, so these suites keep their own
+//! collector next to the harness assertions: the harness records what arrived and how it settled,
+//! the collector records what the handler read out of the context.
+#![cfg(all(
+    feature = "memory",
+    feature = "json",
+    feature = "macros",
+    feature = "testing"
+))]
 
 mod common;
 
-use common::{BackgroundRun, Wire, wait_for};
+use common::Wire;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerOutcome, Layer, PublishExt,
-    RustStream,
+    AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerOutcome, Layer, RustStream,
 };
+use ruststream::testing::TestApp;
 use ruststream::{AckError, BuildContext, Field, FieldMut, HeaderMap, IncomingMessage};
 
 /// A broker that attaches native per-delivery metadata: `TaggedMessage` carries a tag, and the
@@ -91,13 +100,10 @@ impl ruststream::Subscriber for TaggedSubscriber {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn broker_contributed_field_reaches_handler_by_key() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
     let seen_clone = Arc::clone(&seen);
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         let subscriber = TaggedSubscriber {
             inner: b.broker().subscribe("orders"),
             next_tag: 0,
@@ -117,31 +123,22 @@ async fn broker_contributed_field_reaches_handler_by_key() {
         );
     });
 
-    let run = BackgroundRun::spawn(app);
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Wire::of(b"a"))
-        .to("orders")
-        .publish()
-        .await
-        .unwrap();
-    publisher
-        .message(&Wire::of(b"b"))
-        .to("orders")
-        .publish()
-        .await
-        .unwrap();
+    for payload in [b"a", b"b"] {
+        tb.message(&Wire::of(payload))
+            .to("orders")
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    wait_for(
-        || seen.lock().expect("poisoned").len() >= 2,
-        Duration::from_secs(5),
-    )
-    .await;
-
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called(2)
+        .settled(HandlerOutcome::ack());
     // Each delivery is built a fresh context from its own message, so each sees its own tag.
     assert_eq!(*seen.lock().expect("poisoned"), vec![1, 2]);
-
-    run.stop().await;
 }
 
 /// A per-delivery scratch context a middleware writes and a downstream handler reads.
@@ -221,14 +218,11 @@ where
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
     let seen_clone = Arc::clone(&seen);
     let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         let subscriber = b.broker().subscribe("orders");
         let handler = {
             let layer = StampLayer {
@@ -251,44 +245,33 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
         b.handle(subscriber, handler, HandlerMetadata::raw("orders"));
     });
 
-    let run = BackgroundRun::spawn(app);
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Wire::of(b"a"))
-        .to("orders")
-        .publish()
-        .await
-        .unwrap();
-    publisher
-        .message(&Wire::of(b"b"))
-        .to("orders")
-        .publish()
-        .await
-        .unwrap();
+    for payload in [b"a", b"b"] {
+        tb.message(&Wire::of(payload))
+            .to("orders")
+            .publish()
+            .await
+            .expect("publish");
+    }
 
-    wait_for(
-        || seen.lock().expect("poisoned").len() >= 2,
-        Duration::from_secs(5),
-    )
-    .await;
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called(2)
+        .settled(HandlerOutcome::ack());
     assert_eq!(*seen.lock().expect("poisoned"), vec![0, 1]);
-
-    run.stop().await;
 }
 
 struct AppPrefix(String);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn state_reaches_app_state_independently_of_the_delivery_context() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
     let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let seen_clone = Arc::clone(&seen);
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(AppPrefix("svc".to_owned())))
-        .with_broker(broker, |b| {
+        .with_broker(MemoryBroker::new(), |b| {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
@@ -305,21 +288,17 @@ async fn state_reaches_app_state_independently_of_the_delivery_context() {
             );
         });
 
-    let run = BackgroundRun::spawn(app);
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    publisher
-        .message(&Wire::of(b"x"))
+    tb.message(&Wire::of(b"x"))
         .to("orders")
         .publish()
         .await
-        .unwrap();
+        .expect("publish");
 
-    wait_for(
-        || seen.lock().expect("poisoned").is_some(),
-        Duration::from_secs(5),
-    )
-    .await;
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .settled(HandlerOutcome::ack());
     assert_eq!(*seen.lock().expect("poisoned"), Some("svc".to_owned()));
-
-    run.stop().await;
 }
