@@ -141,8 +141,10 @@ impl PublishedThrough<Events> for Progress {}
 struct RawChunk(Vec<u8>);
 
 impl Serialized for RawChunk {
-    fn bytes(&self) -> &[u8] {
-        &self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(&self.0)
     }
 }
 

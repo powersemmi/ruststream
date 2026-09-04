@@ -16,6 +16,7 @@
 //! Each published order is consumed (incrementing the consume counter) and replied to on
 //! `confirmations` through the metrics publish layer (incrementing the publish counter).
 
+use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::sync::Arc;
 
@@ -50,8 +51,10 @@ struct Confirmation {
 struct Ingest(Bytes);
 
 impl Serialized for Ingest {
-    fn bytes(&self) -> &[u8] {
-        &self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(&self.0)
     }
 }
 

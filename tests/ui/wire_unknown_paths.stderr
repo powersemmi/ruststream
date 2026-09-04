@@ -1,0 +1,15 @@
+error[E0433]: cannot find module or crate `wire_format` in this scope
+ --> tests/ui/wire_unknown_paths.rs:6:17
+  |
+6 | #[wire(encode = wire_format::write, decode = wire_format::read)]
+  |                 ^^^^^^^^^^^ use of unresolved module or unlinked crate `wire_format`
+  |
+  = help: if you wanted to use a crate named `wire_format`, use `cargo add wire_format` to add it to your `Cargo.toml`
+
+error[E0433]: cannot find module or crate `wire_format` in this scope
+ --> tests/ui/wire_unknown_paths.rs:6:46
+  |
+6 | #[wire(encode = wire_format::write, decode = wire_format::read)]
+  |                                              ^^^^^^^^^^^ use of unresolved module or unlinked crate `wire_format`
+  |
+  = help: if you wanted to use a crate named `wire_format`, use `cargo add wire_format` to add it to your `Cargo.toml`

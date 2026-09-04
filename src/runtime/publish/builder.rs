@@ -8,6 +8,7 @@
 //! [`OutgoingDestination`] declaration, so an under-specified publish does not compile.
 
 use std::borrow::Cow;
+use std::error::Error as StdError;
 use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
@@ -165,8 +166,54 @@ impl SatisfiesContract<NoHeaders> for HeadersUnset {}
 impl SatisfiesContract<NoHeaders> for MapHeaders {}
 
 impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
-/// A value that already carries its bytes: `Serialize` means the framework's codec does the
-/// work, `Serialized` means it is already done by the user's own type.
+/// The failure a value reports when its own encoder rejects it, erased so that one error type
+/// serves every wire format.
+///
+/// It is what `#[derive(Serialized)]` names as [`Serialized::Error`] for a type that serializes
+/// itself through `#[wire(encode = ..)]`. A hand-written impl names its own error instead -
+/// [`Infallible`](core::convert::Infallible) where the bytes are already there.
+#[derive(Debug, Error)]
+#[error(transparent)]
+pub struct SerializePayloadError(Box<dyn StdError + Send + Sync>);
+
+impl SerializePayloadError {
+    /// Erases one wire format's encode failure.
+    #[must_use]
+    pub fn new(source: impl StdError + Send + Sync + 'static) -> Self {
+        Self(Box::new(source))
+    }
+}
+
+/// What a `#[wire(encode = ..)]` function may return: nothing, or a result. Machinery behind the
+/// derive, so that a format whose writer cannot fail is not made to pretend it can.
+///
+/// There is no counterpart for `decode`: `Result<Self, E>` and a bare `Self` overlap as soon as
+/// the decoded type is itself a `Result`, so the decode half names a fallible function and says
+/// so - which every self-describing format's reader is anyway.
+#[doc(hidden)]
+pub trait EncodeOutcome {
+    /// Normalizes the outcome into the trait's error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializePayloadError`] carrying the format's own error, when there was one.
+    fn finish(self) -> Result<(), SerializePayloadError>;
+}
+
+impl EncodeOutcome for () {
+    fn finish(self) -> Result<(), SerializePayloadError> {
+        Ok(())
+    }
+}
+
+impl<E: StdError + Send + Sync + 'static> EncodeOutcome for Result<(), E> {
+    fn finish(self) -> Result<(), SerializePayloadError> {
+        self.map_err(SerializePayloadError::new)
+    }
+}
+
+/// A value that owns its byte layout: `Serialize` means the framework's codec does the work,
+/// `Serialized` means the type produces the bytes itself.
 ///
 /// A `Serialized` value leaves the service byte-for-byte with no codec anywhere on the path,
 /// selected purely by the type, on every typed surface: the `message(&value)` entry of a
@@ -174,21 +221,31 @@ impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
 /// and the reply position (the same `.reply()` chain and `publish("dest")` clause an encoded
 /// reply uses).
 ///
+/// The two shapes it covers are one method apart. A byte bag lends what it holds; a generated
+/// message (Protobuf, Cap'n Proto, a hand-rolled frame) holds fields, and writes them into the
+/// buffer the publish path hands it - so nothing is encoded twice and nothing intermediate is
+/// allocated.
+///
 /// # Implementing by hand
 ///
 /// `#[derive(Serialized)]` (under the `macros` feature) covers a newtype or single-field struct
-/// over a byte buffer. Any other shape is the bytes plus the wire spellings that route the type
-/// onto the serialized wire: [`MessageWire`] for the typed publish entry, and
+/// over a byte buffer, and, with `#[wire(encode = ..)]`, any type whose format names an encode
+/// function. Any other shape is the bytes plus the wire spellings that route the type onto the
+/// serialized wire: [`MessageWire`] for the typed publish entry, and
 /// [`ReplyShape`](crate::runtime::ReplyShape) for the reply position.
 ///
 /// ```
+/// use std::convert::Infallible;
+///
 /// use ruststream::prelude::*;
 ///
 /// struct Export(Vec<u8>);
 ///
 /// impl Serialized for Export {
-///     fn bytes(&self) -> &[u8] {
-///         &self.0
+///     type Error = Infallible;
+///
+///     fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+///         Ok(&self.0)
 ///     }
 /// }
 ///
@@ -202,12 +259,63 @@ impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
 ///     type Wire = SerializedReply;
 /// }
 ///
+/// # fn check() -> Result<(), Box<dyn std::error::Error>> {
 /// let export = Export(vec![7, 9]);
-/// assert_eq!(export.bytes(), &[7, 9]);
+/// let mut buf = BytesMut::new();
+/// assert_eq!(export.wire_bytes(&mut buf)?, &[7, 9]);
+/// # Ok(())
+/// # }
+/// # check().unwrap();
+/// ```
+///
+/// A type that computes its bytes writes them into the buffer and lends that:
+///
+/// ```
+/// use std::convert::Infallible;
+///
+/// use ruststream::prelude::*;
+///
+/// struct Tick(u32);
+///
+/// impl Serialized for Tick {
+///     type Error = Infallible;
+///
+///     fn wire_bytes<'a>(&'a self, buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+///         buf.extend_from_slice(&self.0.to_be_bytes());
+///         Ok(buf)
+///     }
+/// }
+///
+/// impl MessageWire for Tick {
+///     type Wire = SerializedWire;
+/// }
+///
+/// # fn check() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut buf = BytesMut::new();
+/// assert_eq!(Tick(1).wire_bytes(&mut buf)?, &[0, 0, 0, 1]);
+/// # Ok(())
+/// # }
+/// # check().unwrap();
 /// ```
 pub trait Serialized {
-    /// The bytes the value publishes, exactly as they leave on the wire.
-    fn bytes(&self) -> &[u8];
+    /// The failure of producing the bytes; [`Infallible`](core::convert::Infallible) for a value
+    /// that already holds them.
+    // Tighter than `Deserialized::Error`'s `Display`: a publish failure travels as the `#[source]`
+    // of `PublishError`, where a construction failure is only reported to the decode policy.
+    type Error: StdError + Send + Sync + 'static;
+
+    /// The bytes the value publishes, exactly as they leave on the wire: the ones it already
+    /// holds, lent as they are, or the ones it writes into `buf`.
+    ///
+    /// One method rather than a lend-or-compute pair, so a value cannot answer the two
+    /// differently, and a value that carries its bytes never touches `buf` - which is why the
+    /// publish path can hand it a buffer that has not allocated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the value's own encoder rejects it. A value that already
+    /// holds its bytes cannot fail, and says so with `Infallible`.
+    fn wire_bytes<'a>(&'a self, buf: &'a mut BytesMut) -> Result<&'a [u8], Self::Error>;
 }
 
 /// The encoded wire of a typed publish: the resolved codec serializes the value.
@@ -245,24 +353,17 @@ impl<T: Serialize> MessageWire for T {
     type Wire = EncodedWire;
 }
 
-/// The payload one wire produces: the codec's encode buffer, or the value's own bytes borrowed
-/// as they are. Machinery behind [`WirePayload`]; never named in user code.
+/// What can go wrong producing a publish payload: the resolved codec rejected the value, or the
+/// value's own encoder did. Machinery behind [`WirePayload`]; never named in user code.
 #[doc(hidden)]
-#[derive(Debug)]
-pub enum WireBytes<'v> {
-    /// The encoded wire's buffer, moved out of the codec.
-    Encoded(BytesMut),
-    /// The serialized wire's borrow of the value's own bytes.
-    Carried(&'v [u8]),
-}
-
-impl AsRef<[u8]> for WireBytes<'_> {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            Self::Encoded(bytes) => bytes,
-            Self::Carried(bytes) => bytes,
-        }
-    }
+#[derive(Debug, Error)]
+pub enum PayloadError {
+    /// The encoded wire's codec failed.
+    #[error(transparent)]
+    Codec(#[from] CodecError),
+    /// The serialized wire's own encoder failed.
+    #[error(transparent)]
+    Serialize(Box<dyn StdError + Send + Sync>),
 }
 
 /// How one wire produces the outgoing payload for a value. Machinery behind the publish
@@ -279,25 +380,42 @@ impl AsRef<[u8]> for WireBytes<'_> {
 )]
 #[doc(hidden)]
 pub trait WirePayload<T, Enc> {
-    /// Produces the bytes that leave: the encoded wire runs the resolved codec, the serialized
-    /// wire borrows the value's own bytes and never touches the codec.
+    /// Produces the bytes that leave, into or beside `buf`: the encoded wire runs the resolved
+    /// codec, the serialized wire asks the value and never touches the codec.
     ///
     /// # Errors
     ///
-    /// Returns [`CodecError`] when the encoded wire's codec rejects the value; the serialized
-    /// wire cannot fail.
-    fn payload<'v>(value: &'v T, codec: &Enc) -> Result<WireBytes<'v>, CodecError>;
+    /// Returns [`PayloadError`] when the encoded wire's codec rejects the value, or the
+    /// serialized wire's own encoder does.
+    fn payload<'v>(
+        value: &'v T,
+        codec: &Enc,
+        buf: &'v mut BytesMut,
+    ) -> Result<&'v [u8], PayloadError>;
 }
 
 impl<T: Serialize, Enc: PublishCodec> WirePayload<T, Enc> for EncodedWire {
-    fn payload<'v>(value: &'v T, codec: &Enc) -> Result<WireBytes<'v>, CodecError> {
-        codec.codec().encode(value).map(WireBytes::Encoded)
+    fn payload<'v>(
+        value: &'v T,
+        codec: &Enc,
+        buf: &'v mut BytesMut,
+    ) -> Result<&'v [u8], PayloadError> {
+        // The codec's buffer moves into the slot the serialized wire writes into, so both lanes
+        // hand the sink one borrow and neither copies.
+        *buf = codec.codec().encode(value)?;
+        Ok(&buf[..])
     }
 }
 
 impl<T: Serialized, Enc> WirePayload<T, Enc> for SerializedWire {
-    fn payload<'v>(value: &'v T, _codec: &Enc) -> Result<WireBytes<'v>, CodecError> {
-        Ok(WireBytes::Carried(value.bytes()))
+    fn payload<'v>(
+        value: &'v T,
+        _codec: &Enc,
+        buf: &'v mut BytesMut,
+    ) -> Result<&'v [u8], PayloadError> {
+        value
+            .wire_bytes(buf)
+            .map_err(|err| PayloadError::Serialize(Box::new(err)))
     }
 }
 
@@ -309,12 +427,24 @@ pub enum PublishError<E> {
     /// The codec failed to encode the message payload.
     #[error("encoding the message failed: {0}")]
     Encode(#[source] CodecError),
+    /// The value's own encoder failed to produce its bytes.
+    #[error("serializing the message's own bytes failed: {0}")]
+    Serialize(#[source] Box<dyn StdError + Send + Sync>),
     /// The typed headers did not serialize into a header map.
     #[error("serializing the typed headers failed: {0}")]
     Headers(#[source] SerializeHeadersError),
     /// The sink (the broker publisher, or the transaction) rejected the message.
     #[error("publishing the message failed: {0}")]
     Publish(#[source] E),
+}
+
+impl<E> From<PayloadError> for PublishError<E> {
+    fn from(err: PayloadError) -> Self {
+        match err {
+            PayloadError::Codec(err) => Self::Encode(err),
+            PayloadError::Serialize(err) => Self::Serialize(err),
+        }
+    }
 }
 
 impl<Sink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
@@ -591,9 +721,12 @@ where
     T::Wire: WirePayload<T, Enc>,
     Hdrs: PublishHeaders,
 {
-    let payload =
-        <T::Wire as WirePayload<T, Enc>>::payload(value, &codec).map_err(PublishError::Encode)?;
-    deliver(sink, name, payload.as_ref(), headers).await
+    // The buffer the serialized wire writes into and the encoded wire's codec output moves into.
+    // `BytesMut::new` does not allocate, so a value that lends bytes it already holds pays
+    // nothing for it.
+    let mut buf = BytesMut::new();
+    let payload = <T::Wire as WirePayload<T, Enc>>::payload(value, &codec, &mut buf)?;
+    deliver(sink, name, payload, headers).await
 }
 
 // No `Enc: PublishCodec` here: what a publish needs of its codec position is the wire's business,

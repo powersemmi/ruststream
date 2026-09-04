@@ -576,9 +576,14 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
 ///
 /// Covers the obvious shape - a newtype or single-field struct over the payload view
 /// `&'a [u8]` - and emits the construction plus both `Input` spellings, so `&Frame<'_>` and
-/// `&[Frame<'_>]` bodies mount. A validating or converting construction (a flatbuffers root, a
-/// capnp reader) implements the traits by hand instead; the pair of impls is on the core
-/// trait's rustdoc.
+/// `&[Frame<'_>]` bodies mount.
+///
+/// A type that deserializes *itself* - a generated Protobuf message, a flatbuffers root, a capnp
+/// reader - names its format's own reader with `#[wire(decode = <path>)]` instead, and then the
+/// shape of the type is its own business. The path is a function `fn(&[u8]) -> Result<Self, E>`
+/// (or `fn(&'a [u8]) -> Result<Self<'a>, E>` for a borrowing view); the derive calls it and
+/// nothing here depends on the format's crate. `#[wire(prost)]` is the shorthand for
+/// `prost::Message::decode`.
 ///
 /// ```ignore
 /// #[derive(Deserialized)]
@@ -586,8 +591,13 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
 ///
 /// #[subscriber("frames")]
 /// async fn inspect(frame: &Frame<'_>) -> HandlerOutcome { /* parse it yourself */ }
+///
+/// // What a generator's config puts on every message it emits.
+/// #[derive(Clone, PartialEq, prost::Message, Deserialized)]
+/// #[wire(prost)]
+/// struct Order { #[prost(uint64, tag = "1")] id: u64 }
 /// ```
-#[proc_macro_derive(Deserialized)]
+#[proc_macro_derive(Deserialized, attributes(wire))]
 pub fn derive_deserialized(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     lanes::derive_deserialized(&input)
@@ -602,8 +612,14 @@ pub fn derive_deserialized(item: TokenStream) -> TokenStream {
 /// Covers the obvious shape - a newtype or single-field struct over an owned byte buffer - and
 /// emits the bytes accessor plus the wire spellings that route the type onto the serialized
 /// wire (`MessageWire` for a typed publish, `ReplyShape` for the reply position), so a handler
-/// returning it - or passing it to `message(..)` - publishes those bytes as they are. Any other
-/// shape implements the traits by hand; the impls are on the core trait's rustdoc.
+/// returning it - or passing it to `message(..)` - publishes those bytes as they are.
+///
+/// A type that serializes *itself* names its format's own writer with
+/// `#[wire(encode = <path>)]`, and then holds fields rather than bytes: the path is a function
+/// `fn(&Self, &mut impl BufMut)`, returning either nothing or `Result<(), E>`, and the derive
+/// calls it against the buffer the publish path already carries - so the value is encoded once,
+/// into the buffer that leaves. Nothing here depends on the format's crate. `#[wire(prost)]` is
+/// the shorthand for `prost::Message::encode`.
 ///
 /// ```ignore
 /// #[derive(Serialized)]
@@ -611,8 +627,13 @@ pub fn derive_deserialized(item: TokenStream) -> TokenStream {
 ///
 /// #[subscriber("orders", publish("orders-wire"))]
 /// async fn encode(order: &Order) -> Export { /* your wire format */ }
+///
+/// // What a generator's config puts on every message it emits.
+/// #[derive(Clone, PartialEq, prost::Message, Serialized)]
+/// #[wire(prost)]
+/// struct OrderDone { #[prost(uint64, tag = "1")] id: u64 }
 /// ```
-#[proc_macro_derive(Serialized)]
+#[proc_macro_derive(Serialized, attributes(wire))]
 pub fn derive_serialized(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     lanes::derive_serialized(&input)

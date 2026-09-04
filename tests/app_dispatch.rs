@@ -5,6 +5,7 @@
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 use std::{
+    convert::Infallible,
     future::{Future, ready},
     sync::{
         Arc, Mutex,
@@ -33,7 +34,7 @@ struct Frame<'a>(&'a [u8]);
 
 impl Deserialized for Frame<'_> {
     type Output<'a> = Frame<'a>;
-    type Error = std::convert::Infallible;
+    type Error = Infallible;
 
     fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
         Ok(Frame(payload))
@@ -66,8 +67,10 @@ impl MessageHeaders for Order {
 struct Wire(&'static [u8]);
 
 impl Serialized for Wire {
-    fn bytes(&self) -> &[u8] {
-        self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(self.0)
     }
 }
 
@@ -437,7 +440,7 @@ async fn handler_reads_context_topic_and_state() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| {
-            Ok::<_, std::convert::Infallible>(Config {
+            Ok::<_, Infallible>(Config {
                 greeting: "hello".to_owned(),
             })
         })
@@ -498,7 +501,7 @@ async fn lifespan_hooks_run_in_order() {
             let o1 = Arc::clone(&o1);
             async move {
                 o1.lock().expect("poisoned").push("startup");
-                Ok::<Config, std::convert::Infallible>(Config {
+                Ok::<Config, Infallible>(Config {
                     greeting: "lazy".to_owned(),
                 })
             }
@@ -507,14 +510,14 @@ async fn lifespan_hooks_run_in_order() {
             let o2 = Arc::clone(&o2);
             async move {
                 o2.lock().expect("poisoned").push("after_startup");
-                Ok::<(), std::convert::Infallible>(())
+                Ok::<(), Infallible>(())
             }
         })
         .on_shutdown(move |_state: Arc<Config>| {
             let o3 = Arc::clone(&o3);
             async move {
                 o3.lock().expect("poisoned").push("on_shutdown");
-                Ok::<(), std::convert::Infallible>(())
+                Ok::<(), Infallible>(())
             }
         })
         .after_shutdown(move |state: Arc<Config>| {
@@ -523,7 +526,7 @@ async fn lifespan_hooks_run_in_order() {
             async move {
                 assert_eq!(greeting.as_str(), "lazy");
                 o4.lock().expect("poisoned").push("after_shutdown");
-                Ok::<(), std::convert::Infallible>(())
+                Ok::<(), Infallible>(())
             }
         })
         .with_broker(MemoryBroker::new(), |_b| {});

@@ -1,0 +1,5 @@
+error: this type's `#[wire(..)]` names no `decode`; #[derive(Deserialized)] needs `decode = <path>` (or the `#[wire(prost)]` shorthand)
+ --> tests/ui/wire_half_declared.rs:7:8
+  |
+7 | struct Order {
+  |        ^^^^^
