@@ -29,9 +29,9 @@ async fn batches_drain_buffered_deliveries() {
     }
 }
 
-/// The size the stream is opened at is the page cap: the broker has no size of its own.
+/// The size the stream is opened at is the batch cap: the broker has no size of its own.
 #[tokio::test]
-async fn the_page_size_caps_each_page() {
+async fn the_batch_size_caps_each_batch() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("batch.capped");
     let publisher = broker.publisher();

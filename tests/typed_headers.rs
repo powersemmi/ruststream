@@ -439,10 +439,10 @@ type BatchShape = (Vec<u64>, Vec<(u64, u32)>);
 
 static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec::new());
 
-// The client-side buffer, so a page closes on the mount's size rather than on delivery timing
+// The client-side buffer, so a batch closes on the mount's size rather than on delivery timing
 // and the per-element alignment is actually exercised across more than one element. The wait
 // bound stays at its 10 ms default: a longer one would only make the suite wait for the tail
-// page.
+// batch.
 #[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")))]
 async fn bulk(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
     let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");

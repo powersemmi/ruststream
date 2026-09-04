@@ -97,39 +97,39 @@ async fn records_received_value_and_ack() {
     assert_eq!(raw.len(), 1);
 
     // A single-message handler is handed one message at a time, which is the shape
-    // `assert_page_sizes` reports for it.
+    // `assert_batch_sizes` reports for it.
     tb.broker::<MemoryBroker>()
         .subscriber("orders")
-        .assert_page_sizes(&[1]);
+        .assert_batch_sizes(&[1]);
 
     tb.assert_running();
 }
 
-/// A page body sized well above what arrives: the page is what the broker had to give, and the
-/// page-size assertion reports that, not the size the mount asked for.
-#[subscriber("paged")]
-async fn take_page(orders: &[Order]) -> HandlerOutcome {
+/// A batch body sized well above what arrives: the batch is what the broker had to give, and the
+/// batch-size assertion reports that, not the size the mount asked for.
+#[subscriber("batched")]
+async fn take_batch(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_reaches_the_body_as_the_broker_built_it() {
+async fn a_batch_reaches_the_body_as_the_broker_built_it() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(take_page.batch(nonzero!(8)));
+        b.include(take_batch.batch(nonzero!(8)));
     });
     let tb = TestApp::start(app).await.unwrap();
 
     tb.message(&Order { id: 1 })
-        .to("paged")
+        .to("batched")
         .publish()
         .await
         .unwrap();
 
     tb.broker::<MemoryBroker>()
-        .subscriber("paged")
+        .subscriber("batched")
         .assert_called_once()
-        .assert_page_sizes(&[1])
+        .assert_batch_sizes(&[1])
         .settled(HandlerOutcome::ack());
 }
 

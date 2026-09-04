@@ -1,5 +1,5 @@
 //! What the mounted cells of the matrix actually do: the placeholder source every sealed
-//! definition reports, the page a body is handed against the size its registration named, a
+//! definition reports, the batch a body is handed against the size its registration named, a
 //! payload the input type refuses to construct, and the arena entries the runtime pairs at
 //! startup.
 //!
@@ -30,7 +30,7 @@ use crate::runtime::handler::{Handler, HandlerOutcome};
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef};
 use crate::runtime::publish::PublishIdentity;
 use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{PageSized, SubscriberBuilder, SubscriberSettings};
+use crate::runtime::settings::{BatchSized, SubscriberBuilder, SubscriberSettings};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::{
     Deserialized, Handle, Input, Message, Outs, Reply, Router, Slot, SoloDeserialized, subscriber,
@@ -41,8 +41,8 @@ use crate::{
     Publisher, Seeker, Unnamed,
 };
 
-use super::eager::{construct, settle_page};
-use super::reply::page_reply_verdict;
+use super::eager::{construct, settle_batch};
+use super::reply::batch_reply_verdict;
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -101,12 +101,10 @@ type AnalyticsEntry = Slot<Analytics, MemoryPublisher, JsonCodec>;
 
 /// The arena a single-slot body receives.
 type AnalyticsArena = Outs<(AnalyticsEntry,)>;
-
-// ------------------------------------------------------------------------------- the bodies
-
-/// One confirmation per element of a page.
-fn confirmations(page: &[Order]) -> Vec<Confirmation> {
-    page.iter()
+/// One confirmation per element of a batch.
+fn confirmations(batch: &[Order]) -> Vec<Confirmation> {
+    batch
+        .iter()
         .map(|order| Confirmation { id: order.id })
         .collect()
 }
@@ -139,16 +137,16 @@ impl<'p> Handle<Strict<'p>> for Inspect {
     }
 }
 
-struct SettlePage;
+struct SettleBatch;
 
-impl Handle<[Order]> for SettlePage {
+impl Handle<[Order]> for SettleBatch {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = page.len();
+        let _ = batch.len();
         ready(Ok(()))
     }
 }
@@ -166,14 +164,14 @@ impl Handle<Order, Confirmation> for Confirm {
     }
 }
 
-/// One confirmation per element, produced while the body reads the broker's page context: the
+/// One confirmation per element, produced while the body reads the broker's batch context: the
 /// cell where the reply axis and the context axis are named together.
-struct ConfirmPagesInContext;
+struct ConfirmBatchesInContext;
 
-impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmPagesInContext {
+impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmBatchesInContext {
     async fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &(),
         ctx: &mut Context<'_, MemoryBatchContext>,
     ) -> Result<Vec<Confirmation>, Vec<HandlerOutcome>> {
@@ -183,22 +181,22 @@ impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmPages
             .await
             .is_err()
         {
-            return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+            return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
         }
-        Ok(confirmations(page))
+        Ok(confirmations(batch))
     }
 }
 
-struct ConfirmPages;
+struct ConfirmBatches;
 
-impl Handle<[Order], Vec<Confirmation>> for ConfirmPages {
+impl Handle<[Order], Vec<Confirmation>> for ConfirmBatches {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
-        ready(Ok(confirmations(page)))
+        ready(Ok(confirmations(batch)))
     }
 }
 
@@ -232,16 +230,16 @@ impl<'p> Handle<Strict<'p>, (), AnalyticsArena> for PinnedFrameMirror {
     }
 }
 
-struct PinnedPageMirror;
+struct PinnedBatchMirror;
 
-impl Handle<[Order], (), AnalyticsArena> for PinnedPageMirror {
+impl Handle<[Order], (), AnalyticsArena> for PinnedBatchMirror {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &AnalyticsArena,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = page.len();
+        let _ = batch.len();
         ready(Ok(()))
     }
 }
@@ -259,27 +257,27 @@ impl Handle<Order, Confirmation, AnalyticsArena> for PinnedGateway {
     }
 }
 
-struct PinnedPageGateway;
+struct PinnedBatchGateway;
 
-impl Handle<[Order], Vec<Confirmation>, AnalyticsArena> for PinnedPageGateway {
+impl Handle<[Order], Vec<Confirmation>, AnalyticsArena> for PinnedBatchGateway {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &AnalyticsArena,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
-        ready(Ok(confirmations(page)))
+        ready(Ok(confirmations(batch)))
     }
 }
 
-/// Records every page it is handed and settles a page of the expected length uniformly, any
+/// Records every batch it is handed and settles a batch of the expected length uniformly, any
 /// other per element, so a resizing dispatch would change both the log and the settlement.
-struct PageLog {
+struct BatchLog {
     seen: Arc<Mutex<Vec<usize>>>,
     expected: usize,
 }
 
-impl PageLog {
+impl BatchLog {
     fn verdict(&self, len: usize) -> Result<(), Vec<HandlerOutcome>> {
         self.seen
             .lock()
@@ -293,59 +291,59 @@ impl PageLog {
     }
 }
 
-impl Handle<[Order]> for PageLog {
+impl Handle<[Order]> for BatchLog {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        ready(self.verdict(page.len()))
+        ready(self.verdict(batch.len()))
     }
 }
 
-struct PairPageLog {
-    inner: PageLog,
+struct PairBatchLog {
+    inner: BatchLog,
 }
 
-impl Handle<[Message<Meta, Order>]> for PairPageLog {
+impl Handle<[Message<Meta, Order>]> for PairBatchLog {
     fn handle(
         &self,
-        page: &[Message<Meta, Order>],
+        batch: &[Message<Meta, Order>],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        ready(self.inner.verdict(page.len()))
+        ready(self.inner.verdict(batch.len()))
     }
 }
 
-struct SlotPageLog {
-    inner: PageLog,
+struct SlotBatchLog {
+    inner: BatchLog,
 }
 
-impl Handle<[Order], (), AnalyticsArena> for SlotPageLog {
+impl Handle<[Order], (), AnalyticsArena> for SlotBatchLog {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &AnalyticsArena,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        ready(self.inner.verdict(page.len()))
+        ready(self.inner.verdict(batch.len()))
     }
 }
 
-struct FramePageLog {
-    inner: PageLog,
+struct FrameBatchLog {
+    inner: BatchLog,
 }
 
-impl<'p> Handle<[Strict<'p>]> for FramePageLog {
+impl<'p> Handle<[Strict<'p>]> for FrameBatchLog {
     fn handle(
         &self,
-        page: &[Strict<'p>],
+        batch: &[Strict<'p>],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        ready(self.inner.verdict(page.len()))
+        ready(self.inner.verdict(batch.len()))
     }
 }
 
@@ -365,9 +363,6 @@ impl PublishPolicy<ConnectedMemoryBroker> for RefusePairing {
         ))))
     }
 }
-
-// ------------------------------------------------------------------------------ the fixtures
-
 /// Unwraps the definition a sealed chain carries, so a test can call the mount machinery's
 /// accessors on it directly.
 fn definition_of<Def, Src, State, DC>(builder: SubscriberBuilder<Def, Src, State, DC>) -> Def {
@@ -404,9 +399,6 @@ async fn analytics_arena(connected: &ConnectedMemoryBroker) -> AnalyticsArena {
 fn orders(len: u64) -> Vec<Order> {
     (1..=len).map(|id| Order { id }).collect()
 }
-
-// ---------------------------------------------------------------------- the placeholder source
-
 /// Every sealed definition carries the placeholder source: the settings builder wrapping it
 /// holds the real one, so a bare mount cannot compile.
 #[test]
@@ -414,14 +406,14 @@ fn every_sealed_definition_reports_the_placeholder_source() {
     let solo = definition_of(subscriber("orders", Audit).build());
     assert!(format!("{:?}", SubscriberDef::source(&solo)).contains("Unnamed"));
 
-    let page = definition_of(subscriber("orders", SettlePage).build());
-    assert!(format!("{:?}", BatchDef::source(&page)).contains("Unnamed"));
+    let batch = definition_of(subscriber("orders", SettleBatch).build());
+    assert!(format!("{:?}", BatchDef::source(&batch)).contains("Unnamed"));
 
     let solo_slots = definition_of(subscriber("orders", PinnedMirror).build());
     assert!(format!("{:?}", InjectDef::source(&solo_slots)).contains("Unnamed"));
 
-    let page_slots = definition_of(subscriber("orders", PinnedPageMirror).build());
-    assert!(format!("{:?}", BatchInjectDef::source(&page_slots)).contains("Unnamed"));
+    let batch_slots = definition_of(subscriber("orders", PinnedBatchMirror).build());
+    assert!(format!("{:?}", BatchInjectDef::source(&batch_slots)).contains("Unnamed"));
 
     let solo_reply = definition_of(
         subscriber("orders", Confirm)
@@ -431,13 +423,13 @@ fn every_sealed_definition_reports_the_placeholder_source() {
     );
     assert!(format!("{:?}", PublishingDef::source(&solo_reply)).contains("Unnamed"));
 
-    let page_reply = definition_of(
-        subscriber("orders", ConfirmPages)
+    let batch_reply = definition_of(
+        subscriber("orders", ConfirmBatches)
             .reply()
             .to("confirmations")
             .build(),
     );
-    assert!(format!("{:?}", BatchPublishingDef::source(&page_reply)).contains("Unnamed"));
+    assert!(format!("{:?}", BatchPublishingDef::source(&batch_reply)).contains("Unnamed"));
 
     let solo_reply_slots = definition_of(
         subscriber("orders", PinnedGateway)
@@ -447,13 +439,13 @@ fn every_sealed_definition_reports_the_placeholder_source() {
     );
     assert!(format!("{:?}", PublishingDef::source(&solo_reply_slots)).contains("Unnamed"));
 
-    let page_reply_slots = definition_of(
-        subscriber("orders", PinnedPageGateway)
+    let batch_reply_slots = definition_of(
+        subscriber("orders", PinnedBatchGateway)
             .reply()
             .to("confirmations")
             .build(),
     );
-    assert!(format!("{:?}", BatchPublishingDef::source(&page_reply_slots)).contains("Unnamed"));
+    assert!(format!("{:?}", BatchPublishingDef::source(&batch_reply_slots)).contains("Unnamed"));
 }
 
 /// The definition values and their dispatch adapters name themselves in a diagnostic, which is
@@ -472,8 +464,9 @@ fn the_definition_values_name_themselves() {
     let solo_body = SubscriberDef::into_handler(definition_of(subscriber("orders", Audit).build()));
     assert!(format!("{solo_body:?}").contains("SoloBody"));
 
-    let page_body = BatchDef::into_handler(definition_of(subscriber("orders", SettlePage).build()));
-    assert!(format!("{page_body:?}").contains("PageBody"));
+    let batch_body =
+        BatchDef::into_handler(definition_of(subscriber("orders", SettleBatch).build()));
+    assert!(format!("{batch_body:?}").contains("BatchBody"));
 }
 
 /// Every source spelling the constructor accepts converts: an owned subject string, a borrowed
@@ -516,12 +509,12 @@ fn the_reply_chain_carries_the_documentation_steps() {
     assert!(PublishingDef::input_schema(&opted_out).is_none());
 }
 
-/// A page reply's mount chains `.transactional()` - the replies of one page become visible
+/// A batch reply's mount chains `.transactional()` - the replies of one batch become visible
 /// together, or none of them do - and the definition still reports the destination it was given.
 #[test]
-fn a_page_reply_attaches_a_transactional_publisher() {
+fn a_batch_reply_attaches_a_transactional_publisher() {
     let declared = definition_of(
-        subscriber("orders", ConfirmPages)
+        subscriber("orders", ConfirmBatches)
             .reply()
             .to("confirmations")
             .build(),
@@ -530,7 +523,7 @@ fn a_page_reply_attaches_a_transactional_publisher() {
 
     let _ = Router::<MemoryBroker>::new()
         .include(
-            subscriber("orders", ConfirmPages)
+            subscriber("orders", ConfirmBatches)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
@@ -541,19 +534,19 @@ fn a_page_reply_attaches_a_transactional_publisher() {
         .build();
 }
 
-/// A replying page body reaches the broker's subscription-scoped context: the page's own
-/// definition is driven with the context the runtime builds off the page's first delivery, and
+/// A replying batch body reaches the broker's subscription-scoped context: the batch's own
+/// definition is driven with the context the runtime builds off the batch's first delivery, and
 /// the reposition handle it carries is live there.
 #[tokio::test]
-async fn a_replying_page_reads_the_brokers_page_context() {
+async fn a_replying_batch_reads_the_brokers_batch_context() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
     publish_payloads(&broker, "orders", &[br#"{"id":1}"#, br#"{"id":2}"#]).await;
-    let page = pull_batch(&mut sub).await;
-    let cx = <MemoryBatchContext as BuildBatchContext<_>>::build(&page[0]);
+    let batch = pull_batch(&mut sub).await;
+    let cx = <MemoryBatchContext as BuildBatchContext<_>>::build(&batch[0]);
 
     let def = definition_of(
-        subscriber("orders", ConfirmPagesInContext)
+        subscriber("orders", ConfirmBatchesInContext)
             .reply()
             .to("confirmations")
             .build(),
@@ -565,28 +558,25 @@ async fn a_replying_page_reads_the_brokers_page_context() {
     let mut ctx = Context::new("orders", &headers, &state, cx, &delivery);
     let replies = BatchPublishingCall::<()>::call(&def, &orders(2), &(), &mut ctx)
         .await
-        .expect("the page answers once its reposition is accepted");
+        .expect("the batch answers once its reposition is accepted");
 
     let ids: Vec<u64> = replies.iter().map(|reply| reply.id).collect();
-    assert_eq!(ids, [1, 2], "one reply per element, in page order");
+    assert_eq!(ids, [1, 2], "one reply per element, in batch order");
 }
-
-// ------------------------------------------------------------------------- the page contract
-
-/// A page verdict of `Ok` acks the whole page; a per-element vector of the wrong length is a
+/// A batch verdict of `Ok` acks the whole batch; a per-element vector of the wrong length is a
 /// bug in the body, and the panic names the subscription so the culprit is findable.
 #[test]
-fn a_page_verdict_of_ok_acks_the_whole_page() {
+fn a_batch_verdict_of_ok_acks_the_whole_batch() {
     assert!(matches!(
-        settle_page(Ok(()), 3, "orders"),
+        settle_batch(Ok(()), 3, "orders"),
         BatchResult::Uniform(_)
     ));
 }
 
 #[test]
-#[should_panic(expected = "subscriber 'orders' returned 2 per-element outcomes for a page of 3")]
-fn a_short_per_element_page_verdict_names_the_subscription() {
-    let _ = settle_page(
+#[should_panic(expected = "subscriber 'orders' returned 2 per-element outcomes for a batch of 3")]
+fn a_short_per_element_batch_verdict_names_the_subscription() {
+    let _ = settle_batch(
         Err(vec![HandlerOutcome::drop(), HandlerOutcome::drop()]),
         3,
         "orders",
@@ -594,10 +584,11 @@ fn a_short_per_element_page_verdict_names_the_subscription() {
 }
 
 #[test]
-fn a_page_reply_verdict_of_err_settles_per_element() {
+fn a_batch_reply_verdict_of_err_settles_per_element() {
     let verdict: Result<Vec<Confirmation>, Vec<HandlerOutcome>> =
         Err(vec![HandlerOutcome::drop(), HandlerOutcome::retry()]);
-    let settled = page_reply_verdict(verdict, 2, "orders").expect_err("the page reports outcomes");
+    let settled =
+        batch_reply_verdict(verdict, 2, "orders").expect_err("the batch reports outcomes");
     match settled {
         BatchResult::PerElement(outcomes) => assert_eq!(outcomes.len(), 2),
         BatchResult::Uniform(_) => panic!("a per-element verdict never settles uniformly"),
@@ -605,25 +596,25 @@ fn a_page_reply_verdict_of_err_settles_per_element() {
 }
 
 #[test]
-#[should_panic(expected = "subscriber 'orders' returned 1 replies for a page of 2")]
-fn a_short_page_reply_names_the_subscription() {
+#[should_panic(expected = "subscriber 'orders' returned 1 replies for a batch of 2")]
+fn a_short_batch_reply_names_the_subscription() {
     let verdict: Result<Vec<Confirmation>, Vec<HandlerOutcome>> = Ok(vec![Confirmation { id: 1 }]);
-    let _ = page_reply_verdict(verdict, 2, "orders");
+    let _ = batch_reply_verdict(verdict, 2, "orders");
 }
 
 #[test]
-#[should_panic(expected = "subscriber 'orders' returned 1 per-element outcomes for a page of 2")]
-fn a_short_page_reply_outcome_vector_names_the_subscription() {
+#[should_panic(expected = "subscriber 'orders' returned 1 per-element outcomes for a batch of 2")]
+fn a_short_batch_reply_outcome_vector_names_the_subscription() {
     let verdict: Result<Vec<Confirmation>, Vec<HandlerOutcome>> = Err(vec![HandlerOutcome::drop()]);
-    let _ = page_reply_verdict(verdict, 2, "orders");
+    let _ = batch_reply_verdict(verdict, 2, "orders");
 }
 
-/// A decoded page reaches its body exactly as the broker built it: the size the registration
+/// A decoded batch reaches its body exactly as the broker built it: the size the registration
 /// named opened the subscription, and the dispatch adds no resizing of its own.
 #[tokio::test]
-async fn a_page_reaches_a_decoded_body_whole() {
+async fn a_batch_reaches_a_decoded_body_whole() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = PageLog {
+    let body = BatchLog {
         seen: Arc::clone(&seen),
         expected: 3,
     };
@@ -631,23 +622,23 @@ async fn a_page_reaches_a_decoded_body_whole() {
         subscriber("orders", body).batch(nonzero!(2)).build(),
     ));
 
-    let page = orders(3);
+    let batch = orders(3);
     let state = ();
     let delivery = Delivery::empty();
     let headers = HeaderMap::new();
     let mut ctx = context("orders", &headers, &state, &delivery);
-    let settled = handler.handle_slice(&page, &mut ctx).await;
+    let settled = handler.handle_slice(&batch, &mut ctx).await;
 
     assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
     assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
-/// The same on the pair lane: the typed header contract rides every element of the one page.
+/// The same on the pair lane: the typed header contract rides every element of the one batch.
 #[tokio::test]
-async fn a_page_reaches_a_pair_body_whole() {
+async fn a_batch_reaches_a_pair_body_whole() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = PairPageLog {
-        inner: PageLog {
+    let body = PairBatchLog {
+        inner: BatchLog {
             seen: Arc::clone(&seen),
             expected: 3,
         },
@@ -656,7 +647,7 @@ async fn a_page_reaches_a_pair_body_whole() {
         subscriber("orders", body).batch(nonzero!(2)).build(),
     ));
 
-    let page: Vec<Message<Meta, Order>> = orders(3)
+    let batch: Vec<Message<Meta, Order>> = orders(3)
         .into_iter()
         .map(|order| {
             Message::new(
@@ -671,19 +662,19 @@ async fn a_page_reaches_a_pair_body_whole() {
     let delivery = Delivery::empty();
     let headers = HeaderMap::new();
     let mut ctx = context("orders", &headers, &state, &delivery);
-    let settled = handler.handle_slice(&page, &mut ctx).await;
+    let settled = handler.handle_slice(&batch, &mut ctx).await;
 
     assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
     assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
 /// And on the self-deserializing lane, whose elements the dispatch adapter constructed out of
-/// the deliveries' payloads before the body sees the page.
+/// the deliveries' payloads before the body sees the batch.
 #[tokio::test]
-async fn a_page_reaches_a_self_deserializing_body_whole() {
+async fn a_batch_reaches_a_self_deserializing_body_whole() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = FramePageLog {
-        inner: PageLog {
+    let body = FrameBatchLog {
+        inner: BatchLog {
             seen: Arc::clone(&seen),
             expected: 3,
         },
@@ -692,71 +683,68 @@ async fn a_page_reaches_a_self_deserializing_body_whole() {
         subscriber("frames", body).batch(nonzero!(2)).build(),
     ));
 
-    let page = [Strict(b"ok1"), Strict(b"ok2"), Strict(b"ok3")];
+    let batch = [Strict(b"ok1"), Strict(b"ok2"), Strict(b"ok3")];
     let state = ();
     let delivery = Delivery::empty();
     let headers = HeaderMap::new();
     let mut ctx = context("frames", &headers, &state, &delivery);
-    let settled = handler.handle_slice(&page, &mut ctx).await;
+    let settled = handler.handle_slice(&batch, &mut ctx).await;
 
     assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
     assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
-/// A slot-carrying page reaches the body whole, with the arena riding it: the injections are
-/// what the form adds, and they change nothing about how a page is handed over.
+/// A slot-carrying batch reaches the body whole, with the arena riding it: the injections are
+/// what the form adds, and they change nothing about how a batch is handed over.
 #[tokio::test]
-async fn a_slot_page_reaches_the_body_whole() {
+async fn a_slot_batch_reaches_the_body_whole() {
     let connected = MemoryBroker::new()
         .connect()
         .await
         .expect("the memory broker connects");
     let arena = analytics_arena(&connected).await;
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let body = SlotPageLog {
-        inner: PageLog {
+    let body = SlotBatchLog {
+        inner: BatchLog {
             seen: Arc::clone(&seen),
             expected: 3,
         },
     };
     let def = definition_of(subscriber("orders", body).batch(nonzero!(2)).build());
 
-    let page = orders(3);
+    let batch = orders(3);
     let state = ();
     let delivery = Delivery::empty();
     let headers = HeaderMap::new();
     let mut ctx = context("orders", &headers, &state, &delivery);
-    let settled = BatchInjectCall::<()>::call(&def, &page, &arena, &mut ctx).await;
+    let settled = BatchInjectCall::<()>::call(&def, &batch, &arena, &mut ctx).await;
 
-    // The page the broker built is what arrives, whatever size the registration asked for: the
+    // The batch the broker built is what arrives, whatever size the registration asked for: the
     // size travels to the subscription, not to the dispatch.
     assert_eq!(*seen.lock().expect("the test holds no poisoned lock"), [3]);
     assert!(matches!(settled, BatchResult::Uniform(outcome) if outcome.is_ack()));
 }
 
-/// Every page form carries the size to the mount, whatever else its signature holds.
+/// Every batch form carries the size to the mount, whatever else its signature holds.
 #[test]
-fn every_page_form_carries_its_size_to_the_mount() {
-    let plain = subscriber("orders", SettlePage).batch(nonzero!(2)).build();
-    assert_eq!(PageSized::page_size(&plain), nonzero!(2));
+fn every_batch_form_carries_its_size_to_the_mount() {
+    let plain = subscriber("orders", SettleBatch).batch(nonzero!(2)).build();
+    assert_eq!(BatchSized::batch_size(&plain), nonzero!(2));
 
-    let replying = subscriber("orders", ConfirmPages)
+    let replying = subscriber("orders", ConfirmBatches)
         .reply()
         .to("confirmations")
         .batch(nonzero!(4))
         .build();
-    assert_eq!(PageSized::page_size(&replying), nonzero!(4));
+    assert_eq!(BatchSized::batch_size(&replying), nonzero!(4));
 
-    let with_slots = subscriber("orders", PinnedPageGateway)
+    let with_slots = subscriber("orders", PinnedBatchGateway)
         .reply()
         .to("confirmations")
         .batch(nonzero!(8))
         .build();
-    assert_eq!(PageSized::page_size(&with_slots), nonzero!(8));
+    assert_eq!(BatchSized::batch_size(&with_slots), nonzero!(8));
 }
-
-// -------------------------------------------------------------- the refused payload construction
-
 /// A payload the input type refuses to construct settles by the subscriber's decode policy,
 /// exactly as a codec decode failure does.
 #[test]
@@ -858,9 +846,6 @@ async fn a_refused_payload_never_reaches_a_slot_body() {
     let accepted = InjectCall::<()>::call(&def, b"ok!".as_slice(), &arena, &mut ctx).await;
     assert!(accepted.is_ack());
 }
-
-// ------------------------------------------------------------------------------- the arena
-
 /// The arena resolves its entries at startup and names itself in a diagnostic.
 #[tokio::test]
 async fn the_arena_resolves_its_entries_at_startup() {

@@ -193,8 +193,8 @@ impl RequestReply for MemoryRequester {
     }
 }
 
-/// Greedy paging: a page is the first awaited delivery plus everything already buffered, up to
-/// the size the registration asked for. Partial pages ship immediately, so no deadline timer is
+/// Greedy batching: a batch is the first awaited delivery plus everything already buffered, up to
+/// the size the registration asked for. Partial batches ship immediately, so no deadline timer is
 /// needed - the in-memory transport has nothing to wait for.
 impl BatchSubscriber for MemorySubscriber {
     type Batch = Vec<MemoryMessage>;
@@ -792,15 +792,15 @@ impl crate::BuildContext<MemoryMessage> for MemoryContext {
     }
 }
 
-/// The in-memory broker's subscription-scoped page context: the subscription's own seeker,
-/// shared by every delivery of the page.
+/// The in-memory broker's subscription-scoped batch context: the subscription's own seeker,
+/// shared by every delivery of the batch.
 ///
-/// The runtime builds one per dispatched page from the page's first delivery (see
-/// [`BuildBatchContext`](crate::BuildBatchContext)), and a page body reads it by key -
+/// The runtime builds one per dispatched batch from the batch's first delivery (see
+/// [`BuildBatchContext`](crate::BuildBatchContext)), and a batch body reads it by key -
 /// [`SeekHandle`] - through `ctx.context(..)`. Per-delivery data (a [`Position`]) has no place
-/// here: a page spans many deliveries, so the position a body reacts to rides the elements
-/// themselves (a `&[Message<H, T>]` page reads it off each element's header contract), and
-/// keeping this a separate type from [`MemoryContext`] is what rejects a page body asking for
+/// here: a batch spans many deliveries, so the position a body reacts to rides the elements
+/// themselves (a `&[Message<H, T>]` batch reads it off each element's header contract), and
+/// keeping this a separate type from [`MemoryContext`] is what rejects a batch body asking for
 /// per-delivery fields at compile time.
 ///
 /// # Examples
@@ -819,20 +819,20 @@ impl crate::BuildContext<MemoryMessage> for MemoryContext {
 /// impl Handle<[Job], (), (), MemoryBatchContext> for Replayer {
 ///     async fn handle(
 ///         &self,
-///         page: &[Job],
+///         batch: &[Job],
 ///         _outs: &(),
 ///         ctx: &mut Context<'_, MemoryBatchContext>,
 ///     ) -> Result<(), Vec<HandlerOutcome>> {
-///         // A page that saw the rewind marker repositions the whole subscription once it is
-///         // settled; the next page opens at the target.
-///         if page.iter().any(|job| job.id == u64::MAX)
+///         // A batch that saw the rewind marker repositions the whole subscription once it is
+///         // settled; the next batch opens at the target.
+///         if batch.iter().any(|job| job.id == u64::MAX)
 ///             && ctx
 ///                 .context(SeekHandle)
 ///                 .seek(MemoryPosition::start())
 ///                 .await
 ///                 .is_err()
 ///         {
-///             return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+///             return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
 ///         }
 ///         Ok(())
 ///     }
@@ -848,15 +848,15 @@ impl crate::BuildBatchContext<MemoryMessage> for MemoryBatchContext {
     /// # Panics
     ///
     /// Panics on a request-reply inbox message, which is not a subscription delivery; no
-    /// dispatch loop (and therefore no page context) ever builds off one.
+    /// dispatch loop (and therefore no batch context) ever builds off one.
     fn build(first: &MemoryMessage) -> Self {
         Self {
             // A clone of the subscription's pre-minted handle: reference-count bumps only,
-            // nothing allocated per page.
+            // nothing allocated per batch.
             seeker: first
                 .seek
                 .as_deref()
-                .expect("a page context builds only off subscription deliveries")
+                .expect("a batch context builds only off subscription deliveries")
                 .clone(),
         }
     }

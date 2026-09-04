@@ -22,7 +22,7 @@ use parse::{SubscriberArgs, doc_description};
 /// Turns an `async fn` handler into a mountable subscriber definition.
 ///
 /// The attribute carries the declarative settings of the subscription; the *shape* of the
-/// handler - one message (`&T`) or a whole page of them (`&[T]`) - is read off the signature,
+/// handler - one message (`&T`) or a whole batch of them (`&[T]`) - is read off the signature,
 /// which is the only place it was ever really written. Which lane a type rides is the type's
 /// own business: a `serde` type decodes through the scope codec, a `#[derive(Deserialized)]`
 /// type constructs itself from the payload bytes, and a reply encodes through the reply codec
@@ -59,7 +59,7 @@ use parse::{SubscriberArgs, doc_description};
 /// #[subscriber("frames")]
 /// async fn on_frame(frame: &Frame<'_>) -> HandlerOutcome { /* parse it yourself */ }
 ///
-/// // raw batch: the page shape on the same lane; the views borrow the batch's own messages
+/// // raw batch: the batch shape on the same lane; the views borrow the batch's own messages
 /// // for the duration of the call.
 /// #[subscriber("frames")]
 /// async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome { /* parse them yourself */ }

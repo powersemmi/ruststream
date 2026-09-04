@@ -2,7 +2,7 @@
 //!
 //! A mount site names the broker's publish policy and then the knobs that policy alone does not
 //! carry: the codec the reply encodes with, the static transform stacks that run on it, and
-//! whether a page's replies ride one broker transaction. Each step fills its own slot in the
+//! whether a batch's replies ride one broker transaction. Each step fills its own slot in the
 //! wiring's type, so naming one twice is a compile error rather than a silent overwrite, and the
 //! whole value stays pure declaration - it pairs with the connected broker at startup, like any
 //! other [`PublishPolicy`].
@@ -92,7 +92,7 @@ impl<Policy> MapReplyPolicy for RawReplyWiring<Policy> {
 pub struct Direct;
 
 /// The transaction state [`transactional`](TransactionalReply::into_transactional) moves a wiring
-/// to: a page's replies publish inside one broker transaction.
+/// to: a batch's replies publish inside one broker transaction.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InTransaction;
 
@@ -227,14 +227,14 @@ impl<Policy, Enc, PL, BL, Tx, N> AddReplyTransform<N> for ReplyWiring<Policy, En
     }
 }
 
-/// Composing a [`BatchPublishTransform`](super::BatchPublishTransform) onto a page's replies: the
-/// `.batch_transform(..)` step. It runs on the page path only; a per-message transform wanted on
+/// Composing a [`BatchPublishTransform`](super::BatchPublishTransform) onto a batch's replies: the
+/// `.batch_transform(..)` step. It runs on the batch path only; a per-message transform wanted on
 /// both is added to each, reused here through [`for_batch`](super::for_batch).
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not take a batch publish transform",
     label = "this reply has no batch transform stack",
-    note = "`.batch_transform(..)` composes a `BatchPublishTransform` onto an encoded page reply \
+    note = "`.batch_transform(..)` composes a `BatchPublishTransform` onto an encoded batch reply \
             (`&[T]` plus `publish(..)`), right after `.out(Reply, ..)`"
 )]
 pub trait AddBatchReplyTransform<N> {
@@ -264,7 +264,7 @@ impl<Policy, Enc, PL, BL, Tx, N> AddBatchReplyTransform<N>
     }
 }
 
-/// Wrapping a page's replies in one broker transaction: the `.transactional()` step.
+/// Wrapping a batch's replies in one broker transaction: the `.transactional()` step.
 ///
 /// Implemented for every reply wiring and for nothing else, so the call on a byte-for-byte reply
 /// fails here. Whether the wiring still publishes directly is the separate question
@@ -275,7 +275,7 @@ impl<Policy, Enc, PL, BL, Tx, N> AddBatchReplyTransform<N>
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot publish its replies inside a transaction",
     label = "this reply has no transaction to open",
-    note = "`.transactional()` marks an encoded page reply's wiring, right after \
+    note = "`.transactional()` marks an encoded batch reply's wiring, right after \
             `.out(Reply, ..)`; the policy it marks must pair into a `TransactionalPublisher`"
 )]
 pub trait TransactionalReply {
@@ -312,7 +312,7 @@ impl<Policy, Enc, PL, BL, Tx> TransactionalReply for ReplyWiring<Policy, Enc, PL
 #[diagnostic::on_unimplemented(
     message = "this reply already publishes inside a transaction",
     label = "`.transactional()` marks the reply's publish state, and it is marked",
-    note = "a page's replies ride one transaction: drop one of the `.transactional()` calls"
+    note = "a batch's replies ride one transaction: drop one of the `.transactional()` calls"
 )]
 pub trait PublishingDirectly {}
 

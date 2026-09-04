@@ -8,7 +8,7 @@ struct Order {
     id: u32,
 }
 
-// One message at a time: there is no page for a cap to chunk.
+// One message at a time: there is no batch for a cap to chunk.
 #[subscriber("orders")]
 async fn handle(order: &Order) -> HandlerOutcome {
     let _ = order.id;

@@ -190,7 +190,7 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
         .settled(HandlerOutcome::ack());
     tb.drain().await;
 
-    // The ungated hook fired once per page, and the outcome-gated one never did.
+    // The ungated hook fired once per batch, and the outcome-gated one never did.
     assert_eq!(Counters::read(&counters.settle), 3);
     assert_eq!(
         Counters::read(&counters.ack),

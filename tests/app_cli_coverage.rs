@@ -45,7 +45,6 @@ struct Frame<'a>(&'a [u8]);
 #[derive(Serialized)]
 struct Export(Vec<u8>);
 
-// ---------------------------------------------------------------------------------------------
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is
 // interested, so what the service reports about itself is observable only with one installed.
 
@@ -163,7 +162,6 @@ async fn the_lifecycle_logs_name_the_service_brokers_and_subscribers() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
 // run / run_until: the two foreground forms.
 
 static FAIL_FAST_READY: Notify = Notify::const_new();
@@ -264,7 +262,6 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
     outcome.expect("the signalled shutdown must be graceful");
 }
 
-// ---------------------------------------------------------------------------------------------
 // Startup and teardown failures.
 
 /// A subscription descriptor the broker refuses to open, for the startup unwind.
@@ -457,7 +454,6 @@ async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
 // The graceful-shutdown timeout: both what it bounds (handlers, post-settle continuations).
 
 static HUNG_HANDLER: Notify = Notify::const_new();
@@ -530,7 +526,6 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
         .expect("an abandoned continuation is not a shutdown failure");
 }
 
-// ---------------------------------------------------------------------------------------------
 // The builder surface: the labeled-codec registration and the include builders.
 
 static LABELED_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());

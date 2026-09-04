@@ -95,9 +95,9 @@ impl<T: IncludeDef> Declared for T {
 /// attribute-named setting and a mount-site one take the same path.
 ///
 /// The `State` parameter records which settings are still open, as
-/// `(workers, failure policies, start position, page supply)` over [`Open`] / [`Fixed`] - the
-/// last one recording whether [`batch`](SubscriberSettings::batch) named the page size, which
-/// a page registration must and a single-message one cannot. The subscription's
+/// `(workers, failure policies, start position, batch supply)` over [`Open`] / [`Fixed`] - the
+/// last one recording whether [`batch`](SubscriberSettings::batch) named the batch size, which
+/// a batch registration must and a single-message one cannot. The subscription's
 /// name is recorded in `Src` instead: an unnamed definition carries [`Unnamed<S>`], which is no
 /// [`SubscriptionSource`](crate::SubscriptionSource) at all, so mounting it is a compile error.
 /// The `DefCodec` parameter is the decode codec [`codec`](Self::codec) named, `()` while the
@@ -107,9 +107,9 @@ pub struct SubscriberBuilder<Def, Src, State, DefCodec = ()> {
     source: Src,
     workers: Workers,
     failures: FailurePolicies,
-    /// The page size, present exactly while the state's page slot reads [`Fixed`] - which is
+    /// The batch size, present exactly while the state's batch slot reads [`Fixed`] - which is
     /// the only way [`BatchStep`] hands it over.
-    page_size: Option<NonZeroUsize>,
+    batch_size: Option<NonZeroUsize>,
     codec: DefCodec,
     _state: PhantomData<fn() -> State>,
 }
@@ -126,7 +126,7 @@ impl<Def, Src> SubscriberBuilder<Def, Src, AllOpen> {
             source,
             workers: Workers::sequential(),
             failures: FailurePolicies::default(),
-            page_size: None,
+            batch_size: None,
             codec: (),
             _state: PhantomData,
         }
@@ -147,7 +147,7 @@ impl<Def, Src, State> SubscriberBuilder<Def, Src, State> {
             source: self.source,
             workers: self.workers,
             failures: self.failures,
-            page_size: self.page_size,
+            batch_size: self.batch_size,
             codec,
             _state: PhantomData,
         }
@@ -164,7 +164,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
         (
             self.def,
             self.source,
-            (self.workers, self.failures, self.page_size, self.codec),
+            (self.workers, self.failures, self.batch_size, self.codec),
         )
     }
 
@@ -173,14 +173,14 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     fn from_parts<NewSrc, NewState>(
         def: Def,
         source: NewSrc,
-        (workers, failures, page_size, codec): Collected<DefCodec>,
+        (workers, failures, batch_size, codec): Collected<DefCodec>,
     ) -> SubscriberBuilder<Def, NewSrc, NewState, DefCodec> {
         SubscriberBuilder {
             def,
             source,
             workers,
             failures,
-            page_size,
+            batch_size,
             codec,
             _state: PhantomData,
         }
@@ -200,13 +200,13 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
         self,
         f: impl FnOnce(Def) -> NewDef,
     ) -> SubscriberBuilder<NewDef, Src, State, DefCodec> {
-        let (def, source, (workers, failures, page_size, codec)) = self.into_parts();
+        let (def, source, (workers, failures, batch_size, codec)) = self.into_parts();
         SubscriberBuilder {
             def: f(def),
             source,
             workers,
             failures,
-            page_size,
+            batch_size,
             codec,
             _state: PhantomData,
         }
@@ -366,8 +366,8 @@ impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F
     type Out = SubscriberBuilder<Def, Src, (Fixed, F, P, B), DC>;
 
     fn apply_workers(self, workers: Workers) -> Self::Out {
-        let (def, source, (_default, failures, page_size, codec)) = self.into_parts();
-        Self::from_parts(def, source, (workers, failures, page_size, codec))
+        let (def, source, (_default, failures, batch_size, codec)) = self.into_parts();
+        Self::from_parts(def, source, (workers, failures, batch_size, codec))
     }
 }
 
@@ -390,8 +390,8 @@ impl<Def, Src, W, P, B, DC> FailureStep for SubscriberBuilder<Def, Src, (W, Open
     type Out = SubscriberBuilder<Def, Src, (W, Fixed, P, B), DC>;
 
     fn apply_failures(self, policies: FailurePolicies) -> Self::Out {
-        let (def, source, (workers, _defaults, page_size, codec)) = self.into_parts();
-        Self::from_parts(def, source, (workers, policies, page_size, codec))
+        let (def, source, (workers, _defaults, batch_size, codec)) = self.into_parts();
+        Self::from_parts(def, source, (workers, policies, batch_size, codec))
     }
 }
 
@@ -420,38 +420,38 @@ impl<Def, Src, W, F, P, B, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W
     }
 }
 
-/// A definition whose deliveries are pages, so a page size is its to name: every page form of
-/// the value definition, and the attribute's own slot-carrying page definition.
+/// A definition whose deliveries are batches, so a batch size is its to name: every batch form
+/// of the value definition, and the attribute's own slot-carrying batch definition.
 ///
 /// Machinery behind [`batch`](SubscriberSettings::batch); never named in user code.
 #[diagnostic::on_unimplemented(
-    message = "this subscriber has no pages to size",
-    label = "`batch(..)` sizes the pages a page body is handed",
-    note = "the page size belongs to a page body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`), with \
-            or without a reply and `Out` slots; a single-message body has no page, and how many \
-            of those are in flight at once is `workers(n)` instead"
+    message = "this subscriber has no batches to size",
+    label = "`batch(..)` sizes the batches a batch body is handed",
+    note = "the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`), \
+            with or without a reply and `Out` slots; a single-message body takes no batch, and \
+            how many of those are in flight at once is `workers(n)` instead"
 )]
 #[doc(hidden)]
-pub trait CapsPages {}
+pub trait CapsBatches {}
 
-/// Naming the page size. See [`SubscriberSettings::batch`].
+/// Naming the batch size. See [`SubscriberSettings::batch`].
 #[diagnostic::on_unimplemented(
-    message = "this subscriber's page size is already named",
-    label = "the page size is named once",
-    note = "`batch(n)` is the one page parameter the framework carries; the broker's own \
+    message = "this subscriber's batch size is already named",
+    label = "the batch size is named once",
+    note = "`batch(n)` is the one batching parameter the framework carries; the broker's own \
             batching options ride its subscription source"
 )]
 pub trait BatchStep: Sized {
-    /// The builder with the page size named.
+    /// The builder with the batch size named.
     type Out;
 
-    /// Fixes the size of the pages the broker delivers.
+    /// Fixes the size of the batches the broker delivers.
     fn apply_batch(self, size: NonZeroUsize) -> Self::Out;
 }
 
 impl<Def, Src, W, F, P, DC> BatchStep for SubscriberBuilder<Def, Src, (W, F, P, Open), DC>
 where
-    Def: CapsPages,
+    Def: CapsBatches,
 {
     type Out = SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC>;
 
@@ -461,31 +461,31 @@ where
     }
 }
 
-/// A registration carrying the page size its subscription opens with: what the batch mounts ask
+/// A registration carrying the batch size its subscription opens with: what the batch mounts ask
 /// of a definition before they will drive [`BatchSubscriber::batches`](crate::BatchSubscriber).
 ///
 /// The settings builder has it exactly while [`batch`](SubscriberSettings::batch) has been
-/// named, which is what makes a page registration without a size a compile error at the mount
+/// named, which is what makes a batch registration without a size a compile error at the mount
 /// rather than a default nobody chose. A hand-written definition mounted without the builder
 /// implements this itself, naming the size it was built for.
 #[diagnostic::on_unimplemented(
-    message = "this page subscriber has no page size",
-    label = "a page handler needs one",
-    note = "add `.batch(nonzero!(n))` at the mount site: the page size is the one parameter the \
+    message = "this batch subscriber has no batch size",
+    label = "a batch handler needs one",
+    note = "add `.batch(nonzero!(n))` at the mount site: the batch size is the one parameter the \
             framework passes to the broker, and the broker's own batching options (a block \
             timeout, a consumer group) ride its subscription source"
 )]
-pub trait PageSized {
-    /// The size each delivered page is capped at.
-    fn page_size(&self) -> NonZeroUsize;
+pub trait BatchSized {
+    /// The size each delivered batch is capped at.
+    fn batch_size(&self) -> NonZeroUsize;
 }
 
-impl<Def, Src, W, F, P, DC> PageSized for SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC> {
-    fn page_size(&self) -> NonZeroUsize {
+impl<Def, Src, W, F, P, DC> BatchSized for SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC> {
+    fn batch_size(&self) -> NonZeroUsize {
         // `Fixed` is reachable only through `apply_batch`, which puts the value here; the
         // typestate is the guarantee, and this names it rather than inventing a default.
-        self.page_size
-            .expect("the fixed page-size slot carries its size")
+        self.batch_size
+            .expect("the fixed batch-size slot carries its size")
     }
 }
 
@@ -520,7 +520,7 @@ where
 /// The order in a chain follows from what each step does to the source: [`name`](Self::name)
 /// comes first because it constructs the source, and a broker's own settings then transform it
 /// through [`map_source`](Self::map_source) - which is also where a broker's batching options
-/// live, after the core's own [`batch`](Self::batch) has named the page size.
+/// live, after the core's own [`batch`](Self::batch) has named the batch size.
 ///
 /// # Examples
 ///
@@ -595,18 +595,18 @@ pub trait SubscriberSettings: Declared {
         self.declare().apply_start_at(position)
     }
 
-    /// Opens the subscription in pages of at most `size` messages: the one parameter every page
-    /// handler names, and the only one the framework carries down to the broker.
+    /// Opens the subscription in batches of at most `size` messages: the one parameter every
+    /// batch handler names, and the only one the framework carries down to the broker.
     ///
-    /// The broker builds the page - `XREADGROUP COUNT`, a pull batch, a poll limit, or the
-    /// framework's own client-side buffer where the transport has no pages of its own - and what
-    /// the body sees is exactly what the broker delivered, never a slice of it. Everything else
-    /// about how a page forms (a block timeout, a consumer group, a prefetch window) is the
+    /// The broker builds the batch - `XREADGROUP COUNT`, a pull batch, a poll limit, or the
+    /// framework's own client-side buffer where the transport has no batching of its own - and
+    /// what the body sees is exactly what the broker delivered, never a slice of it. Everything
+    /// else about how a batch forms (a block timeout, a consumer group, a prefetch window) is the
     /// broker's own vocabulary, chained after this on its subscription source.
     ///
-    /// Mandatory on a page body (`&[T]` and friends), whatever else its signature carries:
-    /// mounting one without it does not compile. A single-message body has no page, so the step
-    /// is not offered there at all - how many deliveries it handles at once is
+    /// Mandatory on a batch body (`&[T]` and friends), whatever else its signature carries:
+    /// mounting one without it does not compile. A single-message body takes no batch, so the
+    /// step is not offered there at all - how many deliveries it handles at once is
     /// [`workers`](Self::workers).
     fn batch(self, size: NonZeroUsize) -> <Self::Settings as BatchStep>::Out
     where
@@ -656,7 +656,7 @@ impl<D: Declared> SubscriberSettings for D {}
 
 #[cfg(test)]
 mod tests {
-    use super::{AllOpen, Declared, PageSized, SubscriberBuilder, SubscriberSettings};
+    use super::{AllOpen, BatchSized, Declared, SubscriberBuilder, SubscriberSettings};
     // Reading a source's name needs some connected broker to name the impl, and the in-process
     // one is the only broker the core ships. The settings themselves are broker-agnostic, so
     // that one assertion is gated rather than the whole module.
@@ -699,9 +699,9 @@ mod tests {
         }
     }
 
-    // The page-size step is offered per definition, so the stub declares itself one for the
+    // The batch-size step is offered per definition, so the stub declares itself one for the
     // check below; the real gate lives on the value definitions' own impls.
-    impl super::CapsPages for Stub {}
+    impl super::CapsBatches for Stub {}
 
     #[test]
     fn the_steps_collect_the_settings_the_mount_reads_back() {
@@ -721,12 +721,12 @@ mod tests {
         assert_eq!(built.def, Stub);
     }
 
-    /// A page definition carries the size the mount named, and only then: `PageSized` is what
+    /// A batch definition carries the size the mount named, and only then: `BatchSized` is what
     /// the batch mounts read it back through.
     #[test]
-    fn the_page_size_reaches_the_mount_through_the_fixed_slot() {
+    fn the_batch_size_reaches_the_mount_through_the_fixed_slot() {
         let built = Stub.name("orders").batch(nonzero!(16));
-        assert_eq!(PageSized::page_size(&built), nonzero!(16));
+        assert_eq!(BatchSized::batch_size(&built), nonzero!(16));
     }
 
     #[test]

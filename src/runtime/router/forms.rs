@@ -36,7 +36,7 @@ pub struct RawReplyOut;
 /// A batch subscriber (a handler taking `&[T]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
-/// A self-deserializing batch subscriber (a handler taking a page of
+/// A self-deserializing batch subscriber (a handler taking a batch of
 /// [`Deserialized`](crate::runtime::Deserialized) elements): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;

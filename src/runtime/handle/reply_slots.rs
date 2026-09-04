@@ -16,12 +16,12 @@ use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
+    Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
     SoloDeserialized, SoloPair,
 };
 use super::eager::construct;
 use super::outs::{EntryMarkers, Outs, Slot};
-use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs, page_reply_verdict};
+use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs, batch_reply_verdict};
 use super::value::{HandleValue, ReplyValue, Sealed};
 
 impl<A, R, E, C, H, Doc, Dest> IncludeDef
@@ -82,9 +82,6 @@ impl_reply_bind_slots! {
     (M0 / P0: E0 / Pipe0, M1 / P1: E1 / Pipe1)
     (M0 / P0: E0 / Pipe0, M1 / P1: E1 / Pipe1, M2 / P2: E2 / Pipe2)
 }
-
-// ------------------------------------------------------------------------- the solo reply def
-
 impl<A, R, E, C, H, Doc, Dest> PublishingDef
     for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
@@ -232,13 +229,10 @@ where
         self.0.value.body.handle(input, injections, ctx).await
     }
 }
-
-// ------------------------------------------------------------------------- the page reply def
-
 impl<A, R, E, C, H, Doc, Dest> BatchPublishingDef
     for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
-    A: PagedAxis,
+    A: BatchedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
     E: EntryMarkers + Send + Sync,
     C: Send + Sync,
@@ -306,15 +300,15 @@ where
 }
 
 impl<T, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<Batch<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
-            Input = <Page<T> as Axis>::Kind,
+            Input = <Batch<T> as Axis>::Kind,
             Injections = Outs<E>,
             Context = C,
             Reply = R,
         >,
-    [T]: Input<Axis = Page<T>>,
+    [T]: Input<Axis = Batch<T>>,
     T: Send + Sync + 'static,
     R: ReplyShape,
     E: Send + Sync,
@@ -329,20 +323,20 @@ where
         ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, injections, ctx).await;
-        page_reply_verdict(verdict, batch.len(), ctx.name())
+        batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
 impl<Hd, P, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
-            Input = <PagePair<Hd, P> as Axis>::Kind,
+            Input = <BatchPair<Hd, P> as Axis>::Kind,
             Injections = Outs<E>,
             Context = C,
             Reply = R,
         >,
-    [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
+    [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
     R: ReplyShape,
@@ -358,6 +352,6 @@ where
         ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, injections, ctx).await;
-        page_reply_verdict(verdict, batch.len(), ctx.name())
+        batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }

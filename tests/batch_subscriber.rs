@@ -1,8 +1,8 @@
 //! Integration tests for the batch subscriber pipeline: the form the macro reads off a `&[T]`
 //! payload parameter, batch mounting through `include`, per-element decode failures, and the
-//! `Buffered` adapter a broker crate gives a transport with no pages of its own.
+//! `Buffered` adapter a broker crate gives a transport with no batches of its own.
 //!
-//! The harness settles each injection before it returns, so every page below is exactly the page
+//! The harness settles each injection before it returns, so every batch below is exactly the batch
 //! the handler was called with - no polling for "at least one".
 #![cfg(all(
     feature = "macros",
@@ -29,7 +29,7 @@ use ruststream::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Settles a whole page of orders at once.
+/// Settles a whole batch of orders at once.
 #[subscriber("orders")]
 async fn bill(orders: &[Order]) -> HandlerOutcome {
     let _ = orders;
@@ -50,13 +50,13 @@ async fn batch_macro_def_receives_batches() {
             .expect("publish failed");
     }
 
-    // Nothing is dropped, so the flattened stream is exactly the publish order, and every page
+    // Nothing is dropped, so the flattened stream is exactly the publish order, and every batch
     // the handler was called with carried something.
-    let pages: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("orders").pages();
-    let flattened: Vec<u32> = pages.iter().flatten().map(|o| o.id).collect();
+    let batches: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("orders").batches();
+    let flattened: Vec<u32> = batches.iter().flatten().map(|o| o.id).collect();
     assert_eq!(flattened, vec![0, 1, 2], "deliveries out of publish order");
     assert!(
-        pages.iter().all(|page| !page.is_empty()),
+        batches.iter().all(|batch| !batch.is_empty()),
         "batches must not be empty",
     );
 }
@@ -102,8 +102,8 @@ async fn undecodable_elements_never_reach_the_handler() {
 }
 
 /// A handler mounted on a `Buffered`-wrapped source directly in the macro: the adapter a broker
-/// crate gives a page-less transport, spelled here by hand. The macro recovers the source type
-/// from the constructor path, so a generic source spells its parameter (turbofish), and the page
+/// crate gives a batch-less transport, spelled here by hand. The macro recovers the source type
+/// from the constructor path, so a generic source spells its parameter (turbofish), and the batch
 /// size still comes from the mount site.
 #[subscriber(Buffered::<Name>::new(Name::new("events")))]
 async fn drain(events: &[Order]) -> HandlerOutcome {
@@ -133,9 +133,9 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
 }
 
 // --8<-- [start:buffered_capability]
-/// What a broker crate writes when its transport has no pages of its own: the subscriber it
+/// What a broker crate writes when its transport has no batches of its own: the subscriber it
 /// already has, wrapped in the core's client-side buffer, and `BatchSubscriber` delegated to it.
-/// The deadline that closes a partial page is the broker's own choice; the page size is not -
+/// The deadline that closes a partial batch is the broker's own choice; the batch size is not -
 /// it arrives per subscription, as the argument of `batches`.
 struct TrickleSubscriber(BufferedSubscriber<MemorySubscriber>);
 
@@ -166,8 +166,8 @@ impl BatchSubscriber for TrickleSubscriber {
 }
 
 /// Buffering does not move the subscription, so every other capability reaches through the
-/// wrapper unchanged - here the seeker, which is what lets a page subscription open at a
-/// position even where the pages are assembled on the client.
+/// wrapper unchanged - here the seeker, which is what lets a batch subscription open at a
+/// position even where the batches are assembled on the client.
 impl Seekable for TrickleSubscriber {
     type Seeker = <MemorySubscriber as Seekable>::Seeker;
 
@@ -176,7 +176,7 @@ impl Seekable for TrickleSubscriber {
     }
 }
 
-/// The broker's own subscription descriptor, opening the paging subscriber above.
+/// The broker's own subscription descriptor, opening the batching subscriber above.
 #[derive(Clone)]
 struct Trickle {
     name: &'static str,
@@ -200,7 +200,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
 }
 // --8<-- [end:buffered_capability]
 
-/// A page handler on that broker: nothing in the mount says the pages are assembled on the
+/// A batch handler on that broker: nothing in the mount says the batches are assembled on the
 /// client, which is the point - the size is the one word the mount site has either way.
 #[subscriber(Trickle { name: "trickle" })]
 async fn sip(orders: &[Order]) -> HandlerOutcome {
@@ -208,12 +208,12 @@ async fn sip(orders: &[Order]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// A transport with no native pages still honours the size the registration named, because the
-/// adapter it delegates to is what applies it. The pages are replayed off a position the mount
+/// A transport with no native batches still honours the size the registration named, because the
+/// adapter it delegates to is what applies it. The batches are replayed off a position the mount
 /// names, so they reach the handler before the harness drives anything - which is what lets a
-/// page carry more than the one delivery an injection settles.
+/// batch carry more than the one delivery an injection settles.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_delegating_broker_honours_the_page_size() {
+async fn a_delegating_broker_honours_the_batch_size() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     for id in 0..3u32 {
@@ -229,11 +229,11 @@ async fn a_delegating_broker_honours_the_page_size() {
         b.include(sip.batch(nonzero!(2)).start_at(MemoryPosition::start()));
     });
     let tb = TestApp::start(app).await.expect("harness start");
-    tb.settle().await.expect("the replayed pages settle");
+    tb.settle().await.expect("the replayed batches settle");
 
     tb.broker::<MemoryBroker>()
         .subscriber("trickle")
-        .assert_page_sizes(&[2, 1])
+        .assert_batch_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
 
     tb.shutdown().await.expect("shutdown failed");
@@ -246,7 +246,7 @@ struct Attempts {
 }
 
 /// Retries order 11 on first sight; settles everything else, per element.
-#[subscriber("pages")]
+#[subscriber("batches")]
 async fn reconcile(orders: &[Order], ctx: &mut Context<'_, (), Attempts>) -> Vec<HandlerOutcome> {
     let retried_once = Arc::clone(&ctx.state().retried_once);
     orders
@@ -265,7 +265,7 @@ async fn reconcile(orders: &[Order], ctx: &mut Context<'_, (), Attempts>) -> Vec
 async fn per_element_outcomes_retry_individually() {
     let retried_once = Arc::new(AtomicBool::new(false));
     let state_flag = Arc::clone(&retried_once);
-    let app = RustStream::new(AppInfo::new("pages", "0.1.0"))
+    let app = RustStream::new(AppInfo::new("batches", "0.1.0"))
         .on_startup(move |()| {
             let retried_once = state_flag;
             async move { Ok::<_, std::convert::Infallible>(Attempts { retried_once }) }
@@ -277,7 +277,7 @@ async fn per_element_outcomes_retry_individually() {
 
     for id in [10u32, 11, 12] {
         tb.message(&Order { id })
-            .to("pages")
+            .to("batches")
             .publish()
             .await
             .expect("publish failed");
@@ -285,14 +285,14 @@ async fn per_element_outcomes_retry_individually() {
 
     // 11 was refused once and settled only on redelivery; 10 and 12 settled first try.
     assert!(retried_once.load(Ordering::SeqCst));
-    let pages: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("pages").pages();
-    let seen: Vec<Vec<u32>> = pages
+    let batches: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("batches").batches();
+    let seen: Vec<Vec<u32>> = batches
         .iter()
-        .map(|page| page.iter().map(|o| o.id).collect())
+        .map(|batch| batch.iter().map(|o| o.id).collect())
         .collect();
     assert_eq!(seen, vec![vec![10], vec![11], vec![11], vec![12]]);
     assert_eq!(
-        tb.broker::<MemoryBroker>().subscriber("pages").outcomes(),
+        tb.broker::<MemoryBroker>().subscriber("batches").outcomes(),
         [Outcome::Ack, Outcome::Nack, Outcome::Ack, Outcome::Ack],
     );
 }
@@ -303,7 +303,7 @@ struct Confirmation {
     accepted: bool,
 }
 
-/// Confirms a page of orders. The Result form gives explicit ack control; the whole-batch
+/// Confirms a batch of orders. The Result form gives explicit ack control; the whole-batch
 /// rejection path is covered by the runtime unit tests.
 #[subscriber("requests", publish("confirmations"))]
 async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerOutcome> {
@@ -316,7 +316,7 @@ async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerOutcome> 
         .collect())
 }
 
-/// The plain reply form: every page is confirmed (compile coverage for `-> Vec<Reply>`).
+/// The plain reply form: every batch is confirmed (compile coverage for `-> Vec<Reply>`).
 #[subscriber("requests", publish("audit"))]
 async fn audit(orders: &[Order]) -> Vec<Confirmation> {
     orders
@@ -382,7 +382,7 @@ fn batch_def_records_metadata() {
     assert_eq!(app.handlers()[0].name, "orders");
     assert_eq!(
         app.handlers()[0].description.as_deref(),
-        Some("Settles a whole page of orders at once."),
+        Some("Settles a whole batch of orders at once."),
     );
 }
 

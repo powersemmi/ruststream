@@ -1,4 +1,4 @@
-//! A page that answers and reads the broker's subscription-scoped context in one body.
+//! A batch that answers and reads the broker's subscription-scoped context in one body.
 //!
 //! The reply axis and the context axis are independent: naming the broker's batch context
 //! (`MemoryBatchContext` here) must leave the `publish(..)` clause intact, and the reposition
@@ -29,23 +29,23 @@ struct Digest {
 }
 
 /// The producer's cursor contract: an element carrying `resume_at` asks the consumer to
-/// reposition the subscription to that log position once the page is settled.
+/// reposition the subscription to that log position once the batch is settled.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Cursor {
     resume_at: Option<u64>,
 }
 
-/// One digest per order, produced while the body holds the broker's page context.
+/// One digest per order, produced while the body holds the broker's batch context.
 #[subscriber("orders", publish("digests"))]
-async fn digest(page: &[Order], ctx: &mut Context<'_, MemoryBatchContext>) -> Vec<Digest> {
-    // Reading the key is what proves the page context reached a replying body; the handle it
+async fn digest(batch: &[Order], ctx: &mut Context<'_, MemoryBatchContext>) -> Vec<Digest> {
+    // Reading the key is what proves the batch context reached a replying body; the handle it
     // yields is the subscription's own.
     let _seeker = ctx.context(SeekHandle);
-    page.iter().map(|order| Digest { id: order.id }).collect()
+    batch.iter().map(|order| Digest { id: order.id }).collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_replying_page_reads_the_brokers_page_context() {
+async fn a_replying_batch_reads_the_brokers_batch_context() {
     let app =
         RustStream::new(AppInfo::new("digests", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(digest.batch(nonzero!(8)));
@@ -69,15 +69,15 @@ async fn a_replying_page_reads_the_brokers_page_context() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
-/// The same body, repositioning the subscription through the page context before it answers:
-/// where to resume rides the elements' own header contract, since a page context carries no
+/// The same body, repositioning the subscription through the batch context before it answers:
+/// where to resume rides the elements' own header contract, since a batch context carries no
 /// per-delivery data.
 #[subscriber("replay.orders", publish("replay.digests"))]
 async fn replay_digest(
-    page: &[Message<Cursor, Order>],
+    batch: &[Message<Cursor, Order>],
     ctx: &mut Context<'_, MemoryBatchContext>,
 ) -> Result<Vec<Digest>, HandlerOutcome> {
-    let target = page
+    let target = batch
         .iter()
         .find_map(|element| element.headers.resume_at)
         .map(|sequence| usize::try_from(sequence).expect("test positions are small"));
@@ -90,7 +90,7 @@ async fn replay_digest(
     {
         return Err(HandlerOutcome::retry());
     }
-    Ok(page
+    Ok(batch
         .iter()
         .map(|element| Digest {
             id: element.body.id,
@@ -99,7 +99,7 @@ async fn replay_digest(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_replying_page_repositions_through_the_page_context() {
+async fn a_replying_batch_repositions_through_the_batch_context() {
     let app =
         RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(replay_digest.batch(nonzero!(8)));
@@ -127,8 +127,8 @@ async fn a_replying_page_repositions_through_the_page_context() {
         .expect("publish");
     tb.settle().await.expect("settle");
 
-    // A failed reposition would settle the page as a retry, so the acks are what say the handle
-    // the page context carries was live.
+    // A failed reposition would settle the batch as a retry, so the acks are what say the handle
+    // the batch context carries was live.
     tb.broker::<MemoryBroker>()
         .subscriber("replay.orders")
         .assert_called(2)

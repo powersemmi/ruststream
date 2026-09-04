@@ -43,7 +43,7 @@ header, unparsable value) never reaches the body - the delivery settles by the s
 `Headers` composes with a self-deserializing body (`&Frame<'_>` next to its typed headers) and
 with every other extractor.
 
-On a batch handler the headers stay per-delivery, so the page pairs each element with its own
+On a batch handler the headers stay per-delivery, so the batch pairs each element with its own
 contract: the input is `&[Message<H, T>]`, and `element.headers` sits next to `element.body`.
 The pairing holds by construction - an element whose payload or headers fail to materialize is
 settled by the same `on_failure(decode = ..)` policy and never reaches the handler, exactly as

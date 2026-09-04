@@ -18,7 +18,7 @@ async fn confirm(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-// A page's replies ride one transaction: the second `.transactional()` has no direct publish
+// A batch's replies ride one transaction: the second `.transactional()` has no direct publish
 // state left to mark, so the step reports the mark the first one already made.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {

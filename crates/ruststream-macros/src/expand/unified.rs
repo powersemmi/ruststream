@@ -50,12 +50,12 @@ impl ReplyPlan<'_> {
     }
 
     /// The `R` axis of the emitted `Handle` impl: the reply type one-by-one, a `Vec` of it per
-    /// page, `()` without a reply.
-    fn r_tokens(&self, paged: bool) -> TokenStream2 {
+    /// batch, `()` without a reply.
+    fn r_tokens(&self, batched: bool) -> TokenStream2 {
         match self {
             Self::None => quote!(()),
             Self::Publish { ty, .. } => {
-                if paged {
+                if batched {
                     quote!(::std::vec::Vec<#ty>)
                 } else {
                     quote!(#ty)
@@ -85,9 +85,8 @@ pub(super) fn expand(
         ..
     } = parts;
     let shape = *shape;
-    let paged = shape == Shape::Batch;
+    let batched = shape == Shape::Batch;
 
-    // ------------------------------------------------------------------------- the input axis
     let InputAxis {
         in_ty,
         axis,
@@ -96,13 +95,11 @@ pub(super) fn expand(
         input_binding,
     } = input_axis(shape, input_ty, pat);
 
-    // ------------------------------------------------------------------------- the reply plan
-    let reply = reply_plan(args, func, block, paged)?;
-    let r_tokens = reply.r_tokens(paged);
+    let reply = reply_plan(args, func, block, batched)?;
+    let r_tokens = reply.r_tokens(batched);
 
-    // -------------------------------------------------------------- the context and state axes
-    // The handler's named or `Ctx`-projected context type, on the solo and page forms alike: a
-    // page context is subscription-scoped data (see `BuildBatchContext` in the core crate).
+    // The handler's named or `Ctx`-projected context type, on the solo and batch forms alike: a
+    // batch context is subscription-scoped data (see `BuildBatchContext` in the core crate).
     let ctx_ty = parts.ctx_ty.clone();
     let (state_param, state_in_ctx, state_bound) = match state_ty {
         Some(state_ty) => (quote!(), quote!(#state_ty), None),
@@ -113,7 +110,6 @@ pub(super) fn expand(
         ),
     };
 
-    // ------------------------------------------------------------------ the injections arena
     let arena = ArenaPieces::of(outs, name);
     let o_ty = &arena.o_ty;
     let outs_param = if outs.is_empty() {
@@ -122,18 +118,16 @@ pub(super) fn expand(
         quote!(__rs_outs: &#o_ty)
     };
 
-    // ------------------------------------------------------------------- the computed verdict
     let VerdictPieces {
         verdict_ty,
-        page_len,
+        batch_len,
         reject,
         glue,
-    } = verdict_pieces(func, block, &reply, paged);
+    } = verdict_pieces(func, block, &reply, batched);
 
     let prelude = extractor_prelude(extractors, ctx_param, &ctx_ty, &state_in_ctx, &reject);
     let slot_bindings = &arena.bindings;
 
-    // ------------------------------------------------------------------------ the Handle impl
     let mut preds = extractor_preds(extractors, &ctx_ty, &state_in_ctx);
     preds.extend(arena.bounds.iter().cloned());
     preds.extend(state_bound);
@@ -152,7 +146,7 @@ pub(super) fn expand(
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
             ) -> #verdict_ty {
                 #input_binding
-                #page_len
+                #batch_len
                 #prelude
                 #(#slot_bindings)*
                 #glue
@@ -160,10 +154,8 @@ pub(super) fn expand(
         }
     };
 
-    // -------------------------------------------------------------------- the captured docs
     let docs_expr = probed_docs_expr(parts, &reply);
 
-    // ------------------------------------------------------- the definition and its mounting
     let wiring = definition_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty);
 
     Ok(quote! {
@@ -220,7 +212,7 @@ fn input_axis(shape: Shape, input_ty: &syn::Type, pat: &Pat) -> InputAxis {
                 quote!()
             },
         },
-        // The page rebinds off a named parameter so the page length stays reachable whatever
+        // The batch rebinds off a named parameter so the batch length stays reachable whatever
         // the user's pattern is.
         Shape::Batch => InputAxis {
             in_ty: quote!([#in_elem]),
@@ -241,12 +233,12 @@ fn reply_plan<'a>(
     args: &'a SubscriberArgs,
     func: &ItemFn,
     block: &syn::Block,
-    paged: bool,
+    batched: bool,
 ) -> syn::Result<ReplyPlan<'a>> {
     let Some(topic) = &args.publish else {
         return Ok(ReplyPlan::None);
     };
-    Ok(if paged {
+    Ok(if batched {
         let (elem, body) = batch_reply_body(func, block)?;
         ReplyPlan::Publish {
             topic,
@@ -357,15 +349,15 @@ fn slot_binding_impls(
     outs: &[OutParam<'_>],
     sealed_ty: &dyn Fn(&TokenStream2) -> TokenStream2,
     def_expr: &TokenStream2,
-    paged: bool,
+    batched: bool,
 ) -> TokenStream2 {
-    // The include-site value is the unit struct until the slots bind, so the page-size step is
+    // The include-site value is the unit struct until the slots bind, so the batch-size step is
     // declared on it directly; the size itself rides the settings builder either way. Only a
-    // page handler declares it, which is what keeps `.batch(..)` a compile error on a
+    // batch handler declares it, which is what keeps `.batch(..)` a compile error on a
     // single-message body with slots.
-    let caps_pages = paged.then(|| {
+    let caps_batches = batched.then(|| {
         quote! {
-            impl ::ruststream::runtime::CapsPages for #name {}
+            impl ::ruststream::runtime::CapsBatches for #name {}
         }
     });
     let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();
@@ -401,7 +393,7 @@ fn slot_binding_impls(
     let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#bound_entries,)*)>));
     let witness_tys: Vec<&syn::Type> = outs.iter().map(|out| out.ty).collect();
     quote! {
-        #caps_pages
+        #caps_batches
 
         impl ::ruststream::runtime::HasSlots for #name {
             type Markers = (#(#markers,)*);
@@ -438,11 +430,11 @@ fn slot_binding_impls(
 }
 
 /// The pieces of one handler's computed verdict: the emitted `handle` method's return type, the
-/// page-length capture, the extractor-rejection return, and the tail lowering the user's return
+/// batch-length capture, the extractor-rejection return, and the tail lowering the user's return
 /// vocabulary into the fixed shape.
 struct VerdictPieces {
     verdict_ty: TokenStream2,
-    page_len: TokenStream2,
+    batch_len: TokenStream2,
     reject: TokenStream2,
     glue: TokenStream2,
 }
@@ -457,12 +449,12 @@ fn declared_output(func: &ItemFn) -> TokenStream2 {
 
 /// Computes the verdict conversion of one handler: the fixed `Result` spelling per input family
 /// and reply, with the user's whole return vocabulary lowered through the `IntoOutcome` /
-/// page-verdict seams.
+/// batch-verdict seams.
 fn verdict_pieces(
     func: &ItemFn,
     block: &syn::Block,
     reply: &ReplyPlan<'_>,
-    paged: bool,
+    batched: bool,
 ) -> VerdictPieces {
     let outcome = quote!(::ruststream::runtime::HandlerOutcome);
     // Pin the body's type to the declared return type before the `IntoOutcome` conversion: the
@@ -470,39 +462,39 @@ fn verdict_pieces(
     // `Ok(())` (whose error type only the signature names) can infer through the conversion
     // alone. Ascribing it makes the body infer exactly as it does in a plain function.
     let outcome_ty = declared_output(func);
-    if paged {
-        let page_len = quote!(let __rs_page_len = __rs_input.len(););
+    if batched {
+        let batch_len = quote!(let __rs_batch_len = __rs_input.len(););
         match reply {
             ReplyPlan::None => VerdictPieces {
                 verdict_ty: quote!(::core::result::Result<(), ::std::vec::Vec<#outcome>>),
-                page_len,
+                batch_len,
                 reject: quote! {
-                    return ::ruststream::runtime::page_verdict(
+                    return ::ruststream::runtime::batch_verdict(
                         ::core::convert::Into::<#outcome>::into(__rs_err),
-                        __rs_page_len,
+                        __rs_batch_len,
                     )
                 },
                 glue: quote! {
                     let __rs_outcome: #outcome_ty = (async move #block).await;
-                    ::ruststream::runtime::page_verdict(__rs_outcome, __rs_page_len)
+                    ::ruststream::runtime::batch_verdict(__rs_outcome, __rs_batch_len)
                 },
             },
             ReplyPlan::Publish { ty, body, .. } => VerdictPieces {
                 verdict_ty: quote! {
                     ::core::result::Result<::std::vec::Vec<#ty>, ::std::vec::Vec<#outcome>>
                 },
-                page_len,
+                batch_len,
                 reject: quote! {
-                    return ::core::result::Result::Err(::ruststream::runtime::uniform_page(
+                    return ::core::result::Result::Err(::ruststream::runtime::uniform_batch(
                         ::core::convert::Into::<#outcome>::into(__rs_err),
-                        __rs_page_len,
+                        __rs_batch_len,
                     ))
                 },
                 glue: quote! {
                     let __rs_replies: ::core::result::Result<::std::vec::Vec<#ty>, #outcome> =
                         { #body };
                     __rs_replies.map_err(|__rs_uniform| {
-                        ::ruststream::runtime::uniform_page(__rs_uniform, __rs_page_len)
+                        ::ruststream::runtime::uniform_batch(__rs_uniform, __rs_batch_len)
                     })
                 },
             },
@@ -516,7 +508,7 @@ fn verdict_pieces(
         match reply {
             ReplyPlan::None => VerdictPieces {
                 verdict_ty: quote!(::core::result::Result<(), #outcome>),
-                page_len: quote!(),
+                batch_len: quote!(),
                 reject,
                 // `Err` carries the settlement whatever its status: an ack settles as an ack,
                 // and the `Ok` arm stays the manual path's spelling.
@@ -529,7 +521,7 @@ fn verdict_pieces(
             },
             ReplyPlan::Publish { ty, body, .. } => VerdictPieces {
                 verdict_ty: quote!(::core::result::Result<#ty, #outcome>),
-                page_len: quote!(),
+                batch_len: quote!(),
                 reject,
                 glue: body.clone(),
             },

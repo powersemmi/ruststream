@@ -9,7 +9,7 @@ struct Order {
 }
 
 // One message at a time, fanning out through a slot: the arena changes nothing about the cap,
-// and there is still no page to chunk.
+// and there is still no batch to chunk.
 #[subscriber("orders")]
 async fn handle(order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     let _ = (order.id, out);

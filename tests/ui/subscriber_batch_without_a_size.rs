@@ -8,7 +8,7 @@ struct Order {
     id: u32,
 }
 
-// The signature asks for a page; how big a page is has no default, so the mount site owes one.
+// The signature asks for a batch; how big a batch is has no default, so the mount site owes one.
 #[subscriber("orders")]
 async fn handle(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();

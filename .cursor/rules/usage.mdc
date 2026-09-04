@@ -23,9 +23,9 @@ alwaysApply: false
   `Workers`, `Unnamed`, `nonzero!` and the manual path's `Handle` / `subscriber` pair are all in
   the prelude.
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
-  payload, and its type alone picks the form: `&T` is one message and `&[T]` a page, while the
+  payload, and its type alone picks the form: `&T` is one message and `&[T]` a batch, while the
   lane is the type's own business - `T: serde::Deserialize` decodes with the codec, a
-  `#[derive(Deserialized)]` type builds itself from the raw bytes (`&Frame<'_>`, page
+  `#[derive(Deserialized)]` type builds itself from the raw bytes (`&Frame<'_>`, batch
   `&[Frame<'_>]`). No clause names any of this. Further parameters are extractors:
   `State<T>` injects a component of the application state, `Ctx<K>` one broker context field,
   `Headers<T>` the delivery headers parsed into a typed contract, `Out<impl Publisher, ..>` a live
@@ -129,7 +129,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 
 // per element on a batch: the continuation rides with its own message
 #[subscriber("orders")]
-async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
+async fn handle_batch(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()
         .map(|order| {
@@ -173,10 +173,10 @@ b.include(
         .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
 );
 
-// a page body: `batch(n)` is the page size, the one page parameter the framework carries, and it
-// is mandatory - a page handler mounted without it does not compile. The size goes to the broker,
-// which builds its pages to it; the body sees exactly what the broker delivered. It applies to
-// every page shape, replying or `Out`-carrying alike, and composes with a start position
+// a batch body: `batch(n)` is the batch size, the one batch parameter the framework carries, and it
+// is mandatory - a batch handler mounted without it does not compile. The size goes to the broker,
+// which builds its batches to it; the body sees exactly what the broker delivered. It applies to
+// every batch shape, replying or `Out`-carrying alike, and composes with a start position
 b.include(settle.name("orders").batch(nonzero!(64)));
 b.include(
     drain
@@ -227,8 +227,8 @@ b.include(confirm).out(Reply, Publish).codec(CborCodec).transform(Envelope);  //
 
 The steps after `.out(Reply, ..)` fill the reply wiring, each once: `.codec(..)` names the reply
 codec (the default codec applies without it), `.transform(..)` composes a static
-`PublishTransform`, `.batch_transform(..)` does the same on a page's replies, and
-`.transactional()` publishes a page's replies inside one broker transaction. A second `.codec(..)`,
+`PublishTransform`, `.batch_transform(..)` does the same on a batch's replies, and
+`.transactional()` publishes a batch's replies inside one broker transaction. A second `.codec(..)`,
 or any of these on a `Serialized` (byte-for-byte) reply, is a compile error.
 
 Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` publishes and acks,
@@ -258,11 +258,11 @@ async fn ingest(frame: &Frame<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// the form rule does not change with the lane - `&[Frame<'_>]` is the page, the spelling
+// the form rule does not change with the lane - `&[Frame<'_>]` is the batch, the spelling
 // comes with the derive, and the elements are borrowed from the batch's own messages for
 // the duration of the call, so nothing is copied
 #[subscriber("frames")]
-async fn ingest_page(frames: &[Frame<'_>]) -> HandlerOutcome {
+async fn ingest_batch(frames: &[Frame<'_>]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 ```
@@ -271,13 +271,13 @@ async fn ingest_page(frames: &[Frame<'_>]) -> HandlerOutcome {
 length check) returns `Err` from `from_payload` and that policy settles the delivery, the same rung
 a codec decode failure lands on. Extractors, `&mut Context`, `workers(..)`,
 `on_failure(panic = ..)` and the injected `Out` parameters work unchanged on the single-delivery
-shape; a page of frames does not take `Out` yet.
+shape; a batch of frames does not take `Out` yet.
 
 There is one `publish("dest")` clause, and the reply *type* picks the wire: a `serde::Serialize`
 reply encodes through the reply codec, a `#[derive(Serialized)]` newtype leaves byte-for-byte. The
 two lanes are independent, so raw in / encoded out and decoded in / raw out (the gateway shape)
 both compile. A `Vec<u8>` reply is not a byte reply - it encodes like any `Serialize` value - and a
-`Serialized` page reply does not exist.
+`Serialized` batch reply does not exist.
 
 ```rust
 #[derive(Serialized)]
@@ -576,7 +576,7 @@ async fn handle(order: &Order, Ctx(partition): Ctx<Partition>) -> HandlerOutcome
 
 `Headers<T>` parses the delivery headers into a flat contract struct before the body runs; a
 missing or unparsable header settles the delivery by `on_failure(decode = ..)` (drop by default).
-On a batch the page pairs each element with its contract: take `&[Message<H, T>]` and read
+On a batch the batch pairs each element with its contract: take `&[Message<H, T>]` and read
 `element.headers`. The untyped `name -> bytes` map itself is `HeaderMap` (`ctx.headers()`), and
 `Headers` is only the extractor.
 
@@ -604,9 +604,9 @@ There is no `ctx.get::<T>()` and no named-publisher registry; state is typed (`S
 
 On a batch handler `C` is the broker's *subscription-scoped* context, not its per-delivery one:
 name it (`ctx: &mut Context<'_, MemoryBatchContext>`) to read what the whole subscription shares -
-a seek handle, say - which the runtime builds once per page from the page's first delivery. A
-position or a header belongs to one delivery, so it rides the page's elements
-(`&[Message<H, T>]`) instead, and a page body naming the per-delivery context type does not
+a seek handle, say - which the runtime builds once per batch from the batch's first delivery. A
+position or a header belongs to one delivery, so it rides the batch's elements
+(`&[Message<H, T>]`) instead, and a batch body naming the per-delivery context type does not
 compile.
 
 ## Choosing a codec

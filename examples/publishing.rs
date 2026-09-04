@@ -221,7 +221,7 @@ impl PublishLayer for AuditPublish {
 // --8<-- [end:app_layer]
 
 // --8<-- [start:batch_publishing]
-/// Confirms a whole page of orders; the replies become visible atomically on commit.
+/// Confirms a whole batch of orders; the replies become visible atomically on commit.
 #[subscriber("orders", publish("confirmations"))]
 async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerOutcome> {
     if orders.is_empty() {
@@ -304,7 +304,7 @@ fn app() -> impl App {
             b.include(route).out(Orders, Publish).build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
-            // .batch(n) is the page size the subscription opens with, which every page mount
+            // .batch(n) is the batch size the subscription opens with, which every batch mount
             // owes. .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher is transactional. Without it, each reply publishes independently.
             b.include(confirm.batch(nonzero!(64)))

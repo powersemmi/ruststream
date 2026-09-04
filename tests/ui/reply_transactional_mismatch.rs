@@ -18,7 +18,7 @@ async fn confirm(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-// `.transactional()` wraps a page's replies in one broker transaction, so the policy it marks has
+// `.transactional()` wraps a batch's replies in one broker transaction, so the policy it marks has
 // to pair into a `TransactionalPublisher`. The memory requester publishes and correlates replies
 // but has no transactions, so the mount fails to compile with the capability diagnostic.
 fn main() {

@@ -52,7 +52,7 @@ async fn encode(report: &Report) -> Export {
     Export(report.len.to_be_bytes().to_vec())
 }
 
-/// A page of self-deserializing views.
+/// A batch of self-deserializing views.
 #[subscriber("lanes.frames")]
 async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
     let _ = frames.iter().map(|frame| frame.0.len()).sum::<usize>();
@@ -91,7 +91,7 @@ async fn the_lanes_compose_end_to_end() {
         .await
         .expect("publish");
     ingress
-        .message(&Wire(b"page".to_vec()))
+        .message(&Wire(b"batch".to_vec()))
         .to("lanes.frames")
         .publish()
         .await
@@ -113,17 +113,17 @@ async fn the_lanes_compose_end_to_end() {
         .published::<Vec<u8>>("lanes.encode.out")
         .assert_called_once()
         .with_raw(&7usize.to_be_bytes());
-    // A page of self-deserializing views carries no model to decode back into, so what the body
-    // was handed is read at the byte level: one page, holding the frame as it was published.
-    let pages = tb
+    // A batch of self-deserializing views carries no model to decode back into, so what the body
+    // was handed is read at the byte level: one batch, holding the frame as it was published.
+    let batches = tb
         .broker::<MemoryBroker>()
         .subscriber("lanes.frames")
-        .pages_raw();
-    let seen: Vec<Vec<&[u8]>> = pages
+        .batches_raw();
+    let seen: Vec<Vec<&[u8]>> = batches
         .iter()
-        .map(|page| page.iter().map(AsRef::as_ref).collect())
+        .map(|batch| batch.iter().map(AsRef::as_ref).collect())
         .collect();
-    assert_eq!(seen, vec![vec![b"page".as_slice()]]);
+    assert_eq!(seen, vec![vec![b"batch".as_slice()]]);
 
     tb.shutdown().await.expect("graceful shutdown");
 }

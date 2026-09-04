@@ -26,10 +26,10 @@ use super::coordinator::{Coordinator, Delivered, Outcome, Record};
 /// Assertions over the deliveries one subscriber received, recorded by the harness.
 ///
 /// The unit these count is the handler CALL, not the message: a single-message handler is called
-/// once per delivery, and a batch handler once per page. So `assert_called_once` on a batch
-/// subscription means one page arrived, whatever its size, while
+/// once per delivery, and a batch handler once per batch. So `assert_called_once` on a batch
+/// subscription means one batch arrived, whatever its size, while
 /// [`received_raw`](Self::received_raw) still lists every element of it. An element the decode
-/// policy rejected before the body ran is settled by that policy and is not part of the page the
+/// policy rejected before the body ran is settled by that policy and is not part of the batch the
 /// handler was called with, so it does not appear here.
 #[derive(Debug)]
 pub struct SubscriberAssertions<'a> {
@@ -66,21 +66,21 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Runs `f` over the sole delivery of the most recent call. The assertions that name one
-    /// expected payload go through here, so a page of several reports what it was instead of
+    /// expected payload go through here, so a batch of several reports what it was instead of
     /// silently checking one element of it.
     fn with_sole_delivery<R>(&self, what: &str, f: impl FnOnce(&Delivered) -> R) -> R {
         self.with_last(what, |record| match record.deliveries.as_slice() {
             [only] => f(only),
-            page => panic!(
-                "subscriber {:?} last received a page of {} deliveries, so it has no single \
-                 {what}; read the page with received_raw()",
+            batch => panic!(
+                "subscriber {:?} last received a batch of {} deliveries, so it has no single \
+                 {what}; read the batch with received_raw()",
                 self.name,
-                page.len(),
+                batch.len(),
             ),
         })
     }
 
-    /// Asserts this subscriber was called exactly once (one delivery, or one page).
+    /// Asserts this subscriber was called exactly once (one delivery, or one batch).
     ///
     /// # Panics
     ///
@@ -111,7 +111,7 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Every raw payload this subscriber received, in delivery order, for custom inspection beyond
-    /// the built-in assertions. A page contributes its elements, so the list is flat whether the
+    /// the built-in assertions. A batch contributes its elements, so the list is flat whether the
     /// handler takes one message or a slice.
     #[must_use]
     pub fn received_raw(&self) -> Vec<Bytes> {
@@ -126,11 +126,11 @@ impl<'a> SubscriberAssertions<'a> {
     /// The raw payloads this subscriber received grouped by handler CALL, in call order: one inner
     /// vector per call, holding what that call carried.
     ///
-    /// This is [`received_raw`](Self::received_raw) with the page boundaries kept. A
+    /// This is [`received_raw`](Self::received_raw) with the batch boundaries kept. A
     /// single-message handler yields one-element vectors; a batch handler yields one vector per
-    /// page, which is what a test pinning how a stream was cut into pages reads.
+    /// batch, which is what a test pinning how a stream was cut into batches reads.
     #[must_use]
-    pub fn pages_raw(&self) -> Vec<Vec<Bytes>> {
+    pub fn batches_raw(&self) -> Vec<Vec<Bytes>> {
         self.with_records(|records| {
             records
                 .iter()
@@ -145,26 +145,27 @@ impl<'a> SubscriberAssertions<'a> {
         })
     }
 
-    /// Decodes [`pages_raw`](Self::pages_raw) with [`DefaultCodec`](crate::codec::DefaultCodec).
-    /// Use [`pages_with`](Self::pages_with) for a non-default codec.
+    /// Decodes [`batches_raw`](Self::batches_raw) with
+    /// [`DefaultCodec`](crate::codec::DefaultCodec). Use
+    /// [`batches_with`](Self::batches_with) for a non-default codec.
     ///
     /// # Panics
     ///
     /// Panics if any received payload fails to decode as `T`.
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     #[must_use]
-    pub fn pages<T: DeserializeOwned>(&self) -> Vec<Vec<T>> {
-        self.pages_with(&DefaultCodec::default())
+    pub fn batches<T: DeserializeOwned>(&self) -> Vec<Vec<T>> {
+        self.batches_with(&DefaultCodec::default())
     }
 
-    /// Like [`pages`](Self::pages), but decodes with `codec` - use it when the handler was mounted
-    /// with a non-default codec.
+    /// Like [`batches`](Self::batches), but decodes with `codec` - use it when the handler was
+    /// mounted with a non-default codec.
     ///
     /// # Panics
     ///
     /// Panics if any received payload fails to decode as `T`.
     #[must_use]
-    pub fn pages_with<T, C>(&self, codec: &C) -> Vec<Vec<T>>
+    pub fn batches_with<T, C>(&self, codec: &C) -> Vec<Vec<T>>
     where
         T: DeserializeOwned,
         C: Codec,
@@ -309,7 +310,7 @@ impl<'a> SubscriberAssertions<'a> {
     /// # Panics
     ///
     /// Panics if the subscriber was not called, the raw payload differs, or the most recent call
-    /// was a page of several deliveries (which has no single payload - read it with
+    /// was a batch of several deliveries (which has no single payload - read it with
     /// [`received_raw`](Self::received_raw)).
     pub fn with_raw(self, bytes: &[u8]) -> Self {
         self.with_sole_delivery("raw payload", |one| {
@@ -326,9 +327,9 @@ impl<'a> SubscriberAssertions<'a> {
     /// Asserts the most recent call settled with `outcome`'s status (any continuation on the
     /// expected value is ignored: the harness compares how the broker settled).
     ///
-    /// A page settles per element, so this asserts EVERY element of the most recent page settled
+    /// A batch settles per element, so this asserts EVERY element of the most recent batch settled
     /// that way - which is what a uniform answer (`HandlerOutcome::ack()` for the whole slice)
-    /// produces. A page that answered element by element with differing outcomes matches none.
+    /// produces. A batch that answered element by element with differing outcomes matches none.
     ///
     /// # Panics
     ///
@@ -357,25 +358,25 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
-    /// Asserts the body was handed pages of exactly `sizes`, in the order they arrived.
+    /// Asserts the body was handed batches of exactly `sizes`, in the order they arrived.
     ///
-    /// The page the body sees is the page the broker delivered: the mount site names the size
-    /// with [`batch`](crate::runtime::SubscriberSettings::batch) and the broker builds the pages
-    /// to it, so this is where a test reads back that it did. One call is one page, which is
+    /// The batch the body sees is the batch the broker delivered: the mount site names the size
+    /// with [`batch`](crate::runtime::SubscriberSettings::batch) and the broker builds the batches
+    /// to it, so this is where a test reads back that it did. One call is one batch, which is
     /// what [`assert_called`](Self::assert_called) counts, while
     /// [`received_raw`](Self::received_raw) still lists the elements flat. A single-message
     /// handler is called per delivery, so a run of three reports `[1, 1, 1]`.
     ///
     /// # Panics
     ///
-    /// Panics if the pages differ from `sizes`.
-    pub fn assert_page_sizes(self, sizes: &[usize]) -> Self {
+    /// Panics if the batches differ from `sizes`.
+    pub fn assert_batch_sizes(self, sizes: &[usize]) -> Self {
         self.with_records(|records| {
-            let pages: Vec<usize> = records.iter().map(|r| r.deliveries.len()).collect();
+            let batches: Vec<usize> = records.iter().map(|r| r.deliveries.len()).collect();
             assert_eq!(
-                pages.as_slice(),
+                batches.as_slice(),
                 sizes,
-                "subscriber {:?} was handed pages of {pages:?}",
+                "subscriber {:?} was handed batches of {batches:?}",
                 self.name,
             );
         });

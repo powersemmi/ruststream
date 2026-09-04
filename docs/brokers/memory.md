@@ -70,9 +70,9 @@ a simulation of another broker's:
   `Out<impl RequestReply, ..>` binds to `MemoryRequest`. A responder reads `reply-to` from the
   request and publishes its reply to that name. Requests nobody answers fail with
   `RequestError::Timeout`.
-- **Pages.** `MemorySubscriber` implements `BatchSubscriber` natively: a page is the first
+- **Batches.** `MemorySubscriber` implements `BatchSubscriber` natively: a batch is the first
   awaited delivery plus everything already buffered, capped at the size the registration named
-  with `batch(n)`. Partial pages ship immediately, so no deadline timer is involved.
+  with `batch(n)`. Partial batches ship immediately, so no deadline timer is involved.
 - **Transactions.** `MemoryPublisher`, what the `MemoryPublish` policy pairs into, carries both
   transaction kinds, so a slot or wiring bound with `TransactionalPublisher` or
   `OwnedTransactions` binds to `MemoryPublish`. Publishes inside a scope are buffered and
@@ -91,9 +91,9 @@ a simulation of another broker's:
   so far. The scope is one subscriber instance, and a seek through a handle aliasing a shut-down
   bus errors with `MemoryError::ShutDown`. Inside an application, the delivery context
   (`MemoryContext`) carries the position and the seeker, read by the `Position` / `SeekHandle`
-  keys (see [Seeking](../guides/subscribers.md#seeking)). A page body names `MemoryBatchContext`
+  keys (see [Seeking](../guides/subscribers.md#seeking)). A batch body names `MemoryBatchContext`
   instead: it carries the subscription's seeker under that same `SeekHandle` key and no position,
-  because a page spans many deliveries.
+  because a batch spans many deliveries.
 - **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
   `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
   reporting how many subscriber registrations the teardown dropped. Aliased handles used after the

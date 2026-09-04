@@ -75,8 +75,8 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     );
 }
 
-/// Client-side paging under a pool: the page size or the adapter's deadline (not the pool)
-/// closes a page. The adapter is broker-author machinery, spelled here by hand to pin the
+/// Client-side batching under a pool: the batch size or the adapter's deadline (not the pool)
+/// closes a batch. The adapter is broker-author machinery, spelled here by hand to pin the
 /// composition; the size stays the mount site's.
 #[subscriber(Buffered::<Name>::new(Name::new("buf-in"))
     .max_wait(Duration::from_millis(10)), workers(2))]
@@ -85,7 +85,7 @@ async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// The Buffered adapter composes with a batch pool: pages still close by size or deadline,
+/// The Buffered adapter composes with a batch pool: batches still close by size or deadline,
 /// the pool only bounds how many are processed at once. Every delivery is drained.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_sources_compose_with_a_batch_pool() {
@@ -106,9 +106,9 @@ async fn buffered_sources_compose_with_a_batch_pool() {
         result.expect("publish");
     }
 
-    let pages: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("buf-in").pages();
-    let mut drained: Vec<u32> = pages.iter().flatten().map(|o| o.id).collect();
-    // The pool runs pages concurrently, so which page lands first is its business; that every
+    let batches: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("buf-in").batches();
+    let mut drained: Vec<u32> = batches.iter().flatten().map(|o| o.id).collect();
+    // The pool runs batches concurrently, so which batch lands first is its business; that every
     // delivery ends up in one is not.
     drained.sort_unstable();
     assert_eq!(
@@ -117,9 +117,9 @@ async fn buffered_sources_compose_with_a_batch_pool() {
         "every delivery must be drained"
     );
     assert!(
-        pages.iter().all(|page| page.len() <= 2),
+        batches.iter().all(|batch| batch.len() <= 2),
         "the size cap must close a batch before the pool does: {:?}",
-        pages.iter().map(Vec::len).collect::<Vec<_>>(),
+        batches.iter().map(Vec::len).collect::<Vec<_>>(),
     );
 }
 

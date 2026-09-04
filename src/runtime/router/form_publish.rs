@@ -17,7 +17,7 @@ use crate::runtime::publish::RawReplyWiring;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
+use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
 
 use super::builder::Router;
@@ -25,7 +25,6 @@ use super::builders::{RouterCommit, RouterPublishing, RouterWith};
 use super::mount::{BatchPublishMount, DefaultReply, PublishMount, RawReplyMount, RouterMount};
 use super::{BatchPublishingRouter, PublishingRouter, RawReplyRouter, forms};
 
-// ---------------------------------------------------------------------------------------------
 // The three chain-producing entry points.
 
 /// Implements [`RouterMount`] for a reply-only form: the chain starts with the reply position on
@@ -59,7 +58,6 @@ reply_form! {
     forms::BatchPublishing => BatchPublishMount,
 }
 
-// ---------------------------------------------------------------------------------------------
 // The commits. A named policy is wrapped in `WithSource`: the default marker and the
 // policy-driven commit must live on different type constructors to keep the impls disjoint.
 
@@ -220,7 +218,7 @@ where
     B: Broker + 'static,
     // As on the single-message routes: the input kind decides whether a codec is wanted here.
     Def: BatchPublishingDef
-        + PageSized
+        + BatchSized
         + MountsWith<<Def as BatchPublishingDef>::Input, RouteCodec>
         + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,

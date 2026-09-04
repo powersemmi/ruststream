@@ -68,8 +68,8 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
         .settled(HandlerOutcome::ack());
 }
 
-/// A page body carrying no behaviour: the route kind is what the metadata sweep below reads, not
-/// what the body does with the page.
+/// A batch body carrying no behaviour: the route kind is what the metadata sweep below reads, not
+/// what the body does with the batch.
 struct MetaBatch;
 
 impl Handle<[Order]> for MetaBatch {

@@ -242,7 +242,7 @@ async fn batch_decode_failure_drops_the_bad_element() {
 
     drive_good_bad_good(&tb, "bd").await;
 
-    // The rejected element is settled by the policy and never becomes part of a page, so the
+    // The rejected element is settled by the policy and never becomes part of a batch, so the
     // handler saw exactly the two decodable orders.
     let seen: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("bd").received();
     assert_eq!(seen.iter().map(|o| o.id).collect::<Vec<_>>(), [1, 2]);

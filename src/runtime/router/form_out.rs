@@ -29,7 +29,7 @@ use crate::runtime::input::DecodeWith;
 use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publish::{LowerOutTransforms, RawReplyWiring};
 use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
+use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::slot::{
     BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, SlotCodec, WithSource,
 };
@@ -45,7 +45,6 @@ use super::{
     forms,
 };
 
-// ---------------------------------------------------------------------------------------------
 // The five chain-producing entry points.
 
 /// Implements [`RouterMount`] for a slot form: the chain starts with every position unbound, and
@@ -84,7 +83,6 @@ slot_form! {
     forms::BatchPublishingOut => BatchPublishInjectMount, DefaultReply, RouterPublishingOut,
 }
 
-// ---------------------------------------------------------------------------------------------
 // The slot commits, one macro per form family, for fully-bound tuples only. `Bound` / `Extra`
 // name the definition's `BindSlots` outputs so the bounds read flat instead of through
 // `<Def::Bound as ..>` projections.
@@ -183,7 +181,7 @@ macro_rules! impl_inject_out_commit {
                 Extra = Extra,
             >,
             Def: MountsWith<<Bound as BatchInjectDef>::Input, RouteCodec>,
-            Bound: BatchInjectDef + PageSized + 'static,
+            Bound: BatchInjectDef + BatchSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:
@@ -389,7 +387,7 @@ macro_rules! impl_publishing_out_commit {
                 Extra = Extra,
             >,
             Def: MountsWith<<Bound as BatchPublishingDef>::Input, RouteCodec>,
-            Bound: BatchPublishingDef + PageSized + 'static,
+            Bound: BatchPublishingDef + BatchSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:

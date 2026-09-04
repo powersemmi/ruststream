@@ -13,10 +13,10 @@ use crate::runtime::lifecycle::BoxError;
 use crate::runtime::publish::sealed::Sealed;
 use crate::{Publisher, TransactionalPublisher};
 
-/// The live reply sink a page's replies travel through.
+/// The live reply sink a batch's replies travel through.
 ///
 /// Implemented by a plain [`TypedPublisher`] (each reply published independently) and by a
-/// [`Transactional`] one (all replies of a page inside one transaction). Sealed: implemented by
+/// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by
 /// exactly those two types. `Cx` is the originating batch handler's context type, threaded so the
 /// static [`PublishTransform`](crate::runtime::PublishTransform) reads the delivery while publishing each reply.
 pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {

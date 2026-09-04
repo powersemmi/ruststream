@@ -537,9 +537,9 @@ async fn an_empty_deserialized_batch_reaches_no_handler() {
 }
 
 /// An element whose construction fails is settled by the decode policy and never reaches the
-/// page; the constructed rest does, exactly like a codec decode failure on the typed path.
+/// batch; the constructed rest does, exactly like a codec decode failure on the typed path.
 #[tokio::test]
-async fn a_failed_construction_is_settled_and_the_rest_reach_the_page() {
+async fn a_failed_construction_is_settled_and_the_rest_reach_the_batch() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("raw-batch");
     publish_payloads(&broker, "raw-batch", &[b"one", b"", b"two"]).await;

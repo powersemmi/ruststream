@@ -179,15 +179,15 @@ impl<M: ?Sized> BuildContext<M> for () {
     fn build(_msg: &M) -> Self {}
 }
 
-/// Builds a page handler's context value from the page's first delivery.
+/// Builds a batch handler's context value from the batch's first delivery.
 ///
-/// The batch counterpart of [`BuildContext`]: the runtime calls this once per dispatched page.
-/// A page spans many deliveries, so only subscription-scoped data - handles every delivery of
+/// The batch counterpart of [`BuildContext`]: the runtime calls this once per dispatched batch.
+/// A batch spans many deliveries, so only subscription-scoped data - handles every delivery of
 /// the subscription shares, like a reposition handle - belongs in a batch context type;
-/// per-delivery fields (a position, a header) live on the page's elements instead. Keeping the
+/// per-delivery fields (a position, a header) live on the batch's elements instead. Keeping the
 /// batch context a separate type from the broker's per-delivery one is what makes that
 /// distinction hold at compile time: a per-delivery context type simply does not implement
-/// this, so a page body cannot name it.
+/// this, so a batch body cannot name it.
 ///
 /// The blanket `impl` for `()` gives the zero-field default, so a broker with no
 /// subscription-scoped data needs no implementation.
@@ -219,7 +219,7 @@ impl<M: ?Sized> BuildContext<M> for () {
 /// assert_eq!(cx.stream, "orders");
 /// ```
 pub trait BuildBatchContext<M: ?Sized> {
-    /// Builds the context value by reading subscription-scoped fields out of the page's first
+    /// Builds the context value by reading subscription-scoped fields out of the batch's first
     /// delivery.
     fn build(first: &M) -> Self;
 }

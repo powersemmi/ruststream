@@ -1,7 +1,7 @@
 //! The input axis of the [`Handle`](super::Handle) trait: what the `In` parameter may be, and
 //! what each spelling means to the mount machinery.
 //!
-//! The form rule is uniform - `&T` is one message, `&[T]` a page of them - and the lane is the
+//! The form rule is uniform - `&T` is one message, `&[T]` a batch of them - and the lane is the
 //! type's own business: a `serde` type rides the codec, a [`Deserialized`] type constructs
 //! itself from the payload bytes, and a [`Message<H, P>`](Message) pair decodes its typed
 //! header contract in the same stage. The spellings:
@@ -11,9 +11,9 @@
 //! | `T` | one decoded message | `&T` |
 //! | `Message<H, P>` | one decoded message + typed headers | `&Message<H, P>` |
 //! | `F<'_>` where `F` is [`Deserialized`] | one payload, self-constructed | `&F<'_>` |
-//! | `[T]` | a page of decoded messages | `&[T]` |
-//! | `[Message<H, P>]` | a page with typed headers per element | `&[Message<H, P>]` |
-//! | `[F<'_>]` where `F` is [`Deserialized`] | a page of self-constructed payloads | `&[F<'_>]` |
+//! | `[T]` | a batch of decoded messages | `&[T]` |
+//! | `[Message<H, P>]` | a batch with typed headers per element | `&[Message<H, P>]` |
+//! | `[F<'_>]` where `F` is [`Deserialized`] | a batch of self-constructed payloads | `&[F<'_>]` |
 //!
 //! Every projection the machinery needs (the decode kind, the verdict family, the schema of the
 //! generated document) hangs off the lifetime-free [`Axis`] marker, so definitions can carry the
@@ -24,7 +24,7 @@ use serde::de::DeserializeOwned;
 use crate::runtime::input::{Decoded, DecodedPair, InputKind, Provided};
 
 use super::docs::DocState;
-use super::verdict::{OneByOne, Paged, VerdictFamily};
+use super::verdict::{Batched, OneByOne, VerdictFamily};
 
 /// One incoming message together with its decoded typed header contract.
 ///
@@ -85,7 +85,7 @@ impl<H, P> Message<H, P> {
 ///
 /// `#[derive(Deserialized)]` (under the `macros` feature) covers a newtype or single-field
 /// struct over `&'a [u8]`. Any other shape is a pair of short impls: the construction, and the
-/// [`Input`] spelling that routes the type onto the self-deserializing lane. The page spelling
+/// [`Input`] spelling that routes the type onto the self-deserializing lane. The batch spelling
 /// comes for free - `&[Frame<'_>]` bodies mount off the same two impls:
 ///
 /// ```
@@ -130,11 +130,11 @@ pub trait Deserialized: Sized {
 }
 
 /// A [`Handle`](super::Handle) input spelling: a decoded `T`, a [`Deserialized`] type, a
-/// [`Message<H, P>`](Message) pair, or a page (slice) of any of them.
+/// [`Message<H, P>`](Message) pair, or a batch (slice) of any of them.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a handler input",
     note = "a body's input is `&T` (T: DeserializeOwned), `&F<'_>` (F: Deserialized - derive it \
-            for a raw-payload type), `&Message<H, P>`, or a page: `&[T]`, `&[F<'_>]`, \
+            for a raw-payload type), `&Message<H, P>`, or a batch: `&[T]`, `&[F<'_>]`, \
             `&[Message<H, P>]`"
 )]
 pub trait Input {
@@ -145,10 +145,10 @@ pub trait Input {
 /// The lifetime-free projection of one [`Input`] spelling. Machinery; never named in user code.
 #[doc(hidden)]
 pub trait Axis: Send + Sync + 'static {
-    /// The verdict family ([`OneByOne`] / [`Paged`]).
+    /// The verdict family ([`OneByOne`] / [`Batched`]).
     type Family: VerdictFamily;
 
-    /// The element's decode kind (for a page, the kind of one element).
+    /// The element's decode kind (for a batch, the kind of one element).
     type Kind: InputKind;
 
     /// The mount form of the axis's plain (no reply, no injections) definition.
@@ -194,18 +194,18 @@ pub struct SoloDeserialized<F>(core::marker::PhantomData<F>);
 #[derive(Debug)]
 pub struct SoloPair<H, P>(core::marker::PhantomData<(H, P)>);
 
-/// The decoded page input: `In = [T]`.
+/// The decoded batch input: `In = [T]`.
 #[derive(Debug)]
-pub struct Page<T>(core::marker::PhantomData<T>);
+pub struct Batch<T>(core::marker::PhantomData<T>);
 
-/// The self-deserializing page input: `In = [F<'_>]` for a [`Deserialized`] `F`. See
+/// The self-deserializing batch input: `In = [F<'_>]` for a [`Deserialized`] `F`. See
 /// [`SoloDeserialized`] for the parameter.
 #[derive(Debug)]
-pub struct PageDeserialized<F>(core::marker::PhantomData<F>);
+pub struct BatchDeserialized<F>(core::marker::PhantomData<F>);
 
-/// The pair page input: `In = [Message<H, P>]`.
+/// The pair batch input: `In = [Message<H, P>]`.
 #[derive(Debug)]
-pub struct PagePair<H, P>(core::marker::PhantomData<(H, P)>);
+pub struct BatchPair<H, P>(core::marker::PhantomData<(H, P)>);
 
 impl<T: DeserializeOwned + Send + Sync + 'static> Input for T {
     type Axis = Solo<T>;
@@ -219,37 +219,37 @@ where
     type Axis = SoloPair<H, P>;
 }
 
-/// The page axis of one single-delivery axis: what `[T]` rides given what `T` rides.
+/// The batch axis of one single-delivery axis: what `[T]` rides given what `T` rides.
 ///
-/// The one slice `Input` impl projects through this, so every single spelling's page comes for
+/// The one slice `Input` impl projects through this, so every single spelling's batch comes for
 /// free - a `Deserialized` type's own `Input` impl (or derive) makes `&[Frame<'_>]` bodies
 /// mountable without a second impl, which the orphan rule would forbid downstream anyway
 /// (`[T]` is nobody's local type). Machinery; never named in user code.
 #[doc(hidden)]
-pub trait PagedFrom {
-    /// The page counterpart.
-    type Page: Axis;
+pub trait BatchedFrom {
+    /// The batch counterpart.
+    type Batch: Axis;
 }
 
-impl<T: Send + Sync + 'static> PagedFrom for Solo<T> {
-    type Page = Page<T>;
+impl<T: Send + Sync + 'static> BatchedFrom for Solo<T> {
+    type Batch = Batch<T>;
 }
 
-impl<F: Send + Sync + 'static> PagedFrom for SoloDeserialized<F> {
-    type Page = PageDeserialized<F>;
+impl<F: Send + Sync + 'static> BatchedFrom for SoloDeserialized<F> {
+    type Batch = BatchDeserialized<F>;
 }
 
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> PagedFrom for SoloPair<H, P> {
-    type Page = PagePair<H, P>;
+impl<H: Send + Sync + 'static, P: Send + Sync + 'static> BatchedFrom for SoloPair<H, P> {
+    type Batch = BatchPair<H, P>;
 }
 
 // No overlap with the decoded blanket above: that one is implicitly `Sized`, a slice is not.
 impl<E> Input for [E]
 where
     E: Input,
-    E::Axis: PagedFrom,
+    E::Axis: BatchedFrom,
 {
-    type Axis = <E::Axis as PagedFrom>::Page;
+    type Axis = <E::Axis as BatchedFrom>::Batch;
 }
 
 impl<T: Send + Sync + 'static> Axis for Solo<T> {
@@ -273,22 +273,22 @@ impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for SoloPair<H, P>
     type SlotForm = crate::runtime::router::forms::Out;
 }
 
-impl<T: Send + Sync + 'static> Axis for Page<T> {
-    type Family = Paged;
+impl<T: Send + Sync + 'static> Axis for Batch<T> {
+    type Family = Batched;
     type Kind = Decoded<T>;
     type EagerForm = crate::runtime::router::forms::Batch;
     type SlotForm = crate::runtime::router::forms::BatchOut;
 }
 
-impl<F: Send + Sync + 'static> Axis for PageDeserialized<F> {
-    type Family = Paged;
+impl<F: Send + Sync + 'static> Axis for BatchDeserialized<F> {
+    type Family = Batched;
     type Kind = Provided<F>;
     type EagerForm = crate::runtime::router::forms::RawBatch;
     type SlotForm = crate::runtime::router::forms::BatchOut;
 }
 
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for PagePair<H, P> {
-    type Family = Paged;
+impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for BatchPair<H, P> {
+    type Family = Batched;
     type Kind = DecodedPair<H, P>;
     type EagerForm = crate::runtime::router::forms::Batch;
     type SlotForm = crate::runtime::router::forms::BatchOut;
@@ -326,13 +326,13 @@ where
     }
 }
 
-impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Page<T>> for Doc {
+impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Batch<T>> for Doc {
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
 }
 
-impl<F, Doc> AxisDocs<PageDeserialized<F>> for Doc
+impl<F, Doc> AxisDocs<BatchDeserialized<F>> for Doc
 where
     F: Send + Sync + 'static,
 {
@@ -341,7 +341,7 @@ where
     }
 }
 
-impl<H, P, Doc> AxisDocs<PagePair<H, P>> for Doc
+impl<H, P, Doc> AxisDocs<BatchPair<H, P>> for Doc
 where
     H: Send + Sync + 'static,
     P: Send + Sync + 'static,
@@ -357,7 +357,7 @@ where
 }
 
 /// A single-delivery axis: the plain, raw and pair spellings of one message at a time. The
-/// bound behind the forms that make no sense for a page (a reply's destination is one message's
+/// bound behind the forms that make no sense for a batch (a reply's destination is one message's
 /// business).
 #[doc(hidden)]
 pub trait SoloAxis: Axis<Family = OneByOne> {}
@@ -366,10 +366,10 @@ impl<T: Send + Sync + 'static> SoloAxis for Solo<T> {}
 impl<F: Send + Sync + 'static> SoloAxis for SoloDeserialized<F> {}
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> SoloAxis for SoloPair<H, P> {}
 
-/// A page axis: the slice spellings. The bound behind `.batch(..)`.
+/// A batch axis: the slice spellings. The bound behind `.batch(..)`.
 #[doc(hidden)]
-pub trait PagedAxis: Axis<Family = Paged> {}
+pub trait BatchedAxis: Axis<Family = Batched> {}
 
-impl<T: Send + Sync + 'static> PagedAxis for Page<T> {}
-impl<F: Send + Sync + 'static> PagedAxis for PageDeserialized<F> {}
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> PagedAxis for PagePair<H, P> {}
+impl<T: Send + Sync + 'static> BatchedAxis for Batch<T> {}
+impl<F: Send + Sync + 'static> BatchedAxis for BatchDeserialized<F> {}
+impl<H: Send + Sync + 'static, P: Send + Sync + 'static> BatchedAxis for BatchPair<H, P> {}

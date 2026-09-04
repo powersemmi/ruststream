@@ -56,7 +56,7 @@ async fn archive(order: &Order) -> HandlerOutcome {
 // --8<-- [end:named_kind]
 
 // --8<-- [start:batch]
-/// Settles a whole page of orders in one go: the slice parameter is what says so.
+/// Settles a whole batch of orders in one go: the slice parameter is what says so.
 #[subscriber("orders")]
 async fn settle(orders: &[Order]) -> HandlerOutcome {
     println!("settling {} orders", orders.len());
@@ -66,7 +66,7 @@ async fn settle(orders: &[Order]) -> HandlerOutcome {
 
 // --8<-- [start:raw_batch]
 /// The raw element type: the derive gives the newtype the delivery's bytes, and with them both
-/// input spellings, so a page of frames is `&[Frame<'_>]`.
+/// input spellings, so a batch of frames is `&[Frame<'_>]`.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
@@ -98,7 +98,7 @@ async fn per_customer(order: &Order) -> HandlerOutcome {
 // --8<-- [end:workers_by_key]
 
 // --8<-- [start:batch_selective]
-/// Retries only the entries that are not ready yet; the rest of the page settles.
+/// Retries only the entries that are not ready yet; the rest of the batch settles.
 #[subscriber("orders")]
 async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
@@ -114,7 +114,7 @@ async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
 }
 // --8<-- [end:batch_selective]
 
-/// How big a page is, is the mount site's word, so both the name and the size land there.
+/// How big a batch is, is the mount site's word, so both the name and the size land there.
 #[subscriber]
 async fn drain(orders: &[Order]) -> HandlerOutcome {
     println!("draining {} orders", orders.len());
@@ -142,8 +142,8 @@ fn app() -> RustStream {
         // --8<-- [end:name_mount]
         b.include(archive.name("archive"));
         // --8<-- [start:batch_mount]
-        // The page size is the one parameter a page mount owes the broker: at most 64 orders per
-        // call, whatever the broker builds its pages out of.
+        // The batch size is the one parameter a batch mount owes the broker: at most 64 orders per
+        // call, whatever the broker builds its batches out of.
         b.include(settle.batch(nonzero!(64)));
         // --8<-- [end:batch_mount]
         b.include(ingest.batch(nonzero!(32)));

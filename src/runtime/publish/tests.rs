@@ -491,7 +491,7 @@ async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
     assert_eq!(decoded, 7);
 }
 
-/// The transactional sink reports the same reply codec as the stack it wraps: the page mounts
+/// The transactional sink reports the same reply codec as the stack it wraps: the batch mounts
 /// read it off either shape.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[test]
@@ -561,7 +561,7 @@ async fn a_reply_wiring_pairs_into_its_live_sink() {
     msg.ack().await.expect("ack failed");
 }
 
-/// A `.transactional()` wiring pairs like the plain one, into the sink that wraps a page's
+/// A `.transactional()` wiring pairs like the plain one, into the sink that wraps a batch's
 /// replies in one broker transaction.
 #[cfg(all(feature = "memory", feature = "json"))]
 #[tokio::test]
@@ -587,7 +587,7 @@ async fn a_transactional_wiring_pairs_into_the_transactional_sink() {
     let cx = PublishContext::new("in", &headers, &());
     live.publish_batch("scoped", &[4_u32, 5], &PublishIdentity, &cx)
         .await
-        .expect("the page's replies must publish and commit");
+        .expect("the batch's replies must publish and commit");
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let mut sent = Vec::new();

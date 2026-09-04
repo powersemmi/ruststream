@@ -94,33 +94,33 @@ injecting rather than dropping anonymous bytes on the subject.
 | `with(&value)` | the most recent call's sole delivery decodes to `value` (with the default codec) |
 | `with_raw(bytes)` | the most recent call's sole raw payload |
 | `settled(HandlerOutcome::ack())` | how everything the most recent call carried settled |
-| `assert_page_sizes(&[2, 1])` | the pages the body was handed, in arrival order |
+| `assert_batch_sizes(&[2, 1])` | the batches the body was handed, in arrival order |
 | `assert_outcome(Outcome::Drop)` | the classified outcome (ack / nack / drop / decode-failure / panic) |
 | `panicked()` | the handler panicked on the last call |
 | `assert_last_failed_to_decode()` | the payload failed to decode |
 
 What these count is the handler CALL, not the message. A single-message handler is called once per
-delivery, so the two coincide; a batch handler is called once per page, so `assert_called_once()`
-means one page arrived whatever its size, `settled(..)` covers every element of it, and
+delivery, so the two coincide; a batch handler is called once per batch, so `assert_called_once()`
+means one batch arrived whatever its size, `settled(..)` covers every element of it, and
 `received_raw()` still lists the elements one by one. The two assertions that name a single
-expected payload (`with`, `with_raw`) report the page size rather than silently checking one
+expected payload (`with`, `with_raw`) report the batch size rather than silently checking one
 element of it. An element the decode policy rejected before the body ran is settled by that policy
-and is not part of the page the handler saw, so it does not appear.
+and is not part of the batch the handler saw, so it does not appear.
 
-A page reaches the body whole, which is why one page is one call. Where the pages fall is the
+A batch reaches the body whole, which is why one batch is one call. Where the batches fall is the
 broker's answer to the [`batch(n)`](subscribers.md#batch-subscribers) the mount named, and
-`assert_page_sizes` is where that is visible: a log of three replayed under `batch(2)` reaches the
-body as `[2, 1]` - two calls, because the broker built two pages. A single-message handler is
+`assert_batch_sizes` is where that is visible: a log of three replayed under `batch(2)` reaches the
+body as `[2, 1]` - two calls, because the broker built two batches. A single-message handler is
 called per delivery, so the same run reports `[1, 1, 1]`.
 
-!!! note "Filling a page with more than one element"
+!!! note "Filling a batch with more than one element"
     `tb.message(&value).publish()` drives the whole reaction to a standstill before it returns, and
-    a settled reaction closes the page of a broker that assembles its pages on the client. Injecting
-    messages one call at a time therefore produces one page per message, each holding a single
-    element, whatever size the mount named. Take a producer handle off the broker before the app is
-    built, publish the whole run through it - nothing settles on the way - and drive the reaction
-    once with `tb.settle()`. A broker that pages natively is unaffected: there the broker decides
-    where a page ends.
+    a settled reaction closes the batch of a broker that assembles its batches on the client.
+    Injecting messages one call at a time therefore produces one batch per message, each holding a
+    single element, whatever size the mount named. Take a producer handle off the broker before the
+    app is built, publish the whole run through it - nothing settles on the way - and drive the
+    reaction once with `tb.settle()`. A broker that batches natively is unaffected: there the broker
+    decides where a batch ends.
 
 `tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
 the broker's publish log: `.assert_called_once()` / `.assert_called(n)` /
@@ -133,10 +133,10 @@ Beyond the assertions, the messages themselves are retrievable for custom checks
 `published::<T>(name).decoded()` / `.messages()` returns every message published to the channel - both
 in order.
 
-Two more views keep what a flat list drops. `subscriber(name).pages::<T>()` / `.pages_raw()`
+Two more views keep what a flat list drops. `subscriber(name).batches::<T>()` / `.batches_raw()`
 returns the deliveries grouped by CALL - one inner vector per call - so a test can pin how a stream
-was cut into pages, which `received::<T>()` flattens away. `subscriber(name).outcomes()` returns the
-classified outcome of every call in order, which is what a redelivery sequence (a nack, then the
+was cut into batches, which `received::<T>()` flattens away. `subscriber(name).outcomes()` returns
+the classified outcome of every call in order, which is what a redelivery sequence (a nack, then the
 redelivery's ack) is compared against; `settled(..)` and `assert_outcome(..)` read the most recent
 call only.
 

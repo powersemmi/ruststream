@@ -73,9 +73,6 @@ struct Meta {
 struct Confirmation {
     id: u64,
 }
-
-// ------------------------------------------------------------------------------- the bodies
-
 struct Audit;
 
 impl Handle<Order> for Audit {
@@ -118,16 +115,16 @@ impl Handle<Message<Meta, Order>> for Expedite {
     }
 }
 
-struct SettlePage;
+struct SettleBatch;
 
-impl Handle<[Order]> for SettlePage {
+impl Handle<[Order]> for SettleBatch {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = page.len();
+        let _ = batch.len();
         ready(Ok(()))
     }
 }
@@ -137,25 +134,25 @@ struct Frames;
 impl<'p> Handle<[Frame<'p>]> for Frames {
     fn handle(
         &self,
-        page: &[Frame<'p>],
+        batch: &[Frame<'p>],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = page.len();
+        let _ = batch.len();
         ready(Ok(()))
     }
 }
 
-struct HeaderedPage;
+struct HeaderedBatch;
 
-impl Handle<[Message<Meta, Order>]> for HeaderedPage {
+impl Handle<[Message<Meta, Order>]> for HeaderedBatch {
     fn handle(
         &self,
-        page: &[Message<Meta, Order>],
+        batch: &[Message<Meta, Order>],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = page.len();
+        let _ = batch.len();
         ready(Ok(()))
     }
 }
@@ -223,30 +220,30 @@ impl<'p> Handle<Frame<'p>, Export> for RawEcho {
     }
 }
 
-struct ConfirmPages;
+struct ConfirmBatches;
 
-impl Handle<[Order], Vec<Confirmation>> for ConfirmPages {
+impl Handle<[Order], Vec<Confirmation>> for ConfirmBatches {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
-        ready(Ok(page
+        ready(Ok(batch
             .iter()
             .map(|order| Confirmation { id: order.id })
             .collect()))
     }
 }
 
-/// A page that answers and reads the broker's subscription-scoped context in one body: the
+/// A batch that answers and reads the broker's subscription-scoped context in one body: the
 /// reply axis and the context axis are independent, so naming one must not close the other.
-struct ConfirmPagesInContext;
+struct ConfirmBatchesInContext;
 
-impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmPagesInContext {
+impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmBatchesInContext {
     async fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         _outs: &(),
         ctx: &mut Context<'_, MemoryBatchContext>,
     ) -> Result<Vec<Confirmation>, Vec<HandlerOutcome>> {
@@ -256,30 +253,30 @@ impl Handle<[Order], Vec<Confirmation>, (), MemoryBatchContext> for ConfirmPages
             .await
             .is_err()
         {
-            // The per-element failure side of the page reply verdict, on the context axis.
-            return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+            // The per-element failure side of the batch reply verdict, on the context axis.
+            return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
         }
-        Ok(page
+        Ok(batch
             .iter()
             .map(|order| Confirmation { id: order.id })
             .collect())
     }
 }
 
-/// The same cell on the pair page: typed element headers and a broker page context together.
-struct HeaderedPageInContext;
+/// The same cell on the pair batch: typed element headers and a broker batch context together.
+struct HeaderedBatchInContext;
 
 impl Handle<[Message<Meta, Order>], Vec<Confirmation>, (), MemoryBatchContext>
-    for HeaderedPageInContext
+    for HeaderedBatchInContext
 {
     fn handle(
         &self,
-        page: &[Message<Meta, Order>],
+        batch: &[Message<Meta, Order>],
         _outs: &(),
         ctx: &mut Context<'_, MemoryBatchContext>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
         let _ = ctx.context(SeekHandle);
-        ready(Ok(page
+        ready(Ok(batch
             .iter()
             .map(|element| Confirmation {
                 id: element.body.id,
@@ -489,26 +486,23 @@ impl Handle<Order, (), Outs<(Slot<Analytics, MemoryPublisher, JsonCodec>,)>> for
     }
 }
 
-struct PageMirror;
+struct BatchMirror;
 
-impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>> for PageMirror
+impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>> for BatchMirror
 where
     W: Publisher,
     E: Codec + Send + Sync,
 {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = (page.len(), outs);
+        let _ = (batch.len(), outs);
         ready(Ok(()))
     }
 }
-
-// ------------------------------------------------------------------------------- the mounts
-
 /// Every plain input spelling mounts through the one constructor on a router.
 fn eager_axes() -> impl RouterDef<MemoryBroker> {
     Router::<MemoryBroker>::new()
@@ -516,18 +510,18 @@ fn eager_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber(MemorySource::new("orders"), Audit).build())
         .include(subscriber("frames", Inspect).build())
         .include(subscriber("orders", Expedite).build())
-        // Every page spelling names its size, and none of them mounts without it: the decoded
+        // Every batch spelling names its size, and none of them mounts without it: the decoded
         // one, the self-deserializing one and the paired one.
-        .include(subscriber("orders", SettlePage).batch(nonzero!(8)).build())
+        .include(subscriber("orders", SettleBatch).batch(nonzero!(8)).build())
         .include(subscriber("frames", Frames).batch(nonzero!(8)).build())
         .include(
-            subscriber("orders", HeaderedPage)
+            subscriber("orders", HeaderedBatch)
                 .batch(nonzero!(8))
                 .build(),
         )
         // The size composes with a start position, in either order.
         .include(
-            subscriber("orders", SettlePage)
+            subscriber("orders", SettleBatch)
                 .batch(nonzero!(4))
                 .start_at(MemoryPosition::start())
                 .build(),
@@ -548,7 +542,7 @@ fn every_eager_spelling_mounts() {
 /// Every reply shape mounts through the chain: named and declared destinations, an attached
 /// and a defaulted policy, the serialized wire (from a decoded and a self-deserializing input,
 /// with an explicit and the broker's default publisher - selected by the reply type alone),
-/// the page form, and typed reply headers.
+/// the batch form, and typed reply headers.
 fn reply_axes() -> impl RouterDef<MemoryBroker> {
     use crate::codec::JsonCodec;
 
@@ -586,18 +580,18 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
         .build()
         .include(subscriber("frames", RawEcho).reply().to("echoes").build())
         .build()
-        // A page that replies names its size like any other page.
+        // A batch that replies names its size like any other batch.
         .include(
-            subscriber("orders", ConfirmPages)
+            subscriber("orders", ConfirmBatches)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
                 .build(),
         )
         .build()
-        // the page wiring: one broker transaction per page, with a batch-only transform
+        // the batch wiring: one broker transaction per batch, with a batch-only transform
         .include(
-            subscriber("orders", ConfirmPages)
+            subscriber("orders", ConfirmBatches)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
@@ -615,7 +609,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
         )
         .build()
         .include(
-            subscriber("orders", ConfirmPagesInContext)
+            subscriber("orders", ConfirmBatchesInContext)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
@@ -623,7 +617,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
         )
         .build()
         .include(
-            subscriber("orders", HeaderedPageInContext)
+            subscriber("orders", HeaderedBatchInContext)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
@@ -631,10 +625,10 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
         )
         .out(Reply, MemoryPublish)
         .build()
-        // The client-side buffer turns any subscriber into a page source, so the reply and the
-        // broker page context must survive that wrapping too.
+        // The client-side buffer turns any subscriber into a batch source, so the reply and the
+        // broker batch context must survive that wrapping too.
         .include(
-            subscriber("orders", ConfirmPagesInContext)
+            subscriber("orders", ConfirmBatchesInContext)
                 .reply()
                 .to("confirmations")
                 .map_source(Buffered::new)
@@ -669,9 +663,9 @@ fn order_free_reply_axes() -> impl RouterDef<MemoryBroker> {
     use crate::runtime::{FailurePolicies, SubscriberSettings};
 
     Router::<MemoryBroker>::new()
-        // a page setting, before and after the reply declaration
+        // a batch setting, before and after the reply declaration
         .include(
-            subscriber("orders", ConfirmPages)
+            subscriber("orders", ConfirmBatches)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
@@ -681,7 +675,7 @@ fn order_free_reply_axes() -> impl RouterDef<MemoryBroker> {
         .codec(JsonCodec)
         .build()
         .include(
-            subscriber("orders", ConfirmPages)
+            subscriber("orders", ConfirmBatches)
                 .batch(nonzero!(8))
                 .reply()
                 .to("confirmations")
@@ -813,64 +807,67 @@ where
     }
 }
 
-struct PageGateway;
+struct BatchGateway;
 
-impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>> for PageGateway
+impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>> for BatchGateway
 where
     W: Publisher,
     E: Codec + Send + Sync,
 {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         outs: &Outs<(Slot<Analytics, W, E>,)>,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
         let _ = outs;
-        ready(Ok(page.iter().map(|o| Confirmation { id: o.id }).collect()))
+        ready(Ok(batch
+            .iter()
+            .map(|o| Confirmation { id: o.id })
+            .collect()))
     }
 }
 
-/// The three-axis page cell: an answer, an injections arena and the broker's page context in
+/// The three-axis batch cell: an answer, an injections arena and the broker's batch context in
 /// one signature.
-struct PageGatewayInContext;
+struct BatchGatewayInContext;
 
 impl<W, E> Handle<[Order], Vec<Confirmation>, Outs<(Slot<Analytics, W, E>,)>, MemoryBatchContext>
-    for PageGatewayInContext
+    for BatchGatewayInContext
 where
     W: Publisher,
     E: Codec + Send + Sync,
 {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         outs: &Outs<(Slot<Analytics, W, E>,)>,
         ctx: &mut Context<'_, MemoryBatchContext>,
     ) -> impl Future<Output = Result<Vec<Confirmation>, Vec<HandlerOutcome>>> {
         let _ = (outs, ctx.context(SeekHandle));
-        ready(Ok(page
+        ready(Ok(batch
             .iter()
             .map(|order| Confirmation { id: order.id })
             .collect()))
     }
 }
 
-/// The same arena on a settling page, so the context axis is open with and without a reply.
-struct PageMirrorInContext;
+/// The same arena on a settling batch, so the context axis is open with and without a reply.
+struct BatchMirrorInContext;
 
 impl<W, E> Handle<[Order], (), Outs<(Slot<Analytics, W, E>,)>, MemoryBatchContext>
-    for PageMirrorInContext
+    for BatchMirrorInContext
 where
     W: Publisher,
     E: Codec + Send + Sync,
 {
     fn handle(
         &self,
-        page: &[Order],
+        batch: &[Order],
         outs: &Outs<(Slot<Analytics, W, E>,)>,
         ctx: &mut Context<'_, MemoryBatchContext>,
     ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = (page.len(), outs, ctx.context(SeekHandle));
+        let _ = (batch.len(), outs, ctx.context(SeekHandle));
         ready(Ok(()))
     }
 }
@@ -921,8 +918,8 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .include(subscriber("orders", PinnedMirror).build())
         .out(Analytics, MemoryPublish)
         .build()
-        // A slot-carrying page names its size like any other page.
-        .include(subscriber("orders", PageMirror).batch(nonzero!(8)).build())
+        // A slot-carrying batch names its size like any other batch.
+        .include(subscriber("orders", BatchMirror).batch(nonzero!(8)).build())
         .out(Analytics, MemoryPublish)
         .build()
         .include(
@@ -956,9 +953,9 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .out(Analytics, MemoryPublish)
         .transform(Trace)
         .build()
-        // A page that both replies and fans out through the arena.
+        // A batch that both replies and fans out through the arena.
         .include(
-            subscriber("orders", PageGateway)
+            subscriber("orders", BatchGateway)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
@@ -976,7 +973,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .out(Analytics, MemoryPublish)
         .build()
         .include(
-            subscriber("orders", PageGatewayInContext)
+            subscriber("orders", BatchGatewayInContext)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
@@ -985,7 +982,7 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
         .out(Analytics, MemoryPublish)
         .build()
         .include(
-            subscriber("orders", PageMirrorInContext)
+            subscriber("orders", BatchMirrorInContext)
                 .batch(nonzero!(8))
                 .build(),
         )
@@ -1040,7 +1037,7 @@ async fn seek_reaches_the_body_through_the_context() {
 }
 
 /// The scope surface mounts the same definitions - the new lanes included: the
-/// self-deserializing solo and page inputs, the serialized replies (attached and defaulted,
+/// self-deserializing solo and batch inputs, the serialized replies (attached and defaulted,
 /// with and without slots) and the serialized dictionary out - and one subscriber dispatches
 /// end to end.
 #[tokio::test]
@@ -1053,21 +1050,21 @@ async fn a_subscriber_dispatches_end_to_end() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("orders", Audit).build());
-            b.include(subscriber("orders", SettlePage).batch(nonzero!(4)).build());
+            b.include(subscriber("orders", SettleBatch).batch(nonzero!(4)).build());
             b.include(subscriber("frames", Inspect).build());
             b.include(subscriber("frames", Frames).batch(nonzero!(4)).build());
             b.include(subscriber("orders", Echo).reply().to("echoes").build())
                 .out(Reply, MemoryPublish);
             b.include(subscriber("frames", RawEcho).reply().to("echoes").build());
             b.include(
-                subscriber("orders", ConfirmPagesInContext)
+                subscriber("orders", ConfirmBatchesInContext)
                     .reply()
                     .to("confirmations")
                     .batch(nonzero!(4))
                     .build(),
             );
             b.include(
-                subscriber("orders", PageGatewayInContext)
+                subscriber("orders", BatchGatewayInContext)
                     .reply()
                     .to("confirmations")
                     .batch(nonzero!(4))

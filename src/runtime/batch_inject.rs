@@ -33,7 +33,7 @@ pub trait BatchInjectDef: Send + Sync {
     /// The tuple of startup-injected parameters ([`Out`](super::Out), ...).
     type Injections;
 
-    /// The broker's typed subscription-scoped context the page's handler reads by key (`()` when
+    /// The broker's typed subscription-scoped context the batch's handler reads by key (`()` when
     /// the handler names none); see [`BatchDef::Context`](super::BatchDef::Context).
     type Context;
 

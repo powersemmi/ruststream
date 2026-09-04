@@ -131,8 +131,8 @@ async fn by_key_lanes_preserve_per_key_order() {
     }
 }
 
-/// Batch form composing with a pool: up to two pages in flight.
-#[subscriber("pages", workers(2))]
+/// Batch form composing with a pool: up to two batches in flight.
+#[subscriber("batches", workers(2))]
 async fn settle(orders: &[Order]) -> HandlerOutcome {
     let _ = orders;
     HandlerOutcome::ack()
@@ -141,20 +141,20 @@ async fn settle(orders: &[Order]) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_pool_dispatches_batches() {
     let app =
-        RustStream::new(AppInfo::new("pages", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        RustStream::new(AppInfo::new("batches", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(settle.batch(nonzero!(8)));
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
-        .to("pages")
+        .to("batches")
         .publish()
         .await
         .expect("publish");
 
     // A batch carrying the message must be dispatched through the pool.
     tb.broker::<MemoryBroker>()
-        .subscriber("pages")
+        .subscriber("batches")
         .assert_called_once()
         .with(&Order { id: 1 })
         .settled(HandlerOutcome::ack());
@@ -215,11 +215,11 @@ async fn closure_subscription_pool_runs_concurrently() {
         .settled(HandlerOutcome::ack());
 }
 
-/// The manual path's page body: it takes whole decoded pages, so the batch either arrived as a
-/// page or did not.
-struct CountPages;
+/// The manual path's batch body: it takes whole decoded batches, so the batch either arrived as a
+/// batch or did not.
+struct CountBatches;
 
-impl Handle<[Order]> for CountPages {
+impl Handle<[Order]> for CountBatches {
     fn handle(
         &self,
         orders: &[Order],
@@ -231,30 +231,30 @@ impl Handle<[Order]> for CountPages {
     }
 }
 
-/// The manual batch path: a page body receives whole decoded batches without a macro definition.
+/// The manual batch path: a batch body receives whole decoded batches without a macro definition.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn closure_batch_subscription_receives_batches() {
     let router = Router::<MemoryBroker>::new()
         .include(
-            subscriber("fn-pages", CountPages)
+            subscriber("fn-batches", CountBatches)
                 .batch(nonzero!(8))
                 .build(),
         )
         .workers(Workers::pool(nonzero!(2)));
 
-    let app = RustStream::new(AppInfo::new("fn-pages", "0.1.0"))
+    let app = RustStream::new(AppInfo::new("fn-batches", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
-        .to("fn-pages")
+        .to("fn-batches")
         .publish()
         .await
         .expect("publish");
 
     // The message must reach the slice body as a decoded batch.
     tb.broker::<MemoryBroker>()
-        .subscriber("fn-pages")
+        .subscriber("fn-batches")
         .assert_called_once()
         .with(&Order { id: 1 })
         .settled(HandlerOutcome::ack());

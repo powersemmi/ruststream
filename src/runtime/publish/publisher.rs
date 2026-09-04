@@ -147,11 +147,11 @@ impl<P, C, PL, BL> fmt::Debug for TypedPublisher<P, C, PL, BL> {
     }
 }
 
-/// A [`TypedPublisher`] whose page replies are published inside one broker transaction.
+/// A [`TypedPublisher`] whose batch replies are published inside one broker transaction.
 ///
-/// What a `.transactional()` wiring pairs into. Per page, the runtime begins a transaction,
-/// publishes every reply, then commits before the incoming page is acked; any failure aborts the
-/// transaction and the page is retried, so replies are never half-visible.
+/// What a `.transactional()` wiring pairs into. Per batch, the runtime begins a transaction,
+/// publishes every reply, then commits before the incoming batch is acked; any failure aborts the
+/// transaction and the batch is retried, so replies are never half-visible.
 pub struct Transactional<P, C, PL = PublishTransformIdentity, BL = BatchTransformIdentity> {
     pub(super) inner: TypedPublisher<P, C, PL, BL>,
 }

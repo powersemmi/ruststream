@@ -58,11 +58,11 @@ pub(crate) fn record_slot_publish(slot: &'static str, msg: &OutgoingMessage<'_>)
     let _ = HARNESS.try_with(|scope| scope.coordinator.record_slot(slot, msg));
 }
 
-/// Records one page against the harness driving the current dispatch task, if any: the batch
+/// Records one batch against the harness driving the current dispatch task, if any: the batch
 /// settle path knows the deliveries and their settlements but not which harness (if any) is
 /// watching, and it sits behind four call sites whose signatures would otherwise all have to
 /// carry one.
-pub(crate) fn record_page(name: &str, deliveries: Vec<Delivered>) {
+pub(crate) fn record_batch(name: &str, deliveries: Vec<Delivered>) {
     let _ = HARNESS.try_with(|scope| {
         scope.coordinator.record(Record {
             scope_id: scope.scope_id,
@@ -74,12 +74,12 @@ pub(crate) fn record_page(name: &str, deliveries: Vec<Delivered>) {
     });
 }
 
-/// One page's record still owed to the harness, held from the moment the settle path captures
-/// the page until the record is pushed.
+/// One batch's record still owed to the harness, held from the moment the settle path captures
+/// the batch until the record is pushed.
 ///
-/// The settlements a page applies are what release the in-flight count, and the record is
+/// The settlements a batch applies are what release the in-flight count, and the record is
 /// written after the last of them, so without this a [`drive`](Coordinator::drive) could return
-/// in between and a test would assert against a page that has not been recorded yet.
+/// in between and a test would assert against a batch that has not been recorded yet.
 pub(crate) struct PendingRecord(Option<Coordinator>);
 
 impl PendingRecord {
@@ -142,14 +142,14 @@ pub(crate) struct Delivered {
     pub(crate) settle: Option<HandlerResult>,
 }
 
-/// One recorded call into a handler: a single delivery, or a whole page.
+/// One recorded call into a handler: a single delivery, or a whole batch.
 pub(crate) struct Record {
     /// The broker's registration index in the app, used to scope assertions per broker.
     pub(crate) scope_id: usize,
     /// The subscription (channel) name the message arrived on.
     pub(crate) name: String,
     /// What this call carried: exactly one delivery for a single-message handler, one per
-    /// element of the page for a batch handler.
+    /// element of the batch for a batch handler.
     pub(crate) deliveries: Vec<Delivered>,
     /// Whether the handler panicked.
     pub(crate) panicked: bool,
@@ -161,9 +161,9 @@ impl Record {
     /// Classifies this call into a single [`Outcome`]. Panic and decode-failure dominate the
     /// settlement (a fail-fast panic acks nothing; a skip-policy panic still records `Panicked`).
     ///
-    /// A page settling its elements differently has no one outcome; the first element's stands
+    /// A batch settling its elements differently has no one outcome; the first element's stands
     /// for the call, which is why the per-element assertions
-    /// ([`settled`](super::SubscriberAssertions::settled)) are what a mixed page is read with.
+    /// ([`settled`](super::SubscriberAssertions::settled)) are what a mixed batch is read with.
     pub(crate) fn outcome(&self) -> Outcome {
         if self.panicked {
             Outcome::Panicked

@@ -17,8 +17,8 @@ async fn mirror(order: &Order, Out(_audit): Out<impl Publisher, Audit>) -> Handl
     HandlerOutcome::ack()
 }
 
-// `.transactional()` makes a page's replies one broker transaction, and a slot publish is one
-// message with no page: a body opens its own slot transaction with `entry.begin()` instead.
+// `.transactional()` makes a batch's replies one broker transaction, and a slot publish is one
+// message with no batch: a body opens its own slot transaction with `entry.begin()` instead.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(mirror)

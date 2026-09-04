@@ -763,7 +763,7 @@ impl<Cd, Rep, Slots> CodecLast<Cd, NoOutBound> for (Rep, Slots) {
     }
 }
 
-/// A position the page-only steps can ride: the reply, and nothing else.
+/// A position the batch-only steps can ride: the reply, and nothing else.
 ///
 /// [`BatchTransformLast`] and [`TransactionalLast`] report the position as an associated type and
 /// state this about it, so the step fails on this bound and the call site reads the note rather
@@ -773,7 +773,7 @@ impl<Cd, Rep, Slots> CodecLast<Cd, NoOutBound> for (Rep, Slots) {
     message = "`.batch_transform(..)` and `.transactional()` ride the reply position",
     label = "the position this chain named before it is not `Reply`",
     note = "name the reply's publish policy first (`.out(Reply, policy)`); a slot publish is one \
-            message with no page, so a slot takes `.transform(..)` instead and a body opens its \
+            message with no batch, so a slot takes `.transform(..)` instead and a body opens its \
             own slot transaction with `entry.begin()`"
 )]
 pub trait ReplyStep {}
@@ -781,7 +781,7 @@ pub trait ReplyStep {}
 impl ReplyStep for ReplyLast {}
 
 /// Composes a batch transform onto the reply a mount chain named last. Reply-only: a slot
-/// publish is one message, so there is no page for a batch transform to run over. Machinery;
+/// publish is one message, so there is no batch for a batch transform to run over. Machinery;
 /// never named directly.
 #[doc(hidden)]
 pub trait BatchTransformLast<N, Last> {

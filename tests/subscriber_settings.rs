@@ -25,7 +25,7 @@ use ruststream::runtime::{
 use ruststream::testing::TestApp;
 use ruststream::{Buffered, Deserialized, Name, Publisher, nonzero, subscriber};
 
-/// The payload view the raw batch body below takes, one element per delivery in the page.
+/// The payload view the raw batch body below takes, one element per delivery in the batch.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
@@ -207,8 +207,8 @@ async fn the_builder_supplies_the_start_position() {
     running.shutdown().await.expect("shutdown failed");
 }
 
-/// The page shape read off the signature; the mount site names how big a page is and the broker
-/// builds its pages to it. The body records nothing; the harness reports the pages it was
+/// The batch shape read off the signature; the mount site names how big a batch is and the broker
+/// builds its batches to it. The body records nothing; the harness reports the batches it was
 /// handed.
 #[subscriber]
 async fn paginate(orders: &[Order]) -> HandlerOutcome {
@@ -217,11 +217,11 @@ async fn paginate(orders: &[Order]) -> HandlerOutcome {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_builder_supplies_the_page_size() {
+async fn the_builder_supplies_the_batch_size() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     // The whole run is in the log before the subscription opens, so the opening replay has three
-    // entries to hand over and the size is what shapes them into pages. The harness injects
+    // entries to hand over and the size is what shapes them into batches. The harness injects
     // after startup and settles per message, so the entries are published here.
     for id in 0..3u32 {
         publisher
@@ -241,7 +241,7 @@ async fn the_builder_supplies_the_page_size() {
         );
     });
     let tb = TestApp::start(app).await.expect("startup failed");
-    tb.settle().await.expect("the replayed page settles");
+    tb.settle().await.expect("the replayed batch settles");
 
     let subscriber = tb.broker::<MemoryBroker>();
     let subscriber = subscriber.subscriber("paginate");
@@ -250,15 +250,15 @@ async fn the_builder_supplies_the_page_size() {
         [Order { id: 0 }, Order { id: 1 }, Order { id: 2 }],
     );
     subscriber
-        // The broker built the pages to the size the mount named: two, then the remainder.
-        .assert_page_sizes(&[2, 1])
+        // The broker built the batches to the size the mount named: two, then the remainder.
+        .assert_batch_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
     tb.shutdown().await.expect("shutdown failed");
 }
 
-/// A page that answers: one call per delivered page, with that page's own reply vector.
-#[subscriber(publish("page-cap-confirmed"))]
-async fn confirm_pages(orders: &[Order]) -> Vec<Event> {
+/// A batch that answers: one call per delivered batch, with that batch's own reply vector.
+#[subscriber(publish("batch-cap-confirmed"))]
+async fn confirm_batches(orders: &[Order]) -> Vec<Event> {
     orders
         .iter()
         .map(|order| Event {
@@ -268,13 +268,13 @@ async fn confirm_pages(orders: &[Order]) -> Vec<Event> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_page_size_reaches_a_replying_page() {
+async fn the_batch_size_reaches_a_replying_batch() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     for id in 0..3u32 {
         publisher
             .message(&Order { id })
-            .to("page-cap-reply")
+            .to("batch-cap-reply")
             .publish()
             .await
             .expect("publish failed");
@@ -282,37 +282,37 @@ async fn the_page_size_reaches_a_replying_page() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         b.include(
-            confirm_pages
-                .name("page-cap-reply")
+            confirm_batches
+                .name("batch-cap-reply")
                 .start_at(MemoryPosition::start())
                 .batch(nonzero!(2)),
         );
     });
     let tb = TestApp::start(app).await.expect("startup failed");
-    tb.settle().await.expect("the replayed page settles");
+    tb.settle().await.expect("the replayed batch settles");
 
     let handle = tb.broker::<MemoryBroker>();
     handle
-        .subscriber("page-cap-reply")
-        .assert_page_sizes(&[2, 1])
+        .subscriber("batch-cap-reply")
+        .assert_batch_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
-    // Each page answered for its own elements, and the replies leave in page order.
+    // Each batch answered for its own elements, and the replies leave in batch order.
     assert_eq!(
-        handle.published::<Event>("page-cap-confirmed").decoded(),
+        handle.published::<Event>("batch-cap-confirmed").decoded(),
         [Event { id: 0 }, Event { id: 1 }, Event { id: 2 }],
     );
     tb.shutdown().await.expect("shutdown failed");
 }
 
-/// A page that fans out through a slot: the arena rides every page the broker delivers.
+/// A batch that fans out through a slot: the arena rides every batch the broker delivers.
 #[subscriber]
-async fn fan_out_pages(orders: &[Order], Out(out): Out<impl Publisher>) -> HandlerOutcome {
+async fn fan_out_batches(orders: &[Order], Out(out): Out<impl Publisher>) -> HandlerOutcome {
     for order in orders {
         if out
             .message(&Event {
                 id: u64::from(order.id),
             })
-            .to("page-cap-fanned")
+            .to("batch-cap-fanned")
             .publish()
             .await
             .is_err()
@@ -324,13 +324,13 @@ async fn fan_out_pages(orders: &[Order], Out(out): Out<impl Publisher>) -> Handl
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_page_size_reaches_a_slot_carrying_page() {
+async fn the_batch_size_reaches_a_slot_carrying_batch() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     for id in 0..3u32 {
         publisher
             .message(&Order { id })
-            .to("page-cap-slots")
+            .to("batch-cap-slots")
             .publish()
             .await
             .expect("publish failed");
@@ -338,8 +338,8 @@ async fn the_page_size_reaches_a_slot_carrying_page() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         b.include(
-            fan_out_pages
-                .name("page-cap-slots")
+            fan_out_batches
+                .name("batch-cap-slots")
                 .start_at(MemoryPosition::start())
                 .batch(nonzero!(2)),
         )
@@ -347,25 +347,25 @@ async fn the_page_size_reaches_a_slot_carrying_page() {
         .build();
     });
     let tb = TestApp::start(app).await.expect("startup failed");
-    tb.settle().await.expect("the replayed page settles");
+    tb.settle().await.expect("the replayed batch settles");
 
     let handle = tb.broker::<MemoryBroker>();
     handle
-        .subscriber("page-cap-slots")
-        .assert_page_sizes(&[2, 1])
+        .subscriber("batch-cap-slots")
+        .assert_batch_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());
     assert_eq!(
-        handle.published::<Event>("page-cap-fanned").decoded(),
+        handle.published::<Event>("batch-cap-fanned").decoded(),
         [Event { id: 0 }, Event { id: 1 }, Event { id: 2 }],
     );
     tb.shutdown().await.expect("shutdown failed");
 }
 
-/// The client-side buffer composes with a start position: a page subscription assembled out of
+/// The client-side buffer composes with a start position: a batch subscription assembled out of
 /// single deliveries still opens where the mount site says. The adapter is what a broker crate
-/// gives a transport with no native pages, named here by hand to pin the composition.
+/// gives a transport with no native batches, named here by hand to pin the composition.
 #[subscriber(Buffered::<Name>::new(Name::new("buffered-replay")).max_wait(Duration::from_millis(5)))]
-async fn replay_pages(orders: &[Order]) -> HandlerOutcome {
+async fn replay_batches(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();
     HandlerOutcome::ack()
 }
@@ -385,13 +385,13 @@ async fn the_buffer_composes_with_a_start_position() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
         b.include(
-            replay_pages
+            replay_batches
                 .batch(nonzero!(8))
                 .start_at(MemoryPosition::start()),
         );
     });
     let tb = TestApp::start(app).await.expect("startup failed");
-    tb.settle().await.expect("the replayed pages settle");
+    tb.settle().await.expect("the replayed batches settle");
 
     let handle = tb.broker::<MemoryBroker>();
     let subscriber = handle.subscriber("buffered-replay");
@@ -401,7 +401,7 @@ async fn the_buffer_composes_with_a_start_position() {
         [Order { id: 0 }, Order { id: 1 }, Order { id: 2 }],
     );
     subscriber
-        .assert_page_sizes(&[3])
+        .assert_batch_sizes(&[3])
         .settled(HandlerOutcome::ack());
     tb.shutdown().await.expect("shutdown failed");
 }

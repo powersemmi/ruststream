@@ -47,7 +47,7 @@ pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.
 #[doc(hidden)]
-pub use batch::{page_verdict, uniform_page};
+pub use batch::{batch_verdict, uniform_batch};
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
@@ -57,13 +57,13 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
-    Axis, AxisDocs, DeclaredDest, DocState, Docs, HandleValue, IsDocumented, NamedDest, OneByOne,
-    Page, PagePair, Paged, PagedAxis, Probed, ProbedDocs, ProbedReplyDef, ReplyValue, Sealed, Solo,
-    SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
+    Axis, AxisDocs, Batch, BatchPair, Batched, BatchedAxis, DeclaredDest, DocState, Docs,
+    HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDocs, ProbedReplyDef, ReplyValue,
+    Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
-    Deserialized, Documentable, Documented, EncodedReply, Handle, Input, IntoSource, Message, Outs,
-    PageDeserialized, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
+    BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,
+    IntoSource, Message, Outs, ReplyShape, Serialized, SerializedReply, Slot, SoloDeserialized,
     Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
@@ -124,11 +124,11 @@ pub use router::{
     RouterPublishingOut, RouterSink, RouterWith, forms,
 };
 pub use settings::{
-    AllOpen, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open, PageSized,
+    AllOpen, BatchSized, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
-pub use settings::{CapsPages, DefinitionInputCodec, MountsWith};
+pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
 pub use slot::{
     BatchTransformLast, BindAt, BindSlot, CodecAt, CodecLast, InitSlots, IntoSlotSource,

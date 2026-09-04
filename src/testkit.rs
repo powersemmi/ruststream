@@ -116,7 +116,7 @@ pub(crate) mod batch {
         }
     }
 
-    /// Pulls the next page off the subscriber, opened wide enough that only what is published
+    /// Pulls the next batch off the subscriber, opened wide enough that only what is published
     /// bounds it.
     pub(crate) async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
         let mut stream =

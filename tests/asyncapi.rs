@@ -525,7 +525,7 @@ mod typed_headers_spec {
             "got: {headers}"
         );
 
-        // The batch pair input does the same for the page's element: its contract half is the
+        // The batch pair input does the same for the batch's element: its contract half is the
         // receive message's headers schema, its payload half the payload schema.
         let report = &spec.components.messages["Report"];
         assert!(report.payload.is_some());

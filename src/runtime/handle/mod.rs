@@ -4,9 +4,9 @@
 //! parameter the impl pins, so the signature decides everything and nothing else is named:
 //!
 //! - `In` - the input spelling (see [`Input`]): a decoded `T`, a [`Deserialized`] type, a
-//!   [`Message<H, P>`] pair, or a page of any of them;
+//!   [`Message<H, P>`] pair, or a batch of any of them;
 //! - `R` - the verdict's `Ok` side (`()` declares no reply; a reply body names its reply type,
-//!   a page reply body `Vec<Reply>`; a [`Message<H, P>`] reply carries typed headers; a
+//!   a batch reply body `Vec<Reply>`; a [`Message<H, P>`] reply carries typed headers; a
 //!   [`Serialized`] reply's bytes leave as they are);
 //! - `O` - the injections arena (`()` declares none; see [`Outs`]);
 //! - `C` - the broker's typed per-delivery context;
@@ -63,8 +63,8 @@ mod matrix_tests;
 mod parity_tests;
 
 #[doc(hidden)]
-pub use axis::{Axis, AxisDocs, Page, PagePair, PagedAxis, Solo, SoloAxis, SoloPair};
-pub use axis::{Deserialized, Input, Message, PageDeserialized, SoloDeserialized};
+pub use axis::{Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Solo, SoloAxis, SoloPair};
+pub use axis::{BatchDeserialized, Deserialized, Input, Message, SoloDeserialized};
 #[doc(hidden)]
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
@@ -82,7 +82,7 @@ pub use value::{
 pub use value::{ProbedReplyDef, UnbuiltDefinition, probed_def, probed_reply_def};
 pub use verdict::Verdict;
 #[doc(hidden)]
-pub use verdict::{OneByOne, Paged, VerdictFamily};
+pub use verdict::{Batched, OneByOne, VerdictFamily};
 
 /// What the constructor returns: the settings builder over its definition, mounted on the
 /// converted source with every setting open.
@@ -109,10 +109,10 @@ use super::context::Context;
 /// The `outs` parameter carries the injections arena for a body that declared one (`O` other
 /// than `()`); a body without injections takes `&()`. The returned future's output is the
 /// input family's canonical verdict ([`Verdict<In, R>`]): `Result<R, HandlerOutcome>` for one
-/// message at a time, `Result<R, Vec<HandlerOutcome>>` for a page - so the body's `async fn`
+/// message at a time, `Result<R, Vec<HandlerOutcome>>` for a batch - so the body's `async fn`
 /// signature spells the verdict out literally.
 pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Sync {
-    /// Handles one input (a message, or a page of them).
+    /// Handles one input (a message, or a batch of them).
     fn handle(
         &self,
         input: &In,

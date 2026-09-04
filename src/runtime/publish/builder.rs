@@ -165,9 +165,6 @@ impl SatisfiesContract<NoHeaders> for HeadersUnset {}
 impl SatisfiesContract<NoHeaders> for MapHeaders {}
 
 impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
-
-// ------------------------------------------------------------------------------ the two wires
-
 /// A value that already carries its bytes: `Serialize` means the framework's codec does the
 /// work, `Serialized` means it is already done by the user's own type.
 ///

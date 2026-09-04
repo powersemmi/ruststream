@@ -56,8 +56,8 @@ pub struct BatchRoute<S, H, Cx = ()> {
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
-    /// The size the subscription opens its pages at, from the registration's `batch(n)`.
-    pub(super) page_size: NonZeroUsize,
+    /// The size the subscription opens its batches at, from the registration's `batch(n)`.
+    pub(super) batch_size: NonZeroUsize,
     pub(super) _context: PhantomData<fn() -> Cx>,
 }
 
@@ -140,7 +140,7 @@ where
             self.meta,
             self.policies,
             self.workers,
-            self.page_size,
+            self.batch_size,
         );
     }
 }

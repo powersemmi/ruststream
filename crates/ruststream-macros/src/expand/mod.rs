@@ -389,7 +389,7 @@ fn reject_batch_headers(shape: Shape, extractors: &[(&Pat, &Type)]) -> syn::Resu
         return Err(Error::new_spanned(
             ty,
             "headers are per-delivery: a batch pairs each element with its contract - take the \
-             page as `&[Message<H, T>]` and read `element.headers` (`Headers<..>` extraction \
+             batch as `&[Message<H, T>]` and read `element.headers` (`Headers<..>` extraction \
              stays on the single-message forms)",
         ));
     }
@@ -642,7 +642,7 @@ fn body_decl(body: &Type) -> syn::Result<Option<BodyDecl<'_>>> {
 }
 
 /// What the handler consumes per invocation, read off its message parameter - the attribute
-/// carries no form clause: `&T` is one message, `&[T]` a whole page of them. Which lane the
+/// carries no form clause: `&T` is one message, `&[T]` a whole batch of them. Which lane the
 /// element rides (the codec, or its own `Deserialized` construction) is the type's own
 /// business, so the shape stops at the slice question.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -670,7 +670,7 @@ fn resolve_shape(reference: &syn::TypeReference) -> syn::Result<(Shape, &Type)> 
             {
                 return Err(Error::new_spanned(
                     &slice.elem,
-                    "a page of payloads takes a named element type: #[derive(Deserialized)] on \
+                    "a batch of payloads takes a named element type: #[derive(Deserialized)] on \
                      a newtype over the payload view (struct Frame<'a>(&'a [u8]);) and take \
                      `&[Frame<'_>]`",
                 ));
@@ -805,7 +805,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     let workers_state = state_marker(args.workers.is_some());
     let failure_state = state_marker(args.on_failure.is_some());
     let settings_chain = quote!(#workers_step #failure_step #start_at_step);
-    // The page-supply slot (`buffered(..)` / `batch(..)`) has no attribute clause of its own, so
+    // The batch-supply slot (`buffered(..)` / `batch(..)`) has no attribute clause of its own, so
     // it is always the mount site's to fill.
     let settings_state_ty = quote!((
         #workers_state,

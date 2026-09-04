@@ -1,5 +1,0 @@
-error: a page of payloads takes a named element type: #[derive(Deserialized)] on a newtype over the payload view (struct Frame<'a>(&'a [u8]);) and take `&[Frame<'_>]`
- --> tests/ui/subscriber_bare_slice_page.rs:6:26
-  |
-6 | async fn pages(frames: &[&[u8]]) {
-  |                          ^^^^^

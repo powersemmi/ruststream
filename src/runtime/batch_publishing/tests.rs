@@ -112,10 +112,10 @@ async fn transactional_replies_publish_atomically_then_ack() {
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
-/// A page reply is one call for the page the broker delivered: its replies publish together
-/// (one transaction under a transactional publisher) and the page settles once.
+/// A batch reply is one call for the batch the broker delivered: its replies publish together
+/// (one transaction under a transactional publisher) and the batch settles once.
 #[tokio::test]
-async fn a_page_reply_answers_for_the_whole_delivered_page() {
+async fn a_batch_reply_answers_for_the_whole_delivered_batch() {
     let broker = MemoryBroker::new();
     let mut input = broker.subscribe("orders");
     let mut replies = broker.subscribe("confirmations");
@@ -137,13 +137,13 @@ async fn a_page_reply_answers_for_the_whole_delivered_page() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
-    assert_eq!(batch.len(), 3, "the whole page is delivered at once");
+    assert_eq!(batch.len(), 3, "the whole batch is delivered at once");
     handler.handle_batch(batch, &mut ctx).await;
 
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
-        "the delivered page is one call, whatever its size",
+        "the delivered batch is one call, whatever its size",
     );
     let confirmed = pull_batch(&mut replies).await;
     let payloads: Vec<&[u8]> = confirmed.iter().map(IncomingMessage::payload).collect();
@@ -152,7 +152,7 @@ async fn a_page_reply_answers_for_the_whole_delivered_page() {
         msg.ack().await.unwrap();
     }
 
-    // Every element of the page was acked, so nothing comes back.
+    // Every element of the batch was acked, so nothing comes back.
     let mut stream = std::pin::pin!(input.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 }

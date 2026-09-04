@@ -9,7 +9,7 @@ help: the trait `BatchSubscriber` is not implemented for `OneAtATime`
    |
 13 | struct OneAtATime(MemorySubscriber);
    | ^^^^^^^^^^^^^^^^^
-   = note: a handler taking `&[T]` needs pages: mount it on a subscription kind that batches. A broker whose transport has no native batches gives its subscriber this capability through the `Buffered` adapter (see the broker-authors guide)
+   = note: a handler taking `&[T]` is handed whole batches: mount it on a subscription kind that batches. A broker whose transport has no native batches gives its subscriber this capability through the `Buffered` adapter (see the broker-authors guide)
 help: the following other types implement trait `BatchSubscriber`
   --> src/memory/capability.rs
    |
@@ -20,5 +20,5 @@ help: the following other types implement trait `BatchSubscriber`
    |
    | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
-   = note: required for `Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
-   = note: required for `Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Page<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
+   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
+   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`

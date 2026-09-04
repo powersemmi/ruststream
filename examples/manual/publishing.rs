@@ -448,9 +448,9 @@ impl PublishLayer for AuditPublish {
 // --8<-- [end:app_layer]
 
 // --8<-- [start:batch_publishing]
-/// Confirms a whole page of orders; the replies become visible atomically on commit. The page
+/// Confirms a whole batch of orders; the replies become visible atomically on commit. The batch
 /// input and the reply type are two axes of the one trait: one `Vec` of replies per batch, each
-/// published to the destination the chain names, and an `Err` settles the page element-wise
+/// published to the destination the chain names, and an `Err` settles the batch element-wise
 /// (one outcome per element) without publishing anything.
 struct Confirm;
 
@@ -462,7 +462,7 @@ impl Handle<[Event], Vec<Event>> for Confirm {
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<Vec<Event>, Vec<HandlerOutcome>>> {
         if orders.iter().any(|o| o.id == 0) {
-            // nothing published, every element of the page settled on its own
+            // nothing published, every element of the batch settled on its own
             return ready(Err(orders.iter().map(|_| HandlerOutcome::drop()).collect()));
         }
         ready(Ok(orders.iter().map(|o| Event { id: o.id }).collect()))
@@ -563,7 +563,7 @@ fn app() -> impl App {
                 .build();
             // --8<-- [end:declared_mount]
             // --8<-- [start:batch_publishing_mount]
-            // .batch(n) is the page size the subscription opens with, which every page mount
+            // .batch(n) is the batch size the subscription opens with, which every batch mount
             // owes. .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher is transactional. Without it, each reply publishes independently.
             b.include(

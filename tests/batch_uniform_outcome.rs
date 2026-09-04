@@ -1,8 +1,8 @@
-//! A batch body that answers with one outcome for the whole page.
+//! A batch body that answers with one outcome for the whole batch.
 //!
-//! An acking page with nothing attached is the fast path: the page settles as a unit. Every other
+//! An acking batch with nothing attached is the fast path: the batch settles as a unit. Every other
 //! uniform answer - a refusal, or an ack carrying post-settle work - fans out to a per-element
-//! settlement, and the attached work rides the last element so a page runs it at most once.
+//! settlement, and the attached work rides the last element so a batch runs it at most once.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -21,17 +21,17 @@ use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSetting
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{nonzero, subscriber};
 
-/// Refuses the whole page at once: one outcome answers for every element in it.
+/// Refuses the whole batch at once: one outcome answers for every element in it.
 #[subscriber("uniform-drop")]
 async fn refuse(orders: &[Order]) -> HandlerOutcome {
     let _ = orders;
     HandlerOutcome::drop()
 }
 
-/// Every element of a refused page is settled by that one outcome, so nothing is left unsettled
+/// Every element of a refused batch is settled by that one outcome, so nothing is left unsettled
 /// behind an answer that named no element in particular.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_uniform_refusal_settles_every_element_of_the_page() {
+async fn a_uniform_refusal_settles_every_element_of_the_batch() {
     let app =
         RustStream::new(AppInfo::new("uniform", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(refuse.batch(nonzero!(64)));
@@ -65,11 +65,11 @@ async fn a_uniform_refusal_settles_every_element_of_the_page() {
         .settled(HandlerOutcome::drop());
 }
 
-/// How many times the page's attached post-settle work ran. It lives in application state, which
+/// How many times the batch's attached post-settle work ran. It lives in application state, which
 /// is what a continuation writing to a dependency looks like in a service.
 struct Continued(Arc<AtomicUsize>);
 
-/// Acks the whole page and attaches one piece of post-settle work to that single answer.
+/// Acks the whole batch and attaches one piece of post-settle work to that single answer.
 #[subscriber("uniform-after")]
 async fn accept(orders: &[Order], ctx: &mut Context<'_, (), Continued>) -> HandlerOutcome {
     let _ = orders;
@@ -79,10 +79,10 @@ async fn accept(orders: &[Order], ctx: &mut Context<'_, (), Continued>) -> Handl
     })
 }
 
-/// One message makes one page, so the attached work runs exactly once - the assertion that pins
-/// "once per page" rather than "once per element".
+/// One message makes one batch, so the attached work runs exactly once - the assertion that pins
+/// "once per batch" rather than "once per element".
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_uniform_ack_runs_its_attached_work_once_for_the_page() {
+async fn a_uniform_ack_runs_its_attached_work_once_for_the_batch() {
     let continued = Arc::new(AtomicUsize::new(0));
     let state_counter = Arc::clone(&continued);
     let app = RustStream::new(AppInfo::new("uniform-after", "0.1.0"))

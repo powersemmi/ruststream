@@ -15,7 +15,7 @@ use crate::{FixedName, Name, OutgoingDestination, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
+    Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
     SoloDeserialized, SoloPair,
 };
 use super::docs::DocState;
@@ -23,10 +23,7 @@ use super::eager::construct;
 use super::value::{
     DeclaredDest, EncodedReply, HandleValue, NamedDest, ReplyValue, Sealed, SerializedReply,
 };
-use super::verdict::{OneByOne, Paged};
-
-// ------------------------------------------------------------------------------ reply shapes
-
+use super::verdict::{Batched, OneByOne};
 // The self-serialized vocabulary lives with the publish builder (the general wire seam serves
 // every typed surface); re-exported here so the reply seam keeps reading as one module.
 pub use crate::runtime::publish::Serialized;
@@ -163,11 +160,11 @@ where
 
 /// The form tokens of one reply wire on one verdict family: the sealed value-path tokens and
 /// the attribute path's builder-producing forms, with and without slots. The serialized wire
-/// has no page form: a page's replies publish through the reply codec.
+/// has no batch form: a batch's replies publish through the reply codec.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "this reply's wire does not mount on this input family",
-    note = "an encoded reply (`serde::Serialize`) mounts one-by-one and per page; a \
+    note = "an encoded reply (`serde::Serialize`) mounts one-by-one and per batch; a \
             `Serialized` (raw-byte) reply mounts one-by-one only"
 )]
 pub trait ReplyFormFor<Fam> {
@@ -182,7 +179,7 @@ impl ReplyFormFor<OneByOne> for EncodedReply {
     type SlotForm = forms::PublishingOut;
 }
 
-impl ReplyFormFor<Paged> for EncodedReply {
+impl ReplyFormFor<Batched> for EncodedReply {
     type Form = forms::BatchPublishing;
     type SlotForm = forms::BatchPublishingOut;
 }
@@ -193,7 +190,7 @@ impl ReplyFormFor<OneByOne> for SerializedReply {
 }
 
 /// The route of one reply type on one verdict family: its wire, and the form tokens that wire
-/// selects. One-by-one the reply type routes itself; per page the `Vec<Reply>` verdict routes
+/// selects. One-by-one the reply type routes itself; per batch the `Vec<Reply>` verdict routes
 /// by its element. Machinery behind `include` and the reply chain; never named in user code.
 #[doc(hidden)]
 pub trait ReplyRoute<Fam> {
@@ -215,14 +212,14 @@ where
     type SlotForm = <R::Wire as ReplyFormFor<OneByOne>>::SlotForm;
 }
 
-impl<R> ReplyRoute<Paged> for Vec<R>
+impl<R> ReplyRoute<Batched> for Vec<R>
 where
     R: ReplyShape,
-    R::Wire: ReplyFormFor<Paged>,
+    R::Wire: ReplyFormFor<Batched>,
 {
     type Wire = R::Wire;
-    type Form = <R::Wire as ReplyFormFor<Paged>>::Form;
-    type SlotForm = <R::Wire as ReplyFormFor<Paged>>::SlotForm;
+    type Form = <R::Wire as ReplyFormFor<Batched>>::Form;
+    type SlotForm = <R::Wire as ReplyFormFor<Batched>>::SlotForm;
 }
 
 impl<A, R, C, H, Doc, Dest> IncludeDef
@@ -233,9 +230,6 @@ where
 {
     type Form = R::Form;
 }
-
-// ------------------------------------------------------------------------- the solo reply def
-
 impl<A, R, C, H, Doc, Dest> PublishingDef
     for Sealed<ReplyValue<HandleValue<A, R, (), C, H, Doc>, Dest>>
 where
@@ -377,13 +371,10 @@ where
         self.0.value.body.handle(input, &(), ctx).await
     }
 }
-
-// ------------------------------------------------------------------------- the page reply def
-
 impl<A, R, C, H, Doc, Dest> BatchPublishingDef
     for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), C, H, Doc>, Dest>>
 where
-    A: PagedAxis,
+    A: BatchedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
     C: Send + Sync,
     H: Send + Sync,
@@ -447,26 +438,26 @@ where
     }
 }
 
-/// Applies the page reply contract: one reply per element, or one outcome per element.
-pub(super) fn page_reply_verdict<R>(
+/// Applies the batch reply contract: one reply per element, or one outcome per element.
+pub(super) fn batch_reply_verdict<R>(
     verdict: Result<Vec<R>, Vec<HandlerOutcome>>,
-    page_len: usize,
+    batch_len: usize,
     subscription: &str,
 ) -> Result<Vec<R>, BatchResult> {
     match verdict {
         Ok(replies) => {
             assert!(
-                replies.len() == page_len,
-                "subscriber '{subscription}' returned {} replies for a page of {page_len}",
+                replies.len() == batch_len,
+                "subscriber '{subscription}' returned {} replies for a batch of {batch_len}",
                 replies.len(),
             );
             Ok(replies)
         }
         Err(outcomes) => {
             assert!(
-                outcomes.len() == page_len,
-                "subscriber '{subscription}' returned {} per-element outcomes for a page of \
-                 {page_len}",
+                outcomes.len() == batch_len,
+                "subscriber '{subscription}' returned {} per-element outcomes for a batch of \
+                 {batch_len}",
                 outcomes.len(),
             );
             Err(BatchResult::PerElement(outcomes))
@@ -475,10 +466,15 @@ pub(super) fn page_reply_verdict<R>(
 }
 
 impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Page<T>, Vec<R>, (), C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<Batch<T>, Vec<R>, (), C, H, Doc>, Dest>>
 where
-    Self: BatchPublishingDef<Input = <Page<T> as Axis>::Kind, Injections = (), Context = C, Reply = R>,
-    [T]: Input<Axis = Page<T>>,
+    Self: BatchPublishingDef<
+            Input = <Batch<T> as Axis>::Kind,
+            Injections = (),
+            Context = C,
+            Reply = R,
+        >,
+    [T]: Input<Axis = Batch<T>>,
     T: Send + Sync + 'static,
     R: ReplyShape,
     C: Send + Sync,
@@ -492,20 +488,20 @@ where
         ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, &(), ctx).await;
-        page_reply_verdict(verdict, batch.len(), ctx.name())
+        batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
 impl<Hd, P, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<PagePair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
-            Input = <PagePair<Hd, P> as Axis>::Kind,
+            Input = <BatchPair<Hd, P> as Axis>::Kind,
             Injections = (),
             Context = C,
             Reply = R,
         >,
-    [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
+    [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
     R: ReplyShape,
@@ -520,6 +516,6 @@ where
         ctx: &mut Context<'_, C, S>,
     ) -> Result<Vec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, &(), ctx).await;
-        page_reply_verdict(verdict, batch.len(), ctx.name())
+        batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }

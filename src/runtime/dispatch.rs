@@ -476,7 +476,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     delivery: Arc<Delivery>,
     failure: DispatchFailure,
     workers: Workers,
-    page_size: NonZeroUsize,
+    batch_size: NonZeroUsize,
 ) -> JoinHandle<()>
 where
     S: BatchSubscriber + Send + 'static,
@@ -486,9 +486,9 @@ where
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
-        // The registration's own page size, straight to the broker: whatever comes back is the
-        // page the handler sees.
-        let mut stream = std::pin::pin!(subscriber.batches(page_size));
+        // The registration's own batch size, straight to the broker: whatever comes back is the
+        // batch the handler sees.
+        let mut stream = std::pin::pin!(subscriber.batches(batch_size));
         let mut tasks = JoinSet::new();
         loop {
             tokio::select! {
@@ -683,7 +683,7 @@ async fn run_batch<H, M, C, St>(
     C: crate::BuildBatchContext<M> + Send,
     St: Send + Sync,
 {
-    // A page with no deliveries has nothing to settle and no first delivery to build a context
+    // A batch with no deliveries has nothing to settle and no first delivery to build a context
     // from; nothing to do.
     let Some(first) = batch.first() else { return };
     let empty = HeaderMap::new();
@@ -695,16 +695,16 @@ async fn run_batch<H, M, C, St>(
         .with_failfast(&failure.shutdown)
         .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness scope attributes `Out` publishes to their slot, and lets the
-    // batch settle path record the page it applied.
-    // A panicking page settles nothing, so its payloads are captured here (the handler owns the
+    // batch settle path record the batch it applied.
+    // A panicking batch settles nothing, so its payloads are captured here (the handler owns the
     // deliveries and a panic consumes them) to record the call the settle path never reached.
     #[cfg(feature = "testing")]
-    let page: Vec<Bytes> = batch
+    let payloads: Vec<Bytes> = batch
         .iter()
         .map(|msg| Bytes::copy_from_slice(msg.payload()))
         .collect();
     // A batch settles its own deliveries inside the handler (a panic settles them by dropping
-    // them), so the last decrement lands before the page record and the fail-fast signal below.
+    // them), so the last decrement lands before the batch record and the fail-fast signal below.
     // One extra in-flight token spans the whole dispatch, so a harness driving to quiescence
     // cannot return into that window.
     #[cfg(feature = "testing")]
@@ -742,7 +742,7 @@ async fn run_batch<H, M, C, St>(
                 coordinator.record(Record {
                     scope_id: delivery.scope_id,
                     name: name.to_owned(),
-                    deliveries: page
+                    deliveries: payloads
                         .into_iter()
                         .map(|raw| Delivered { raw, settle: None })
                         .collect(),

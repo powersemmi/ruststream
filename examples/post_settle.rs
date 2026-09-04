@@ -31,7 +31,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 /// its own follow-up. The continuation rides with the element, so a batch settles each message and
 /// its side effect independently.
 #[subscriber("orders")]
-async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
+async fn handle_batch(orders: &[Order]) -> Vec<HandlerOutcome> {
     orders
         .iter()
         .map(|order| {
@@ -52,6 +52,6 @@ async fn handle_page(orders: &[Order]) -> Vec<HandlerOutcome> {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("post_settle", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(handle);
-        b.include(handle_page.batch(nonzero!(64)));
+        b.include(handle_batch.batch(nonzero!(64)));
     })
 }

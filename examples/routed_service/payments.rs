@@ -30,9 +30,9 @@ pub(crate) async fn process_payment(
 }
 // --8<-- [end:workers]
 
-/// Settles a page of cleared payments and publishes the settlements on `settlements`. Mounted with
-/// a transactional publisher in [`routes`](crate::routes), so the whole page becomes visible
-/// atomically on commit. The batch contract guarantees a non-empty page, so the handler maps it
+/// Settles a batch of cleared payments and publishes the settlements on `settlements`. Mounted with
+/// a transactional publisher in [`routes`](crate::routes), so the whole batch becomes visible
+/// atomically on commit. The batch contract guarantees a non-empty batch, so the handler maps it
 /// straight to replies; returning the bare `Vec` publishes them all and acks the batch.
 // --8<-- [start:batch]
 // This handler ignores the app state, so it omits the `Context` parameter and stays generic over

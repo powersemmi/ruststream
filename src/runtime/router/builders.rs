@@ -134,10 +134,10 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     }
 
     /// Composes a [`BatchPublishTransform`](crate::runtime::BatchPublishTransform) onto every
-    /// reply of a page (`&[T]` plus `publish(..)`), after the per-message stack. Wrap a
+    /// reply of a batch (`&[T]` plus `publish(..)`), after the per-message stack. Wrap a
     /// per-message transform with [`for_batch`](crate::runtime::for_batch) to reuse it here.
     ///
-    /// Reply-only: a slot publish is one message with no page to run a batch transform over.
+    /// Reply-only: a slot publish is one message with no batch to run a batch transform over.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn batch_transform<N>(
         self,
@@ -153,13 +153,13 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         )
     }
 
-    /// Publishes a page's replies inside one broker transaction: they all become visible
+    /// Publishes a batch's replies inside one broker transaction: they all become visible
     /// atomically on commit, or none of them do.
     ///
     /// The policy's live publisher has to be a
     /// [`TransactionalPublisher`](crate::TransactionalPublisher), which the pairing checks against
-    /// the chain's own broker; a one-message reply has no page to make atomic, so the wiring only
-    /// mounts on the page forms. Reply-only, for the same reason
+    /// the chain's own broker; a one-message reply has no batch to make atomic, so the wiring only
+    /// mounts on the batch forms. Reply-only, for the same reason
     /// [`batch_transform`](Self::batch_transform) is.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn transactional(

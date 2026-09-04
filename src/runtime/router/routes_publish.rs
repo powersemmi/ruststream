@@ -81,8 +81,8 @@ pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) meta: HandlerMetadata,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
-    /// The size the subscription opens its pages at, from the registration's `batch(n)`.
-    pub(super) page_size: NonZeroUsize,
+    /// The size the subscription opens its batches at, from the registration's `batch(n)`.
+    pub(super) batch_size: NonZeroUsize,
 }
 
 /// Renders the deferred routes by the registration they carry: they hold no built handler to
@@ -305,7 +305,7 @@ where
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
-    // transactional) that reads the page's context while publishing each reply.
+    // transactional) that reads the batch's context while publishing each reply.
     ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
     BatchReply: ReplyPublisher<Def::Context> + 'static,
 {
@@ -327,7 +327,7 @@ where
             meta,
             policies,
             workers,
-            page_size,
+            batch_size,
         } = self;
         sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
@@ -352,7 +352,7 @@ where
             meta,
             policies,
             workers,
-            page_size,
+            batch_size,
         );
     }
 }
@@ -405,7 +405,7 @@ mod tests {
             meta: HandlerMetadata::raw("bulk-orders"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
-            page_size: crate::nonzero!(8),
+            batch_size: crate::nonzero!(8),
         };
         let rendered = format!("{batch_publishing:?}");
         assert!(rendered.contains("BatchPublishingRoute"), "{rendered}");

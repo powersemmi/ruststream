@@ -1,6 +1,6 @@
 //! The reply wiring a mount site's chain builds, driven end to end on the in-memory broker: the
 //! codec the chain names encodes the reply, the transform it composes stamps it, and
-//! `.transactional()` puts a page's replies in one broker transaction.
+//! `.transactional()` puts a batch's replies in one broker transaction.
 #![cfg(all(
     feature = "testing",
     feature = "macros",
@@ -119,22 +119,22 @@ async fn a_chained_transform_stamps_the_reply() {
     );
 }
 
-#[subscriber("page.in", publish("page.out"))]
-async fn confirm_page(orders: &[Order]) -> Vec<Receipt> {
+#[subscriber("batch.in", publish("batch.out"))]
+async fn confirm_batch(orders: &[Order]) -> Vec<Receipt> {
     orders
         .iter()
         .map(|order| Receipt { id: order.id })
         .collect()
 }
 
-/// `.transactional()` publishes a page's replies inside one broker transaction, and the
+/// `.transactional()` publishes a batch's replies inside one broker transaction, and the
 /// batch-only transform still runs on each of them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_reply_commits_its_transaction() {
+async fn a_batch_reply_commits_its_transaction() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(confirm_page.batch(nonzero!(8)))
+            b.include(confirm_batch.batch(nonzero!(8)))
                 .out(Reply, TransactionalPublish)
                 .batch_transform(for_batch(Stamp))
                 .transactional();
@@ -143,21 +143,23 @@ async fn a_page_reply_commits_its_transaction() {
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 11 })
-        .to("page.in")
+        .to("batch.in")
         .publish()
         .await
         .expect("publish");
 
     tb.broker::<MemoryBroker>()
-        .subscriber("page.in")
+        .subscriber("batch.in")
         .assert_called_once()
         .settled(HandlerOutcome::ack());
 
-    let published = tb.broker::<MemoryBroker>().published::<Receipt>("page.out");
+    let published = tb
+        .broker::<MemoryBroker>()
+        .published::<Receipt>("batch.out");
     let published = published.assert_called_once().with(&Receipt { id: 11 });
     assert_eq!(
         published.messages()[0].headers().get("x-stamped"),
         Some(b"1".as_slice()),
-        "the page's replies must carry the batch transform's header",
+        "the batch's replies must carry the batch transform's header",
     );
 }

@@ -282,7 +282,7 @@ impl Handle<StatusRequest, StatusReply> for Status {
 }
 // --8<-- [end:reply]
 
-// Headers stay per-delivery on a batch too, so the contracts arrive as one per element: a page of
+// Headers stay per-delivery on a batch too, so the contracts arrive as one per element: a batch of
 // `Message<ChunkMeta, Progress>` pairs each payload with its own contract, and an element failing
 // either the payload decode or the contract is settled by the decode policy instead of reaching the
 // handler. The input spelling is the whole declaration - nothing else names the batch.

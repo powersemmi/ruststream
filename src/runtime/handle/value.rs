@@ -5,9 +5,9 @@ use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 
-use crate::runtime::settings::{CapsPages, SubscriberBuilder};
+use crate::runtime::settings::{CapsBatches, SubscriberBuilder};
 
-use super::axis::{Input, Page, PageDeserialized, PagePair};
+use super::axis::{Batch, BatchDeserialized, BatchPair, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::{Handle, IntoSource};
 
@@ -77,13 +77,13 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// Binds a [`Handle`] body to its subscription source; the one mounting verb of the manual
 /// path.
 ///
-/// Every axis comes from the body's `impl Handle<..>`: the input spelling (single, raw, page,
+/// Every axis comes from the body's `impl Handle<..>`: the input spelling (single, raw, batch,
 /// typed-headers pair), the reply type, the injections arena, the broker context and the typed
 /// application state. The chain then carries what is not in the signature - the declarative
 /// settings ([`workers`](crate::runtime::SubscriberSettings::workers),
 /// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
 /// [`start_at`](crate::runtime::SubscriberSettings::start_at), ...), what the body replies with
-/// and where ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to)), the page size
+/// and where ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to)), the batch size
 /// ([`batch`](crate::runtime::SubscriberSettings::batch)) and the documentation opt-out
 /// ([`undocumented`](SubscriberBuilder::undocumented)) - and
 /// [`build`](SubscriberBuilder::build) seals the definition for
@@ -138,9 +138,6 @@ where
         source.into_source(),
     )
 }
-
-// --------------------------------------------------------------------- the macro expansion seam
-
 /// Builds a `#[subscriber]` expansion's sealed plain definition: the same value the
 /// `subscriber(..) .. .build()` chain produces, at the probe-captured documentation state
 /// (see [`ProbedDocs`]) instead of the documented-by-default obligations. Machinery behind the
@@ -182,9 +179,6 @@ pub fn probed_reply_def<A, R, O, C, H>(
         dest: NamedDest(Cow::Borrowed(dest)),
     })
 }
-
-// ------------------------------------------------------------------------- the reply wiring
-
 /// The reply destination still unnamed: it resolves from the reply type's own
 /// `#[outgoing(name = "..")]` declaration, and a type declaring none takes a mandatory
 /// [`to`](SubscriberBuilder::to).
@@ -256,29 +250,26 @@ impl<V> fmt::Debug for Sealed<V> {
     }
 }
 
-// Which definitions may name a page size: every page form, with the reply axis and the
+// Which definitions may name a batch size: every batch form, with the reply axis and the
 // injections arena free, because the size is the subscription's parameter and none of those
-// axes changes how a page is opened. The size itself rides the settings builder, not the
+// axes changes how a batch is opened. The size itself rides the settings builder, not the
 // definition; this only says the step belongs here.
 //
-// The three page spellings are named one by one rather than through a `PagedAxis` bound on one
+// The three batch spellings are named one by one rather than through a `BatchedAxis` bound on one
 // impl: a bound inside a matching impl is what the compiler reports back, and the axis marker's
-// name is machinery. With no impl matching a single-message definition, the missing `CapsPages`
+// name is machinery. With no impl matching a single-message definition, the missing `CapsBatches`
 // carries the message instead.
-impl<T, R, O, C, H, Doc> CapsPages for HandleValue<Page<T>, R, O, C, H, Doc> {}
+impl<T, R, O, C, H, Doc> CapsBatches for HandleValue<Batch<T>, R, O, C, H, Doc> {}
 
-impl<F, R, O, C, H, Doc> CapsPages for HandleValue<PageDeserialized<F>, R, O, C, H, Doc> {}
+impl<F, R, O, C, H, Doc> CapsBatches for HandleValue<BatchDeserialized<F>, R, O, C, H, Doc> {}
 
-impl<Hd, P, R, O, C, H, Doc> CapsPages for HandleValue<PagePair<Hd, P>, R, O, C, H, Doc> {}
+impl<Hd, P, R, O, C, H, Doc> CapsBatches for HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc> {}
 
 // The reply wrapper and the seal are transparent to the step, so the attribute path sizes the
 // very definition the `subscriber(..)` chain does.
-impl<V: CapsPages, Dest> CapsPages for ReplyValue<V, Dest> {}
+impl<V: CapsBatches, Dest> CapsBatches for ReplyValue<V, Dest> {}
 
-impl<V: CapsPages> CapsPages for Sealed<V> {}
-
-// ------------------------------------------------------------------ steps on the plain chain
-
+impl<V: CapsBatches> CapsBatches for Sealed<V> {}
 impl<A, R, O, C, H, Doc, Src, State, DC>
     SubscriberBuilder<HandleValue<A, R, O, C, H, Doc>, Src, State, DC>
 {
@@ -335,9 +326,6 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
 )]
 pub trait IsDocumented {}
 impl IsDocumented for Documented {}
-
-// ------------------------------------------------------------------ steps on the reply chain
-
 impl<V, Src, State, DC> SubscriberBuilder<ReplyValue<V, DeclaredDest>, Src, State, DC> {
     /// Names the subject the reply is published to, overriding nothing: without this call the
     /// destination comes from the reply type's own `#[outgoing(name = "..")]` declaration, and

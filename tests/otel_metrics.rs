@@ -501,7 +501,7 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
         batches >= 1,
         "at least one batch must be recorded: {points:?}",
     );
-    // However the stream was cut into pages, the recorded sizes add up to every element.
+    // However the stream was cut into batches, the recorded sizes add up to every element.
     assert_eq!(
         elements, 3,
         "the recorded sizes must add up to every decoded element: {points:?}",

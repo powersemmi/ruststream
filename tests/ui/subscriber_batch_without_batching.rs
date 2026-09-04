@@ -38,8 +38,8 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
     }
 }
 
-// The signature asks for a page, and the mount names its size; this subscription cannot deliver
-// pages at all, which is the broker's own gap to close.
+// The signature asks for a batch, and the mount names its size; this subscription cannot deliver
+// batches at all, which is the broker's own gap to close.
 #[subscriber(Trickle { name: "orders" })]
 async fn handle(orders: &[Order]) -> HandlerOutcome {
     let _ = orders.len();

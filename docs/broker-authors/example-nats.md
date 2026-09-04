@@ -550,8 +550,8 @@ impl RequestReply for NatsPublisher {
 
 A JetStream pull consumer fetches in batches on the wire, so `BatchSubscriber` reports what the
 transport already does rather than emulating anything: one stream item is one fetch, bounded by a
-batch size and an expiry, and an empty fetch is retried so a page is never empty. The Core arm of
-the same subscriber has no wire-level batching, so a page there is whatever the client has already
+batch size and an expiry, and an empty fetch is retried so a batch is never empty. The Core arm of
+the same subscriber has no wire-level batching, so a batch there is whatever the client has already
 buffered locally, capped and never padded with latency the transport does not have. A broker
 without either would leave the capability out and let users reach for the client-side
 [`buffered`](../guides/subscribers.md#batch-subscribers) adapter instead.

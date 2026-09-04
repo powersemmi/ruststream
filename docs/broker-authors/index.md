@@ -241,10 +241,10 @@ pub trait NatsSubscriber {
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-// The four state slots are (workers, failure policies, start position, page size); `Codec` is
+// The four state slots are (workers, failure policies, start position, batch size); `Codec` is
 // the registration's own decode override, `()` until one is named. Both travel unchanged.
-impl<Def, Workers, Failures, StartAt, Page, Codec> NatsSubscriber
-    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartAt, Page), Codec>
+impl<Def, Workers, Failures, StartAt, Batch, Codec> NatsSubscriber
+    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartAt, Batch), Codec>
 where
     Def: Declared,
 {
@@ -306,12 +306,12 @@ hook is the ergonomic mirror, not a replacement.
 ## Capability traits
 
 Implement only the capabilities your broker supports; none are part of the mandatory interface.
-`BatchSubscriber` is the exception: [every broker offers it](#pages-batchsubscriber), because
-every page handler asks for one.
+`BatchSubscriber` is the exception: [every broker offers it](#batches-batchsubscriber), because
+every batch handler asks for one.
 
 | Trait | For brokers that support |
 |---|---|
-| `BatchSubscriber` | receiving messages in pages (every broker; see below) |
+| `BatchSubscriber` | receiving messages in batches (every broker; see below) |
 | `TransactionalPublisher` | begin / commit / abort around publishes on the handle |
 | `OwnedTransactions` / `Transaction` | transactions whose buffer lives in a value, any number open at once per handle |
 | `RequestReply` | native request-reply (NATS yes, Kafka no) |
@@ -340,22 +340,22 @@ entry also offers that capability's typed form over the include site's codec and
 dictionary - the publish builder, a transaction scope, an owned transaction, a correlated request
 - so implementing the trait on your live publisher is all a service needs to reach them.
 
-### Pages: `BatchSubscriber`
+### Batches: `BatchSubscriber`
 
-A handler taking `&[T]` consumes a page, and its mount site names one number - the page size -
-which the runtime passes straight to `BatchSubscriber::batches(size)`. The page your subscriber
-yields is the page the body sees: the runtime never splits or merges one, so a page must never
+A handler taking `&[T]` consumes a batch, and its mount site names one number - the batch size -
+which the runtime passes straight to `BatchSubscriber::batches(size)`. The batch your subscriber
+yields is the batch the body sees: the runtime never splits or merges one, so a batch must never
 carry more than `size` messages, and it may carry fewer whenever that is all the transport had.
 
 Translate `size` into whatever your client already speaks: `XREADGROUP COUNT`, a JetStream pull
-batch, a Kafka poll limit. Everything else about how a page forms - a block timeout, a consumer
+batch, a Kafka poll limit. Everything else about how a batch forms - a block timeout, a consumer
 group, a prefetch window - stays your own vocabulary, configured on your subscription source
 through your settings extension trait, so a service writes `b.include(handler.batch(nonzero!(6))
 .block(Duration::from_secs(5)))` with the core's word first and yours after it.
 
 Where the transport delivers one message at a time, do not leave the capability out: assemble
-the pages on the client with the core's `BufferedSubscriber`, whose `batches` honours the size
-it is given. The deadline that closes a partial page is your choice, made once when you build
+the batches on the client with the core's `BufferedSubscriber`, whose `batches` honours the size
+it is given. The deadline that closes a partial batch is your choice, made once when you build
 the wrapper; the size is not yours to choose. Everything else about the subscriber reaches
 through the wrapper unchanged:
 
@@ -364,10 +364,10 @@ through the wrapper unchanged:
 ```
 
 Nothing in the mount site says which of the two you did, which is the point: a service names the
-page size and gets pages.
+batch size and gets batches.
 
 The `conformance` batch suite checks the contract - it opens a subscription at a size smaller
-than the run and fails a broker whose pages come back larger.
+than the run and fails a broker whose batches come back larger.
 
 ### The prelude your crate ships { #broker-prelude }
 
@@ -519,16 +519,16 @@ traits, one shape each.
 
 A broker with no per-delivery fields uses `()` and skips all of this.
 
-Batch subscriptions get a context of their own, because a page spans many deliveries: build a
+Batch subscriptions get a context of their own, because a batch spans many deliveries: build a
 second struct out of what the whole *subscription* shares (a seek handle, a stream name, a
-consumer group), implement `BuildBatchContext` on it - the runtime builds one per page from the
-page's first delivery - and publish `Field` keys so a page body reads it with `ctx.context(..)`.
-Per-delivery fields stay out of it: a position belongs to one delivery, so a page reads it off
+consumer group), implement `BuildBatchContext` on it - the runtime builds one per batch from the
+batch's first delivery - and publish `Field` keys so a batch body reads it with `ctx.context(..)`.
+Per-delivery fields stay out of it: a position belongs to one delivery, so a batch reads it off
 the elements instead. Keeping the two structs apart is what enforces that at compile time,
-since a per-delivery context does not implement `BuildBatchContext` and a page body therefore
+since a per-delivery context does not implement `BuildBatchContext` and a batch body therefore
 cannot name it. The in-memory broker's `MemoryBatchContext` - the subscription's seeker under
 the same `SeekHandle` key its per-delivery context publishes - is the model, and a broker with
-nothing subscription-scoped to offer implements nothing and leaves pages on the `()` default.
+nothing subscription-scoped to offer implements nothing and leaves batches on the `()` default.
 
 ## Middleware on the async edges { #middleware-on-the-async-edges }
 

@@ -179,8 +179,8 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     const SUBJECT: &str = "conformance.batches";
     const COUNT: u32 = 10;
     // Smaller than the run, so a broker that ignores the size it is given is caught by the
-    // page-length assertion below rather than by luck of timing.
-    const PAGE: NonZeroUsize = NonZeroUsize::new(3).unwrap();
+    // batch-length assertion below rather than by luck of timing.
+    const BATCH: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 
     let connected = make_broker().connect().await.expect("broker must connect");
 
@@ -198,7 +198,7 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     }
 
     let mut received = Vec::new();
-    let mut stream = std::pin::pin!(subscriber.batches(PAGE));
+    let mut stream = std::pin::pin!(subscriber.batches(BATCH));
     while received.len() < COUNT as usize {
         let batch = timeout(DEFAULT_TIMEOUT, stream.next())
             .await
@@ -209,10 +209,10 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         let batch: Vec<_> = batch.into_iter().collect();
         assert!(!batch.is_empty(), "a yielded batch must not be empty");
         assert!(
-            batch.len() <= PAGE.get(),
-            "a page must never carry more than the size it was opened with: got {}, asked {}",
+            batch.len() <= BATCH.get(),
+            "a batch must never carry more than the size it was opened with: got {}, asked {}",
             batch.len(),
-            PAGE,
+            BATCH,
         );
         for msg in batch {
             received.push(msg.payload().to_vec());

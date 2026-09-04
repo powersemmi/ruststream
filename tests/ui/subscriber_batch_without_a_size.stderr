@@ -1,0 +1,15 @@
+error[E0277]: this batch subscriber has no batch size
+  --> tests/ui/subscriber_batch_without_a_size.rs:21:15
+   |
+21 |             b.include(handle);
+   |               ^^^^^^^ a batch handler needs one
+   |
+   = help: the trait `BatchSized` is not implemented for `SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>`
+   = note: add `.batch(nonzero!(n))` at the mount site: the batch size is the one parameter the framework passes to the broker, and the broker's own batching options (a block timeout, a consumer group) ride its subscription source
+help: the trait `BatchSized` is implemented for `SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC>`
+  --> src/runtime/settings.rs
+   |
+   | impl<Def, Src, W, F, P, DC> BatchSized for SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`

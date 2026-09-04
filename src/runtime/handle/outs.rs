@@ -105,14 +105,11 @@ use crate::{
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Deserialized, Input, Message, Page, PagePair, PagedAxis, Solo, SoloAxis,
+    Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
     SoloDeserialized, SoloPair,
 };
-use super::eager::{construct, run_page, settle_solo};
+use super::eager::{construct, run_batch, settle_solo};
 use super::value::{HandleValue, Sealed};
-
-// ------------------------------------------------------------------------------------- slots
-
 /// One arena entry: the wired live value of the marker `M`, plus the publish path the include
 /// site gave it - its encode codec and the pipeline every message leaving the slot travels.
 ///
@@ -511,9 +508,6 @@ where
         })
     }
 }
-
-// ------------------------------------------------------------------------------- the arena
-
 /// The injections arena a slot body receives: its entries mirror the marker tuple the body
 /// declared, and [`get`](Self::get) picks one by marker.
 pub struct Outs<E> {
@@ -639,9 +633,6 @@ impl_entry_markers! {
     (M0: W0 / E0 / P0 / B0, M1: W1 / E1 / P1 / B1)
     (M0: W0 / E0 / P0 / B0, M1: W1 / E1 / P1 / B1, M2: W2 / E2 / P2 / B2)
 }
-
-// -------------------------------------------------------------------- the slot definitions
-
 impl<A, E, C, H, Doc> IncludeDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
     A: Axis,
@@ -815,7 +806,7 @@ where
 
 impl<A, C, H, Doc, E> BatchInjectDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
-    A: PagedAxis,
+    A: BatchedAxis,
     C: Send + Sync,
     H: Send + Sync,
     Doc: AxisDocs<A> + Send + Sync,
@@ -863,10 +854,11 @@ where
     }
 }
 
-impl<T, C, S, H, Doc, E> BatchInjectCall<S> for Sealed<HandleValue<Page<T>, (), Outs<E>, C, H, Doc>>
+impl<T, C, S, H, Doc, E> BatchInjectCall<S>
+    for Sealed<HandleValue<Batch<T>, (), Outs<E>, C, H, Doc>>
 where
-    Self: BatchInjectDef<Input = <Page<T> as Axis>::Kind, Injections = Outs<E>, Context = C>,
-    [T]: Input<Axis = Page<T>>,
+    Self: BatchInjectDef<Input = <Batch<T> as Axis>::Kind, Injections = Outs<E>, Context = C>,
+    [T]: Input<Axis = Batch<T>>,
     T: Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,
@@ -879,16 +871,16 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        run_page(&self.0.body, injections, batch, ctx).await
+        run_batch(&self.0.body, injections, batch, ctx).await
     }
 }
 
 impl<Hd, P, C, S, H, Doc, E> BatchInjectCall<S>
-    for Sealed<HandleValue<PagePair<Hd, P>, (), Outs<E>, C, H, Doc>>
+    for Sealed<HandleValue<BatchPair<Hd, P>, (), Outs<E>, C, H, Doc>>
 where
     Self:
-        BatchInjectDef<Input = <PagePair<Hd, P> as Axis>::Kind, Injections = Outs<E>, Context = C>,
-    [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
+        BatchInjectDef<Input = <BatchPair<Hd, P> as Axis>::Kind, Injections = Outs<E>, Context = C>,
+    [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
     C: Send + Sync,
@@ -902,6 +894,6 @@ where
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        run_page(&self.0.body, injections, batch, ctx).await
+        run_batch(&self.0.body, injections, batch, ctx).await
     }
 }

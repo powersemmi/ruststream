@@ -6,7 +6,7 @@
 //! statement commits with the broker's default policy); on a [`Router`](super::Router) the same
 //! chain ends in `.build()`, which is what commits the
 //! registration. At startup the wiring pairs into a [`ReplyPublisher`]: a plain one publishes
-//! each reply independently, while a `.transactional()` one makes the whole page's replies
+//! each reply independently, while a `.transactional()` one makes the whole batch's replies
 //! visible atomically - the consume-transform-produce pattern.
 
 use std::future::Future;
@@ -41,11 +41,11 @@ pub trait BatchPublishingDef: Send + Sync {
     /// [`InjectDef::Injections`](super::InjectDef::Injections).
     type Injections;
 
-    /// The broker's typed subscription-scoped context the page's handler reads by key (`()` when
-    /// the handler names none), exactly as on [`BatchDef::Context`](super::BatchDef::Context):
-    /// built once per page from its first delivery, so a replying page body reaches the
-    /// subscription's handles (a reposition handle, a consumer-group name) the same way a
-    /// settling one does.
+    /// The broker's typed subscription-scoped context the batch's handler reads by key (`()`
+    /// when the handler names none), exactly as on
+    /// [`BatchDef::Context`](super::BatchDef::Context): built once per batch from its first
+    /// delivery, so a replying batch body reaches the subscription's handles (a reposition
+    /// handle, a consumer-group name) the same way a settling one does.
     type Context;
 
     /// The reply element type; each entry of the returned `Vec` is encoded and published.
@@ -196,7 +196,7 @@ where
         if accepted.is_empty() {
             return;
         }
-        // The page the broker delivered is the page the handler answers for, whole: the size it
+        // The batch the broker delivered is the batch the handler answers for, whole: the size it
         // was built at is the registration's own, so there is nothing left to split here.
         let result = match self.def.call(&values, &self.injections, ctx).await {
             Ok(replies) => {

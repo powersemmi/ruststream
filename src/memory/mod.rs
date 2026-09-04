@@ -568,8 +568,8 @@ impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
 ///
-/// Also consumable in pages through the [`BatchSubscriber`](crate::BatchSubscriber) capability,
-/// which caps each page at the size it is asked for. Repositionable over the publish log through
+/// Also consumable in batches through the [`BatchSubscriber`](crate::BatchSubscriber) capability,
+/// which caps each batch at the size it is asked for. Repositionable over the publish log through
 /// the [`Seekable`](crate::Seekable) capability: mint a [`MemorySeeker`] with
 /// [`seeker`](crate::Seekable::seeker) before opening the stream.
 pub struct MemorySubscriber {

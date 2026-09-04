@@ -43,7 +43,7 @@ impl<T> Admits<T, ()> for AnyDeclared {}
 /// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
 /// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
 /// publish after settling is a compile error. This is the hand-written counterpart of the
-/// per-page transaction the runtime drives for a `.transactional()` reply wiring.
+/// per-batch transaction the runtime drives for a `.transactional()` reply wiring.
 ///
 /// The scope encodes values with the surface's codec and sends them into the open transaction
 /// directly: it opens on the surface's own publisher, so a slot's

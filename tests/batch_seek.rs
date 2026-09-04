@@ -1,7 +1,7 @@
-//! Repositioning a subscription from a page body: the broker gives the batch forms a
+//! Repositioning a subscription from a batch body: the broker gives the batch forms a
 //! subscription-scoped context (the in-memory broker's [`MemoryBatchContext`] carries the
 //! subscription's seeker), and where to seek rides the elements themselves - a
-//! `&[Message<H, T>]` page reads the target off each element's typed header contract.
+//! `&[Message<H, T>]` batch reads the target off each element's typed header contract.
 #![cfg(all(
     feature = "memory",
     feature = "macros",
@@ -18,7 +18,7 @@ use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, Publisher, Seeker};
 
 /// The producer's cursor contract: an element carrying `resume_at` asks the consumer to
-/// reposition the subscription there once the page is settled.
+/// reposition the subscription there once the batch is settled.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Cursor {
     resume_at: Option<u64>,
@@ -29,14 +29,14 @@ struct Entry {
     id: u64,
 }
 
-/// Settles the page, then repositions: the target comes from the elements' header contract and
+/// Settles the batch, then repositions: the target comes from the elements' header contract and
 /// the handle from the broker's subscription-scoped batch context.
 #[subscriber("replay.log")]
 async fn replay(
-    page: &[Message<Cursor, Entry>],
+    batch: &[Message<Cursor, Entry>],
     ctx: &mut Context<'_, MemoryBatchContext>,
 ) -> HandlerOutcome {
-    let target = page
+    let target = batch
         .iter()
         .find_map(|element| element.headers.resume_at)
         .map(|sequence| usize::try_from(sequence).expect("test positions are small"));
@@ -65,12 +65,12 @@ async fn publish_entry(broker: &MemoryBroker, id: u64, resume_at: Option<u64>) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_reads_its_seek_target_from_element_headers() {
+async fn a_batch_reads_its_seek_target_from_element_headers() {
     let broker = MemoryBroker::new();
 
     // The whole run is in the log before the subscription opens, so the opening replay hands
-    // the body one full page: the entries land at log positions 0, 1 and 2, and the first
-    // element asks to resume from position 2 once the page is settled.
+    // the body one full batch: the entries land at log positions 0, 1 and 2, and the first
+    // element asks to resume from position 2 once the batch is settled.
     publish_entry(&broker, 0, Some(2)).await;
     publish_entry(&broker, 1, None).await;
     publish_entry(&broker, 2, None).await;
@@ -83,16 +83,16 @@ async fn a_page_reads_its_seek_target_from_element_headers() {
     // only has to drive it to a standstill.
     tb.settle().await.expect("the replay settles");
 
-    let pages: Vec<Vec<u64>> = tb
+    let batches: Vec<Vec<u64>> = tb
         .broker::<MemoryBroker>()
         .subscriber("replay.log")
-        .pages::<Entry>()
+        .batches::<Entry>()
         .iter()
-        .map(|page| page.iter().map(|entry| entry.id).collect())
+        .map(|batch| batch.iter().map(|entry| entry.id).collect())
         .collect();
     assert_eq!(
-        pages,
+        batches,
         [vec![0, 1, 2], vec![2]],
-        "the page after the seek must open at the header-named position",
+        "the batch after the seek must open at the header-named position",
     );
 }

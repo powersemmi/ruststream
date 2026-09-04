@@ -58,9 +58,9 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
   消息头里带上一个唯一的进程内 inbox 再发布，并在第一条投递到该 inbox 的消息到达时完成；`MemoryRequest`
   策略配对出的就是它，因此带 `Out<impl RequestReply, ..>` 约束的槽位绑定到 `MemoryRequest`。响应方从请求
   中读出 `reply-to`，把回复发布到该名字上。无人应答的请求以 `RequestError::Timeout` 失败。
-- **分页。** `MemorySubscriber` 原生实现了 `BatchSubscriber`：一页由第一条 await 到的投递加上此时已经
-  缓冲的全部消息组成，上限就是挂载点用 `batch(n)` 报出的页大小。不满一页也会立即发出，因此不涉及任何
-  截止时间定时器。
+- **批次。** `MemorySubscriber` 原生实现了 `BatchSubscriber`：一个批次由第一条 await 到的投递加上此时
+  已经缓冲的全部消息组成，上限就是挂载点用 `batch(n)` 报出的批次大小。不满一个批次也会立即发出，因此
+  不涉及任何截止时间定时器。
 - **事务。** `MemoryPublish` 策略配对出的 `MemoryPublisher` 同时具备两种事务，因此带
   `TransactionalPublisher` 或 `OwnedTransactions` 约束的槽位或接线都绑定到 `MemoryPublish`。
   作用域内的发布会进入缓冲，并在提交时按发布顺序一起扇出；中止则把它们丢弃；每个拥有式事务各自缓冲。
@@ -77,7 +77,7 @@ Broker 的投递语义 - 持久游标、重新投递计时器、分区、死信�
   通过它定位会以 `MemoryError::ShutDown` 报错。在应用内部，投递上下文（`MemoryContext`）携带位置和
   seeker，处理器通过 `Position` / `SeekHandle` 键读取它们（参见
   [定位](../guides/subscribers.md#seeking)）。批量函数体写的是 `MemoryBatchContext`：它在同一个
-  `SeekHandle` 键下携带订阅的 seeker，但不携带位置，因为一批横跨多次投递。
+  `SeekHandle` 键下携带订阅的 seeker，但不携带位置，因为一个批次横跨多次投递。
 - **关闭。** 这条阶梯是完全带类型的：`MemoryBroker::connect(self)` 产出 `ConnectedMemoryBroker`，而它
   消费自身的 `shutdown` 又产出 `ClosedMemoryBroker`，一个见证值，报告本次拆除丢弃了多少订阅者注册。
   关闭之后再使用别名句柄，无论是发布、提交事务还是发起请求，都会以 `MemoryError::ShutDown` /

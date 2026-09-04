@@ -79,7 +79,7 @@ RustStream 用同一套词汇结算这两者，都通过 `on_failure(..)` 子句
   结算消息，订阅者继续消费。捕获只在展开式 panic 配置下有效；用 `panic = "abort"` 时进程早已不复存在。
 - 解码失败以 `Result` 的形式浮现，不涉及任何展开；`decode` 策略直接结算这条消息（参见
   [编解码器](codecs.md#decode-failures)）。
-- 在批量路径上，该策略作用于每一批的解码（其中每个元素独立解码）以及批量处理器中的 panic。不存在按
+- 在批量路径上，该策略作用于每个批次的解码（其中每个元素独立解码）以及批量处理器中的 panic。不存在按
   元素的 panic 处理。
 
 完整示例在这里：[`examples/failure_policy.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/failure_policy.rs)。

@@ -180,7 +180,7 @@ impl<C, L: PublishTransform<C>> BatchPublishTransform<C> for ForBatch<L> {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         // `Stamp` on the page path, without a second implementation.
+///         // `Stamp` on the batch path, without a second implementation.
 ///         b.include(confirm.batch(nonzero!(8)))
 ///             .out(Reply, Publish)
 ///             .batch_transform(for_batch(Stamp));

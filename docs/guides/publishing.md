@@ -42,7 +42,7 @@ sends it:
 Mount it with plain `include`. With nothing else said, the reply goes out through the broker's
 default publish policy under the default codec; `.out(Reply, Publish)` names the policy the broker
 prelude exports, and the steps after it fill the rest of the reply wiring - `.codec(..)` for the
-reply codec, `.transform(..)` for a static publish transform, `.transactional()` for a page's
+reply codec, `.transform(..)` for a static publish transform, `.transactional()` for a batch's
 replies in one broker transaction. Each step fills its own slot once, so naming a codec twice is a
 compile error rather than a silent overwrite. The wiring is a declaration: the runtime pairs it
 with the connected broker at startup.
@@ -288,7 +288,7 @@ a newtype that derives `Outgoing`, or, inside a transaction, keep the scope's
 
 The parameter composes with every subscriber form: next to a `Ctx` extractor, on a
 self-deserializing input, and on batch handlers (`b.include(f).out(marker, policy).build()` - the
-whole page in, per-element destinations out). On the reply forms - `publish(..)` and its batch
+whole batch in, per-element destinations out). On the reply forms - `publish(..)` and its batch
 counterpart - the reply is one more position on the same chain, so a gateway names both and
 answers on a fixed destination while fanning side copies out through the injection:
 
@@ -485,7 +485,7 @@ per batch: the runtime begins a transaction, publishes every reply, commits, and
 the incoming batch; any failure aborts, so replies are never half-visible. The transactional
 requirement is enforced where the wiring is consumed: mounting it needs a policy whose live
 publisher is transactional, so a broker without transactions still fails to compile. A
-single-message reply has no page to make atomic, so `.transactional()` mounts on the page forms
+single-message reply has no batch to make atomic, so `.transactional()` mounts on the batch forms
 only.
 
 ## Manual transactions

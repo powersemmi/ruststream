@@ -39,10 +39,10 @@ impl PublishLayer for AppStamp {
 #[publishes(Order)]
 struct Audit;
 
-/// A page handler that answers: the reply's publisher is the mount site's to name, on a scope
+/// A batch handler that answers: the reply's publisher is the mount site's to name, on a scope
 /// and on a router alike.
 #[subscriber("mount.orders", publish("mount.receipts"))]
-async fn confirm_page(orders: &[Order]) -> Vec<Order> {
+async fn confirm_batch(orders: &[Order]) -> Vec<Order> {
     orders.iter().map(|order| Order { id: order.id }).collect()
 }
 
@@ -61,14 +61,14 @@ async fn mirror(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> Handle
     HandlerOutcome::ack()
 }
 
-/// The page's reply leaves through the policy the include site named, and the app-wide publish
+/// The batch's reply leaves through the policy the include site named, and the app-wide publish
 /// layer stamps it: nothing about the publisher is on the definition.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_reply_takes_the_policy_the_include_site_names() {
+async fn a_batch_reply_takes_the_policy_the_include_site_names() {
     let app = RustStream::new(AppInfo::new("mount-scope", "0.1.0"))
         .publish_layer(AppStamp)
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(confirm_page.batch(nonzero!(4)))
+            b.include(confirm_batch.batch(nonzero!(4)))
                 .out(Reply, Publish);
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -92,7 +92,7 @@ async fn a_page_reply_takes_the_policy_the_include_site_names() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_names_the_same_reply_policy() {
     let routes = Router::<MemoryBroker>::new()
-        .include(confirm_page.batch(nonzero!(4)))
+        .include(confirm_batch.batch(nonzero!(4)))
         .out(Reply, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("mount-router", "0.1.0"))
@@ -178,7 +178,7 @@ async fn a_broker_settings_trait_reaches_the_reply_policy() {
     let app = RustStream::new(AppInfo::new("mount-map-reply", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(confirm_page.batch(nonzero!(4)))
+            b.include(confirm_batch.batch(nonzero!(4)))
                 .out(Reply, Prefixed::default())
                 .prefixed("pre.");
         },

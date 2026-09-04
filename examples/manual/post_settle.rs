@@ -44,9 +44,9 @@ impl Handle<Order> for Notify {
 /// Per-element settlement: id 0 retries with no continuation, every other order acks and schedules
 /// its own follow-up. The continuation rides with the element, so a batch settles each message and
 /// its side effect independently.
-struct NotifyPage;
+struct NotifyBatch;
 
-impl Handle<[Order]> for NotifyPage {
+impl Handle<[Order]> for NotifyBatch {
     fn handle(
         &self,
         orders: &[Order],
@@ -73,9 +73,13 @@ impl Handle<[Order]> for NotifyPage {
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("post_settle", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("orders", Notify).build());
-        // Batches dispatch per page rather than per delivery, and the page input is what says
-        // so; the page size is the one parameter the mount owes the broker.
-        b.include(subscriber("orders", NotifyPage).batch(nonzero!(64)).build());
+        // Batches dispatch per batch rather than per delivery, and the batch input is what says
+        // so; the batch size is the one parameter the mount owes the broker.
+        b.include(
+            subscriber("orders", NotifyBatch)
+                .batch(nonzero!(64))
+                .build(),
+        );
     })
 }
 

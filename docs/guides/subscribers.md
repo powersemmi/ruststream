@@ -344,7 +344,7 @@ attribute says it.
     ```
 
 Mount it with `include`, like any other form. The definition carries the batch shape; the mount
-site owes it one number, the page size:
+site owes it one number, the batch size:
 
 === "Macros"
 
@@ -358,14 +358,14 @@ site owes it one number, the page size:
     --8<-- "examples/manual/subscribers.rs:batch_mount"
     ```
 
-`batch(n)` is the one page parameter the framework carries, and it is mandatory: a page handler
+`batch(n)` is the one batch parameter the framework carries, and it is mandatory: a batch handler
 mounted without it does not compile, because there is no size the framework could invent for
-you. The number goes straight to the broker, which builds its pages to it - `XREADGROUP COUNT`,
-a JetStream pull batch, a Kafka poll limit - and the page your body sees is exactly the page the
+you. The number goes straight to the broker, which builds its batches to it - `XREADGROUP COUNT`,
+a JetStream pull batch, a Kafka poll limit - and the batch your body sees is exactly the batch the
 broker delivered, never a slice of it. It may be shorter than `n` whenever that is all the
 broker had.
 
-Everything else about how a page forms - a block timeout, a consumer group, a prefetch window -
+Everything else about how a batch forms - a block timeout, a consumer group, a prefetch window -
 is the broker's own vocabulary, chained after the size on its subscription source:
 
 <!-- inline-rust: the extra step belongs to a broker crate, which this repository cannot depend on -->
@@ -374,16 +374,16 @@ is the broker's own vocabulary, chained after the size on its subscription sourc
 b.include(reconcile.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)));
 ```
 
-The size applies to every page shape, whatever else the signature carries: a page that replies,
-and a page that fans out through an `Out` slot, name it exactly as a plain one does. A
-single-message handler has no page, so naming it there does not compile either - how many
+The size applies to every batch shape, whatever else the signature carries: a batch that replies,
+and a batch that fans out through an `Out` slot, name it exactly as a plain one does. A
+single-message handler has no batch, so naming it there does not compile either - how many
 deliveries such a handler takes at once is `workers(n)` instead.
 
-Every broker offers pages. Those whose clients batch natively expose the `BatchSubscriber`
+Every broker offers batches. Those whose clients batch natively expose the `BatchSubscriber`
 capability directly (Kafka poll, JetStream pull consumers, Redis `XREADGROUP`; the in-memory
-broker too), and those whose transport delivers one message at a time assemble the pages on the
+broker too), and those whose transport delivers one message at a time assemble the batches on the
 client through the core's `Buffered` adapter, inside the broker crate. Nothing at the mount site
-says which of the two it was. See [Pages](../broker-authors/index.md#pages-batchsubscriber) in
+says which of the two it was. See [Batches](../broker-authors/index.md#batches-batchsubscriber) in
 the broker-authors guide for how a broker does it.
 
 The semantics differ from single-message handlers in a few ways:
@@ -394,13 +394,13 @@ The semantics differ from single-message handlers in a few ways:
   settles **every** message uniformly: `ack()` acks them all, `retry()` requeues them all.
 - Per-message headers are not accessible in the `&[T]` form, and the context starts with empty
   headers.
-- The context is one per page, and the broker fields on it are the *subscription-scoped* ones: a
-  page body names the broker's batch context type (`ctx: &mut Context<'_, MemoryBatchContext>`
+- The context is one per batch, and the broker fields on it are the *subscription-scoped* ones: a
+  batch body names the broker's batch context type (`ctx: &mut Context<'_, MemoryBatchContext>`
   for the in-memory broker) and reads its keys with `ctx.context(..)`. A broker with nothing
-  subscription-scoped to offer leaves pages on the `()` default.
-- Per-delivery data has no place there, because a page spans many deliveries: a position or a
-  header rides the elements instead, read off a `&[Message<H, T>]` page element by element. The
-  two are separate types, so a page body asking for the broker's per-delivery context does not
+  subscription-scoped to offer leaves batches on the `()` default.
+- Per-delivery data has no place there, because a batch spans many deliveries: a position or a
+  header rides the elements instead, read off a `&[Message<H, T>]` batch element by element. The
+  two are separate types, so a batch body asking for the broker's per-delivery context does not
   compile.
 - App-global and router middleware wrap per-message handlers and do not apply to batch
   registrations.
@@ -500,9 +500,9 @@ against the broker's context type on the manual one. Nothing is attached at the 
     --8<-- "examples/manual/seek.rs:mount"
     ```
 
-A page body repositions its subscription the same way, one level up: the seek handle is
+A batch body repositions its subscription the same way, one level up: the seek handle is
 subscription-scoped, so it rides the broker's batch context, while the target - a position the
-producer asked the consumer to resume from - rides the page's own elements.
+producer asked the consumer to resume from - rides the batch's own elements.
 
 What one seek covers differs per broker - repositioning a consumer instance (Kafka) moves that
 instance only, repositioning a shared group cursor (Redis streams) moves the whole group - and a
@@ -545,8 +545,8 @@ service's own, and the compile error names the derive as the fix. The Manual tab
 of impls the derive writes - the construction, and the spelling that routes the type onto the
 lane.
 
-The form rule does not change with the lane: `&T` is one message, `&[T]` a page. A page of
-frames is therefore `&[Frame<'_>]`, and the page spelling comes with the derive - a page body
+The form rule does not change with the lane: `&T` is one message, `&[T]` a batch. A batch of
+frames is therefore `&[Frame<'_>]`, and the batch spelling comes with the derive - a batch body
 asks for no second impl. Its elements borrow the batch's own messages for the duration of the
 call, so nothing is copied there either, and the settlement rules are the batch path's.
 
@@ -567,7 +567,7 @@ bad payload by returning `Err` from `from_payload`, and `on_failure(decode = ..)
 delivery: the same rung a codec decode failure and a typed `Headers` violation land on.
 Everything else composes as usual: extractors, `&mut Context`, `workers(..)`,
 `on_failure(panic = ..)` and the injected `Out` parameters work unchanged on the
-single-delivery shape (a page of frames takes no `Out` parameter), and the subscriber mounts
+single-delivery shape (a batch of frames takes no `Out` parameter), and the subscriber mounts
 with the same `include` as every other definition. A scope codec does not apply to it - the
 lane never calls one - which also makes this the subscriber form that works with no codec
 feature enabled at all. For a custom serialization format you want *typed* handlers for,
@@ -618,7 +618,7 @@ the input still decodes with the scope codec and keeps its decode failure policy
 The other diagonal reads the same way: a `Frame<'_>` input with a `Serialize` reply encodes the
 answer through the reply codec while the input never touches one. Two things do not follow the
 type, though. A `Vec<u8>` reply is not a byte reply - it is an ordinary `Serialize` value, so it
-goes out encoded, and a payload that must leave untouched needs the newtype. And a page reply
+goes out encoded, and a payload that must leave untouched needs the newtype. And a batch reply
 always publishes through the reply codec - the `Serialized` wire applies to single replies.
 
 ## Worker pools
@@ -677,7 +677,7 @@ integration test.
 | `retry()` / `retry_after` × `workers(n)` | Retried deliveries re-enter the pool and complete like any other delivery. |
 | `retry()` / `retry_after` × `workers(n, by_key)` | Retries complete, but per-key ordering across a retry is **not** promised: a requeued message rejoins the stream from the back. If a key's messages must stay ordered even through failures, the handler has to absorb the failure instead of nacking. |
 | `.transactional()` × `workers(n)` | One transaction per batch, exactly as in the sequential loop. Concurrent batches run concurrent, independent transactions; each stays atomic (commit-then-ack per batch). |
-| a page size × `workers(n)` | Pages still close at `batch(n)` or, where the broker pages on the client, at its deadline; the pool bounds how many closed pages are processed at once and never affects page boundaries. |
+| a batch size × `workers(n)` | Batches still close at `batch(n)` or, where the broker batches on the client, at its deadline; the pool bounds how many closed batches are processed at once and never affects batch boundaries. |
 | `publish(..)` × `workers(n)` | Replies are produced concurrently, so reply order across deliveries is not promised. A failed reply publish retries only its own delivery. |
 | middleware × a batch handler | App-global and router layers wrap per-message handlers and do not apply to batch registrations (a per-message layer cannot wrap a whole-batch handler). |
 
@@ -710,7 +710,7 @@ register the same handler.
 
 The manual body returns a `Result`: the `Ok` side carries what the handler produces (the reply, or
 nothing) and the `Err` side carries the settlement, so `Ok(())` acks and
-`Err(HandlerOutcome::retry())` requeues; a page body settles element-wise with
+`Err(HandlerOutcome::retry())` requeues; a batch body settles element-wise with
 `Err(Vec<HandlerOutcome>)`. Between `subscriber(..)` and `.build()`, the chain takes the same
 settings the attribute's clauses would (`.name`, `.workers`, `.on_failure`, `.batch`) plus the
 documentation controls: a registration is documented by default under the `asyncapi` feature,

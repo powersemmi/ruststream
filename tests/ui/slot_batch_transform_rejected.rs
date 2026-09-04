@@ -27,7 +27,7 @@ async fn mirror(order: &Order, Out(_audit): Out<impl Publisher, Audit>) -> Handl
     HandlerOutcome::ack()
 }
 
-// A slot publish is one message with no page, so a batch transform has nothing to run over: the
+// A slot publish is one message with no batch, so a batch transform has nothing to run over: the
 // step exists only on the reply position.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {

@@ -143,7 +143,7 @@ impl OpenTelemetry {
 
     /// The publish-side [`PublishTransform`]: copies the delivery's `traceparent` onto every
     /// reply. Compose it onto a reply's wiring with the mount site's `.transform(..)` step (or,
-    /// on a page reply, `.batch_transform(for_batch(..))` - see
+    /// on a batch reply, `.batch_transform(for_batch(..))` - see
     /// [`for_batch`](crate::runtime::for_batch)).
     ///
     /// # Examples

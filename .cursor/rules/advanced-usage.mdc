@@ -20,10 +20,10 @@ alwaysApply: false
   every axis of the form matrix is a defaulted parameter the impl pins, so the signature decides
   the form and nothing else names it. `In` is the input spelling (`T` decoded, `F<'_>` a type that
   deserializes itself from the bytes, `Message<H, P>` a decoded payload next to its typed header
-  contract, and `[T]` / `[F<'_>]` / `[Message<H, P>]` for a page of each), `R` the reply type
+  contract, and `[T]` / `[F<'_>]` / `[Message<H, P>]` for a batch of each), `R` the reply type
   (`()` declares none), `O` the injections arena (`()` declares none), `C` the broker's typed
   context - per delivery on the single forms, the broker's subscription-scoped batch context
-  (`BuildBatchContext`, built once per page) on the page ones - and `S` the application state the
+  (`BuildBatchContext`, built once per batch) on the batch ones - and `S` the application state the
   body reads with `ctx.state()`. What the signature does
   not carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
   `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply declaration (`.reply()`,
@@ -35,12 +35,12 @@ alwaysApply: false
 - The return shape is computed from the same two axes, so an illegal combination has no type to be
   written in and each shape has exactly one accepted spelling: `Result<(), HandlerOutcome>` for a
   single message with no reply (`Ok(())` acks), `Result<Reply, HandlerOutcome>` for a single one
-  with a reply, `Result<(), Vec<HandlerOutcome>>` for a page, and
-  `Result<Vec<Reply>, Vec<HandlerOutcome>>` for a page with replies, whose impl header names the
+  with a reply, `Result<(), Vec<HandlerOutcome>>` for a batch, and
+  `Result<Vec<Reply>, Vec<HandlerOutcome>>` for a batch with replies, whose impl header names the
   vector (`impl Handle<[Order], Vec<Confirmation>>`). There is no bare-outcome return and no
-  whole-page uniform outcome; a continuation is not a shape of its own either - return
-  `Err(HandlerOutcome::ack().and_after(..))`. The page vector settles element-wise and is
-  page-length by contract; a mismatch panics under the `on_failure(panic = ..)` policy.
+  whole-batch uniform outcome; a continuation is not a shape of its own either - return
+  `Err(HandlerOutcome::ack().and_after(..))`. The batch vector settles element-wise and is
+  batch-length by contract; a mismatch panics under the `on_failure(panic = ..)` policy.
 - **Level two** - implement `SubscriberDef` plus `Declared`, and `b.include(def)` works on your own
   type with the whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`,
   `.batch`), `.out(marker, policy)` per publish position and `.build()`. The settings live on
@@ -50,7 +50,7 @@ alwaysApply: false
   decoded one resolves its codec through the builder, so a bare definition does not mount there -
   and the steps (`NameStep`, `WorkersStep`, `FailureStep`, `BatchStep`) are implemented for
   `SubscriberBuilder`, not for a bare definition, so that route has no settings surface either. A
-  page definition must also implement `PageSized`, which is how the mount reads back the size
+  batch definition must also implement `BatchSized`, which is how the mount reads back the size
   `.batch(n)` named.
 - The derives are equally reproducible, and reading their expansion is the fastest way to get one
   right: `#[derive(Outgoing)]` writes `OutgoingDestination` plus a `MessageHeaders` contract
@@ -171,8 +171,8 @@ means the framework's codec builds the value, `Deserialized` means the type buil
 delivery's bytes. So the raw input spelling is a named type of the service's own - `Frame<'_>`
 below - and the pair of impls `#[derive(Deserialized)]` writes by hand is the construction plus
 the `Input` spelling that routes it onto the lane. No codec is involved, and this is the only
-subscriber form available with no codec feature at all. The page spelling (`[Frame<'_>]`) comes
-with those two impls; a bare `[u8]` is not an input, because it is also a page of decoded `u8`
+subscriber form available with no codec feature at all. The batch spelling (`[Frame<'_>]`) comes
+with those two impls; a bare `[u8]` is not an input, because it is also a batch of decoded `u8`
 elements and coherence cannot split the two.
 
 ```rust
@@ -318,7 +318,7 @@ impl Handle<Message<ChunkMeta, Chunk>> for Convert {
 b.include(subscriber("chunks", Convert).build());
 ```
 
-A page reads `[Message<H, P>]`, one contract per element. `ctx.headers()` is still the untyped
+A batch reads `[Message<H, P>]`, one contract per element. `ctx.headers()` is still the untyped
 `HeaderMap` for a discriminator read (`get_str`), `ctx.headers_mut()` is the working copy
 middleware enriches, and `HeaderMap::insert_typed(&value)` writes a contract back into it.
 
@@ -359,7 +359,7 @@ after it. A `serde::Serialize`
 `R` encodes through the codec, so it takes `.codec(..)`, `.transform(..)` and `.transactional()`;
 an `R` implementing `Serialized` (the impls above; `ReplyShape` with `type Wire = SerializedReply`
 covers the reply position) leaves byte-for-byte, so those steps do not compile on it. There is one
-`.reply()` and one `.out(Reply, ..)` for both wires. A page reply always publishes through the
+`.reply()` and one `.out(Reply, ..)` for both wires. A batch reply always publishes through the
 reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
 `Outs<(Slot<Marker, W, Enc, Pipe>,)>`, where `W` is the wired live value, `Enc` the include site's
 encode codec and `Pipe` the publish path it gave the slot (its `.transform(..)` steps over the
@@ -447,7 +447,7 @@ Every form is reachable through that one constructor, so none is locked behind t
 traits: the application state, the typed broker context and the injections are all axes read off
 the body's own `impl Handle`, and the reply and document steps ride the chain
 (`.reply()` / `.to(..)`, `.describe(..)`, `.undocumented()`) next to the
-declarative settings the attribute path shares, the mandatory page size `.batch(n)` among them.
+declarative settings the attribute path shares, the mandatory batch size `.batch(n)` among them.
 Registrations are documented by default under `asyncapi`, which is why the
 message types need `schemars::JsonSchema` and `.undocumented()` is the per-registration exit.
 What is left for the definition traits is being the attribute's own expansion target, and a fully
@@ -478,7 +478,7 @@ impl SubscriberDef for Receive {
 // attribute's clauses parsed into.
 impl Declared for Receive {
     type Form = forms::Subscribing;
-    // (workers, failure policies, start position, page supply)
+    // (workers, failure policies, start position, batch supply)
     type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open, Open)>;
 
     fn declare(self) -> Self::Settings {

@@ -16,7 +16,7 @@ use crate::{Name, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Deserialized, Input, Message, Page, PageDeserialized, PagePair, PagedAxis,
+    Axis, AxisDocs, Batch, BatchDeserialized, BatchPair, BatchedAxis, Deserialized, Input, Message,
     Solo, SoloAxis, SoloDeserialized, SoloPair,
 };
 use super::value::{HandleValue, Sealed};
@@ -186,57 +186,57 @@ where
     }
 }
 
-/// The dispatch adapter of a page body.
+/// The dispatch adapter of a batch body.
 ///
-/// Awaits the verdict, checks the per-element contract, and settles the page by it. The page's
-/// size was named by [`batch`](crate::runtime::SubscriberSettings::batch) and applied by the
-/// broker, so nothing here resizes it.
-pub struct PageBody<A, H> {
+/// Awaits the verdict, checks the per-element contract, and settles the batch by it. The
+/// batch's size was named by [`batch`](crate::runtime::SubscriberSettings::batch) and applied by
+/// the broker, so nothing here resizes it.
+pub struct BatchBody<A, H> {
     body: H,
     _axes: PhantomData<fn() -> A>,
 }
 
-impl<A, H> std::fmt::Debug for PageBody<A, H> {
+impl<A, H> std::fmt::Debug for BatchBody<A, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PageBody").finish_non_exhaustive()
+        f.debug_struct("BatchBody").finish_non_exhaustive()
     }
 }
 
-/// Applies the page contract to one verdict: `Ok` acks the page, an `Err` vector must be
-/// exactly page-length (a mismatch is a bug in the handler and panics under the subscriber's
+/// Applies the batch contract to one verdict: `Ok` acks the batch, an `Err` vector must be
+/// exactly batch-length (a mismatch is a bug in the handler and panics under the subscriber's
 /// panic policy).
-pub(super) fn settle_page(
+pub(super) fn settle_batch(
     verdict: Result<(), Vec<HandlerOutcome>>,
-    page_len: usize,
+    batch_len: usize,
     subscription: &str,
 ) -> BatchResult {
     match verdict {
         Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
         Err(outcomes) => {
             assert!(
-                outcomes.len() == page_len,
-                "subscriber '{subscription}' returned {} per-element outcomes for a page of {}",
+                outcomes.len() == batch_len,
+                "subscriber '{subscription}' returned {} per-element outcomes for a batch of {}",
                 outcomes.len(),
-                page_len,
+                batch_len,
             );
             BatchResult::PerElement(outcomes)
         }
     }
 }
 
-/// Runs a page body over one delivered page and settles by its verdict.
+/// Runs a batch body over one delivered batch and settles by its verdict.
 ///
-/// The page arrives at the size the registration asked the broker for, and reaches the body
-/// exactly as it arrived: the settling page forms all run through here - plain and
+/// The batch arrives at the size the registration asked the broker for, and reaches the body
+/// exactly as it arrived: the settling batch forms all run through here - plain and
 /// slot-carrying alike - and none of them splits it.
-pub(super) async fn run_page<T, O, C, S, H>(
+pub(super) async fn run_batch<T, O, C, S, H>(
     body: &H,
     outs: &O,
     batch: &[T],
     ctx: &mut Context<'_, C, S>,
 ) -> BatchResult
 where
-    [T]: Input<Axis: PagedAxis>,
+    [T]: Input<Axis: BatchedAxis>,
     H: Handle<[T], (), O, C, S>,
     T: Send + Sync,
     O: Send + Sync,
@@ -244,25 +244,25 @@ where
     S: Send + Sync,
 {
     let verdict = body.handle(batch, outs, ctx).await;
-    settle_page(verdict, batch.len(), ctx.name())
+    settle_batch(verdict, batch.len(), ctx.name())
 }
 
-impl<T, C, S, H> SliceHandler<T, C, S> for PageBody<Page<T>, H>
+impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<Batch<T>, H>
 where
-    [T]: Input<Axis = Page<T>>,
+    [T]: Input<Axis = Batch<T>>,
     T: Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        run_page(&self.body, &(), batch, ctx).await
+        run_batch(&self.body, &(), batch, ctx).await
     }
 }
 
-impl<Hd, P, C, S, H> SliceHandler<Message<Hd, P>, C, S> for PageBody<PagePair<Hd, P>, H>
+impl<Hd, P, C, S, H> SliceHandler<Message<Hd, P>, C, S> for BatchBody<BatchPair<Hd, P>, H>
 where
-    [Message<Hd, P>]: Input<Axis = PagePair<Hd, P>>,
+    [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
     Hd: Send + Sync + 'static,
     P: Send + Sync + 'static,
     C: Send + Sync,
@@ -274,7 +274,7 @@ where
         batch: &[Message<Hd, P>],
         ctx: &mut Context<'_, C, S>,
     ) -> BatchResult {
-        run_page(&self.body, &(), batch, ctx).await
+        run_batch(&self.body, &(), batch, ctx).await
     }
 }
 
@@ -283,28 +283,28 @@ where
 // parameter (`T`, one lifetime instantiation of the family's output) because a projection with
 // a free lifetime cannot head an impl; the pinned-axis bound is what ties it back to `F` and
 // normalizes the verdict family.
-impl<T, F, C, S, H> SliceHandler<T, C, S> for PageBody<PageDeserialized<F>, H>
+impl<T, F, C, S, H> SliceHandler<T, C, S> for BatchBody<BatchDeserialized<F>, H>
 where
     T: Send + Sync,
     F: Deserialized + Send + Sync + 'static,
-    [T]: Input<Axis = PageDeserialized<F>>,
+    [T]: Input<Axis = BatchDeserialized<F>>,
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
-        run_page(&self.body, &(), batch, ctx).await
+        run_batch(&self.body, &(), batch, ctx).await
     }
 }
 
 impl<A, C, H, Doc> BatchDef for Sealed<HandleValue<A, (), (), C, H, Doc>>
 where
-    A: PagedAxis,
+    A: BatchedAxis,
     Doc: AxisDocs<A>,
 {
     type Input = A::Kind;
     type Context = C;
-    type Handler = PageBody<A, H>;
+    type Handler = BatchBody<A, H>;
     // See `SubscriberDef::Source` above: the builder carries the real source.
     type Source = Unnamed<Name>;
 
@@ -340,8 +340,8 @@ where
         self.0.docs.message_description
     }
 
-    fn into_handler(self) -> PageBody<A, H> {
-        PageBody {
+    fn into_handler(self) -> BatchBody<A, H> {
+        BatchBody {
             body: self.0.body,
             _axes: PhantomData,
         }
